@@ -93,6 +93,15 @@ pub struct Checker {
     region_stack: Vec<String>, // stack of active region names
     reference_lifetimes: HashMap<String, String>, // ref_name -> region_name (lifetime)
     pattern_borrows: HashMap<String, Vec<String>>, // pattern_var -> list of borrow constraints
+
+    // Phase 14: Pattern Matching Analysis (Exhaustiveness & Unreachability)
+    covered_patterns: Vec<String>, // patterns covered so far in match
+    unreachable_patterns: Vec<usize>, // indices of unreachable patterns
+
+    // Phase 15: Visibility & Module Scoping
+    current_module: Vec<String>, // current module path, e.g. ["io", "file"]
+    public_items: std::collections::HashSet<String>, // items marked as pub (fully qualified names)
+    private_items: std::collections::HashSet<String>, // items marked as private
 }
 
 impl Checker {
@@ -125,6 +134,11 @@ impl Checker {
             region_stack: Vec::new(),
             reference_lifetimes: HashMap::new(),
             pattern_borrows: HashMap::new(),
+            covered_patterns: Vec::new(),
+            unreachable_patterns: Vec::new(),
+            current_module: vec!["root".into()],
+            public_items: std::collections::HashSet::new(),
+            private_items: std::collections::HashSet::new(),
         }
     }
 
@@ -525,7 +539,7 @@ impl Checker {
 
     pub fn check_all_trait_bounds(&self, fn_name: &str, type_args: &[(String, Type)]) -> bool {
         // Get generic parameters for function
-        if let Some(params) = self.get_generic_params(fn_name) {
+        if let Some(_params) = self.get_generic_params(fn_name) {
             // For each type argument, validate its trait bounds
             for (param_name, arg_type) in type_args {
                 if let Some(bounds) = self.get_trait_bounds(param_name) {
@@ -625,6 +639,186 @@ impl Checker {
         self.region_stack.clear();
         self.reference_lifetimes.clear();
         self.pattern_borrows.clear();
+    }
+
+    // Phase 14: Pattern Matching Analysis (Exhaustiveness & Unreachability)
+    pub fn add_covered_pattern(&mut self, pattern: String) {
+        self.covered_patterns.push(pattern);
+    }
+
+    pub fn get_covered_patterns(&self) -> &[String] {
+        &self.covered_patterns
+    }
+
+    pub fn mark_unreachable_pattern(&mut self, pattern_index: usize) {
+        self.unreachable_patterns.push(pattern_index);
+    }
+
+    pub fn get_unreachable_patterns(&self) -> &[usize] {
+        &self.unreachable_patterns
+    }
+
+    pub fn check_pattern_subsumption(&self, new_pattern: &str, existing_patterns: &[&str]) -> bool {
+        // Check if new_pattern is subsumed by (covered by) existing patterns
+        // Wildcard pattern subsumes everything
+        if existing_patterns.contains(&"_") {
+            return true;
+        }
+
+        // Check if exact same pattern exists
+        if existing_patterns.iter().any(|p| *p == new_pattern) {
+            return true;
+        }
+
+        false
+    }
+
+    pub fn validate_match_exhaustiveness(&mut self, scrutinee_type: &Type, patterns: &[String], span: Span) -> bool {
+        // Check if all variants are covered for typed expressions
+        match scrutinee_type {
+            Type::Named(name) if name.contains("Variant") || name.contains("Enum") => {
+                // For variant types, check if wildcard exists or specific coverage
+                if patterns.contains(&"_".to_string()) {
+                    return true;
+                }
+
+                // If no wildcard, it's non-exhaustive (in real scenario would need variant info)
+                self.report_error("Non-exhaustive patterns in match".into(), span);
+                false
+            }
+            _ => {
+                // For other types, wildcard pattern is sufficient
+                patterns.contains(&"_".to_string())
+            }
+        }
+    }
+
+    pub fn detect_unreachable_patterns(&mut self, patterns: &[String]) -> Vec<usize> {
+        let mut unreachable = Vec::new();
+        let mut covered = Vec::new();
+
+        for (i, pattern) in patterns.iter().enumerate() {
+            // Wildcard pattern makes all subsequent patterns unreachable
+            if pattern == "_" {
+                for j in (i + 1)..patterns.len() {
+                    unreachable.push(j);
+                }
+                break;
+            }
+
+            // Check if this pattern is subsumed by previous patterns
+            let covered_strs: Vec<&str> = covered.iter().map(|s: &String| s.as_str()).collect();
+            if self.check_pattern_subsumption(pattern, &covered_strs) {
+                unreachable.push(i);
+            } else {
+                covered.push(pattern.clone());
+            }
+        }
+
+        unreachable
+    }
+
+    pub fn is_pattern_exhaustive(&self, patterns: &[String]) -> bool {
+        // Pattern set is exhaustive if it contains a wildcard
+        patterns.contains(&"_".to_string())
+    }
+
+    pub fn clear_pattern_analysis(&mut self) {
+        self.covered_patterns.clear();
+        self.unreachable_patterns.clear();
+    }
+
+    // Phase 15: Visibility & Module Scoping
+    pub fn push_module(&mut self, module_name: String) {
+        self.current_module.push(module_name);
+    }
+
+    pub fn pop_module(&mut self) {
+        if self.current_module.len() > 1 {
+            self.current_module.pop();
+        }
+    }
+
+    pub fn get_current_module(&self) -> Vec<String> {
+        self.current_module.clone()
+    }
+
+    pub fn set_current_module(&mut self, module_path: Vec<String>) {
+        if !module_path.is_empty() {
+            self.current_module = module_path;
+        }
+    }
+
+    pub fn mark_public(&mut self, item_name: String) {
+        let qualified_name = format!("{}::{}", self.current_module.join("::"), item_name);
+        self.public_items.insert(qualified_name.clone());
+        self.private_items.remove(&qualified_name);
+    }
+
+    pub fn mark_private(&mut self, item_name: String) {
+        let qualified_name = format!("{}::{}", self.current_module.join("::"), item_name);
+        self.private_items.insert(qualified_name.clone());
+        self.public_items.remove(&qualified_name);
+    }
+
+    pub fn is_public(&self, item_name: &str) -> bool {
+        // Check if item is accessible from current module
+        // An item is accessible if:
+        // 1. It's marked as public
+        // 2. It's in the same module as the current context
+        // 3. It's a built-in item
+
+        // Check for public registration
+        for public_item in &self.public_items {
+            if public_item.ends_with(&format!("::{}", item_name)) {
+                return true;
+            }
+        }
+
+        // Check if it's in the same module
+        let qualified_name = format!("{}::{}", self.current_module.join("::"), item_name);
+        !self.private_items.contains(&qualified_name)
+    }
+
+    pub fn is_accessible(&self, item_name: &str, item_module: &[String]) -> bool {
+        // Check if item from item_module is accessible from current_module
+        // Items from the same module are always accessible
+        if item_module == self.current_module {
+            return true;
+        }
+
+        // Items marked as public are accessible from anywhere
+        let qualified_name = format!("{}::{}", item_module.join("::"), item_name);
+        self.public_items.contains(&qualified_name)
+    }
+
+    pub fn validate_visibility(&mut self, item_name: &str, item_module: &[String], access_span: Span) -> bool {
+        // Validate that item_name from item_module is accessible
+        if self.is_accessible(item_name, item_module) {
+            return true;
+        }
+
+        // Report visibility error
+        let qualified = format!("{}::{}", item_module.join("::"), item_name);
+        self.report_error(
+            format!("Cannot access private item '{}'", qualified),
+            access_span
+        );
+        false
+    }
+
+    pub fn get_public_items(&self) -> Vec<String> {
+        self.public_items.iter().cloned().collect()
+    }
+
+    pub fn get_private_items(&self) -> Vec<String> {
+        self.private_items.iter().cloned().collect()
+    }
+
+    pub fn clear_visibility_context(&mut self) {
+        self.current_module = vec!["root".into()];
+        self.public_items.clear();
+        self.private_items.clear();
     }
 
     // Phase 5: Pattern Matching Support
@@ -786,7 +980,7 @@ impl Checker {
             ast::Type::Tuple(tys) => {
                 Type::Tuple(tys.iter().map(|t| self.convert_type(t)).collect())
             }
-            ast::Type::Reference { is_mut, inner, region } => Type::Reference {
+            ast::Type::Reference { is_mut, inner, region: _ } => Type::Reference {
                 is_mut: *is_mut,
                 inner: Box::new(self.convert_type(inner)),
             },
