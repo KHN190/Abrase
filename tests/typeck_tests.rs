@@ -587,3 +587,355 @@ fn verify_throw_expression() {
     assert_eq!(ty, Type::Never);
     assert!(checker.errors.is_empty());
 }
+
+// Phase 2: Complex Expressions
+
+#[test]
+fn verify_function_call_type_checking() {
+    let mut checker = Checker::new();
+    let fn_type = Type::Function {
+        params: vec![Type::Int, Type::Bool],
+        effects: vec![],
+        ret: Box::new(Type::String),
+    };
+    checker.insert_var("add".into(), fn_type, false, d_span());
+
+    let expr = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::Identifier("add".into()))),
+        args: vec![
+            sp(ast::Expr::Literal(ast::Literal::Int(5))),
+            sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+        ],
+    });
+
+    assert_eq!(checker.infer_expr(&expr), Type::String);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_function_call_argument_count_mismatch() {
+    let mut checker = Checker::new();
+    let fn_type = Type::Function {
+        params: vec![Type::Int],
+        effects: vec![],
+        ret: Box::new(Type::String),
+    };
+    checker.insert_var("func".into(), fn_type, false, d_span());
+
+    let expr = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::Identifier("func".into()))),
+        args: vec![
+            sp(ast::Expr::Literal(ast::Literal::Int(5))),
+            sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+        ],
+    });
+
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Expected 1 arguments, got 2"));
+}
+
+#[test]
+fn verify_function_call_argument_type_mismatch() {
+    let mut checker = Checker::new();
+    let fn_type = Type::Function {
+        params: vec![Type::Int],
+        effects: vec![],
+        ret: Box::new(Type::String),
+    };
+    checker.insert_var("func".into(), fn_type, false, d_span());
+
+    let expr = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::Identifier("func".into()))),
+        args: vec![sp(ast::Expr::Literal(ast::Literal::Bool(true)))],
+    });
+
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Argument 0 type mismatch"));
+}
+
+#[test]
+fn verify_tuple_expression_type() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Tuple(vec![
+        sp(ast::Expr::Literal(ast::Literal::Int(1))),
+        sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+        sp(ast::Expr::Literal(ast::Literal::String("x".into()))),
+    ]));
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Tuple(vec![Type::Int, Type::Bool, Type::String]));
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_empty_tuple_expression() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Tuple(vec![]));
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Tuple(vec![]));
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_array_expression_uniform_type() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Array(vec![
+        sp(ast::Expr::Literal(ast::Literal::Int(1))),
+        sp(ast::Expr::Literal(ast::Literal::Int(2))),
+        sp(ast::Expr::Literal(ast::Literal::Int(3))),
+    ]));
+
+    let _ty = checker.infer_expr(&expr);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_array_expression_type_mismatch() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Array(vec![
+        sp(ast::Expr::Literal(ast::Literal::Int(1))),
+        sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+    ]));
+
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Array elements must have same type"));
+}
+
+#[test]
+fn verify_array_repeat_expression() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::ArrayRepeat {
+        elem: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(5)))),
+        count: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(10)))),
+    });
+
+    let _ty = checker.infer_expr(&expr);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_array_repeat_non_int_count() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::ArrayRepeat {
+        elem: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(5)))),
+        count: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
+    });
+
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Array repeat count must be Int"));
+}
+
+#[test]
+fn verify_index_expression_on_array() {
+    let mut checker = Checker::new();
+    checker.insert_var("arr".into(), Type::Named("Array<Int>".into()), false, d_span());
+
+    let expr = sp(ast::Expr::Index {
+        base: Box::new(sp(ast::Expr::Identifier("arr".into()))),
+        index: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0)))),
+    });
+
+    let _ty = checker.infer_expr(&expr);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_index_non_int_index() {
+    let mut checker = Checker::new();
+    checker.insert_var("arr".into(), Type::Named("Array<Int>".into()), false, d_span());
+
+    let expr = sp(ast::Expr::Index {
+        base: Box::new(sp(ast::Expr::Identifier("arr".into()))),
+        index: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
+    });
+
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Index must be Int"));
+}
+
+#[test]
+fn verify_index_on_tuple() {
+    let mut checker = Checker::new();
+    let tuple_type = Type::Tuple(vec![Type::Int, Type::Bool, Type::String]);
+    checker.insert_var("tup".into(), tuple_type, false, d_span());
+
+    let expr = sp(ast::Expr::Index {
+        base: Box::new(sp(ast::Expr::Identifier("tup".into()))),
+        index: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0)))),
+    });
+
+    let _ty = checker.infer_expr(&expr);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_field_access() {
+    let mut checker = Checker::new();
+    checker.insert_var("obj".into(), Type::Named("Point".into()), false, d_span());
+
+    let expr = sp(ast::Expr::FieldAccess {
+        base: Box::new(sp(ast::Expr::Identifier("obj".into()))),
+        field: "x".into(),
+    });
+
+    let _ty = checker.infer_expr(&expr);
+    // FieldAccess returns Unknown until we have type registry
+    assert!(checker.errors.is_empty());
+}
+
+// Phase 3: Advanced Expressions
+
+#[test]
+fn verify_closure_expression_type() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Closure {
+        is_move: false,
+        params: vec![
+            ast::ClosureParam {
+                pattern: sp(Pattern::Bind("x".into())),
+                ty: Some(ast::Type::Named("Int".into())),
+            },
+        ],
+        effects: vec![],
+        ret_ty: Some(ast::Type::Named("Bool".into())),
+        body: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert!(matches!(ty, Type::Named(ref n) if n == "Closure"));
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_closure_return_type_mismatch() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Closure {
+        is_move: false,
+        params: vec![],
+        effects: vec![],
+        ret_ty: Some(ast::Type::Named("Int".into())),
+        body: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
+    });
+
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Closure body type mismatch"));
+}
+
+#[test]
+fn verify_record_expression() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Record {
+        ty: vec!["Point".into()],
+        fields: vec![
+            ast::FieldInit {
+                name: "x".into(),
+                value: Some(sp(ast::Expr::Literal(ast::Literal::Int(10)))),
+            },
+            ast::FieldInit {
+                name: "y".into(),
+                value: Some(sp(ast::Expr::Literal(ast::Literal::Int(20)))),
+            },
+        ],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Named("Point".into()));
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_variant_expression() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Variant {
+        ty: vec!["Option".into()],
+        args: vec![sp(ast::Expr::Literal(ast::Literal::Int(42)))],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Named("Option".into()));
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_range_expression_int() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Range {
+        start: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1))))),
+        end: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(10))))),
+        inclusive: false,
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Named("Range<Int>".into()));
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_range_non_int_start() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Range {
+        start: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true))))),
+        end: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(10))))),
+        inclusive: false,
+    });
+
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Range start must be Int"));
+}
+
+#[test]
+fn verify_range_non_int_end() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Range {
+        start: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1))))),
+        end: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::String("x".into()))))),
+        inclusive: false,
+    });
+
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Range end must be Int"));
+}
+
+#[test]
+fn verify_scope_expression() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(42))))),
+    };
+    let expr = sp(ast::Expr::Scope {
+        label: Some("s".into()),
+        options: None,
+        body,
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_region_expression() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::String("x".into()))))),
+    };
+    let expr = sp(ast::Expr::Region {
+        label: None,
+        body,
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::String);
+    assert!(checker.errors.is_empty());
+}

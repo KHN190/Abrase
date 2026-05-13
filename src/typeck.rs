@@ -383,6 +383,154 @@ impl Checker {
                 let _ex_ty = self.infer_expr(expr_val);
                 Type::Never
             }
+            // Phase 2: Complex Expressions
+            ast::Expr::Call { callee, args } => {
+                let callee_ty = self.infer_expr(callee);
+                if let Type::Function { params, ret, .. } = callee_ty {
+                    if args.len() != params.len() {
+                        self.report_error(
+                            format!("Expected {} arguments, got {}", params.len(), args.len()),
+                            expr.span
+                        );
+                    }
+                    for (i, (arg, param_ty)) in args.iter().zip(params.iter()).enumerate() {
+                        let arg_ty = self.infer_expr(arg);
+                        if arg_ty != *param_ty && arg_ty != Type::Unknown && *param_ty != Type::Unknown {
+                            self.report_error(
+                                format!("Argument {} type mismatch: expected {:?}, got {:?}", i, param_ty, arg_ty),
+                                arg.span
+                            );
+                        }
+                    }
+                    *ret
+                } else {
+                    self.report_error("Callee must be function type".into(), callee.span)
+                }
+            }
+            ast::Expr::Tuple(elems) => {
+                let elem_types: Vec<_> = elems.iter().map(|e| self.infer_expr(e)).collect();
+                Type::Tuple(elem_types)
+            }
+            ast::Expr::Array(elems) => {
+                if elems.is_empty() {
+                    Type::Named("Array<Unknown>".into())
+                } else {
+                    let first_ty = self.infer_expr(&elems[0]);
+                    for elem in &elems[1..] {
+                        let elem_ty = self.infer_expr(elem);
+                        if elem_ty != first_ty && elem_ty != Type::Unknown && first_ty != Type::Unknown {
+                            self.report_error("Array elements must have same type".into(), elem.span);
+                        }
+                    }
+                    Type::Named(format!("Array<{:?}>", first_ty))
+                }
+            }
+            ast::Expr::ArrayRepeat { elem, count } => {
+                let _elem_ty = self.infer_expr(elem);
+                let count_ty = self.infer_expr(count);
+                if count_ty != Type::Int && count_ty != Type::Unknown {
+                    self.report_error("Array repeat count must be Int".into(), count.span);
+                }
+                Type::Named("Array<Unknown>".into())
+            }
+            ast::Expr::Index { base, index } => {
+                let base_ty = self.infer_expr(base);
+                let index_ty = self.infer_expr(index);
+
+                if index_ty != Type::Int && index_ty != Type::Unknown {
+                    self.report_error("Index must be Int".into(), index.span);
+                }
+
+                match base_ty {
+                    Type::Named(ref name) if name.starts_with("Array") => Type::Unknown,
+                    Type::Tuple(ref elems) => {
+                        if elems.is_empty() { Type::Unknown }
+                        else { elems[0].clone() }
+                    }
+                    _ => self.report_error("Can only index arrays or tuples".into(), base.span),
+                }
+            }
+            ast::Expr::FieldAccess { base, field } => {
+                let _base_ty = self.infer_expr(base);
+                Type::Unknown // Would need record type registry
+            }
+            // Phase 3: Advanced Expressions
+            ast::Expr::Closure { is_move: _, params, effects: _, ret_ty, body } => {
+                self.enter_scope();
+                for param in params {
+                    if let Some(param_ty) = &param.ty {
+                        let converted_ty = self.convert_type(param_ty);
+                        self.insert_var(
+                            match &param.pattern.node {
+                                ast::Pattern::Bind(n) => n.clone(),
+                                _ => "<param>".into(),
+                            },
+                            converted_ty,
+                            false,
+                            param.pattern.span
+                        );
+                    }
+                }
+                let body_ty = self.infer_expr(body);
+                if let Some(expected_ret) = ret_ty {
+                    let expected = self.convert_type(expected_ret);
+                    if expected != body_ty && expected != Type::Unknown && body_ty != Type::Unknown {
+                        self.report_error("Closure body type mismatch".into(), body.span);
+                    }
+                }
+                self.exit_scope();
+                Type::Named("Closure".into())
+            }
+            ast::Expr::Record { ty, fields } => {
+                for field in fields {
+                    if let Some(value) = &field.value {
+                        let _field_ty = self.infer_expr(value);
+                    }
+                }
+                Type::Named(ty.join("."))
+            }
+            ast::Expr::Variant { ty, args } => {
+                for arg in args {
+                    let _arg_ty = self.infer_expr(arg);
+                }
+                Type::Named(ty.join("."))
+            }
+            ast::Expr::Range { start, end, inclusive: _ } => {
+                if let Some(s) = start {
+                    let s_ty = self.infer_expr(s);
+                    if s_ty != Type::Int && s_ty != Type::Unknown {
+                        self.report_error("Range start must be Int".into(), s.span);
+                    }
+                }
+                if let Some(e) = end {
+                    let e_ty = self.infer_expr(e);
+                    if e_ty != Type::Int && e_ty != Type::Unknown {
+                        self.report_error("Range end must be Int".into(), e.span);
+                    }
+                }
+                Type::Named("Range<Int>".into())
+            }
+            ast::Expr::Question(_inner) => {
+                Type::Unknown // Error propagation, would need context
+            }
+            ast::Expr::Await(_inner) => {
+                Type::Unknown // Async, would need effect tracking
+            }
+            ast::Expr::Scope { label: _, options: _, body } => {
+                self.infer_block(body)
+            }
+            ast::Expr::Region { label: _, body } => {
+                self.infer_block(body)
+            }
+            ast::Expr::Handle { expr: handler_expr, arms } => {
+                let _expr_ty = self.infer_expr(handler_expr);
+                let mut arm_types = Vec::new();
+                for _arm in arms {
+                    // TODO: implement handle arm type checking
+                    arm_types.push(Type::Unknown);
+                }
+                if arm_types.is_empty() { Type::Unknown } else { arm_types[0].clone() }
+            }
             _ => self.report_error("Expression not supported yet".into(), expr.span),
         }
     }
