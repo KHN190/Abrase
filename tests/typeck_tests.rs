@@ -1,4 +1,4 @@
-use ect::ast::{self, Span, Spanned};
+use ect::ast::{self, Pattern, Span, Spanned};
 use ect::ty::Type;
 use ect::typeck::Checker;
 
@@ -231,7 +231,7 @@ fn verify_undefined_variable_error() {
 fn verify_let_statement_with_type_annotation() {
     let mut checker = Checker::new();
     let let_stmt = sp(ast::Stmt::Let {
-        name: "x".into(),
+        pattern: sp(Pattern::Bind("x".into())),
         is_mut: false,
         ty: Some(ast::Type::Named("Int".into())),
         value: sp(ast::Expr::Literal(ast::Literal::Int(42))),
@@ -244,7 +244,7 @@ fn verify_let_statement_with_type_annotation() {
 fn verify_let_statement_type_mismatch_error() {
     let mut checker = Checker::new();
     let let_stmt = sp(ast::Stmt::Let {
-        name: "x".into(),
+        pattern: sp(Pattern::Bind("x".into())),
         is_mut: false,
         ty: Some(ast::Type::Named("Bool".into())),
         value: sp(ast::Expr::Literal(ast::Literal::Int(42))),
@@ -271,7 +271,7 @@ fn verify_block_expression() {
 fn verify_block_with_statements() {
     let mut checker = Checker::new();
     let let_stmt = sp(ast::Stmt::Let {
-        name: "x".into(),
+        pattern: sp(Pattern::Bind("x".into())),
         is_mut: true,
         ty: None,
         value: sp(ast::Expr::Literal(ast::Literal::Int(10))),
@@ -332,7 +332,7 @@ fn verify_borrow_checking_move_semantics() {
     let mut checker = Checker::new();
 
     let let_stmt = sp(ast::Stmt::Let {
-        name: "text".into(),
+        pattern: sp(Pattern::Bind("text".into())),
         is_mut: false,
         ty: None,
         value: sp(ast::Expr::Literal(ast::Literal::String("hello".into()))),
@@ -365,7 +365,7 @@ fn verify_borrow_checking_copy_semantics() {
     let mut checker = Checker::new();
 
     let let_stmt = sp(ast::Stmt::Let {
-        name: "num".into(),
+        pattern: sp(Pattern::Bind("num".into())),
         is_mut: false,
         ty: None,
         value: sp(ast::Expr::Literal(ast::Literal::Int(100))),

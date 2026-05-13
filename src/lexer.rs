@@ -1,13 +1,5 @@
 use crate::ast::Span;
-
-/// A segment of a string literal that contains interpolation.
-/// `"hello {name}, age {user.age}"` →
-///   [Literal("hello "), Interp(["name"]), Literal(", age "), Interp(["user", "age"])]
-#[derive(Debug, PartialEq, Clone)]
-pub enum StringPart {
-    Literal(String),
-    Interp(Vec<String>), // path segments, e.g. ["user", "name"] for {user.name}
-}
+pub use crate::ast::StringPart;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {

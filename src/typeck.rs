@@ -3,7 +3,14 @@
 use std::collections::HashMap;
 use crate::ast;
 use crate::ast::{Span, Spanned};
-use crate::ty::{Effect, Ownership, Type};
+use crate::ty::{Ownership, Type};
+
+fn elem_name(ty: &ast::Type) -> String {
+    match ty {
+        ast::Type::Named(n) => n.clone(),
+        _ => "?".into(),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TypeError {
@@ -123,44 +130,51 @@ impl Checker {
                 "Unit" => Type::Unit,
                 _ => Type::Named(name.clone()),
             },
+            ast::Type::Qualified(parts) => Type::Named(parts.join(".")),
+            ast::Type::Generic { name, .. } => Type::Named(name.clone()),
+            ast::Type::Array { elem, .. } => Type::Named(format!("[{}]", elem_name(elem))),
             ast::Type::Tuple(tys) => {
                 Type::Tuple(tys.iter().map(|t| self.convert_type(t)).collect())
             }
-            ast::Type::Reference { is_mut, inner } => Type::Reference {
+            ast::Type::Reference { is_mut, inner, .. } => Type::Reference {
                 is_mut: *is_mut,
                 inner: Box::new(self.convert_type(inner)),
             },
-            ast::Type::Function { params, ret } => Type::Function {
+            ast::Type::Function { params, ret, .. } => Type::Function {
                 params: params.iter().map(|t| self.convert_type(t)).collect(),
                 effects: vec![],
                 ret: Box::new(self.convert_type(ret)),
             },
+            ast::Type::DynTrait(name) => Type::Named(format!("dyn {}", name)),
         }
     }
 
     pub fn check_stmt(&mut self, stmt: &Spanned<ast::Stmt>) {
         match &stmt.node {
-            ast::Stmt::Let { name, is_mut, ty, value } => {
+            ast::Stmt::Let { pattern, is_mut, ty, value } => {
+                let name = match &pattern.node {
+                    ast::Pattern::Bind(n) => n.clone(),
+                    _ => "<pattern>".into(),
+                };
                 self.context_stack.push(format!("In let binding for '{}'", name));
                 let mut val_ty = self.infer_expr(value);
-                
+
                 if let Some(expected_ast_ty) = ty {
                     let expected_ty = self.convert_type(expected_ast_ty);
                     if expected_ty != val_ty && val_ty != Type::Unknown {
                         self.report_error(
-                            format!("Type mismatch: expected {:?}, found {:?}", expected_ty, val_ty), 
+                            format!("Type mismatch: expected {:?}, found {:?}", expected_ty, val_ty),
                             value.span
                         );
                     }
                     val_ty = expected_ty;
                 }
-                
-                self.insert_var(name.clone(), val_ty, *is_mut, stmt.span);
+
+                self.insert_var(name, val_ty, *is_mut, stmt.span);
                 self.context_stack.pop();
             }
-            ast::Stmt::Expr(expr) => {
-                self.infer_expr(expr);
-            }
+            ast::Stmt::Expr(expr) => { self.infer_expr(expr); }
+            ast::Stmt::Empty => {}
         }
     }
 
@@ -172,7 +186,7 @@ impl Checker {
                 ast::Literal::Float(_) => Type::Float,
                 ast::Literal::Bool(_) => Type::Bool,
                 ast::Literal::Char(_) => Type::Char,
-                ast::Literal::String(_) => Type::String,
+                ast::Literal::String(_) | ast::Literal::StringInterp(_) => Type::String,
                 ast::Literal::Unit => Type::Unit,
             },
             ast::Expr::Identifier(name) => self.get_var(name, false, expr.span),
@@ -228,7 +242,10 @@ impl Checker {
                         ast::BinaryOp::And | ast::BinaryOp::Or => {
                             if l_ty == Type::Bool { Type::Bool } else { self.report_error("Expected Bool".into(), expr.span) }
                         }
-                        ast::BinaryOp::Assign => {
+                        ast::BinaryOp::Assign
+                        | ast::BinaryOp::AddAssign | ast::BinaryOp::SubAssign
+                        | ast::BinaryOp::MulAssign | ast::BinaryOp::DivAssign
+                        | ast::BinaryOp::ModAssign => {
                             Type::Unit
                         }
                     }
@@ -505,7 +522,7 @@ mod tests {
     fn verify_let_statement_with_type_annotation() {
         let mut checker = Checker::new();
         let let_stmt = sp(ast::Stmt::Let {
-            name: "x".into(),
+            pattern: sp(ast::Pattern::Bind("x".into())),
             is_mut: false,
             ty: Some(ast::Type::Named("Int".into())),
             value: sp(ast::Expr::Literal(ast::Literal::Int(42))),
@@ -518,7 +535,7 @@ mod tests {
     fn verify_let_statement_type_mismatch_error() {
         let mut checker = Checker::new();
         let let_stmt = sp(ast::Stmt::Let {
-            name: "x".into(),
+            pattern: sp(ast::Pattern::Bind("x".into())),
             is_mut: false,
             ty: Some(ast::Type::Named("Bool".into())),
             value: sp(ast::Expr::Literal(ast::Literal::Int(42))),
@@ -545,7 +562,7 @@ mod tests {
     fn verify_block_with_statements() {
         let mut checker = Checker::new();
         let let_stmt = sp(ast::Stmt::Let {
-            name: "x".into(),
+            pattern: sp(ast::Pattern::Bind("x".into())),
             is_mut: true,
             ty: None,
             value: sp(ast::Expr::Literal(ast::Literal::Int(10))),
@@ -606,7 +623,7 @@ mod tests {
         let mut checker = Checker::new();
 
         let let_stmt = sp(ast::Stmt::Let {
-            name: "text".into(),
+            pattern: sp(ast::Pattern::Bind("text".into())),
             is_mut: false,
             ty: None,
             value: sp(ast::Expr::Literal(ast::Literal::String("hello".into()))),
@@ -639,7 +656,7 @@ mod tests {
         let mut checker = Checker::new();
 
         let let_stmt = sp(ast::Stmt::Let {
-            name: "num".into(),
+            pattern: sp(ast::Pattern::Bind("num".into())),
             is_mut: false,
             ty: None,
             value: sp(ast::Expr::Literal(ast::Literal::Int(100))),

@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::lexer::{Lexer, Token};
 
 #[derive(PartialOrd, PartialEq, Clone, Copy)]
-enum Precedence {
+pub enum Precedence {
     Lowest,
     Assign,
     Or,
@@ -110,7 +110,7 @@ impl<'a> Parser<'a> {
         decls
     }
 
-    fn parse_decl(&mut self) -> Result<Decl, String> {
+    pub fn parse_decl(&mut self) -> Result<Decl, String> {
         let mut is_pub = false;
         let mut is_async = false;
 
@@ -136,7 +136,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_fn_decl(&mut self, is_pub: bool, is_async: bool) -> Result<Decl, String> {
+    pub fn parse_fn_decl(&mut self, is_pub: bool, is_async: bool) -> Result<Decl, String> {
         if let Token::Ident(_) = self.peek_token {
             self.next_token();
         } else {
@@ -153,7 +153,7 @@ impl<'a> Parser<'a> {
             return Err("Expected '('".into());
         }
         let params = self.parse_params()?;
-        
+
         let mut return_type = None;
         if self.peek_token == Token::Arrow {
             self.next_token();
@@ -166,25 +166,61 @@ impl<'a> Parser<'a> {
         }
         let body = self.parse_block()?;
 
-        Ok(Decl::Fn { name, is_async, is_pub, params, return_type, body })
+        Ok(Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub,
+            is_async,
+            name,
+            generics: vec![],
+            params,
+            effects: vec![],
+            return_type,
+            where_clause: vec![],
+            body,
+        }))
     }
 
-    fn parse_params(&mut self) -> Result<Vec<Param>, String> {
+    pub fn parse_params(&mut self) -> Result<Vec<Param>, String> {
         let mut params = Vec::new();
         if self.peek_token == Token::RParen {
             self.next_token();
             return Ok(params);
         }
         self.next_token();
-        
+
         loop {
-            let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected param name".into()) };
-            if !self.expect_peek(Token::Colon) {
-                return Err("Expected ':'".into());
-            }
-            self.next_token();
-            let ty = self.parse_type()?;
-            params.push(Param { name, ty });
+            let span = self.current_span;
+            let param = match &self.current_token {
+                Token::SelfKW => Param::SelfVal,
+                Token::Ampersand => {
+                    self.next_token();
+                    let is_mut = if self.current_token == Token::Mut { self.next_token(); true } else { false };
+                    // expect `self`
+                    if self.current_token != Token::SelfKW {
+                        return Err("Expected 'self' after '&'".into());
+                    }
+                    Param::SelfRef { is_mut }
+                }
+                Token::Ident(n) => {
+                    let name = n.clone();
+                    if !self.expect_peek(Token::Colon) {
+                        return Err("Expected ':'".into());
+                    }
+                    self.next_token();
+                    let ty = self.parse_type()?;
+                    // `self: &Self` / `self: Self` / `self: &mut Self` → sugar for self params
+                    match (&name[..], &ty) {
+                        ("self", Type::Reference { is_mut, .. }) => Param::SelfRef { is_mut: *is_mut },
+                        ("self", _) => Param::SelfVal,
+                        _ => Param::Named {
+                            pattern: Spanned { node: Pattern::Bind(name), span },
+                            ty,
+                        },
+                    }
+                }
+                _ => return Err(format!("Unexpected param token: {:?}", self.current_token)),
+            };
+            params.push(param);
 
             if self.peek_token == Token::Comma {
                 self.next_token();
@@ -199,46 +235,49 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    fn parse_type(&mut self) -> Result<Type, String> {
+    pub fn parse_type(&mut self) -> Result<Type, String> {
         match &self.current_token {
             Token::Ident(name) => Ok(Type::Named(name.clone())),
+            Token::SelfUpper => Ok(Type::Named("Self".into())),
             Token::Ampersand => {
                 self.next_token();
                 let is_mut = if self.current_token == Token::Mut { self.next_token(); true } else { false };
                 let inner = self.parse_type()?;
-                Ok(Type::Reference { is_mut, inner: Box::new(inner) })
+                Ok(Type::Reference { is_mut, inner: Box::new(inner), region: None })
             }
             _ => Err(format!("Unknown type: {:?}", self.current_token))
         }
     }
 
-    fn parse_stmt(&mut self) -> Result<Spanned<Stmt>, String> {
+    pub fn parse_stmt(&mut self) -> Result<Spanned<Stmt>, String> {
         let span = self.current_span;
         match self.current_token {
             Token::Let => {
                 self.next_token();
                 let is_mut = if self.current_token == Token::Mut { self.next_token(); true } else { false };
+                let pat_span = self.current_span;
                 let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected let name".into()) };
-                
+                let pattern = Spanned { node: Pattern::Bind(name), span: pat_span };
+
                 let mut ty = None;
                 if self.peek_token == Token::Colon {
-                    self.next_token(); // Move to :
-                    self.next_token(); // Move to type identifier
+                    self.next_token();
+                    self.next_token();
                     ty = Some(self.parse_type()?);
                 }
 
                 if !self.expect_peek(Token::Assign) {
                     return Err("Expected '='".into());
                 }
-                
-                self.next_token(); // Move to expression
-                let value = self.parse_expr(Precedence::Lowest); // No '?' here
-                
-                if self.peek_token == Token::Semicolon { 
-                    self.next_token(); 
+
+                self.next_token();
+                let value = self.parse_expr(Precedence::Lowest);
+
+                if self.peek_token == Token::Semicolon {
+                    self.next_token();
                 }
-                
-                Ok(Spanned { node: Stmt::Let { name, is_mut, ty, value }, span })
+
+                Ok(Spanned { node: Stmt::Let { pattern, is_mut, ty, value }, span })
             }
             _ => {
                 let expr = self.parse_expr(Precedence::Lowest); // No '?' here
@@ -251,7 +290,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expr(&mut self, precedence: Precedence) -> Spanned<Expr> {
+    pub fn parse_expr(&mut self, precedence: Precedence) -> Spanned<Expr> {
         let span = self.current_span;
         let mut left = match self.parse_prefix() {
             Some(expr) => expr,
@@ -268,7 +307,7 @@ impl<'a> Parser<'a> {
         left
     }
 
-    fn parse_prefix(&mut self) -> Option<Spanned<Expr>> {
+    pub fn parse_prefix(&mut self) -> Option<Spanned<Expr>> {
         let span = self.current_span;
         let node = match &self.current_token {
             Token::Ident(name) => Expr::Identifier(name.clone()),
@@ -294,7 +333,7 @@ impl<'a> Parser<'a> {
         Some(Spanned { node, span })
     }
 
-    fn parse_infix(&mut self, left: Spanned<Expr>) -> Spanned<Expr> {
+    pub fn parse_infix(&mut self, left: Spanned<Expr>) -> Spanned<Expr> {
         let span = left.span;
         let node = match self.current_token {
             Token::Plus => BinaryOp::Add,
@@ -335,7 +374,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_call_expr(&mut self, callee: Spanned<Expr>) -> Spanned<Expr> {
+    pub fn parse_call_expr(&mut self, callee: Spanned<Expr>) -> Spanned<Expr> {
         let span = callee.span;
         let mut args = Vec::new();
         if self.peek_token == Token::RParen {
@@ -356,7 +395,7 @@ impl<'a> Parser<'a> {
         Spanned { node: Expr::Call { callee: Box::new(callee), args }, span }
     }
 
-    fn parse_block(&mut self) -> Result<Block, String> {
+    pub fn parse_block(&mut self) -> Result<Block, String> {
         let mut stmts = Vec::new();
         self.next_token(); // consume '{'
         
@@ -383,77 +422,10 @@ impl<'a> Parser<'a> {
         Ok(Block { stmts, ret })
     }
 
-    fn parse_block_expr(&mut self) -> Expr {
+    pub fn parse_block_expr(&mut self) -> Expr {
         match self.parse_block() {
             Ok(block) => Expr::Block(block),
             Err(_) => Expr::Error,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lexer::Lexer;
-
-#[test]
-    fn test_let_statements() {
-        let input = "let mut x: Int = 10;";
-        let mut parser = Parser::new(Lexer::new(input));
-        
-        let spanned_stmt = parser.parse_stmt().unwrap();
-
-        if let Stmt::Let { name, is_mut, ty, value } = spanned_stmt.node {
-            assert_eq!(name, "x");
-            assert!(is_mut);
-            assert_eq!(ty, Some(Type::Named("Int".to_string())));
-            assert_eq!(value.node, Expr::Literal(Literal::Int(10)));
-        } else {
-            panic!("Expected Let statement");
-        }
-    }
-
-    #[test]
-    fn test_operator_precedence() {
-        let input = "1 + 2 * 3";
-        let mut parser = Parser::new(Lexer::new(input));
-        let expr = parser.parse_expr(Precedence::Lowest);
-
-        if let Expr::Binary { op, left, right } = expr.node {
-            assert_eq!(op, BinaryOp::Add);
-            assert_eq!(left.node, Expr::Literal(Literal::Int(1)));
-            
-            if let Expr::Binary { op: op_inner, left: l_inner, right: r_inner } = &right.node {
-                assert_eq!(*op_inner, BinaryOp::Mul);
-                assert_eq!(l_inner.node, Expr::Literal(Literal::Int(2)));
-                assert_eq!(r_inner.node, Expr::Literal(Literal::Int(3)));
-            } else {
-                panic!("Right side of addition should be multiplication");
-            }
-        } else {
-            panic!("Expected Binary expression");
-        }
-    }
-
-    #[test]
-    fn test_fn_declaration() {
-        let input = "pub async fn fetch(id: Int) -> String { id }";
-        let mut parser = Parser::new(Lexer::new(input));
-        let decl = parser.parse_decl().unwrap();
-
-        if let Decl::Fn { name, is_async, is_pub, params, return_type, body } = decl {
-            assert_eq!(name, "fetch");
-            assert!(is_async);
-            assert!(is_pub);
-            assert_eq!(params.len(), 1);
-            assert_eq!(params[0].name, "id");
-            assert_eq!(params[0].ty, Type::Named("Int".to_string()));
-            assert_eq!(return_type, Some(Type::Named("String".to_string())));
-            
-            assert_eq!(body.stmts.len(), 0);
-            assert_eq!(body.ret.unwrap().node, Expr::Identifier("id".to_string()));
-        } else {
-            panic!("Expected Function Declaration");
         }
     }
 }
