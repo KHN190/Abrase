@@ -1,0 +1,327 @@
+use crate::ast::Span;
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token {
+    // Keywords
+    Fn, Let, Const, If, Else, Match, For, While, Loop, Break, Continue, 
+    Return, Type, Trait, Impl, Import, Mod, Pub, Scope, Region, Handle, 
+    Throw, True, False, Where, Async, Await, In, As, SelfKW, SelfUpper, Mut, Thread,
+
+    // Identifiers and Literals
+    Ident(String),
+    Int(i64),
+    Float(f64),
+    String(String),
+    Char(char),
+
+    // Operators
+    Assign, Plus, Minus, Asterisk, Slash, Percent,
+    Eq, NotEq, Lt, Gt, Lte, Gte,
+    And, Or, Bang,
+    PlusAssign, MinusAssign, MulAssign, DivAssign, ModAssign,
+    Range, RangeInclusive, Arrow, FatArrow,
+
+    // Punctuation
+    Comma, Colon, Semicolon, Dot, Question,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket,
+    Ampersand, Pipe, At,
+
+    Eof,
+    Illegal(String),
+}
+
+pub struct Lexer<'a> {
+    input: std::str::Chars<'a>,
+    current_char: Option<char>,
+    peek_char: Option<char>,
+    pub line: usize,
+    pub col: usize,
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(input: &'a str) -> Self {
+        let mut chars = input.chars();
+        let current = chars.next();
+        let peek = chars.next();
+        Self { input: chars, current_char: current, peek_char: peek, line: 1, col: 1 }
+    }
+
+    fn read_char(&mut self) {
+        if self.current_char == Some('\n') {
+            self.line += 1;
+            self.col = 1;
+        } else {
+            self.col += 1;
+        }
+        self.current_char = self.peek_char;
+        self.peek_char = self.input.next();
+    }
+
+    fn skip_whitespace(&mut self) {
+        while let Some(c) = self.current_char {
+            if c.is_whitespace() { self.read_char(); } else { break; }
+        }
+    }
+
+    fn skip_comment(&mut self) {
+        while let Some(c) = self.current_char {
+            if c == '\n' { break; }
+            self.read_char();
+        }
+    }
+
+    fn read_identifier(&mut self) -> Token {
+        let mut ident = String::new();
+        while let Some(c) = self.current_char {
+            if c.is_alphanumeric() || c == '_' {
+                ident.push(c);
+                self.read_char();
+            } else {
+                break;
+            }
+        }
+
+        match ident.as_str() {
+            "fn" => Token::Fn,
+            "let" => Token::Let,
+            "const" => Token::Const,
+            "if" => Token::If,
+            "else" => Token::Else,
+            "match" => Token::Match,
+            "for" => Token::For,
+            "while" => Token::While,
+            "loop" => Token::Loop,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
+            "return" => Token::Return,
+            "type" => Token::Type,
+            "trait" => Token::Trait,
+            "impl" => Token::Impl,
+            "import" => Token::Import,
+            "mod" => Token::Mod,
+            "pub" => Token::Pub,
+            "scope" => Token::Scope,
+            "region" => Token::Region,
+            "handle" => Token::Handle,
+            "throw" => Token::Throw,
+            "true" => Token::True,
+            "false" => Token::False,
+            "where" => Token::Where,
+            "async" => Token::Async,
+            "await" => Token::Await,
+            "in" => Token::In,
+            "as" => Token::As,
+            "self" => Token::SelfKW,
+            "Self" => Token::SelfUpper,
+            "mut" => Token::Mut,
+            "thread" => Token::Thread,
+            _ => Token::Ident(ident),
+        }
+    }
+
+    pub fn next_token(&mut self) -> (Token, Span) {
+        self.skip_whitespace();
+        
+        while self.current_char == Some('/') && self.peek_char == Some('/') {
+            self.skip_comment();
+            self.skip_whitespace();
+        }
+
+        let start_span = Span::new(self.line, self.col);
+
+        let token = match self.current_char {
+            Some('=') => {
+                if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::Eq }
+                else if self.peek_char == Some('>') { self.read_char(); self.read_char(); Token::FatArrow }
+                else { self.read_char(); Token::Assign }
+            }
+            Some('+') => {
+                if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::PlusAssign }
+                else { self.read_char(); Token::Plus }
+            }
+            Some('-') => {
+                if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::MinusAssign }
+                else if self.peek_char == Some('>') { self.read_char(); self.read_char(); Token::Arrow }
+                else { self.read_char(); Token::Minus }
+            }
+            Some('*') => {
+                if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::MulAssign }
+                else { self.read_char(); Token::Asterisk }
+            }
+            Some('/') => {
+                if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::DivAssign }
+                else { self.read_char(); Token::Slash }
+            }
+            Some('%') => {
+                if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::ModAssign }
+                else { self.read_char(); Token::Percent }
+            }
+            Some('!') => {
+                if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::NotEq }
+                else { self.read_char(); Token::Bang }
+            }
+            Some('<') => {
+                if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::Lte }
+                else { self.read_char(); Token::Lt }
+            }
+            Some('>') => {
+                if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::Gte }
+                else { self.read_char(); Token::Gt }
+            }
+            Some('&') => {
+                if self.peek_char == Some('&') { self.read_char(); self.read_char(); Token::And }
+                else { self.read_char(); Token::Ampersand }
+            }
+            Some('|') => {
+                if self.peek_char == Some('|') { self.read_char(); self.read_char(); Token::Or }
+                else { self.read_char(); Token::Pipe }
+            }
+            Some('.') => {
+                if self.peek_char == Some('.') {
+                    self.read_char(); 
+                    if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::RangeInclusive }
+                    else { self.read_char(); Token::Range }
+                } else { self.read_char(); Token::Dot }
+            }
+            Some(';') => { self.read_char(); Token::Semicolon }
+            Some(':') => { self.read_char(); Token::Colon }
+            Some(',') => { self.read_char(); Token::Comma }
+            Some('?') => { self.read_char(); Token::Question }
+            Some('(') => { self.read_char(); Token::LParen }
+            Some(')') => { self.read_char(); Token::RParen }
+            Some('{') => { self.read_char(); Token::LBrace }
+            Some('}') => { self.read_char(); Token::RBrace }
+            Some('[') => { self.read_char(); Token::LBracket }
+            Some(']') => { self.read_char(); Token::RBracket }
+            Some('@') => { self.read_char(); Token::At }
+            Some('"') => return self.read_string(start_span),
+            Some('\'') => return self.read_char_literal(start_span),
+            Some(c) if c.is_alphabetic() || c == '_' => {
+                let token = self.read_identifier();
+                return (token, start_span);
+            }
+            Some(c) if c.is_ascii_digit() => {
+                return self.read_number(start_span);
+            }
+            Some(c) => {
+                self.read_char();
+                Token::Illegal(c.to_string())
+            }
+            None => Token::Eof,
+        };
+        (token, start_span)
+    }
+
+    fn read_number(&mut self, span: Span) -> (Token, Span){
+        let mut number = String::new();
+        let mut is_float = false;
+
+        while let Some(c) = self.current_char {
+            if c.is_ascii_digit() {
+                number.push(c);
+                self.read_char();
+            } else if c == '.' && self.peek_char != Some('.') {
+                is_float = true;
+                number.push(c);
+                self.read_char();
+            } else { break; }
+        }
+
+        if is_float {
+            (Token::Float(number.parse().unwrap_or(0.0)), span)
+        } else {
+            (Token::Int(number.parse().unwrap_or(0)), span)
+        }
+    }
+
+    fn read_string(&mut self, span: Span) -> (Token, Span) {
+        self.read_char(); // skip opening quote
+        let mut str_val = String::new();
+        while let Some(c) = self.current_char {
+            if c == '"' { self.read_char(); break; }
+            str_val.push(c);
+            self.read_char();
+        }
+        (Token::String(str_val), span)
+    }
+
+    fn read_char_literal(&mut self, span: Span) -> (Token, Span) {
+        self.read_char(); // skip opening tick
+        let c = self.current_char.unwrap_or('\0');
+        self.read_char(); // consume char
+        if self.current_char == Some('\'') { self.read_char(); }
+        (Token::Char(c), span)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lexer_keywords_and_identifiers() {
+        let input = "fn let const mut pub async await true false _ident Self";
+        let mut lexer = Lexer::new(input);
+        
+        let expected = vec![
+            Token::Fn, Token::Let, Token::Const, Token::Mut, Token::Pub, 
+            Token::Async, Token::Await, Token::True, Token::False, 
+            Token::Ident("_ident".into()), Token::SelfUpper, Token::Eof
+        ];
+        for t in expected {
+            let (token, _span) = lexer.next_token();
+            assert_eq!(token, t);
+        }
+    }
+
+    #[test]
+    fn test_lexer_operators() {
+        let input = "= == => -> + += - -= * *= / /= % %= ! != < <= > >= && || .. ..= & | @";
+        let mut lexer = Lexer::new(input);
+        
+        let expected = vec![
+            Token::Assign, Token::Eq, Token::FatArrow, Token::Arrow,
+            Token::Plus, Token::PlusAssign, Token::Minus, Token::MinusAssign,
+            Token::Asterisk, Token::MulAssign, Token::Slash, Token::DivAssign,
+            Token::Percent, Token::ModAssign, Token::Bang, Token::NotEq,
+            Token::Lt, Token::Lte, Token::Gt, Token::Gte,
+            Token::And, Token::Or, Token::Range, Token::RangeInclusive,
+            Token::Ampersand, Token::Pipe, Token::At, Token::Eof
+        ];
+        for t in expected {
+            let (token, _span) = lexer.next_token();
+            assert_eq!(token, t);
+        }
+    }
+
+    #[test]
+    fn test_lexer_literals() {
+        let input = "42 3.14 \"hello\" 'a' ()";
+        let mut lexer = Lexer::new(input);
+        
+        let expected = vec![
+            Token::Int(42), Token::Float(3.14), Token::String("hello".into()), 
+            Token::Char('a'), Token::LParen, Token::RParen, Token::Eof
+        ];
+        for t in expected {
+            let (token, _span) = lexer.next_token();
+            assert_eq!(token, t);
+        }
+    }
+
+    #[test]
+    fn test_lexer_comments() {
+        let input = "let x = 10; // This is a comment\n let y = 20;";
+        let mut lexer = Lexer::new(input);
+        
+        let expected = vec![
+            Token::Let, Token::Ident("x".into()), Token::Assign, Token::Int(10), Token::Semicolon,
+            Token::Let, Token::Ident("y".into()), Token::Assign, Token::Int(20), Token::Semicolon, Token::Eof
+        ];
+
+        for t in expected {
+            let (token, _span) = lexer.next_token();
+            assert_eq!(token, t);
+        }
+    }
+}
