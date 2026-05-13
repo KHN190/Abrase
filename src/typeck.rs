@@ -66,6 +66,11 @@ pub struct Checker {
 
     // Phase 7: Ownership & Borrowing
     borrow_stack: Vec<(String, bool)>, // stack of (var_name, is_mutable)
+
+    // Phase 8: Effects System
+    effect_registry: HashMap<String, Vec<String>>, // effect_name -> list of operations
+    effect_alias_registry: HashMap<String, Vec<crate::ty::Effect>>, // alias_name -> effects
+    current_effects: Vec<crate::ty::Effect>, // effects in current function context
 }
 
 impl Checker {
@@ -83,6 +88,9 @@ impl Checker {
             type_registry: HashMap::new(),
             const_registry: HashMap::new(),
             borrow_stack: Vec::new(),
+            effect_registry: HashMap::new(),
+            effect_alias_registry: HashMap::new(),
+            current_effects: Vec::new(),
         }
     }
 
@@ -195,6 +203,66 @@ impl Checker {
 
     pub fn check_ownership(&self, ty: &Type) -> Ownership {
         ty.ownership()
+    }
+
+    // Phase 8: Effects System
+    pub fn register_effect(&mut self, name: String, operations: Vec<String>) {
+        self.effect_registry.insert(name, operations);
+    }
+
+    pub fn get_effect(&self, name: &str) -> Option<Vec<String>> {
+        self.effect_registry.get(name).cloned()
+    }
+
+    pub fn register_effect_alias(&mut self, alias_name: String, effects: Vec<crate::ty::Effect>) {
+        self.effect_alias_registry.insert(alias_name, effects);
+    }
+
+    pub fn get_effect_alias(&self, alias_name: &str) -> Option<Vec<crate::ty::Effect>> {
+        self.effect_alias_registry.get(alias_name).cloned()
+    }
+
+    pub fn push_effect(&mut self, effect: crate::ty::Effect) {
+        self.current_effects.push(effect);
+    }
+
+    pub fn pop_effect(&mut self) {
+        self.current_effects.pop();
+    }
+
+    pub fn effects_compatible(&self, expected: &[crate::ty::Effect], actual: &[crate::ty::Effect]) -> bool {
+        // All expected effects must be present in actual effects
+        expected.iter().all(|exp_effect| {
+            actual.iter().any(|act_effect| self.effects_equal(exp_effect, act_effect))
+        })
+    }
+
+    fn effects_equal(&self, e1: &crate::ty::Effect, e2: &crate::ty::Effect) -> bool {
+        match (e1, e2) {
+            (crate::ty::Effect::Total, crate::ty::Effect::Total) => true,
+            (crate::ty::Effect::Async, crate::ty::Effect::Async) => true,
+            (crate::ty::Effect::Alloc, crate::ty::Effect::Alloc) => true,
+            (crate::ty::Effect::Nondet, crate::ty::Effect::Nondet) => true,
+            (crate::ty::Effect::Exn(t1), crate::ty::Effect::Exn(t2)) => t1 == t2,
+            _ => false,
+        }
+    }
+
+    pub fn convert_effect(&self, eff: &ast::EffectItem) -> Option<crate::ty::Effect> {
+        let name = eff.name.join(".").to_lowercase();
+        match name.as_str() {
+            "io" | "alloc" => Some(crate::ty::Effect::Alloc),
+            "async" => Some(crate::ty::Effect::Async),
+            "exn" => {
+                if let Some(arg) = &eff.arg {
+                    Some(crate::ty::Effect::Exn(Box::new(self.convert_type(arg))))
+                } else {
+                    Some(crate::ty::Effect::Exn(Box::new(Type::Named("Exception".into()))))
+                }
+            },
+            "nondet" => Some(crate::ty::Effect::Nondet),
+            _ => self.get_effect_alias(&name).and_then(|mut effs| effs.pop()),
+        }
     }
 
     // Phase 5: Pattern Matching Support
@@ -360,10 +428,15 @@ impl Checker {
                 is_mut: *is_mut,
                 inner: Box::new(self.convert_type(inner)),
             },
-            ast::Type::Function { params, effects, ret } => Type::Function {
-                params: params.iter().map(|t| self.convert_type(t)).collect(),
-                effects: vec![], // TODO: Phase 8 - convert effect types
-                ret: Box::new(self.convert_type(ret)),
+            ast::Type::Function { params, effects, ret } => {
+                let converted_effects = effects.iter()
+                    .filter_map(|eff| self.convert_effect(eff))
+                    .collect();
+                Type::Function {
+                    params: params.iter().map(|t| self.convert_type(t)).collect(),
+                    effects: converted_effects,
+                    ret: Box::new(self.convert_type(ret)),
+                }
             },
             ast::Type::DynTrait(name) => Type::Named(format!("dyn {}", name)),
         }
