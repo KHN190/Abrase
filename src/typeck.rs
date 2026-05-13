@@ -280,22 +280,123 @@ impl Checker {
                 _ => Type::Named(name.clone()),
             },
             ast::Type::Qualified(parts) => Type::Named(parts.join(".")),
-            ast::Type::Generic { name, .. } => Type::Named(name.clone()),
-            ast::Type::Array { elem, .. } => Type::Named(format!("[{}]", elem_name(elem))),
+            ast::Type::Generic { name, args } => {
+                // Phase 6: Better generic handling - preserve type arguments
+                let arg_strs: Vec<String> = args.iter()
+                    .map(|arg| format!("{:?}", self.convert_type(arg)))
+                    .collect();
+                Type::Named(format!("{}<{}>", name, arg_strs.join(", ")))
+            },
+            ast::Type::Array { elem, size } => {
+                // Phase 6: Track array sizes
+                Type::Named(format!("[{}; {}]", elem_name(elem), size))
+            },
             ast::Type::Tuple(tys) => {
                 Type::Tuple(tys.iter().map(|t| self.convert_type(t)).collect())
             }
-            ast::Type::Reference { is_mut, inner, .. } => Type::Reference {
+            ast::Type::Reference { is_mut, inner, region } => Type::Reference {
                 is_mut: *is_mut,
                 inner: Box::new(self.convert_type(inner)),
             },
-            ast::Type::Function { params, ret, .. } => Type::Function {
+            ast::Type::Function { params, effects, ret } => Type::Function {
                 params: params.iter().map(|t| self.convert_type(t)).collect(),
-                effects: vec![],
+                effects: vec![], // TODO: Phase 8 - convert effect types
                 ret: Box::new(self.convert_type(ret)),
             },
             ast::Type::DynTrait(name) => Type::Named(format!("dyn {}", name)),
         }
+    }
+
+    // Phase 6: Type Compatibility & Unification
+    pub fn types_compatible(&self, expected: &Type, actual: &Type) -> bool {
+        match (expected, actual) {
+            // Same types are compatible
+            (a, b) if a == b => true,
+            // Unknown types are compatible with anything
+            (Type::Unknown, _) | (_, Type::Unknown) => true,
+            // Named types might be compatible via type definitions
+            (Type::Named(exp_name), Type::Named(act_name)) => {
+                exp_name == act_name || self.are_types_equivalent(exp_name, act_name)
+            },
+            // Tuples must have same length and compatible elements
+            (Type::Tuple(exp_elems), Type::Tuple(act_elems)) => {
+                exp_elems.len() == act_elems.len() &&
+                exp_elems.iter().zip(act_elems.iter())
+                    .all(|(e, a)| self.types_compatible(e, a))
+            },
+            // References with compatible inner types
+            (Type::Reference { is_mut: e_mut, inner: e_inner },
+             Type::Reference { is_mut: a_mut, inner: a_inner }) => {
+                // Mutability must match exactly
+                e_mut == a_mut && self.types_compatible(e_inner, a_inner)
+            },
+            // Function types with compatible signatures
+            (Type::Function { params: e_params, ret: e_ret, .. },
+             Type::Function { params: a_params, ret: a_ret, .. }) => {
+                e_params.len() == a_params.len() &&
+                e_params.iter().zip(a_params.iter())
+                    .all(|(e, a)| self.types_compatible(e, a)) &&
+                self.types_compatible(e_ret, a_ret)
+            },
+            // Different kinds are not compatible
+            _ => false,
+        }
+    }
+
+    // Check if two named types are equivalent (through type definitions)
+    fn are_types_equivalent(&self, ty1: &str, ty2: &str) -> bool {
+        // TODO: Phase 5 - Use type registry to check equivalence
+        // For now, only exact name matches are equivalent
+        ty1 == ty2
+    }
+
+    // Try to unify two types (for generics)
+    pub fn unify_types(&self, ty1: &Type, ty2: &Type) -> Option<Type> {
+        match (ty1, ty2) {
+            // Same types unify to themselves
+            (a, b) if a == b => Some(a.clone()),
+            // Unknown unifies with anything
+            (Type::Unknown, b) => Some(b.clone()),
+            (a, Type::Unknown) => Some(a.clone()),
+            // Tuples unify element-wise
+            (Type::Tuple(elems1), Type::Tuple(elems2)) if elems1.len() == elems2.len() => {
+                let unified: Option<Vec<_>> = elems1.iter().zip(elems2.iter())
+                    .map(|(e1, e2)| self.unify_types(e1, e2))
+                    .collect();
+                unified.map(Type::Tuple)
+            },
+            // References unify if inner types unify and mutability matches
+            (Type::Reference { is_mut: m1, inner: i1 },
+             Type::Reference { is_mut: m2, inner: i2 }) if m1 == m2 => {
+                self.unify_types(i1, i2).map(|inner| Type::Reference {
+                    is_mut: *m1,
+                    inner: Box::new(inner),
+                })
+            },
+            // Function types unify if signatures match
+            (Type::Function { params: p1, ret: r1, .. },
+             Type::Function { params: p2, ret: r2, .. }) if p1.len() == p2.len() => {
+                let unified_params: Option<Vec<_>> = p1.iter().zip(p2.iter())
+                    .map(|(pp1, pp2)| self.unify_types(pp1, pp2))
+                    .collect();
+                let unified_ret = self.unify_types(r1, r2);
+                match (unified_params, unified_ret) {
+                    (Some(params), Some(ret)) => Some(Type::Function {
+                        params,
+                        effects: vec![],
+                        ret: Box::new(ret),
+                    }),
+                    _ => None,
+                }
+            },
+            // No unification possible
+            _ => None,
+        }
+    }
+
+    // Check if type can be assigned to expected type (subtyping)
+    pub fn is_assignable(&self, expected: &Type, actual: &Type) -> bool {
+        self.types_compatible(expected, actual)
     }
 
     pub fn check_stmt(&mut self, stmt: &Spanned<ast::Stmt>) {
