@@ -1,12 +1,12 @@
 ## BNF Grammar
 
-- `'literal'` - 终结符
-- `<rule>` - 非终结符
-- `?` - 可选
-- `*` - 零次或多次
-- `+` - 一次或多次
-- `|` - 或
-- `(...)` - 分组
+- `'literal'` - literals
+- `<rule>` - non-literals
+- `?` - optional
+- `*` - 0 or more
+- `+` - 1 or more
+- `|` - or
+- `(...)` - group
 
 ### 1 Top
 
@@ -59,7 +59,7 @@
 <generic-params>  ::= '<' <generic-param> (',' <generic-param>)* '>'
 
 <generic-param>   ::= <type-name>
-                    | <identifier>                          /* effect 变量 */
+                    | <identifier>
 
 <ownership-attr>  ::= '@copy' | '@move' | '@share'
 ```
@@ -80,8 +80,8 @@
 
 <base-type>       ::= <qualified-name>
 
-<tuple-type>      ::= '(' ')'                               /* unit */
-                    | '(' <type> ',' ')'                    /* 单元素元组 */
+<tuple-type>      ::= '(' ')'
+                    | '(' <type> ',' ')'
                     | '(' <type> (',' <type>)+ ','? ')'
 
 <array-type>      ::= '[' <type> ';' <int-literal> ']'
@@ -105,9 +105,9 @@
 <effect-set>      ::= '<' <effect-item> (',' <effect-item>)* '>'
 
 <effect-item>     ::= <effect-name>
-                    | <effect-name> '<' <type> '>'          /* 参数化 effect 如 exn<E> */
-                    | <qualified-name>                       /* 模块限定 effect */
-                    | <identifier>                           /* effect 变量 */
+                    | <effect-name> '<' <type> '>'
+                    | <qualified-name>
+                    | <identifier>
 
 <effect-alias>    ::= 'pub'? 'effect' 'alias' <identifier> '=' <effect-set>
 
@@ -155,7 +155,7 @@
                       <where-clause>?
                       '{' <trait-item>* '}'
 
-<trait-item>      ::= <fn-decl>                             /* 可有默认实现 */
+<trait-item>      ::= <fn-decl>
                     | <fn-signature>
 
 <fn-signature>    ::= 'async'? 'fn' <identifier> <generic-params>?
@@ -191,7 +191,7 @@
                     | <block>
 ```
 
-注: `<expr-with-block>` 末尾不需要 `;`,因为它本身以 `}` 结束。
+p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
 
 ### 8 Expressions
 
@@ -221,11 +221,11 @@
 
 <postfix-expr>    ::= <primary-expr> <postfix-op>*
 
-<postfix-op>      ::= '.' <identifier>                      /* 字段/方法访问 */
+<postfix-op>      ::= '.' <identifier>                      /* attribute */
                     | '.' 'await'                           /* await */
-                    | '(' <arg-list>? ')'                   /* 函数调用 */
-                    | '[' <expr> ']'                        /* 索引 */
-                    | '?'                                   /* 错误传播 */
+                    | '(' <arg-list>? ')'                   /* function call */
+                    | '[' <expr> ']'                        /* index */
+                    | '?'                                   /* error propagation */
 
 <arg-list>        ::= <expr> (',' <expr>)*
 
@@ -264,7 +264,7 @@
 <record-expr>     ::= <qualified-name> '{' <field-init> (',' <field-init>)* ','? '}'
 
 <field-init>      ::= <identifier> ':' <expr>
-                    | <identifier>                          /* 简写 */
+                    | <identifier>
 
 <variant-expr>    ::= <qualified-name> '(' <expr-list>? ')'
 
@@ -323,7 +323,6 @@
                     | <qualified-name> <pattern>? '=>' <match-body>
 
 <thread-expr>     ::= <identifier> '.' 'thread' '(' <expr> ')'
-                    /* 在 scope 内调用,如 s.thread(...) */
 ```
 
 ### 11 Pattern
@@ -336,7 +335,7 @@
 <pattern-primary> ::= '_'
                     | <literal-pattern>
                     | <range-pattern>
-                    | <identifier>                          /* 绑定或变量 */
+                    | <identifier>
                     | <wildcard-pattern>
                     | <tuple-pattern>
                     | <array-pattern>
@@ -349,7 +348,7 @@
 
 <range-pattern>   ::= <literal> '..' <literal>
                     | <literal> '..=' <literal>
-                    | <literal> '..'                        /* 开区间 */
+                    | <literal> '..'
                     | '..=' <literal>
 
 <wildcard-pattern>::= '_'
@@ -361,7 +360,7 @@
 <record-pattern>  ::= <qualified-name> '{' <field-pattern> (',' <field-pattern>)* (',' '..')? ','? '}'
 
 <field-pattern>   ::= <identifier> ':' <pattern>
-                    | <identifier>                          /* 简写 */
+                    | <identifier>
 
 <variant-pattern> ::= <qualified-name> ('(' <pattern> (',' <pattern>)* ')')?
                     | <qualified-name> <record-body>

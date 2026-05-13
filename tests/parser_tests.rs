@@ -103,11 +103,37 @@ fn test_expr_if() {
     let input = "if true { 1 } else { 2 }";
     let mut parser = Parser::new(Lexer::new(input));
     let expr = parser.parse_expr(Precedence::Lowest);
-    if let Expr::If { condition, consequence, alternative } = expr.node {
+    if let Expr::If { condition, consequence: _, alternative } = expr.node {
         assert_eq!(condition.node, Expr::Literal(Literal::Bool(true)));
         assert!(alternative.is_some());
     } else {
         panic!("Expected If expression");
+    }
+}
+
+#[test]
+fn test_expr_if_without_else() {
+    let input = "if x > 5 { 10 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::If { condition, alternative, .. } = expr.node {
+        assert!(matches!(condition.node, Expr::Binary { .. }));
+        assert!(alternative.is_none());
+    } else {
+        panic!("Expected If expression");
+    }
+}
+
+#[test]
+fn test_expr_if_else_if_chain() {
+    let input = "if x { 1 } else if y { 2 } else { 3 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::If { alternative: Some(alt), .. } = expr.node {
+        // Alternative should be another if expression
+        assert!(matches!(alt.node, Expr::If { .. }));
+    } else {
+        panic!("Expected If expression with else if");
     }
 }
 
@@ -118,6 +144,34 @@ fn test_expr_match() {
     let expr = parser.parse_expr(Precedence::Lowest);
     if let Expr::Match { scrutinee, arms } = expr.node {
         assert_eq!(scrutinee.node, Expr::Identifier("x".into()));
+        assert_eq!(arms.len(), 2);
+    } else {
+        panic!("Expected Match expression");
+    }
+}
+
+#[test]
+fn test_expr_match_with_guard() {
+    let input = "match x { 1 if x > 0 => true, _ => false }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Match { scrutinee: _, arms } = expr.node {
+        assert_eq!(arms.len(), 2);
+        // First arm should have a guard
+        assert!(arms[0].guard.is_some());
+        // Second arm should not have a guard
+        assert!(arms[1].guard.is_none());
+    } else {
+        panic!("Expected Match expression");
+    }
+}
+
+#[test]
+fn test_expr_match_block_body() {
+    let input = "match x { A => { print(1); 1 }, B => 2 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Match { arms, .. } = expr.node {
         assert_eq!(arms.len(), 2);
     } else {
         panic!("Expected Match expression");
@@ -139,6 +193,21 @@ fn test_expr_for() {
 }
 
 #[test]
+fn test_expr_for_tuple_destructure() {
+    let input = "for (x, y) in pairs { x + y }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::For { pattern, iter, .. } = expr.node {
+        // Pattern should be tuple pattern
+        assert!(matches!(pattern.node, Pattern::Tuple(_)));
+        // Iterator should be identifier pairs
+        assert_eq!(iter.node, Expr::Identifier("pairs".into()));
+    } else {
+        panic!("Expected For expression");
+    }
+}
+
+#[test]
 fn test_expr_while() {
     let input = "while true { 1 }";
     let mut parser = Parser::new(Lexer::new(input));
@@ -152,6 +221,21 @@ fn test_expr_while() {
 }
 
 #[test]
+fn test_expr_while_complex_condition() {
+    let input = "while x < 10 { x = x + 1 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::While { condition, body } = expr.node {
+        // Condition should be a binary expression
+        assert!(matches!(condition.node, Expr::Binary { .. }));
+        // Body should have at least one statement
+        assert!(body.stmts.len() > 0 || body.ret.is_some());
+    } else {
+        panic!("Expected While expression");
+    }
+}
+
+#[test]
 fn test_expr_loop() {
     let input = "loop { break }";
     let mut parser = Parser::new(Lexer::new(input));
@@ -159,6 +243,19 @@ fn test_expr_loop() {
     if let Expr::Loop { body } = expr.node {
         assert_eq!(body.stmts.len(), 0);
         assert!(matches!(body.ret, Some(r) if matches!(r.node, Expr::Break(_))));
+    } else {
+        panic!("Expected Loop expression");
+    }
+}
+
+#[test]
+fn test_expr_loop_with_continue() {
+    let input = "loop { if x { continue } }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Loop { body } = expr.node {
+        // If is the return expression of the loop, not a statement
+        assert!(matches!(body.ret, Some(r) if matches!(r.node, Expr::If { .. })));
     } else {
         panic!("Expected Loop expression");
     }
@@ -189,6 +286,18 @@ fn test_expr_scope() {
 }
 
 #[test]
+fn test_expr_scope_without_label() {
+    let input = "scope { 1 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Scope { label, .. } = expr.node {
+        assert_eq!(label, None);
+    } else {
+        panic!("Expected Scope expression");
+    }
+}
+
+#[test]
 fn test_expr_region() {
     let input = "region r { 1 }";
     let mut parser = Parser::new(Lexer::new(input));
@@ -201,12 +310,36 @@ fn test_expr_region() {
 }
 
 #[test]
+fn test_expr_region_without_label() {
+    let input = "region { let x = 5; x }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Region { label, .. } = expr.node {
+        assert_eq!(label, None);
+    } else {
+        panic!("Expected Region expression");
+    }
+}
+
+#[test]
 fn test_expr_handle() {
     let input = "handle foo { return => 0 }";
     let mut parser = Parser::new(Lexer::new(input));
     let expr = parser.parse_expr(Precedence::Lowest);
     if let Expr::Handle { expr: _, arms } = expr.node {
         assert_eq!(arms.len(), 1);
+    } else {
+        panic!("Expected Handle expression");
+    }
+}
+
+#[test]
+fn test_expr_handle_multiple_arms() {
+    let input = "handle computation { return x => x, exn e => 0 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Handle { expr: _, arms } = expr.node {
+        assert_eq!(arms.len(), 2);
     } else {
         panic!("Expected Handle expression");
     }
