@@ -71,6 +71,9 @@ pub struct Checker {
     effect_registry: HashMap<String, Vec<String>>, // effect_name -> list of operations
     effect_alias_registry: HashMap<String, Vec<crate::ty::Effect>>, // alias_name -> effects
     current_effects: Vec<crate::ty::Effect>, // effects in current function context
+
+    // Phase 9: Type Ownership Attributes
+    ownership_registry: HashMap<String, Ownership>, // type_name -> ownership
 }
 
 impl Checker {
@@ -91,6 +94,7 @@ impl Checker {
             effect_registry: HashMap::new(),
             effect_alias_registry: HashMap::new(),
             current_effects: Vec::new(),
+            ownership_registry: HashMap::new(),
         }
     }
 
@@ -262,6 +266,50 @@ impl Checker {
             },
             "nondet" => Some(crate::ty::Effect::Nondet),
             _ => self.get_effect_alias(&name).and_then(|mut effs| effs.pop()),
+        }
+    }
+
+    // Phase 9: Type Ownership Attributes
+    pub fn register_ownership(&mut self, type_name: String, ownership: Ownership) {
+        self.ownership_registry.insert(type_name, ownership);
+    }
+
+    pub fn get_type_ownership(&self, type_name: &str) -> Option<Ownership> {
+        self.ownership_registry.get(type_name).cloned()
+    }
+
+    pub fn infer_type_ownership(&self, type_name: &str) -> Ownership {
+        // Primitives are always Copy (cannot be overridden)
+        match type_name {
+            "Int" | "Float" | "Bool" | "Char" | "Unit" => return Ownership::Copy,
+            _ => {}
+        }
+
+        // Check registry for explicit declarations
+        if let Some(ownership) = self.get_type_ownership(type_name) {
+            return ownership;
+        }
+
+        // String defaults to Share (can be shared across ownership boundaries)
+        if type_name == "String" {
+            return Ownership::Share;
+        }
+
+        // Unknown types default to Move
+        Ownership::Move
+    }
+
+    pub fn register_type_with_ownership(&mut self, type_name: String, ownership: Ownership, body: ast::TypeBody) {
+        self.register_ownership(type_name.clone(), ownership);
+        self.register_type(type_name, body);
+    }
+
+    pub fn convert_ownership_attr(&self, attr: &Option<ast::OwnershipAttr>) -> Ownership {
+        match attr {
+            Some(ast::OwnershipAttr::Copy) => Ownership::Copy,
+            Some(ast::OwnershipAttr::Move) => Ownership::Move,
+            Some(ast::OwnershipAttr::Share) => Ownership::Share,
+            None => Ownership::Move, // default
         }
     }
 

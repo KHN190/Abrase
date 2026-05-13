@@ -2279,3 +2279,231 @@ fn verify_effect_compatibility_order_independent() {
 
     assert!(checker.effects_compatible(&expected, &actual));
 }
+
+// Phase 9: Type Ownership Attributes Tests
+
+#[test]
+fn verify_register_type_ownership_copy() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    checker.register_ownership("Point".into(), Ownership::Copy);
+
+    let ownership = checker.get_type_ownership("Point");
+    assert!(ownership.is_some());
+    assert_eq!(ownership.unwrap(), Ownership::Copy);
+}
+
+#[test]
+fn verify_register_type_ownership_move() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    checker.register_ownership("Buffer".into(), Ownership::Move);
+
+    let ownership = checker.get_type_ownership("Buffer");
+    assert!(ownership.is_some());
+    assert_eq!(ownership.unwrap(), Ownership::Move);
+}
+
+#[test]
+fn verify_register_type_ownership_share() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    checker.register_ownership("Rc".into(), Ownership::Share);
+
+    let ownership = checker.get_type_ownership("Rc");
+    assert!(ownership.is_some());
+    assert_eq!(ownership.unwrap(), Ownership::Share);
+}
+
+#[test]
+fn verify_infer_ownership_primitive_int() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    assert_eq!(checker.infer_type_ownership("Int"), Ownership::Copy);
+}
+
+#[test]
+fn verify_infer_ownership_primitive_float() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    assert_eq!(checker.infer_type_ownership("Float"), Ownership::Copy);
+}
+
+#[test]
+fn verify_infer_ownership_primitive_bool() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    assert_eq!(checker.infer_type_ownership("Bool"), Ownership::Copy);
+}
+
+#[test]
+fn verify_infer_ownership_primitive_char() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    assert_eq!(checker.infer_type_ownership("Char"), Ownership::Copy);
+}
+
+#[test]
+fn verify_infer_ownership_primitive_unit() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    assert_eq!(checker.infer_type_ownership("Unit"), Ownership::Copy);
+}
+
+#[test]
+fn verify_infer_ownership_string_default() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    assert_eq!(checker.infer_type_ownership("String"), Ownership::Share);
+}
+
+#[test]
+fn verify_infer_ownership_unknown_default() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    assert_eq!(checker.infer_type_ownership("CustomType"), Ownership::Move);
+}
+
+#[test]
+fn verify_infer_ownership_registered_type() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    checker.register_ownership("MyType".into(), Ownership::Copy);
+
+    assert_eq!(checker.infer_type_ownership("MyType"), Ownership::Copy);
+}
+
+#[test]
+fn verify_convert_ownership_attr_copy() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    let attr = Some(ast::OwnershipAttr::Copy);
+    assert_eq!(checker.convert_ownership_attr(&attr), Ownership::Copy);
+}
+
+#[test]
+fn verify_convert_ownership_attr_move() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    let attr = Some(ast::OwnershipAttr::Move);
+    assert_eq!(checker.convert_ownership_attr(&attr), Ownership::Move);
+}
+
+#[test]
+fn verify_convert_ownership_attr_share() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    let attr = Some(ast::OwnershipAttr::Share);
+    assert_eq!(checker.convert_ownership_attr(&attr), Ownership::Share);
+}
+
+#[test]
+fn verify_convert_ownership_attr_none_defaults_to_move() {
+    let checker = Checker::new();
+    use ect::ty::Ownership;
+
+    let attr = None;
+    assert_eq!(checker.convert_ownership_attr(&attr), Ownership::Move);
+}
+
+#[test]
+fn verify_register_type_with_ownership_copy() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    let type_body = ast::TypeBody::Record(vec![]);
+    checker.register_type_with_ownership("Point".into(), Ownership::Copy, type_body);
+
+    assert_eq!(checker.get_type_ownership("Point").unwrap(), Ownership::Copy);
+    assert!(checker.get_type("Point").is_some());
+}
+
+#[test]
+fn verify_register_type_with_ownership_move() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    let type_body = ast::TypeBody::Record(vec![]);
+    checker.register_type_with_ownership("Buffer".into(), Ownership::Move, type_body);
+
+    assert_eq!(checker.get_type_ownership("Buffer").unwrap(), Ownership::Move);
+    assert!(checker.get_type("Buffer").is_some());
+}
+
+#[test]
+fn verify_register_type_with_ownership_share() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    let type_body = ast::TypeBody::Variant(vec![]);
+    checker.register_type_with_ownership("Rc".into(), Ownership::Share, type_body);
+
+    assert_eq!(checker.get_type_ownership("Rc").unwrap(), Ownership::Share);
+    assert!(checker.get_type("Rc").is_some());
+}
+
+#[test]
+fn verify_ownership_override_primitives_not_allowed() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    // Attempting to override Int ownership still returns Copy
+    checker.register_ownership("Int".into(), Ownership::Move);
+    assert_eq!(checker.infer_type_ownership("Int"), Ownership::Copy);
+}
+
+#[test]
+fn verify_ownership_string_can_be_overridden_to_copy() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    checker.register_ownership("String".into(), Ownership::Copy);
+    assert_eq!(checker.get_type_ownership("String").unwrap(), Ownership::Copy);
+}
+
+#[test]
+fn verify_multiple_custom_types_ownership() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    checker.register_ownership("Type1".into(), Ownership::Copy);
+    checker.register_ownership("Type2".into(), Ownership::Move);
+    checker.register_ownership("Type3".into(), Ownership::Share);
+
+    assert_eq!(checker.get_type_ownership("Type1").unwrap(), Ownership::Copy);
+    assert_eq!(checker.get_type_ownership("Type2").unwrap(), Ownership::Move);
+    assert_eq!(checker.get_type_ownership("Type3").unwrap(), Ownership::Share);
+}
+
+#[test]
+fn verify_ownership_registry_empty_by_default() {
+    let checker = Checker::new();
+
+    assert!(checker.get_type_ownership("NonExistent").is_none());
+}
+
+#[test]
+fn verify_infer_ownership_uses_registry_before_defaults() {
+    let mut checker = Checker::new();
+    use ect::ty::Ownership;
+
+    // Register custom ownership for a type
+    checker.register_ownership("MyString".into(), Ownership::Copy);
+
+    // Should use registry value, not default inference
+    assert_eq!(checker.infer_type_ownership("MyString"), Ownership::Copy);
+}
