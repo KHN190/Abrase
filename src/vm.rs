@@ -29,7 +29,7 @@ impl VirtualMachine {
         }
     }
 
-    pub fn run(&mut self, _chunk: &bytecode::Chunk) -> Result<Value, String> {
+    pub fn run(&mut self, _chunk: &crate::bytecode::Chunk) -> Result<Value, String> {
         Ok(Value::Unit)
     }
 }

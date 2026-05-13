@@ -99,6 +99,120 @@ fn test_type_function_effects() {
 }
 
 #[test]
+fn test_expr_if() {
+    let input = "if true { 1 } else { 2 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::If { condition, consequence, alternative } = expr.node {
+        assert_eq!(condition.node, Expr::Literal(Literal::Bool(true)));
+        assert!(alternative.is_some());
+    } else {
+        panic!("Expected If expression");
+    }
+}
+
+#[test]
+fn test_expr_match() {
+    let input = "match x { A => 1, B => 2 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Match { scrutinee, arms } = expr.node {
+        assert_eq!(scrutinee.node, Expr::Identifier("x".into()));
+        assert_eq!(arms.len(), 2);
+    } else {
+        panic!("Expected Match expression");
+    }
+}
+
+#[test]
+fn test_expr_for() {
+    let input = "for x in items { x }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::For { pattern, iter, body } = expr.node {
+        assert_eq!(pattern.node, Pattern::Bind("x".into()));
+        assert_eq!(iter.node, Expr::Identifier("items".into()));
+        assert_eq!(body.stmts.len(), 0);
+    } else {
+        panic!("Expected For expression");
+    }
+}
+
+#[test]
+fn test_expr_while() {
+    let input = "while true { 1 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::While { condition, body } = expr.node {
+        assert_eq!(condition.node, Expr::Literal(Literal::Bool(true)));
+        assert_eq!(body.stmts.len(), 0);
+    } else {
+        panic!("Expected While expression");
+    }
+}
+
+#[test]
+fn test_expr_loop() {
+    let input = "loop { break }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Loop { body } = expr.node {
+        assert_eq!(body.stmts.len(), 0);
+        assert!(matches!(body.ret, Some(r) if matches!(r.node, Expr::Break(_))));
+    } else {
+        panic!("Expected Loop expression");
+    }
+}
+
+#[test]
+fn test_expr_closure() {
+    let input = "|x| x + 1";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Closure { params, .. } = expr.node {
+        assert_eq!(params.len(), 1);
+    } else {
+        panic!("Expected Closure expression");
+    }
+}
+
+#[test]
+fn test_expr_scope() {
+    let input = "scope s { 1 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Scope { label, .. } = expr.node {
+        assert_eq!(label, Some("s".into()));
+    } else {
+        panic!("Expected Scope expression");
+    }
+}
+
+#[test]
+fn test_expr_region() {
+    let input = "region r { 1 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Region { label, .. } = expr.node {
+        assert_eq!(label, Some("r".into()));
+    } else {
+        panic!("Expected Region expression");
+    }
+}
+
+#[test]
+fn test_expr_handle() {
+    let input = "handle foo { return => 0 }";
+    let mut parser = Parser::new(Lexer::new(input));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    if let Expr::Handle { expr: _, arms } = expr.node {
+        assert_eq!(arms.len(), 1);
+    } else {
+        panic!("Expected Handle expression");
+    }
+}
+
+#[test]
 fn test_let_statements() {
     let input = "let mut x: Int = 10;";
     let mut parser = Parser::new(Lexer::new(input));

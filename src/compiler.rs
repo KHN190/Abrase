@@ -16,7 +16,7 @@ impl<'a> Compiler<'a> {
         Self { globals, modules }
     }
 
-    pub fn compile(&mut self, _ast: &[ast::Decl]) -> Result<bytecode::Chunk, String> {
+    pub fn compile(&mut self, _ast: &[ast::Decl]) -> Result<crate::bytecode::Chunk, String> {
         unimplemented!()
     }
 }
