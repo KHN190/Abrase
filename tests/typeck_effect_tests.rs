@@ -806,3 +806,249 @@ fn verify_alloc_effect_matches_io_handler() {
     checker.compute_unhandled_effects(&all_effects);
     assert!(checker.get_unhandled_effects().is_empty());
 }
+
+// Effect Subsumption Tests (Function Type Compatibility)
+
+#[test]
+fn verify_effect_subsumption_pure_for_pure_exn() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Pure function can be used where <pure, exn> is expected
+    // Function declares: <pure>
+    let declared = vec![Effect::Total];
+    // Context expects: <pure, exn>
+    let expected = vec![Effect::Total, Effect::Exn(Box::new(Type::Unknown))];
+
+    // Check if expected effects can cover declared effects
+    assert!(checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_effect_subsumption_pure_for_multiple_effects() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Pure function can be used where multiple effects are expected
+    let declared = vec![Effect::Total]; // <pure>
+    let expected = vec![Effect::Total, Effect::Async, Effect::Alloc]; // <pure, async, alloc>
+
+    assert!(checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_effect_subsumption_async_for_async_io() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Async function can be used where <async, alloc> is expected
+    let declared = vec![Effect::Async]; // <async>
+    let expected = vec![Effect::Async, Effect::Alloc]; // <async, alloc>
+
+    assert!(checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_effect_subsumption_more_effects_not_subsumed() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Function with more effects cannot be used where fewer effects expected
+    let declared = vec![Effect::Async, Effect::Alloc]; // <async, alloc>
+    let expected = vec![Effect::Async]; // <async>
+
+    assert!(!checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_effect_subsumption_different_exception_types() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Different exception types should not be subsumed
+    let provided = vec![Effect::Exn(Box::new(Type::Int))];
+    let required = vec![Effect::Exn(Box::new(Type::String))];
+
+    assert!(!checker.effects_subsume(&provided, &required));
+}
+
+#[test]
+fn verify_effect_subsumption_empty_to_any() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Empty (no effects) can be used anywhere
+    let declared = vec![]; // no effects
+    let expected = vec![Effect::Async, Effect::Alloc];
+
+    assert!(checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_effect_subsumption_exact_match() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Exact match should subsume
+    let declared = vec![Effect::Async, Effect::Alloc];
+    let expected = vec![Effect::Async, Effect::Alloc];
+
+    assert!(checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_function_type_subsumption_pure_for_async_exn() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Function type: () -> <pure> Int
+    let provided_fn = Type::Function {
+        params: vec![],
+        effects: vec![Effect::Total],
+        ret: Box::new(Type::Int),
+    };
+
+    // Expected: () -> <pure, async, exn> Int
+    // Note: pure function can be used where pure + other effects are expected
+    let required_fn = Type::Function {
+        params: vec![],
+        effects: vec![Effect::Total, Effect::Async, Effect::Exn(Box::new(Type::Unknown))],
+        ret: Box::new(Type::Int),
+    };
+
+    // Check function compatibility - return types match, declared effects subsume expected
+    match (&provided_fn, &required_fn) {
+        (
+            Type::Function { effects: prov_effects, ret: prov_ret, .. },
+            Type::Function { effects: req_effects, ret: req_ret, .. }
+        ) => {
+            assert_eq!(prov_ret, req_ret); // return types must match
+            assert!(checker.effects_subsume(prov_effects, req_effects)); // declared subsume expected
+        },
+        _ => panic!("Expected function types"),
+    }
+}
+
+#[test]
+fn verify_function_type_subsumption_incompatible_return() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Function type: () -> <pure> Int
+    let provided_fn = Type::Function {
+        params: vec![],
+        effects: vec![Effect::Total],
+        ret: Box::new(Type::Int),
+    };
+
+    // Expected: () -> <pure> String
+    let required_fn = Type::Function {
+        params: vec![],
+        effects: vec![Effect::Total],
+        ret: Box::new(Type::String),
+    };
+
+    // Return types differ, so not compatible
+    match (&provided_fn, &required_fn) {
+        (
+            Type::Function { ret: prov_ret, .. },
+            Type::Function { ret: req_ret, .. }
+        ) => {
+            assert_ne!(prov_ret, req_ret);
+        },
+        _ => panic!("Expected function types"),
+    }
+}
+
+#[test]
+fn verify_effect_subsumption_with_nondet() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Function declares <nondet, alloc> but context expects <nondet>
+    let declared = vec![Effect::Nondet, Effect::Alloc]; // <nondet, alloc>
+    let expected = vec![Effect::Nondet]; // <nondet>
+
+    assert!(!checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_effect_subsumption_nondet_subsumed() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Nondet function can be used where nondet + alloc is expected
+    let declared = vec![Effect::Nondet]; // <nondet>
+    let expected = vec![Effect::Nondet, Effect::Alloc]; // <nondet, alloc>
+
+    assert!(checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_effect_subsumption_mixed_effects() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Function with subset of effects can be used where more effects expected
+    let declared = vec![Effect::Async, Effect::Total]; // <async, pure>
+    let expected = vec![Effect::Async, Effect::Total, Effect::Alloc]; // <async, pure, alloc>
+
+    assert!(checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_effect_subsumption_missing_one_effect() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Function produces <async, alloc>, but code expects <async, alloc, nondet>
+    // Since function's effects are subset of expected, it CAN be used
+    let declared = vec![Effect::Async, Effect::Alloc]; // <async, alloc>
+    let expected = vec![Effect::Async, Effect::Alloc, Effect::Nondet]; // <async, alloc, nondet>
+
+    // Declared effects are subset of expected - function can be used
+    assert!(checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_effect_subsumption_function_produces_more() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Function produces MORE effects than context expects to handle
+    let declared = vec![Effect::Async, Effect::Alloc, Effect::Nondet]; // <async, alloc, nondet>
+    let expected = vec![Effect::Async, Effect::Alloc]; // <async, alloc>
+
+    // Function produces effects context doesn't expect - NOT compatible
+    assert!(!checker.effects_subsume(&declared, &expected));
+}
+
+#[test]
+fn verify_closure_with_pure_effects_subsumes_with_exn() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Closure declared as <pure>
+    let closure_effects = vec![Effect::Total];
+    checker.set_fn_declared_effects(closure_effects.clone());
+
+    // Context expects <pure, exn>
+    let expected_effects = vec![Effect::Total, Effect::Exn(Box::new(Type::Unknown))];
+
+    // Pure closure effects should subsume expected effects
+    assert!(checker.effects_subsume(&closure_effects, &expected_effects));
+}
+
+#[test]
+fn verify_effect_subsumption_order_independent() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Order shouldn't matter for subsumption
+    let declared_a = vec![Effect::Async, Effect::Total];
+    let declared_b = vec![Effect::Total, Effect::Async];
+    let expected = vec![Effect::Async, Effect::Total, Effect::Alloc];
+
+    assert!(checker.effects_subsume(&declared_a, &expected));
+    assert!(checker.effects_subsume(&declared_b, &expected));
+}
