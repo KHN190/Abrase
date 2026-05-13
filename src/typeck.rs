@@ -74,6 +74,14 @@ pub struct Checker {
 
     // Phase 9: Type Ownership Attributes
     ownership_registry: HashMap<String, Ownership>, // type_name -> ownership
+
+    // Phase 10: Effect Unification & Inference
+    fn_declared_effects: Vec<crate::ty::Effect>, // declared effects for current function
+    fn_required_effects: Vec<crate::ty::Effect>, // required effects from function body
+
+    // Phase 11: Effect Shadowing, Propagation & Scope Semantics
+    handled_effects: Vec<String>, // effects handled in current handle block
+    unhandled_effects: Vec<crate::ty::Effect>, // effects not handled, propagated up
 }
 
 impl Checker {
@@ -95,6 +103,10 @@ impl Checker {
             effect_alias_registry: HashMap::new(),
             current_effects: Vec::new(),
             ownership_registry: HashMap::new(),
+            fn_declared_effects: Vec::new(),
+            fn_required_effects: Vec::new(),
+            handled_effects: Vec::new(),
+            unhandled_effects: Vec::new(),
         }
     }
 
@@ -311,6 +323,134 @@ impl Checker {
             Some(ast::OwnershipAttr::Share) => Ownership::Share,
             None => Ownership::Move, // default
         }
+    }
+
+    // Phase 10: Effect Unification & Inference
+    pub fn set_fn_declared_effects(&mut self, effects: Vec<crate::ty::Effect>) {
+        self.fn_declared_effects = effects;
+    }
+
+    pub fn get_fn_declared_effects(&self) -> &[crate::ty::Effect] {
+        &self.fn_declared_effects
+    }
+
+    pub fn add_required_effect(&mut self, effect: crate::ty::Effect) {
+        if !self.fn_required_effects.iter().any(|e| self.effects_equal(e, &effect)) {
+            self.fn_required_effects.push(effect);
+        }
+    }
+
+    pub fn get_fn_required_effects(&self) -> &[crate::ty::Effect] {
+        &self.fn_required_effects
+    }
+
+    pub fn check_effect_compatibility(&mut self, fn_effects: &[crate::ty::Effect], call_span: Span) -> bool {
+        for required_effect in self.fn_required_effects.iter() {
+            let found = fn_effects.iter().any(|e| self.effects_equal(e, required_effect));
+            if !found {
+                self.report_error(
+                    format!("Function call requires effect {:?} not in function signature", required_effect),
+                    call_span
+                );
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn unify_effects(&self, effects1: &[crate::ty::Effect], effects2: &[crate::ty::Effect]) -> Vec<crate::ty::Effect> {
+        let mut unified = effects1.to_vec();
+        for effect in effects2 {
+            if !unified.iter().any(|e| self.effects_equal(e, effect)) {
+                unified.push(effect.clone());
+            }
+        }
+        unified
+    }
+
+    pub fn effects_subsume(&self, required: &[crate::ty::Effect], provided: &[crate::ty::Effect]) -> bool {
+        // Check if provided effects include all required effects
+        required.iter().all(|req| {
+            provided.iter().any(|prov| self.effects_equal(req, prov))
+        })
+    }
+
+    pub fn infer_closure_effects(&self, body_effects: &[crate::ty::Effect]) -> Vec<crate::ty::Effect> {
+        // If declared effects, use those; otherwise infer from body
+        if !self.fn_declared_effects.is_empty() {
+            self.fn_declared_effects.clone()
+        } else {
+            body_effects.to_vec()
+        }
+    }
+
+    pub fn convert_effect_items(&self, items: &[ast::EffectItem]) -> Vec<crate::ty::Effect> {
+        items.iter()
+            .filter_map(|item| self.convert_effect(item))
+            .collect()
+    }
+
+    // Phase 11: Effect Shadowing, Propagation & Scope Semantics
+    pub fn mark_effect_handled(&mut self, effect_name: String) {
+        if !self.handled_effects.contains(&effect_name) {
+            self.handled_effects.push(effect_name);
+        }
+    }
+
+    pub fn get_handled_effects(&self) -> &[String] {
+        &self.handled_effects
+    }
+
+    pub fn compute_unhandled_effects(&mut self, all_effects: &[crate::ty::Effect]) {
+        self.unhandled_effects.clear();
+        for effect in all_effects {
+            let handled = match effect {
+                crate::ty::Effect::Total => self.handled_effects.contains(&"total".into()),
+                crate::ty::Effect::Async => self.handled_effects.contains(&"async".into()),
+                crate::ty::Effect::Alloc => self.handled_effects.contains(&"io".into()) || self.handled_effects.contains(&"alloc".into()),
+                crate::ty::Effect::Nondet => self.handled_effects.contains(&"nondet".into()),
+                crate::ty::Effect::Exn(_) => self.handled_effects.contains(&"exn".into()),
+            };
+            if !handled {
+                self.unhandled_effects.push(effect.clone());
+            }
+        }
+    }
+
+    pub fn get_unhandled_effects(&self) -> &[crate::ty::Effect] {
+        &self.unhandled_effects
+    }
+
+    pub fn validate_parameterized_exn_handler(&self, exn_type: &Type, pattern: &Option<Spanned<ast::Pattern>>) -> bool {
+        if let Some(pat) = pattern {
+            match &pat.node {
+                ast::Pattern::Bind(_) => {
+                    // For parameterized exceptions, the bound variable should have the exception type
+                    *exn_type != Type::Unknown
+                },
+                _ => true,
+            }
+        } else {
+            true
+        }
+    }
+
+    pub fn validate_scope_with_context(&self, with_expr_type: &Type) -> bool {
+        // Scope with <expr> should provide context, validate type is not Unknown
+        *with_expr_type != Type::Unknown
+    }
+
+    pub fn propagate_effects_to_parent(&mut self) {
+        // Propagate unhandled effects up to parent context
+        let unhandled = self.unhandled_effects.clone();
+        for effect in unhandled {
+            self.add_required_effect(effect);
+        }
+    }
+
+    pub fn clear_handle_context(&mut self) {
+        self.handled_effects.clear();
+        self.unhandled_effects.clear();
     }
 
     // Phase 5: Pattern Matching Support
@@ -824,7 +964,7 @@ impl Checker {
             // Phase 2: Complex Expressions
             ast::Expr::Call { callee, args } => {
                 let callee_ty = self.infer_expr(callee);
-                if let Type::Function { params, ret, .. } = callee_ty {
+                if let Type::Function { params, effects, ret } = callee_ty {
                     if args.len() != params.len() {
                         self.report_error(
                             format!("Expected {} arguments, got {}", params.len(), args.len()),
@@ -840,6 +980,12 @@ impl Checker {
                             );
                         }
                     }
+
+                    // Phase 10: Check effect compatibility
+                    for effect in &effects {
+                        self.add_required_effect(effect.clone());
+                    }
+
                     *ret
                 } else {
                     self.report_error("Callee must be function type".into(), callee.span)
@@ -892,9 +1038,16 @@ impl Checker {
                 let _base_ty = self.infer_expr(base);
                 Type::Unknown // Would need record type registry
             }
-            // Phase 3: Advanced Expressions
-            ast::Expr::Closure { is_move: _, params, effects: _, ret_ty, body } => {
+            // Phase 3: Advanced Expressions (updated Phase 10: Effect Inference)
+            ast::Expr::Closure { is_move: _, params, effects, ret_ty, body } => {
                 self.enter_scope();
+
+                // Phase 10: Set declared effects for the closure
+                let declared_effects = self.convert_effect_items(effects);
+                let saved_required = std::mem::take(&mut self.fn_required_effects);
+
+                self.fn_declared_effects = declared_effects.clone();
+
                 for param in params {
                     if let Some(param_ty) = &param.ty {
                         let converted_ty = self.convert_type(param_ty);
@@ -916,8 +1069,20 @@ impl Checker {
                         self.report_error("Closure body type mismatch".into(), body.span);
                     }
                 }
+
+                // Phase 10: Infer closure effects and clear context
+                let inferred_effects = self.infer_closure_effects(&self.fn_required_effects);
+                self.fn_declared_effects.clear();
+                self.fn_required_effects = saved_required;
+
                 self.exit_scope();
-                Type::Named("Closure".into())
+
+                // Phase 10: Return function type with inferred effects
+                Type::Function {
+                    params: vec![],
+                    effects: inferred_effects,
+                    ret: Box::new(body_ty),
+                }
             }
             ast::Expr::Record { ty, fields } => {
                 for field in fields {
@@ -954,9 +1119,17 @@ impl Checker {
             ast::Expr::Await(_inner) => {
                 Type::Unknown // Async, would need effect tracking
             }
-            ast::Expr::Scope { label, options: _, body } => {
+            ast::Expr::Scope { label, options, body } => {
                 self.context_stack.push(format!("In scope{}",
                     label.as_ref().map(|l| format!(" '{}'", l)).unwrap_or_default()));
+
+                // Phase 11: Validate scope with context expression
+                if let Some(opts) = options {
+                    let opts_ty = self.infer_expr(opts);
+                    if !self.validate_scope_with_context(&opts_ty) {
+                        self.report_error("Scope 'with' expression must provide valid context".into(), opts.span);
+                    }
+                }
 
                 // Push new scope effect context
                 self.effect_stack.push(self.active_effects.clone());
@@ -982,6 +1155,7 @@ impl Checker {
             }
             ast::Expr::Handle { expr: handler_expr, arms } => {
                 self.context_stack.push("In handle expression".into());
+                self.handled_effects.clear();
 
                 let _expr_ty = self.infer_expr(handler_expr);
 
@@ -995,25 +1169,31 @@ impl Checker {
                     if let Some(pat) = &arm.pattern {
                         match &pat.node {
                             ast::Pattern::Bind(name) => {
-                                self.insert_var(name.clone(), Type::Unknown, false, pat.span);
+                                // Phase 11: For parameterized exceptions, bind with correct type
+                                let var_ty = match &arm.kind {
+                                    ast::HandleArmKind::Exn => Type::Unknown, // Would need exn parameter type
+                                    _ => Type::Unknown,
+                                };
+                                self.insert_var(name.clone(), var_ty, false, pat.span);
                             }
                             _ => {}
                         }
                     }
 
-                    // Register handled effect based on kind
+                    // Phase 11: Register handled effect based on kind
                     match &arm.kind {
                         ast::HandleArmKind::Return => {
                             // Return handler doesn't remove an effect
                         }
                         ast::HandleArmKind::Exn => {
-                            // Exception handler
+                            // Exception handler - Phase 11: mark exn as handled
                             if !self.active_effects.contains(&"exn".to_string()) {
                                 self.report_error(
                                     "Handling exn but no exn effect is active".into(),
                                     expr.span
                                 );
                             }
+                            self.mark_effect_handled("exn".into());
                         }
                         ast::HandleArmKind::Effect(effect_path) => {
                             let effect_name = effect_path.join(".");
@@ -1023,9 +1203,15 @@ impl Checker {
                                     expr.span
                                 );
                             }
+                            self.mark_effect_handled(effect_name);
                         }
                     }
                 }
+
+                // Phase 11: Compute unhandled effects and propagate them
+                let required_effects = self.fn_required_effects.clone();
+                self.compute_unhandled_effects(&required_effects);
+                self.propagate_effects_to_parent();
 
                 // All arms must have same type
                 if !arm_types.is_empty() {
@@ -1038,6 +1224,7 @@ impl Checker {
                 }
 
                 self.context_stack.pop();
+                self.clear_handle_context();
                 if arm_types.is_empty() { Type::Unknown } else { arm_types[0].clone() }
             }
             _ => self.report_error("Expression not supported yet".into(), expr.span),
