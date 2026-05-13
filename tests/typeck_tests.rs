@@ -394,3 +394,196 @@ fn verify_error_context_stack() {
     assert_eq!(checker.errors[0].context.len(), 1);
     assert!(checker.errors[0].context[0].contains("binary"));
 }
+
+#[test]
+fn verify_match_expression_type_unification() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Match {
+        scrutinee: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        arms: vec![
+            ast::MatchArm {
+                pattern: sp(Pattern::Literal(ast::Literal::Int(1))),
+                guard: None,
+                body: sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+            },
+            ast::MatchArm {
+                pattern: sp(Pattern::Wildcard),
+                guard: None,
+                body: sp(ast::Expr::Literal(ast::Literal::Bool(false))),
+            },
+        ],
+    });
+    assert_eq!(checker.infer_expr(&expr), Type::Bool);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_match_arm_type_mismatch() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Match {
+        scrutinee: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        arms: vec![
+            ast::MatchArm {
+                pattern: sp(Pattern::Literal(ast::Literal::Int(1))),
+                guard: None,
+                body: sp(ast::Expr::Literal(ast::Literal::Int(42))),
+            },
+            ast::MatchArm {
+                pattern: sp(Pattern::Wildcard),
+                guard: None,
+                body: sp(ast::Expr::Literal(ast::Literal::String("mismatch".into()))),
+            },
+        ],
+    });
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Match arm types"));
+}
+
+#[test]
+fn verify_match_guard_must_be_bool() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Match {
+        scrutinee: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        arms: vec![
+            ast::MatchArm {
+                pattern: sp(Pattern::Bind("x".into())),
+                guard: Some(sp(ast::Expr::Literal(ast::Literal::Int(5)))),
+                body: sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+            },
+        ],
+    });
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Guard must be Bool"));
+}
+
+#[test]
+fn verify_for_loop_binding() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![
+            sp(ast::Stmt::Expr(sp(ast::Expr::Identifier("x".into())))),
+        ],
+        ret: None,
+    };
+    let expr = sp(ast::Expr::For {
+        pattern: sp(Pattern::Bind("x".into())),
+        iter: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(10)))),
+        body,
+    });
+    let _ty = checker.infer_expr(&expr);
+    assert!(checker.errors.is_empty(), "For loop should bind pattern variable");
+}
+
+#[test]
+fn verify_while_loop_condition_must_be_bool() {
+    let mut checker = Checker::new();
+    let body = ast::Block { stmts: vec![], ret: None };
+    let expr = sp(ast::Expr::While {
+        condition: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(5)))),
+        body,
+    });
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("While condition must be Bool"));
+}
+
+#[test]
+fn verify_while_loop_valid() {
+    let mut checker = Checker::new();
+    let body = ast::Block { stmts: vec![], ret: None };
+    let expr = sp(ast::Expr::While {
+        condition: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
+        body,
+    });
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Unit);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_loop_expression() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(42))))),
+    };
+    let expr = sp(ast::Expr::Loop { body });
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_break_outside_loop_error() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Break(None));
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Break outside of loop"));
+}
+
+#[test]
+fn verify_break_inside_loop_valid() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Break(None)))),
+    };
+    let expr = sp(ast::Expr::Loop { body });
+    checker.infer_expr(&expr);
+    assert!(checker.errors.is_empty(), "Break inside loop should be valid");
+}
+
+#[test]
+fn verify_continue_outside_loop_error() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Continue);
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Continue outside of loop"));
+}
+
+#[test]
+fn verify_continue_inside_loop_valid() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![sp(ast::Stmt::Expr(sp(ast::Expr::Continue)))],
+        ret: None,
+    };
+    let expr = sp(ast::Expr::Loop { body });
+    checker.infer_expr(&expr);
+    assert!(checker.errors.is_empty(), "Continue inside loop should be valid");
+}
+
+#[test]
+fn verify_break_type_is_never() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Break(None)))),
+    };
+    let expr = sp(ast::Expr::Loop { body });
+    let _ty = checker.infer_expr(&expr);
+    // After break, the loop's type is from the break expression (Never propagates)
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_return_expression() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Return(Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(42)))))));
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Never);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_throw_expression() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Throw(Box::new(sp(ast::Expr::Literal(ast::Literal::String("error".into()))))));
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Never);
+    assert!(checker.errors.is_empty());
+}

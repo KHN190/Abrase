@@ -50,6 +50,9 @@ pub struct Checker {
     scopes: Vec<Scope>,
     pub errors: Vec<TypeError>,
     context_stack: Vec<String>,
+    loop_depth: usize,
+    in_function: bool,
+    fn_return_type: Option<crate::ty::Type>,
 }
 
 impl Checker {
@@ -58,6 +61,9 @@ impl Checker {
             scopes: vec![Scope { vars: HashMap::new() }],
             errors: Vec::new(),
             context_stack: Vec::new(),
+            loop_depth: 0,
+            in_function: false,
+            fn_return_type: None,
         }
     }
 
@@ -284,8 +290,115 @@ impl Checker {
                 }
                 cons_ty
             }
+            ast::Expr::Match { scrutinee, arms } => {
+                self.context_stack.push("In match expression".into());
+                let _scrutinee_ty = self.infer_expr(scrutinee);
+
+                let mut arm_types = Vec::new();
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        let guard_ty = self.infer_expr(guard);
+                        if guard_ty != Type::Bool && guard_ty != Type::Unknown {
+                            self.report_error("Guard must be Bool".into(), guard.span);
+                        }
+                    }
+                    let body_ty = self.infer_expr(&arm.body);
+                    arm_types.push(body_ty);
+                }
+
+                // All arms must have same type
+                if !arm_types.is_empty() {
+                    let first = arm_types[0].clone();
+                    for ty in arm_types.iter().skip(1) {
+                        if *ty != first && first != Type::Unknown && *ty != Type::Unknown {
+                            self.report_error("Match arm types do not match".into(), expr.span);
+                        }
+                    }
+                }
+
+                self.context_stack.pop();
+                if arm_types.is_empty() { Type::Unknown } else { arm_types[0].clone() }
+            }
+            ast::Expr::For { pattern, iter, body } => {
+                self.context_stack.push("In for loop".into());
+                let _iter_ty = self.infer_expr(iter);
+
+                self.enter_scope();
+                self.loop_depth += 1;
+
+                // Bind pattern variable
+                if let ast::Pattern::Bind(name) = &pattern.node {
+                    self.insert_var(name.clone(), Type::Unknown, false, pattern.span);
+                }
+
+                let body_ty = self.infer_block(body);
+
+                self.loop_depth -= 1;
+                self.exit_scope();
+                self.context_stack.pop();
+                body_ty
+            }
+            ast::Expr::While { condition, body } => {
+                self.context_stack.push("In while loop".into());
+                let cond_ty = self.infer_expr(condition);
+
+                if cond_ty != Type::Bool && cond_ty != Type::Unknown {
+                    self.report_error("While condition must be Bool".into(), condition.span);
+                }
+
+                self.loop_depth += 1;
+                let body_ty = self.infer_block(body);
+                self.loop_depth -= 1;
+
+                self.context_stack.pop();
+                body_ty
+            }
+            ast::Expr::Loop { body } => {
+                self.context_stack.push("In loop".into());
+                self.loop_depth += 1;
+                let body_ty = self.infer_block(body);
+                self.loop_depth -= 1;
+                self.context_stack.pop();
+                body_ty
+            }
+            ast::Expr::Break(_break_val) => {
+                if self.loop_depth == 0 {
+                    self.report_error("Break outside of loop".into(), expr.span);
+                }
+                Type::Never
+            }
+            ast::Expr::Continue => {
+                if self.loop_depth == 0 {
+                    self.report_error("Continue outside of loop".into(), expr.span);
+                }
+                Type::Never
+            }
+            ast::Expr::Return(ret_val) => {
+                if let Some(val) = ret_val {
+                    let _val_ty = self.infer_expr(val);
+                }
+                Type::Never
+            }
+            ast::Expr::Throw(expr_val) => {
+                let _ex_ty = self.infer_expr(expr_val);
+                Type::Never
+            }
             _ => self.report_error("Expression not supported yet".into(), expr.span),
         }
+    }
+
+    fn infer_block(&mut self, block: &ast::Block) -> Type {
+        self.enter_scope();
+        for stmt in &block.stmts {
+            self.check_stmt(stmt);
+        }
+        let ty = if let Some(ret_expr) = &block.ret {
+            self.infer_expr(ret_expr)
+        } else {
+            Type::Unit
+        };
+        self.exit_scope();
+        ty
     }
 }
 
