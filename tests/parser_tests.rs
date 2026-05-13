@@ -213,6 +213,109 @@ fn test_expr_handle() {
 }
 
 #[test]
+fn test_pattern_basic() {
+    // Bind pattern
+    let mut p = Parser::new(Lexer::new("x"));
+    let pat = p.parse_pattern().unwrap();
+    assert_eq!(pat.node, Pattern::Bind("x".into()));
+
+    // Wildcard
+    let mut p = Parser::new(Lexer::new("_"));
+    let pat = p.parse_pattern().unwrap();
+    assert_eq!(pat.node, Pattern::Wildcard);
+
+    // Literal
+    let mut p = Parser::new(Lexer::new("42"));
+    let pat = p.parse_pattern().unwrap();
+    assert_eq!(pat.node, Pattern::Literal(Literal::Int(42)));
+}
+
+#[test]
+fn test_pattern_tuple() {
+    let mut p = Parser::new(Lexer::new("(x, 42)"));
+    let pat = p.parse_pattern().unwrap();
+    if let Pattern::Tuple(pats) = pat.node {
+        assert_eq!(pats.len(), 2);
+    } else {
+        panic!("Expected tuple pattern");
+    }
+}
+
+#[test]
+fn test_pattern_or() {
+    let mut p = Parser::new(Lexer::new("A | B"));
+    let pat = p.parse_pattern().unwrap();
+    if let Pattern::Or(pats) = pat.node {
+        assert_eq!(pats.len(), 2);
+    } else {
+        panic!("Expected or pattern");
+    }
+}
+
+#[test]
+fn test_decl_type() {
+    let input = "type Point = { x: Int, y: Int }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Type { name, .. } = decl {
+        assert_eq!(name, "Point");
+    } else {
+        panic!("Expected Type declaration");
+    }
+}
+
+#[test]
+fn test_decl_trait() {
+    let input = "trait Show { }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Trait { name, .. } = decl {
+        assert_eq!(name, "Show");
+    } else {
+        panic!("Expected Trait declaration");
+    }
+}
+
+#[test]
+fn test_decl_impl() {
+    let input = "impl Int { }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Impl { .. } = decl {
+        // impl parsed successfully
+    } else {
+        panic!("Expected Impl declaration");
+    }
+}
+
+#[test]
+fn test_decl_const() {
+    let input = "const PI: Float = 3.14;";
+    let mut p = Parser::new(Lexer::new(input));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Const { name, .. } = decl {
+        assert_eq!(name, "PI");
+    } else {
+        panic!("Expected Const declaration");
+    }
+}
+
+#[test]
+fn test_decl_import() {
+    let input = "import std.io { Read, Write };";
+    let mut p = Parser::new(Lexer::new(input));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Import { path, items } = decl {
+        assert_eq!(path.len(), 2);
+        assert_eq!(path[0], "std");
+        assert_eq!(path[1], "io");
+        assert_eq!(items.len(), 2);
+    } else {
+        panic!("Expected Import declaration");
+    }
+}
+
+#[test]
 fn test_let_statements() {
     let input = "let mut x: Int = 10;";
     let mut parser = Parser::new(Lexer::new(input));

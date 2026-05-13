@@ -126,6 +126,11 @@ impl<'a> Parser<'a> {
 
         match self.current_token {
             Token::Fn => self.parse_fn_decl(is_pub, is_async),
+            Token::Type => self.parse_type_decl(is_pub),
+            Token::Trait => self.parse_trait_decl(is_pub),
+            Token::Impl => self.parse_impl_decl(),
+            Token::Const => self.parse_const_decl(is_pub),
+            Token::Import => self.parse_import_decl(),
             Token::Mod => {
                 self.next_token();
                 if let Token::Ident(name) = &self.current_token {
@@ -134,6 +139,161 @@ impl<'a> Parser<'a> {
             }
             _ => Err(format!("Unexpected declaration token: {:?}", self.current_token)),
         }
+    }
+
+    fn parse_type_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        // current = 'type'
+        self.next_token(); // type name
+        let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected type name".into()); };
+
+        if !self.expect_peek(Token::Assign) {
+            return Err("Expected '=' in type decl".into());
+        }
+        self.next_token();
+
+        let body = if self.current_token == Token::LBrace {
+            self.next_token();
+            let mut fields = Vec::new();
+            while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+                if let Token::Ident(fname) = &self.current_token {
+                    let fname = fname.clone();
+                    if !self.expect_peek(Token::Colon) {
+                        return Err("Expected ':' in record field".into());
+                    }
+                    self.next_token();
+                    let ftype = self.parse_type()?;
+                    fields.push(RecordField { is_pub: false, name: fname, ty: ftype });
+                    if self.peek_token == Token::Comma {
+                        self.next_token();
+                        self.next_token();
+                    } else { break; }
+                } else { break; }
+            }
+            if !self.expect_peek(Token::RBrace) {
+                return Err("Expected '}' in record type".into());
+            }
+            TypeBody::Record(fields)
+        } else {
+            return Err("Expected type body (only record supported)".into());
+        };
+
+        Ok(Decl::Type { attrs: vec![], is_pub, ownership: None, name, generics: vec![], body })
+    }
+
+    fn parse_trait_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        self.next_token();
+        let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected trait name".into()); };
+
+        if !self.expect_peek(Token::LBrace) {
+            return Err("Expected '{' in trait".into());
+        }
+
+        let mut items = Vec::new();
+        self.next_token();
+        while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+            if self.current_token == Token::Fn {
+                let fn_decl = self.parse_fn_decl(false, false)?;
+                if let Decl::Fn(f) = fn_decl {
+                    items.push(TraitItem::Default(f));
+                }
+            }
+            if self.current_token != Token::RBrace {
+                self.next_token();
+            }
+        }
+        Ok(Decl::Trait { is_pub, name, generics: vec![], where_clause: vec![], items })
+    }
+
+    fn parse_impl_decl(&mut self) -> Result<Decl, String> {
+        self.next_token();
+        let for_type = self.parse_type()?;
+
+        if !self.expect_peek(Token::LBrace) {
+            return Err("Expected '{' in impl".into());
+        }
+
+        let mut methods = Vec::new();
+        self.next_token();
+        while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+            if self.current_token == Token::Fn {
+                let fn_decl = self.parse_fn_decl(false, false)?;
+                if let Decl::Fn(f) = fn_decl {
+                    methods.push(f);
+                }
+            }
+            if self.current_token != Token::RBrace {
+                self.next_token();
+            }
+        }
+        Ok(Decl::Impl { generics: vec![], trait_name: None, for_type, where_clause: vec![], methods })
+    }
+
+    fn parse_const_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        self.next_token();
+        let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected const name".into()); };
+
+        if !self.expect_peek(Token::Colon) {
+            return Err("Expected ':' in const".into());
+        }
+        self.next_token();
+        let ty = self.parse_type()?;
+
+        if !self.expect_peek(Token::Assign) {
+            return Err("Expected '=' in const".into());
+        }
+        self.next_token();
+        let value = self.parse_expr(Precedence::Lowest);
+
+        if self.peek_token == Token::Semicolon {
+            self.next_token();
+        }
+
+        Ok(Decl::Const { is_pub, is_fn: false, name, generics: vec![], params: vec![], ty, value })
+    }
+
+    fn parse_import_decl(&mut self) -> Result<Decl, String> {
+        self.next_token();
+        let mut path = Vec::new();
+        if let Token::Ident(p) = &self.current_token {
+            path.push(p.clone());
+        }
+        while self.peek_token == Token::Dot {
+            self.next_token();
+            self.next_token();
+            if let Token::Ident(p) = &self.current_token {
+                path.push(p.clone());
+            }
+        }
+
+        let mut items = Vec::new();
+        if self.peek_token == Token::LBrace {
+            self.next_token();
+            self.next_token();
+            while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+                if let Token::Ident(n) = &self.current_token {
+                    let name = n.clone();
+                    let alias = if self.peek_token == Token::As {
+                        self.next_token();
+                        self.next_token();
+                        if let Token::Ident(a) = &self.current_token { Some(a.clone()) } else { None }
+                    } else { None };
+                    items.push(ImportItem { name, alias });
+                    if self.peek_token == Token::Comma {
+                        self.next_token();
+                        self.next_token();
+                    } else { break; }
+                } else { break; }
+            }
+            if !self.expect_peek(Token::RBrace) {
+                return Err("Expected '}' in import list".into());
+            }
+        }
+
+        if self.peek_token == Token::Semicolon {
+            self.next_token();
+        }
+
+        Ok(Decl::Import { path, items })
     }
 
     pub fn parse_fn_decl(&mut self, is_pub: bool, is_async: bool) -> Result<Decl, String> {
@@ -722,21 +882,117 @@ impl<'a> Parser<'a> {
         Ok(Expr::Handle { expr, arms })
     }
 
-    fn parse_pattern(&mut self) -> Result<Spanned<Pattern>, String> {
+    pub fn parse_pattern(&mut self) -> Result<Spanned<Pattern>, String> {
+        let span = self.current_span;
+        let mut pats = vec![self.parse_pattern_primary()?];
+        while self.peek_token == Token::Pipe {
+            self.next_token(); // '|'
+            self.next_token();
+            pats.push(self.parse_pattern_primary()?);
+        }
+        let node = if pats.len() == 1 {
+            pats.pop().unwrap().node
+        } else {
+            Pattern::Or(pats)
+        };
+        Ok(Spanned { node, span })
+    }
+
+    fn parse_pattern_primary(&mut self) -> Result<Spanned<Pattern>, String> {
         let span = self.current_span;
         let node = match &self.current_token {
             Token::Underscore => Pattern::Wildcard,
             Token::Ampersand => {
                 self.next_token();
-                let pat = self.parse_pattern()?;
+                let pat = self.parse_pattern_primary()?;
                 Pattern::Ref(Box::new(pat))
             }
-            Token::Ident(name) => Pattern::Bind(name.clone()),
-            Token::Int(v) => Pattern::Literal(Literal::Int(*v)),
+            Token::Int(v) => {
+                let start = Literal::Int(*v);
+                if self.peek_token == Token::Range {
+                    self.next_token(); // '..'
+                    self.next_token();
+                    let end = if let Token::Int(n) = self.current_token { Some(Literal::Int(n)) } else { None };
+                    Pattern::Range { start: Some(start), end, inclusive: false }
+                } else if self.peek_token == Token::RangeInclusive {
+                    self.next_token(); // '..='
+                    self.next_token();
+                    let end = if let Token::Int(n) = self.current_token { Some(Literal::Int(n)) } else { None };
+                    Pattern::Range { start: Some(start), end, inclusive: true }
+                } else {
+                    Pattern::Literal(start)
+                }
+            }
             Token::Float(v) => Pattern::Literal(Literal::Float(*v)),
             Token::True => Pattern::Literal(Literal::Bool(true)),
             Token::False => Pattern::Literal(Literal::Bool(false)),
             Token::String(s) => Pattern::Literal(Literal::String(s.clone())),
+            Token::Ident(name) => {
+                let name = name.clone();
+                if self.peek_token == Token::LParen || self.peek_token == Token::LBrace {
+                    self.next_token(); // '(' or '{'
+                    let (ty_path, args) = match self.current_token {
+                        Token::LParen => {
+                            let path = vec![name];
+                            let mut args = Vec::new();
+                            if self.peek_token != Token::RParen {
+                                self.next_token();
+                                loop {
+                                    args.push(self.parse_pattern()?);
+                                    if self.peek_token == Token::Comma {
+                                        self.next_token();
+                                        self.next_token();
+                                    } else { break; }
+                                }
+                            }
+                            if !self.expect_peek(Token::RParen) {
+                                return Err("Expected ')' in variant pattern".into());
+                            }
+                            (path, args)
+                        }
+                        _ => (vec![name.clone()], vec![]),
+                    };
+                    Pattern::Variant { ty: ty_path, args }
+                } else {
+                    Pattern::Bind(name)
+                }
+            }
+            Token::LParen => {
+                self.next_token();
+                if self.current_token == Token::RParen {
+                    Pattern::Tuple(vec![])
+                } else {
+                    let mut pats = vec![self.parse_pattern()?];
+                    while self.peek_token == Token::Comma {
+                        self.next_token();
+                        if self.peek_token == Token::RParen { break; }
+                        self.next_token();
+                        pats.push(self.parse_pattern()?);
+                    }
+                    if !self.expect_peek(Token::RParen) {
+                        return Err("Expected ')' in pattern".into());
+                    }
+                    Pattern::Tuple(pats)
+                }
+            }
+            Token::LBracket => {
+                self.next_token();
+                if self.current_token == Token::RBracket {
+                    Pattern::Array(vec![])
+                } else {
+                    let mut pats = vec![self.parse_pattern()?];
+                    while self.peek_token == Token::Comma {
+                        self.next_token();
+                        if self.peek_token == Token::RBracket { break; }
+                        self.next_token();
+                        pats.push(self.parse_pattern()?);
+                    }
+                    if !self.expect_peek(Token::RBracket) {
+                        return Err("Expected ']' in pattern".into());
+                    }
+                    Pattern::Array(pats)
+                }
+            }
             _ => return Err(format!("Unexpected pattern token: {:?}", self.current_token)),
         };
         Ok(Spanned { node, span })
