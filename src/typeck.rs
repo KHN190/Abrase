@@ -39,6 +39,9 @@ struct VarMeta {
     is_moved: bool,
     defined_at: Span,
     moved_at: Option<Span>,
+    // Phase 7: Ownership & Borrowing
+    immut_borrow_count: usize, // count of active immutable borrows
+    mut_borrow_active: bool,   // whether a mutable borrow is active
 }
 
 #[derive(Clone)]
@@ -60,6 +63,9 @@ pub struct Checker {
     fn_registry: HashMap<String, (Vec<Type>, Type)>, // name -> (params, return_type)
     type_registry: HashMap<String, ast::TypeBody>, // name -> type definition
     const_registry: HashMap<String, Type>, // name -> const type
+
+    // Phase 7: Ownership & Borrowing
+    borrow_stack: Vec<(String, bool)>, // stack of (var_name, is_mutable)
 }
 
 impl Checker {
@@ -76,6 +82,7 @@ impl Checker {
             fn_registry: HashMap::new(),
             type_registry: HashMap::new(),
             const_registry: HashMap::new(),
+            borrow_stack: Vec::new(),
         }
     }
 
@@ -105,7 +112,9 @@ impl Checker {
                 is_mut,
                 is_moved: false,
                 defined_at,
-                moved_at: None
+                moved_at: None,
+                immut_borrow_count: 0,
+                mut_borrow_active: false,
             });
         }
     }
@@ -133,6 +142,59 @@ impl Checker {
 
     pub fn get_const(&self, name: &str) -> Option<Type> {
         self.const_registry.get(name).cloned()
+    }
+
+    // Phase 7: Ownership & Borrowing
+    pub fn try_immut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(meta) = scope.vars.get_mut(var_name) {
+                if meta.mut_borrow_active {
+                    return Err(format!("Cannot immutably borrow '{}': mutable borrow already active", var_name));
+                }
+                meta.immut_borrow_count += 1;
+                self.borrow_stack.push((var_name.to_string(), false));
+                return Ok(());
+            }
+        }
+        Err(format!("Variable '{}' not found", var_name))
+    }
+
+    pub fn try_mut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(meta) = scope.vars.get_mut(var_name) {
+                if meta.immut_borrow_count > 0 {
+                    return Err(format!("Cannot mutably borrow '{}': immutable borrow already active", var_name));
+                }
+                if meta.mut_borrow_active {
+                    return Err(format!("Cannot mutably borrow '{}': mutable borrow already active", var_name));
+                }
+                if !meta.is_mut {
+                    return Err(format!("Cannot mutably borrow immutable variable '{}'", var_name));
+                }
+                meta.mut_borrow_active = true;
+                self.borrow_stack.push((var_name.to_string(), true));
+                return Ok(());
+            }
+        }
+        Err(format!("Variable '{}' not found", var_name))
+    }
+
+    pub fn release_borrow(&mut self, var_name: &str) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(meta) = scope.vars.get_mut(var_name) {
+                if meta.immut_borrow_count > 0 {
+                    meta.immut_borrow_count = meta.immut_borrow_count.saturating_sub(1);
+                }
+                if meta.mut_borrow_active && self.borrow_stack.last().map_or(false, |(name, _)| name == var_name) {
+                    meta.mut_borrow_active = false;
+                }
+                return;
+            }
+        }
+    }
+
+    pub fn check_ownership(&self, ty: &Type) -> Ownership {
+        ty.ownership()
     }
 
     // Phase 5: Pattern Matching Support
@@ -445,16 +507,26 @@ impl Checker {
                 match op {
                     ast::UnaryOp::Ref => {
                         if let ast::Expr::Identifier(name) = &right.node {
-                            let ty = self.get_var(name, true, expr.span);
-                            Type::Reference { is_mut: false, inner: Box::new(ty) }
+                            match self.try_immut_borrow(name, expr.span) {
+                                Ok(()) => {
+                                    let ty = self.get_var(name, true, expr.span);
+                                    Type::Reference { is_mut: false, inner: Box::new(ty) }
+                                }
+                                Err(msg) => self.report_error(msg, expr.span)
+                            }
                         } else {
                             self.report_error("Cannot borrow temporary".into(), right.span)
                         }
                     }
                     ast::UnaryOp::RefMut => {
                         if let ast::Expr::Identifier(name) = &right.node {
-                            let ty = self.get_var(name, true, expr.span);
-                            Type::Reference { is_mut: true, inner: Box::new(ty) }
+                            match self.try_mut_borrow(name, expr.span) {
+                                Ok(()) => {
+                                    let ty = self.get_var(name, true, expr.span);
+                                    Type::Reference { is_mut: true, inner: Box::new(ty) }
+                                }
+                                Err(msg) => self.report_error(msg, expr.span)
+                            }
                         } else {
                             self.report_error("Cannot mutably borrow temporary".into(), right.span)
                         }
