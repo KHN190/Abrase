@@ -126,11 +126,28 @@ impl<'a> Parser<'a> {
 
         match self.current_token {
             Token::Fn => self.parse_fn_decl(is_pub, is_async),
-            Token::Type => self.parse_type_decl(is_pub),
+            Token::Type => {
+                self.next_token();
+                if self.current_token == Token::Ident("alias".into()) {
+                    self.next_token();
+                    self.parse_type_alias_decl(is_pub)
+                } else {
+                    self.parse_type_decl(is_pub)
+                }
+            }
             Token::Trait => self.parse_trait_decl(is_pub),
             Token::Impl => self.parse_impl_decl(),
             Token::Const => self.parse_const_decl(is_pub),
             Token::Import => self.parse_import_decl(),
+            Token::Effect => {
+                self.next_token();
+                if self.current_token == Token::Ident("alias".into()) {
+                    self.next_token();
+                    self.parse_effect_alias_decl(is_pub)
+                } else {
+                    self.parse_effect_decl(is_pub)
+                }
+            }
             Token::Mod => {
                 self.next_token();
                 if let Token::Ident(name) = &self.current_token {
@@ -142,9 +159,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
-        // current = 'type'
-        self.next_token(); // type name
+        // current is at the type name (parse_decl already advanced past 'type')
         let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected type name".into()); };
+        let generics = if self.peek_token == Token::Lt {
+            self.next_token();
+            self.parse_generic_params()?
+        } else { vec![] };
 
         if !self.expect_peek(Token::Assign) {
             return Err("Expected '=' in type decl".into());
@@ -177,7 +197,7 @@ impl<'a> Parser<'a> {
             return Err("Expected type body (only record supported)".into());
         };
 
-        Ok(Decl::Type { attrs: vec![], is_pub, ownership: None, name, generics: vec![], body })
+        Ok(Decl::Type { attrs: vec![], is_pub, ownership: None, name, generics, body })
     }
 
     fn parse_trait_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
@@ -251,6 +271,105 @@ impl<'a> Parser<'a> {
         Ok(Decl::Const { is_pub, is_fn: false, name, generics: vec![], params: vec![], ty, value })
     }
 
+    fn parse_type_alias_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        // current = type name (after 'type' 'alias')
+        let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected type alias name".into()); };
+        let generics = if self.peek_token == Token::Lt {
+            self.next_token();
+            self.parse_generic_params()?
+        } else { vec![] };
+        if !self.expect_peek(Token::Assign) {
+            return Err("Expected '=' in type alias".into());
+        }
+        self.next_token();
+        let ty = self.parse_type()?;
+        Ok(Decl::TypeAlias { is_pub, name, generics, ty })
+    }
+
+    fn parse_effect_alias_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        // current = effect alias name (after 'effect' 'alias')
+        let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected effect alias name".into()); };
+        if !self.expect_peek(Token::Assign) {
+            return Err("Expected '=' in effect alias".into());
+        }
+        self.next_token();
+        let effects = if self.current_token == Token::Lt {
+            self.parse_effect_set()?
+        } else {
+            return Err("Expected effect set in effect alias".into());
+        };
+        Ok(Decl::EffectAlias { is_pub, name, effects })
+    }
+
+    fn parse_effect_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        // current = effect name (after 'effect')
+        let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected effect name".into()); };
+        if !self.expect_peek(Token::LBrace) {
+            return Err("Expected '{' in effect decl".into());
+        }
+        let mut ops = Vec::new();
+        self.next_token();
+        while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+            if self.current_token == Token::Fn {
+                let sig = self.parse_fn_signature()?;
+                ops.push(sig);
+            }
+            if self.current_token != Token::RBrace {
+                self.next_token();
+            }
+        }
+        Ok(Decl::Effect { is_pub, name, ops })
+    }
+
+    fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, String> {
+        // current = '<'
+        if self.peek_token == Token::Gt {
+            self.next_token();
+            return Ok(vec![]);
+        }
+        self.next_token();
+        let mut params = Vec::new();
+        loop {
+            if let Token::Ident(n) = &self.current_token {
+                params.push(GenericParam { name: n.clone() });
+            } else {
+                return Err("Expected generic param name".into());
+            }
+            if self.peek_token == Token::Comma {
+                self.next_token();
+                self.next_token();
+            } else { break; }
+        }
+        if !self.expect_peek(Token::Gt) {
+            return Err("Expected '>' in generic params".into());
+        }
+        Ok(params)
+    }
+
+    fn parse_fn_signature(&mut self) -> Result<FnSignature, String> {
+        // current = 'fn'
+        self.next_token();
+        let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected fn name in signature".into()); };
+        if !self.expect_peek(Token::LParen) {
+            return Err("Expected '(' in fn signature".into());
+        }
+        let params = self.parse_params()?;
+        let return_type = if self.peek_token == Token::Arrow {
+            self.next_token();
+            self.next_token();
+            Some(self.parse_type()?)
+        } else { None };
+        Ok(FnSignature {
+            is_async: false,
+            name,
+            generics: vec![],
+            params,
+            effects: vec![],
+            return_type,
+            where_clause: vec![],
+        })
+    }
+
     fn parse_import_decl(&mut self) -> Result<Decl, String> {
         self.next_token();
         let mut path = Vec::new();
@@ -314,10 +433,16 @@ impl<'a> Parser<'a> {
         }
         let params = self.parse_params()?;
 
+        let mut effects = Vec::new();
         let mut return_type = None;
         if self.peek_token == Token::Arrow {
-            self.next_token();
-            self.next_token();
+            self.next_token(); // arrow
+            self.next_token(); // thing after arrow
+            // Check for effect set: -> <effect1, effect2> Type
+            if self.current_token == Token::Lt {
+                effects = self.parse_effect_set()?;
+                self.next_token(); // advance past >
+            }
             return_type = Some(self.parse_type()?);
         }
 
@@ -333,7 +458,7 @@ impl<'a> Parser<'a> {
             name,
             generics: vec![],
             params,
-            effects: vec![],
+            effects,
             return_type,
             where_clause: vec![],
             body,
@@ -573,9 +698,7 @@ impl<'a> Parser<'a> {
             Token::Let => {
                 self.next_token();
                 let is_mut = if self.current_token == Token::Mut { self.next_token(); true } else { false };
-                let pat_span = self.current_span;
-                let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected let name".into()) };
-                let pattern = Spanned { node: Pattern::Bind(name), span: pat_span };
+                let pattern = self.parse_pattern()?;
 
                 let mut ty = None;
                 if self.peek_token == Token::Colon {

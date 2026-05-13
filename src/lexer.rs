@@ -7,7 +7,7 @@ pub enum Token {
     Fn, Let, Const, If, Else, Match, For, While, Loop, Break, Continue,
     Return, Type, Trait, Impl, Import, Mod, Pub, Scope, Region, Handle,
     Throw, True, False, Where, Async, Await, In, As, SelfKW, SelfUpper, Mut, Thread,
-    Underscore,
+    Effect, Underscore,
 
     // Identifiers and Literals
     Ident(String),
@@ -118,6 +118,7 @@ impl<'a> Lexer<'a> {
             "Self" => Token::SelfUpper,
             "mut" => Token::Mut,
             "thread" => Token::Thread,
+            "effect" => Token::Effect,
             "_" => Token::Underscore,
             _ => Token::Ident(ident),
         }
