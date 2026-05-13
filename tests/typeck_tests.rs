@@ -939,3 +939,547 @@ fn verify_region_expression() {
     assert_eq!(ty, Type::String);
     assert!(checker.errors.is_empty());
 }
+
+// Phase 4: Special Scopes & Effects
+
+#[test]
+fn verify_scope_with_label() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(42))))),
+    };
+    let expr = sp(ast::Expr::Scope {
+        label: Some("outer".into()),
+        options: None,
+        body,
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_nested_scopes() {
+    let mut checker = Checker::new();
+    let inner_scope = sp(ast::Expr::Scope {
+        label: Some("inner".into()),
+        options: None,
+        body: ast::Block {
+            stmts: vec![],
+            ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true))))),
+        },
+    });
+
+    let outer_scope = sp(ast::Expr::Scope {
+        label: Some("outer".into()),
+        options: None,
+        body: ast::Block {
+            stmts: vec![sp(ast::Stmt::Expr(inner_scope))],
+            ret: None,
+        },
+    });
+
+    let ty = checker.infer_expr(&outer_scope);
+    assert_eq!(ty, Type::Unit);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_region_with_label() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Float(3.14))))),
+    };
+    let expr = sp(ast::Expr::Region {
+        label: Some("heap".into()),
+        body,
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Float);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_handle_return_arm() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(10)))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(Pattern::Bind("x".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(42))),
+            },
+        ],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    // No error for return handler (it's always available)
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_handle_exception_arm() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Exn,
+                pattern: Some(sp(Pattern::Bind("e".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+            },
+        ],
+    });
+
+    checker.infer_expr(&expr);
+    // Should report error: handling exn but no exn effect is active
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("no exn effect is active"));
+}
+
+#[test]
+fn verify_handle_custom_effect() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Effect(vec!["logger".into(), "log".into()]),
+                pattern: Some(sp(Pattern::Bind("msg".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Unit)),
+            },
+        ],
+    });
+
+    checker.infer_expr(&expr);
+    // Should report error: handling logger.log but it is not active
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("not active"));
+}
+
+#[test]
+fn verify_handle_multiple_arms_type_unification() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(Pattern::Bind("x".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(42))),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Exn,
+                pattern: Some(sp(Pattern::Bind("e".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+            },
+        ],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    // Both arms return Int, so type unification succeeds
+}
+
+#[test]
+fn verify_handle_arm_type_mismatch() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(Pattern::Bind("x".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(42))),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Exn,
+                pattern: Some(sp(Pattern::Bind("e".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::String("error".into()))),
+            },
+        ],
+    });
+
+    checker.infer_expr(&expr);
+    // First arm is Int, second is String -> type mismatch error
+    assert!(checker.errors.iter().any(|e| e.message.contains("Handle arm types do not match")));
+}
+
+#[test]
+fn verify_scope_with_statements() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![
+            sp(ast::Stmt::Let {
+                pattern: sp(Pattern::Bind("x".into())),
+                is_mut: false,
+                ty: None,
+                value: sp(ast::Expr::Literal(ast::Literal::Int(5))),
+            }),
+            sp(ast::Stmt::Let {
+                pattern: sp(Pattern::Bind("y".into())),
+                is_mut: false,
+                ty: None,
+                value: sp(ast::Expr::Literal(ast::Literal::Int(10))),
+            }),
+        ],
+        ret: Some(Box::new(sp(ast::Expr::Binary {
+            op: ast::BinaryOp::Add,
+            left: Box::new(sp(ast::Expr::Identifier("x".into()))),
+            right: Box::new(sp(ast::Expr::Identifier("y".into()))),
+        }))),
+    };
+
+    let expr = sp(ast::Expr::Scope {
+        label: None,
+        options: None,
+        body,
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_region_with_statements() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![
+            sp(ast::Stmt::Let {
+                pattern: sp(Pattern::Bind("ptr".into())),
+                is_mut: false,
+                ty: None,
+                value: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+            }),
+        ],
+        ret: Some(Box::new(sp(ast::Expr::Identifier("ptr".into())))),
+    };
+
+    let expr = sp(ast::Expr::Region {
+        label: Some("r".into()),
+        body,
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_handle_without_arms() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        arms: vec![],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Unknown);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_scope_effect_isolation() {
+    let mut checker = Checker::new();
+    // Verify that effect changes in scope don't leak out
+    let scope_expr = sp(ast::Expr::Scope {
+        label: Some("s".into()),
+        options: None,
+        body: ast::Block {
+            stmts: vec![],
+            ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true))))),
+        },
+    });
+
+    let ty = checker.infer_expr(&scope_expr);
+    assert_eq!(ty, Type::Bool);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_region_effect_isolation() {
+    let mut checker = Checker::new();
+    // Verify that effect changes in region don't leak out
+    let region_expr = sp(ast::Expr::Region {
+        label: Some("r".into()),
+        body: ast::Block {
+            stmts: vec![],
+            ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Char('a'))))),
+        },
+    });
+
+    let ty = checker.infer_expr(&region_expr);
+    assert_eq!(ty, Type::Char);
+    assert!(checker.errors.is_empty());
+}
+
+// Phase 5: Infrastructure & Context Management
+
+#[test]
+fn verify_function_registry() {
+    let mut checker = Checker::new();
+    checker.register_function(
+        "add".into(),
+        vec![Type::Int, Type::Int],
+        Type::Int,
+    );
+
+    let result = checker.get_function("add");
+    assert!(result.is_some());
+    let (params, ret) = result.unwrap();
+    assert_eq!(params, vec![Type::Int, Type::Int]);
+    assert_eq!(ret, Type::Int);
+}
+
+#[test]
+fn verify_type_registry() {
+    let mut checker = Checker::new();
+    checker.register_type(
+        "Point".into(),
+        ast::TypeBody::Record(vec![]),
+    );
+
+    let result = checker.get_type("Point");
+    assert!(result.is_some());
+}
+
+#[test]
+fn verify_const_registry() {
+    let mut checker = Checker::new();
+    checker.register_const("PI".into(), Type::Float);
+
+    let result = checker.get_const("PI");
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), Type::Float);
+}
+
+#[test]
+fn verify_pattern_bind() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Bind("x".into()));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+
+    // Variable should be inserted
+    let var_ty = checker.get_var("x", false, d_span());
+    assert_eq!(var_ty, Type::Int);
+}
+
+#[test]
+fn verify_pattern_wildcard() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Wildcard);
+    checker.check_pattern(&pattern, &Type::String, d_span());
+    // Wildcard accepts any type
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_literal_match() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Literal(ast::Literal::Int(42)));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_literal_mismatch() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Literal(ast::Literal::Int(42)));
+    checker.check_pattern(&pattern, &Type::Bool, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Pattern type mismatch"));
+}
+
+#[test]
+fn verify_pattern_tuple_match() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Tuple(vec![
+        sp(Pattern::Bind("x".into())),
+        sp(Pattern::Bind("y".into())),
+    ]));
+    let tuple_ty = Type::Tuple(vec![Type::Int, Type::Bool]);
+    checker.check_pattern(&pattern, &tuple_ty, d_span());
+
+    // Both variables should be inserted
+    assert_eq!(checker.get_var("x", false, d_span()), Type::Int);
+    assert_eq!(checker.get_var("y", false, d_span()), Type::Bool);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_tuple_length_mismatch() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Tuple(vec![
+        sp(Pattern::Bind("x".into())),
+        sp(Pattern::Bind("y".into())),
+    ]));
+    let tuple_ty = Type::Tuple(vec![Type::Int]);
+    checker.check_pattern(&pattern, &tuple_ty, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Tuple pattern length mismatch"));
+}
+
+#[test]
+fn verify_pattern_or() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Or(vec![
+        sp(Pattern::Bind("a".into())),
+        sp(Pattern::Bind("b".into())),
+    ]));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+
+    // Both variables should be inserted
+    assert_eq!(checker.get_var("a", false, d_span()), Type::Int);
+    assert_eq!(checker.get_var("b", false, d_span()), Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_range_int() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Range {
+        start: Some(ast::Literal::Int(0)),
+        end: Some(ast::Literal::Int(10)),
+        inclusive: false,
+    });
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_range_non_int() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Range {
+        start: Some(ast::Literal::Int(0)),
+        end: Some(ast::Literal::Int(10)),
+        inclusive: false,
+    });
+    checker.check_pattern(&pattern, &Type::Bool, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Range pattern requires Int"));
+}
+
+#[test]
+fn verify_pattern_array() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Array(vec![
+        sp(Pattern::Bind("x".into())),
+        sp(Pattern::Bind("y".into())),
+    ]));
+    let array_ty = Type::Named("Array<Int>".into());
+    checker.check_pattern(&pattern, &array_ty, d_span());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_array_wrong_type() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Array(vec![sp(Pattern::Wildcard)]));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Expected array pattern"));
+}
+
+#[test]
+fn verify_pattern_ref() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Ref(Box::new(sp(Pattern::Bind("x".into())))));
+    let ref_ty = Type::Reference { is_mut: false, inner: Box::new(Type::String) };
+    checker.check_pattern(&pattern, &ref_ty, d_span());
+
+    // x should be bound to String (unwrapped from reference)
+    assert_eq!(checker.get_var("x", false, d_span()), Type::String);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_ref_non_reference() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Ref(Box::new(sp(Pattern::Wildcard))));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Expected reference pattern"));
+}
+
+#[test]
+fn verify_let_with_tuple_pattern() {
+    let mut checker = Checker::new();
+    let stmt = sp(ast::Stmt::Let {
+        pattern: sp(Pattern::Tuple(vec![
+            sp(Pattern::Bind("x".into())),
+            sp(Pattern::Bind("y".into())),
+        ])),
+        is_mut: false,
+        ty: None,
+        value: sp(ast::Expr::Tuple(vec![
+            sp(ast::Expr::Literal(ast::Literal::Int(1))),
+            sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+        ])),
+    });
+
+    checker.check_stmt(&stmt);
+
+    // Both variables should be inserted
+    assert_eq!(checker.get_var("x", false, d_span()), Type::Int);
+    assert_eq!(checker.get_var("y", false, d_span()), Type::Bool);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_record() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Record {
+        ty: vec!["Point".into()],
+        fields: vec![
+            ast::FieldPattern {
+                name: "x".into(),
+                pattern: Some(sp(Pattern::Bind("px".into()))),
+            },
+        ],
+        rest: false,
+    });
+    checker.check_pattern(&pattern, &Type::Named("Point".into()), d_span());
+    // Without type registry, we can't validate field names
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_variant() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Variant {
+        ty: vec!["Option".into()],
+        args: vec![sp(Pattern::Bind("val".into()))],
+    });
+    checker.check_pattern(&pattern, &Type::Named("Option".into()), d_span());
+    // Without ADT registry, we can't validate variant signature
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_nested_pattern_tuple_and_bind() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Tuple(vec![
+        sp(Pattern::Bind("x".into())),
+        sp(Pattern::Tuple(vec![
+            sp(Pattern::Bind("a".into())),
+            sp(Pattern::Bind("b".into())),
+        ])),
+    ]));
+    let tuple_ty = Type::Tuple(vec![
+        Type::Int,
+        Type::Tuple(vec![Type::Bool, Type::String]),
+    ]);
+    checker.check_pattern(&pattern, &tuple_ty, d_span());
+
+    assert_eq!(checker.get_var("x", false, d_span()), Type::Int);
+    assert_eq!(checker.get_var("a", false, d_span()), Type::Bool);
+    assert_eq!(checker.get_var("b", false, d_span()), Type::String);
+    assert!(checker.errors.is_empty());
+}

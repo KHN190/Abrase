@@ -53,6 +53,13 @@ pub struct Checker {
     loop_depth: usize,
     in_function: bool,
     fn_return_type: Option<crate::ty::Type>,
+    active_effects: Vec<String>, // track active effect handlers
+    effect_stack: Vec<Vec<String>>, // stack of effect scopes for region/scope
+
+    // Type Environment (Phase 5)
+    fn_registry: HashMap<String, (Vec<Type>, Type)>, // name -> (params, return_type)
+    type_registry: HashMap<String, ast::TypeBody>, // name -> type definition
+    const_registry: HashMap<String, Type>, // name -> const type
 }
 
 impl Checker {
@@ -64,6 +71,11 @@ impl Checker {
             loop_depth: 0,
             in_function: false,
             fn_return_type: None,
+            active_effects: Vec::new(),
+            effect_stack: vec![Vec::new()],
+            fn_registry: HashMap::new(),
+            type_registry: HashMap::new(),
+            const_registry: HashMap::new(),
         }
     }
 
@@ -88,13 +100,144 @@ impl Checker {
 
     pub fn insert_var(&mut self, name: String, ty: Type, is_mut: bool, defined_at: Span) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.vars.insert(name, VarMeta { 
-                ty, 
-                is_mut, 
-                is_moved: false, 
-                defined_at, 
-                moved_at: None 
+            scope.vars.insert(name, VarMeta {
+                ty,
+                is_mut,
+                is_moved: false,
+                defined_at,
+                moved_at: None
             });
+        }
+    }
+
+    // Phase 5: Type Environment Management
+    pub fn register_function(&mut self, name: String, params: Vec<Type>, ret: Type) {
+        self.fn_registry.insert(name, (params, ret));
+    }
+
+    pub fn get_function(&self, name: &str) -> Option<(Vec<Type>, Type)> {
+        self.fn_registry.get(name).cloned()
+    }
+
+    pub fn register_type(&mut self, name: String, body: ast::TypeBody) {
+        self.type_registry.insert(name, body);
+    }
+
+    pub fn get_type(&self, name: &str) -> Option<ast::TypeBody> {
+        self.type_registry.get(name).cloned()
+    }
+
+    pub fn register_const(&mut self, name: String, ty: Type) {
+        self.const_registry.insert(name, ty);
+    }
+
+    pub fn get_const(&self, name: &str) -> Option<Type> {
+        self.const_registry.get(name).cloned()
+    }
+
+    // Phase 5: Pattern Matching Support
+    pub fn check_pattern(&mut self, pattern: &Spanned<ast::Pattern>, value_ty: &Type, _pattern_span: Span) {
+        match &pattern.node {
+            ast::Pattern::Bind(name) => {
+                // Bind pattern: extract variable
+                self.insert_var(name.clone(), value_ty.clone(), false, pattern.span);
+            }
+            ast::Pattern::Wildcard => {
+                // Wildcard: accept any type
+            }
+            ast::Pattern::Literal(lit) => {
+                // Literal pattern: verify value matches literal type
+                let lit_ty = match lit {
+                    ast::Literal::Int(_) => Type::Int,
+                    ast::Literal::Float(_) => Type::Float,
+                    ast::Literal::Bool(_) => Type::Bool,
+                    ast::Literal::Char(_) => Type::Char,
+                    ast::Literal::String(_) | ast::Literal::StringInterp(_) => Type::String,
+                    ast::Literal::Unit => Type::Unit,
+                };
+                if *value_ty != lit_ty && *value_ty != Type::Unknown {
+                    self.report_error(
+                        format!("Pattern type mismatch: expected {:?}, found {:?}", lit_ty, value_ty),
+                        pattern.span
+                    );
+                }
+            }
+            ast::Pattern::Tuple(pats) => {
+                // Tuple pattern: recursively check nested patterns
+                if let Type::Tuple(elem_types) = value_ty {
+                    if pats.len() != elem_types.len() {
+                        self.report_error(
+                            format!("Tuple pattern length mismatch: expected {}, got {}",
+                                elem_types.len(), pats.len()),
+                            pattern.span
+                        );
+                    }
+                    for (pat, elem_ty) in pats.iter().zip(elem_types.iter()) {
+                        self.check_pattern(pat, elem_ty, pat.span);
+                    }
+                } else {
+                    self.report_error(
+                        format!("Expected tuple pattern, got {:?}", value_ty),
+                        pattern.span
+                    );
+                }
+            }
+            ast::Pattern::Or(pats) => {
+                // Or pattern: all branches must be compatible
+                for pat in pats {
+                    self.check_pattern(pat, value_ty, pat.span);
+                }
+            }
+            ast::Pattern::Range { start: _, end: _, inclusive: _ } => {
+                // Range pattern: start and end must be comparable
+                if *value_ty != Type::Int && *value_ty != Type::Unknown {
+                    self.report_error(
+                        format!("Range pattern requires Int, got {:?}", value_ty),
+                        pattern.span
+                    );
+                }
+            }
+            ast::Pattern::Array(pats) => {
+                // Array pattern: all elements must match element type
+                match value_ty {
+                    Type::Named(name) if name.starts_with("Array") => {
+                        for pat in pats {
+                            self.check_pattern(pat, &Type::Unknown, pat.span);
+                        }
+                    }
+                    _ => {
+                        self.report_error(
+                            format!("Expected array pattern, got {:?}", value_ty),
+                            pattern.span
+                        );
+                    }
+                }
+            }
+            ast::Pattern::Record { ty: _, fields, rest: _ } => {
+                // Record pattern: verify fields exist (without type registry, skip validation)
+                for field in fields {
+                    if let Some(pat) = &field.pattern {
+                        self.check_pattern(pat, &Type::Unknown, pat.span);
+                    }
+                }
+            }
+            ast::Pattern::Variant { ty: _, args } => {
+                // Variant pattern: verify variant args (without ADT registry, skip validation)
+                for pat in args {
+                    self.check_pattern(pat, &Type::Unknown, pat.span);
+                }
+            }
+            ast::Pattern::Ref(pat) => {
+                // Reference pattern: unwrap reference type
+                if let Type::Reference { inner, .. } = value_ty {
+                    self.check_pattern(pat, inner, pattern.span);
+                } else {
+                    self.report_error(
+                        format!("Expected reference pattern, got {:?}", value_ty),
+                        pattern.span
+                    );
+                }
+            }
         }
     }
 
@@ -157,7 +300,7 @@ impl Checker {
 
     pub fn check_stmt(&mut self, stmt: &Spanned<ast::Stmt>) {
         match &stmt.node {
-            ast::Stmt::Let { pattern, is_mut, ty, value } => {
+            ast::Stmt::Let { pattern, is_mut: _, ty, value } => {
                 let name = match &pattern.node {
                     ast::Pattern::Bind(n) => n.clone(),
                     _ => "<pattern>".into(),
@@ -176,7 +319,8 @@ impl Checker {
                     val_ty = expected_ty;
                 }
 
-                self.insert_var(name, val_ty, *is_mut, stmt.span);
+                // Use check_pattern for comprehensive pattern matching
+                self.check_pattern(pattern, &val_ty, pattern.span);
                 self.context_stack.pop();
             }
             ast::Stmt::Expr(expr) => { self.infer_expr(expr); }
@@ -450,7 +594,7 @@ impl Checker {
                     _ => self.report_error("Can only index arrays or tuples".into(), base.span),
                 }
             }
-            ast::Expr::FieldAccess { base, field } => {
+            ast::Expr::FieldAccess { base, field: _ } => {
                 let _base_ty = self.infer_expr(base);
                 Type::Unknown // Would need record type registry
             }
@@ -516,19 +660,90 @@ impl Checker {
             ast::Expr::Await(_inner) => {
                 Type::Unknown // Async, would need effect tracking
             }
-            ast::Expr::Scope { label: _, options: _, body } => {
-                self.infer_block(body)
+            ast::Expr::Scope { label, options: _, body } => {
+                self.context_stack.push(format!("In scope{}",
+                    label.as_ref().map(|l| format!(" '{}'", l)).unwrap_or_default()));
+
+                // Push new scope effect context
+                self.effect_stack.push(self.active_effects.clone());
+                let body_ty = self.infer_block(body);
+                // Pop scope effect context
+                self.effect_stack.pop();
+
+                self.context_stack.pop();
+                body_ty
             }
-            ast::Expr::Region { label: _, body } => {
-                self.infer_block(body)
+            ast::Expr::Region { label, body } => {
+                self.context_stack.push(format!("In region{}",
+                    label.as_ref().map(|l| format!(" '{}'", l)).unwrap_or_default()));
+
+                // Push new region effect context
+                self.effect_stack.push(self.active_effects.clone());
+                let body_ty = self.infer_block(body);
+                // Pop region effect context
+                self.effect_stack.pop();
+
+                self.context_stack.pop();
+                body_ty
             }
             ast::Expr::Handle { expr: handler_expr, arms } => {
+                self.context_stack.push("In handle expression".into());
+
                 let _expr_ty = self.infer_expr(handler_expr);
+
                 let mut arm_types = Vec::new();
-                for _arm in arms {
-                    // TODO: implement handle arm type checking
-                    arm_types.push(Type::Unknown);
+                for arm in arms {
+                    // Type-check the arm body
+                    let arm_ty = self.infer_expr(&arm.body);
+                    arm_types.push(arm_ty);
+
+                    // Validate arm pattern if present
+                    if let Some(pat) = &arm.pattern {
+                        match &pat.node {
+                            ast::Pattern::Bind(name) => {
+                                self.insert_var(name.clone(), Type::Unknown, false, pat.span);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Register handled effect based on kind
+                    match &arm.kind {
+                        ast::HandleArmKind::Return => {
+                            // Return handler doesn't remove an effect
+                        }
+                        ast::HandleArmKind::Exn => {
+                            // Exception handler
+                            if !self.active_effects.contains(&"exn".to_string()) {
+                                self.report_error(
+                                    "Handling exn but no exn effect is active".into(),
+                                    expr.span
+                                );
+                            }
+                        }
+                        ast::HandleArmKind::Effect(effect_path) => {
+                            let effect_name = effect_path.join(".");
+                            if !self.active_effects.contains(&effect_name) {
+                                self.report_error(
+                                    format!("Handling effect {} but it is not active", effect_name),
+                                    expr.span
+                                );
+                            }
+                        }
+                    }
                 }
+
+                // All arms must have same type
+                if !arm_types.is_empty() {
+                    let first = arm_types[0].clone();
+                    for ty in arm_types.iter().skip(1) {
+                        if *ty != first && first != Type::Unknown && *ty != Type::Unknown {
+                            self.report_error("Handle arm types do not match".into(), expr.span);
+                        }
+                    }
+                }
+
+                self.context_stack.pop();
                 if arm_types.is_empty() { Type::Unknown } else { arm_types[0].clone() }
             }
             _ => self.report_error("Expression not supported yet".into(), expr.span),
