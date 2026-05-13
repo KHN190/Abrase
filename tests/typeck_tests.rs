@@ -3222,3 +3222,200 @@ fn verify_validate_where_clause_multiple_bounds_partially_satisfied() {
 
     assert!(!checker.validate_where_clause("T", "Bool"));
 }
+
+// Phase 13: Region Escape Analysis & Advanced Borrow Checking Tests
+
+#[test]
+fn verify_push_pop_region() {
+    let mut checker = Checker::new();
+
+    assert!(checker.get_current_region().is_none());
+
+    checker.push_region("region_a".into());
+    assert_eq!(checker.get_current_region(), Some("region_a"));
+
+    checker.push_region("region_b".into());
+    assert_eq!(checker.get_current_region(), Some("region_b"));
+
+    checker.pop_region();
+    assert_eq!(checker.get_current_region(), Some("region_a"));
+}
+
+#[test]
+fn verify_bind_reference_lifetime() {
+    let mut checker = Checker::new();
+
+    checker.bind_reference_lifetime("ref_x".into(), "region_a".into());
+
+    let lifetime = checker.get_reference_lifetime("ref_x");
+    assert_eq!(lifetime, Some("region_a".into()));
+}
+
+#[test]
+fn verify_reference_lifetime_not_found() {
+    let checker = Checker::new();
+
+    let lifetime = checker.get_reference_lifetime("unknown_ref");
+    assert!(lifetime.is_none());
+}
+
+#[test]
+fn verify_check_escape_analysis_same_region() {
+    let mut checker = Checker::new();
+
+    let valid = checker.check_escape_analysis(Some("region_a"), Some("region_a"), d_span());
+    assert!(valid);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_check_escape_analysis_different_regions() {
+    let mut checker = Checker::new();
+
+    let valid = checker.check_escape_analysis(Some("region_a"), Some("region_b"), d_span());
+    assert!(!valid);
+    assert!(!checker.errors.is_empty());
+}
+
+#[test]
+fn verify_check_escape_analysis_none_regions() {
+    let mut checker = Checker::new();
+
+    let valid = checker.check_escape_analysis(None, None, d_span());
+    assert!(valid);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_register_pattern_borrow() {
+    let mut checker = Checker::new();
+
+    checker.register_pattern_borrow("x".into(), "immut".into());
+    checker.register_pattern_borrow("y".into(), "mut".into());
+
+    let borrows_x = checker.get_pattern_borrows("x");
+    let borrows_y = checker.get_pattern_borrows("y");
+
+    assert!(borrows_x.is_some());
+    assert!(borrows_y.is_some());
+}
+
+#[test]
+fn verify_check_pattern_borrow_exclusivity_compatible() {
+    let mut checker = Checker::new();
+
+    checker.register_pattern_borrow("x".into(), "immut".into());
+    checker.register_pattern_borrow("y".into(), "immut".into());
+
+    let exclusive = checker.check_pattern_borrow_exclusivity(&["x", "y"]);
+    assert!(exclusive);
+}
+
+#[test]
+fn verify_check_pattern_borrow_exclusivity_conflict() {
+    let mut checker = Checker::new();
+
+    checker.register_pattern_borrow("x".into(), "mut".into());
+    checker.register_pattern_borrow("y".into(), "mut".into());
+
+    let exclusive = checker.check_pattern_borrow_exclusivity(&["x", "y"]);
+    assert!(!exclusive);
+}
+
+#[test]
+fn verify_check_pattern_borrow_exclusivity_immut_and_mut() {
+    let mut checker = Checker::new();
+
+    checker.register_pattern_borrow("x".into(), "immut".into());
+    checker.register_pattern_borrow("y".into(), "mut".into());
+
+    let exclusive = checker.check_pattern_borrow_exclusivity(&["x", "y"]);
+    assert!(exclusive);
+}
+
+#[test]
+fn verify_validate_reference_escape_same_region() {
+    let mut checker = Checker::new();
+
+    checker.bind_reference_lifetime("ref_x".into(), "region_a".into());
+    let valid = checker.validate_reference_escape("ref_x", Some("region_a"));
+    assert!(valid);
+}
+
+#[test]
+fn verify_validate_reference_escape_different_regions() {
+    let mut checker = Checker::new();
+
+    checker.bind_reference_lifetime("ref_x".into(), "region_a".into());
+    let valid = checker.validate_reference_escape("ref_x", Some("region_b"));
+    assert!(!valid);
+}
+
+#[test]
+fn verify_validate_reference_escape_none_lifetime() {
+    let checker = Checker::new();
+
+    let valid = checker.validate_reference_escape("unknown_ref", Some("region_a"));
+    assert!(valid);
+}
+
+#[test]
+fn verify_clear_region_context() {
+    let mut checker = Checker::new();
+
+    checker.push_region("region_a".into());
+    checker.bind_reference_lifetime("ref_x".into(), "region_a".into());
+    checker.register_pattern_borrow("x".into(), "immut".into());
+
+    assert_eq!(checker.get_current_region(), Some("region_a"));
+    assert!(checker.get_reference_lifetime("ref_x").is_some());
+    assert!(checker.get_pattern_borrows("x").is_some());
+
+    checker.clear_region_context();
+
+    assert!(checker.get_current_region().is_none());
+    assert!(checker.get_reference_lifetime("ref_x").is_none());
+    assert!(checker.get_pattern_borrows("x").is_none());
+}
+
+#[test]
+fn verify_region_stack_multiple_levels() {
+    let mut checker = Checker::new();
+
+    checker.push_region("outer".into());
+    checker.push_region("middle".into());
+    checker.push_region("inner".into());
+
+    assert_eq!(checker.get_current_region(), Some("inner"));
+
+    checker.pop_region();
+    assert_eq!(checker.get_current_region(), Some("middle"));
+
+    checker.pop_region();
+    assert_eq!(checker.get_current_region(), Some("outer"));
+
+    checker.pop_region();
+    assert!(checker.get_current_region().is_none());
+}
+
+#[test]
+fn verify_pattern_borrows_multiple_constraints() {
+    let mut checker = Checker::new();
+
+    checker.register_pattern_borrow("x".into(), "immut".into());
+    checker.register_pattern_borrow("x".into(), "noalias".into());
+
+    let borrows = checker.get_pattern_borrows("x");
+    assert_eq!(borrows.unwrap().len(), 2);
+}
+
+#[test]
+fn verify_reference_lifetime_overwrite() {
+    let mut checker = Checker::new();
+
+    checker.bind_reference_lifetime("ref_x".into(), "region_a".into());
+    assert_eq!(checker.get_reference_lifetime("ref_x"), Some("region_a".into()));
+
+    checker.bind_reference_lifetime("ref_x".into(), "region_b".into());
+    assert_eq!(checker.get_reference_lifetime("ref_x"), Some("region_b".into()));
+}
