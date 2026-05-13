@@ -158,7 +158,6 @@ fn verify_reference_operation() {
         op: ast::UnaryOp::Ref,
         right: Box::new(sp(ast::Expr::Identifier("x".into()))),
     });
-    // Setup the variable first
     checker.insert_var("x".into(), Type::Int, false, d_span());
     let result = checker.infer_expr(&ref_expr);
     assert_eq!(result, Type::Reference { is_mut: false, inner: Box::new(Type::Int) });
@@ -352,7 +351,6 @@ fn verify_borrow_checking_move_semantics() {
     let _ = checker.infer_expr(&move_expr);
     assert!(checker.errors.is_empty(), "First move should be valid");
 
-    // The second move should fail and push to errors
     let second_move = sp(ast::Expr::Identifier("text".into()));
     let _ = checker.infer_expr(&second_move);
 
@@ -566,7 +564,6 @@ fn verify_break_type_is_never() {
     };
     let expr = sp(ast::Expr::Loop { body });
     let _ty = checker.infer_expr(&expr);
-    // After break, the loop's type is from the break expression (Never propagates)
     assert!(checker.errors.is_empty());
 }
 
@@ -588,7 +585,7 @@ fn verify_throw_expression() {
     assert!(checker.errors.is_empty());
 }
 
-// Phase 2: Complex Expressions
+// Complex Expressions
 
 #[test]
 fn verify_function_call_type_checking() {
@@ -785,11 +782,10 @@ fn verify_field_access() {
     });
 
     let _ty = checker.infer_expr(&expr);
-    // FieldAccess returns Unknown until we have type registry
     assert!(checker.errors.is_empty());
 }
 
-// Phase 3: Advanced Expressions
+// Advanced Expressions
 
 #[test]
 fn verify_closure_expression_type() {
@@ -940,7 +936,7 @@ fn verify_region_expression() {
     assert!(checker.errors.is_empty());
 }
 
-// Phase 4: Special Scopes & Effects
+// Special Scopes & Effects
 
 #[test]
 fn verify_scope_with_label() {
@@ -1019,7 +1015,6 @@ fn verify_handle_return_arm() {
 
     let ty = checker.infer_expr(&expr);
     assert_eq!(ty, Type::Int);
-    // No error for return handler (it's always available)
     assert!(checker.errors.is_empty());
 }
 
@@ -1038,7 +1033,6 @@ fn verify_handle_exception_arm() {
     });
 
     checker.infer_expr(&expr);
-    // Should report error: handling exn but no exn effect is active
     assert_eq!(checker.errors.len(), 1);
     assert!(checker.errors[0].message.contains("no exn effect is active"));
 }
@@ -1058,7 +1052,6 @@ fn verify_handle_custom_effect() {
     });
 
     checker.infer_expr(&expr);
-    // Should report error: handling logger.log but it is not active
     assert_eq!(checker.errors.len(), 1);
     assert!(checker.errors[0].message.contains("not active"));
 }
@@ -1084,7 +1077,6 @@ fn verify_handle_multiple_arms_type_unification() {
 
     let ty = checker.infer_expr(&expr);
     assert_eq!(ty, Type::Int);
-    // Both arms return Int, so type unification succeeds
 }
 
 #[test]
@@ -1107,7 +1099,6 @@ fn verify_handle_arm_type_mismatch() {
     });
 
     checker.infer_expr(&expr);
-    // First arm is Int, second is String -> type mismatch error
     assert!(checker.errors.iter().any(|e| e.message.contains("Handle arm types do not match")));
 }
 
@@ -1188,7 +1179,6 @@ fn verify_handle_without_arms() {
 #[test]
 fn verify_scope_effect_isolation() {
     let mut checker = Checker::new();
-    // Verify that effect changes in scope don't leak out
     let scope_expr = sp(ast::Expr::Scope {
         label: Some("s".into()),
         options: None,
@@ -1206,7 +1196,6 @@ fn verify_scope_effect_isolation() {
 #[test]
 fn verify_region_effect_isolation() {
     let mut checker = Checker::new();
-    // Verify that effect changes in region don't leak out
     let region_expr = sp(ast::Expr::Region {
         label: Some("r".into()),
         body: ast::Block {
@@ -1220,7 +1209,7 @@ fn verify_region_effect_isolation() {
     assert!(checker.errors.is_empty());
 }
 
-// Phase 5: Infrastructure & Context Management
+// Infrastructure & Context Management
 
 #[test]
 fn verify_function_registry() {
@@ -1266,7 +1255,6 @@ fn verify_pattern_bind() {
     let pattern = sp(Pattern::Bind("x".into()));
     checker.check_pattern(&pattern, &Type::Int, d_span());
 
-    // Variable should be inserted
     let var_ty = checker.get_var("x", false, d_span());
     assert_eq!(var_ty, Type::Int);
 }
@@ -1276,7 +1264,6 @@ fn verify_pattern_wildcard() {
     let mut checker = Checker::new();
     let pattern = sp(Pattern::Wildcard);
     checker.check_pattern(&pattern, &Type::String, d_span());
-    // Wildcard accepts any type
     assert!(checker.errors.is_empty());
 }
 
@@ -1307,7 +1294,6 @@ fn verify_pattern_tuple_match() {
     let tuple_ty = Type::Tuple(vec![Type::Int, Type::Bool]);
     checker.check_pattern(&pattern, &tuple_ty, d_span());
 
-    // Both variables should be inserted
     assert_eq!(checker.get_var("x", false, d_span()), Type::Int);
     assert_eq!(checker.get_var("y", false, d_span()), Type::Bool);
     assert!(checker.errors.is_empty());
@@ -1335,7 +1321,6 @@ fn verify_pattern_or() {
     ]));
     checker.check_pattern(&pattern, &Type::Int, d_span());
 
-    // Both variables should be inserted
     assert_eq!(checker.get_var("a", false, d_span()), Type::Int);
     assert_eq!(checker.get_var("b", false, d_span()), Type::Int);
     assert!(checker.errors.is_empty());
@@ -1394,7 +1379,6 @@ fn verify_pattern_ref() {
     let ref_ty = Type::Reference { is_mut: false, inner: Box::new(Type::String) };
     checker.check_pattern(&pattern, &ref_ty, d_span());
 
-    // x should be bound to String (unwrapped from reference)
     assert_eq!(checker.get_var("x", false, d_span()), Type::String);
     assert!(checker.errors.is_empty());
 }
@@ -1426,7 +1410,6 @@ fn verify_let_with_tuple_pattern() {
 
     checker.check_stmt(&stmt);
 
-    // Both variables should be inserted
     assert_eq!(checker.get_var("x", false, d_span()), Type::Int);
     assert_eq!(checker.get_var("y", false, d_span()), Type::Bool);
     assert!(checker.errors.is_empty());
@@ -1446,7 +1429,6 @@ fn verify_pattern_record() {
         rest: false,
     });
     checker.check_pattern(&pattern, &Type::Named("Point".into()), d_span());
-    // Without type registry, we can't validate field names
     assert!(checker.errors.is_empty());
 }
 
@@ -1458,7 +1440,6 @@ fn verify_pattern_variant() {
         args: vec![sp(Pattern::Bind("val".into()))],
     });
     checker.check_pattern(&pattern, &Type::Named("Option".into()), d_span());
-    // Without ADT registry, we can't validate variant signature
     assert!(checker.errors.is_empty());
 }
 
@@ -1484,7 +1465,7 @@ fn verify_nested_pattern_tuple_and_bind() {
     assert!(checker.errors.is_empty());
 }
 
-// Phase 6: Type Conversion & Compatibility
+// Type Conversion & Compatibility
 
 #[test]
 fn verify_convert_primitive_types() {
@@ -1513,7 +1494,6 @@ fn verify_convert_generic_types() {
         args: vec![ast::Type::Named("Int".into())],
     };
     let converted = checker.convert_type(&generic);
-    // Should preserve generic information
     assert!(format!("{:?}", converted).contains("List"));
 }
 
@@ -1525,7 +1505,6 @@ fn verify_convert_array_with_size() {
         size: 16,
     };
     let converted = checker.convert_type(&array);
-    // Should preserve array size
     assert!(format!("{:?}", converted).contains("16"));
 }
 
@@ -1758,7 +1737,7 @@ fn verify_is_assignable() {
     assert!(!checker.is_assignable(&Type::Int, &Type::Bool));
 }
 
-// Phase 7: Ownership & Borrowing Tests
+// Ownership & Borrowing Tests
 
 #[test]
 fn verify_ownership_primitives_are_copy() {
@@ -1866,7 +1845,6 @@ fn verify_move_copy_type_when_using_identifier() {
     let expr = sp(ast::Expr::Identifier("x".into()));
     let ty = checker.infer_expr(&expr);
     assert_eq!(ty, Type::Int);
-    // Int is Copy, so x should not be marked as moved
     assert!(checker.errors.is_empty());
 }
 
@@ -1945,7 +1923,6 @@ fn verify_ownership_in_let_statement_copy() {
     });
     checker.check_stmt(&stmt);
     assert!(checker.errors.is_empty());
-    // x should be defined and have type Int
 }
 
 #[test]
@@ -1973,7 +1950,6 @@ fn verify_copy_semantics_multiple_uses() {
     let expr2 = sp(ast::Expr::Identifier("x".into()));
     checker.infer_expr(&expr2);
 
-    // Both uses should succeed for Copy types
     assert!(checker.errors.is_empty());
 }
 
@@ -1983,8 +1959,6 @@ fn verify_release_borrow() {
     checker.insert_var("x".into(), Type::Int, false, d_span());
     checker.try_immut_borrow("x", d_span()).unwrap();
     checker.release_borrow("x");
-    // After release, new mutable borrow should fail because immut count may still be > 0
-    // Let's just verify the release doesn't panic
     assert!(true);
 }
 
@@ -1998,4 +1972,310 @@ fn verify_check_ownership_method() {
 
     let ref_ty = Type::Reference { is_mut: false, inner: Box::new(Type::String) };
     assert_eq!(checker.check_ownership(&ref_ty), Ownership::Copy);
+}
+
+// Effects System Tests
+
+#[test]
+fn verify_effect_registration() {
+    let mut checker = Checker::new();
+    checker.register_effect("io".into(), vec!["read".into(), "write".into()]);
+
+    let effect = checker.get_effect("io");
+    assert!(effect.is_some());
+    assert_eq!(effect.unwrap(), vec!["read", "write"]);
+}
+
+#[test]
+fn verify_effect_alias_registration() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    let effects = vec![Effect::Async, Effect::Alloc];
+    checker.register_effect_alias("concurrent".into(), effects.clone());
+
+    let alias = checker.get_effect_alias("concurrent");
+    assert!(alias.is_some());
+    assert_eq!(alias.unwrap().len(), 2);
+}
+
+#[test]
+fn verify_push_and_pop_effect() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    checker.push_effect(Effect::Async);
+    checker.push_effect(Effect::Alloc);
+
+    let expected = vec![Effect::Async, Effect::Alloc];
+    assert!(checker.effects_compatible(&expected, &expected));
+
+    checker.pop_effect();
+    let expected2 = vec![Effect::Async];
+    assert!(checker.effects_compatible(&expected2, &expected2));
+}
+
+#[test]
+fn verify_effects_equal_total() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    assert!(checker.effects_equal(&Effect::Total, &Effect::Total));
+    assert!(!checker.effects_equal(&Effect::Total, &Effect::Async));
+}
+
+#[test]
+fn verify_effects_equal_async() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    assert!(checker.effects_equal(&Effect::Async, &Effect::Async));
+}
+
+#[test]
+fn verify_effects_equal_alloc() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    assert!(checker.effects_equal(&Effect::Alloc, &Effect::Alloc));
+}
+
+#[test]
+fn verify_effects_equal_nondet() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    assert!(checker.effects_equal(&Effect::Nondet, &Effect::Nondet));
+}
+
+#[test]
+fn verify_effects_equal_exn_same_type() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let exn1 = Effect::Exn(Box::new(Type::String));
+    let exn2 = Effect::Exn(Box::new(Type::String));
+
+    assert!(checker.effects_equal(&exn1, &exn2));
+}
+
+#[test]
+fn verify_effects_equal_exn_different_type() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let exn1 = Effect::Exn(Box::new(Type::String));
+    let exn2 = Effect::Exn(Box::new(Type::Int));
+
+    assert!(!checker.effects_equal(&exn1, &exn2));
+}
+
+#[test]
+fn verify_effects_compatible_empty() {
+    let checker = Checker::new();
+
+    assert!(checker.effects_compatible(&[], &[]));
+    assert!(checker.effects_compatible(&[], &vec![ect::ty::Effect::Async]));
+}
+
+#[test]
+fn verify_effects_compatible_single_effect() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let expected = vec![Effect::Async];
+    let actual = vec![Effect::Async];
+
+    assert!(checker.effects_compatible(&expected, &actual));
+}
+
+#[test]
+fn verify_effects_compatible_subset() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let expected = vec![Effect::Async];
+    let actual = vec![Effect::Async, Effect::Alloc];
+
+    assert!(checker.effects_compatible(&expected, &actual));
+}
+
+#[test]
+fn verify_effects_compatible_missing_effect() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let expected = vec![Effect::Async, Effect::Alloc];
+    let actual = vec![Effect::Async];
+
+    assert!(!checker.effects_compatible(&expected, &actual));
+}
+
+#[test]
+fn verify_convert_effect_io() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let effect_item = ast::EffectItem {
+        name: vec!["io".into()],
+        arg: None,
+    };
+
+    let converted = checker.convert_effect(&effect_item);
+    assert!(converted.is_some());
+    assert!(matches!(converted.unwrap(), Effect::Alloc));
+}
+
+#[test]
+fn verify_convert_effect_async() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let effect_item = ast::EffectItem {
+        name: vec!["async".into()],
+        arg: None,
+    };
+
+    let converted = checker.convert_effect(&effect_item);
+    assert!(converted.is_some());
+    assert!(matches!(converted.unwrap(), Effect::Async));
+}
+
+#[test]
+fn verify_convert_effect_exn_no_arg() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let effect_item = ast::EffectItem {
+        name: vec!["exn".into()],
+        arg: None,
+    };
+
+    let converted = checker.convert_effect(&effect_item);
+    assert!(converted.is_some());
+    match converted.unwrap() {
+        Effect::Exn(exc_ty) => {
+            assert_eq!(*exc_ty, Type::Named("Exception".into()));
+        },
+        _ => panic!("Expected Exn effect"),
+    }
+}
+
+#[test]
+fn verify_convert_effect_exn_with_arg() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let effect_item = ast::EffectItem {
+        name: vec!["exn".into()],
+        arg: Some(Box::new(ast::Type::Named("CustomError".into()))),
+    };
+
+    let converted = checker.convert_effect(&effect_item);
+    assert!(converted.is_some());
+    match converted.unwrap() {
+        Effect::Exn(exc_ty) => {
+            assert_eq!(*exc_ty, Type::Named("CustomError".into()));
+        },
+        _ => panic!("Expected Exn effect"),
+    }
+}
+
+#[test]
+fn verify_convert_effect_nondet() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let effect_item = ast::EffectItem {
+        name: vec!["nondet".into()],
+        arg: None,
+    };
+
+    let converted = checker.convert_effect(&effect_item);
+    assert!(converted.is_some());
+    assert!(matches!(converted.unwrap(), Effect::Nondet));
+}
+
+#[test]
+fn verify_function_type_with_effects() {
+    let _checker = Checker::new();
+    use ect::ty::Effect;
+
+    let fn_type = Type::Function {
+        params: vec![Type::Int],
+        effects: vec![Effect::Async],
+        ret: Box::new(Type::Bool),
+    };
+
+    match fn_type {
+        Type::Function { effects, .. } => {
+            assert_eq!(effects.len(), 1);
+            assert!(matches!(&effects[0], Effect::Async));
+        },
+        _ => panic!("Expected function type"),
+    }
+}
+
+#[test]
+fn verify_function_type_multiple_effects() {
+    let _checker = Checker::new();
+    use ect::ty::Effect;
+
+    let fn_type = Type::Function {
+        params: vec![Type::Int],
+        effects: vec![Effect::Async, Effect::Alloc],
+        ret: Box::new(Type::Bool),
+    };
+
+    match fn_type {
+        Type::Function { effects, .. } => {
+            assert_eq!(effects.len(), 2);
+        },
+        _ => panic!("Expected function type"),
+    }
+}
+
+#[test]
+fn verify_effect_total() {
+    let _checker = Checker::new();
+    use ect::ty::Effect;
+
+    assert!(matches!(Effect::Total, Effect::Total));
+}
+
+#[test]
+fn verify_convert_effect_alloc() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let effect_item = ast::EffectItem {
+        name: vec!["alloc".into()],
+        arg: None,
+    };
+
+    let converted = checker.convert_effect(&effect_item);
+    assert!(converted.is_some());
+    assert!(matches!(converted.unwrap(), Effect::Alloc));
+}
+
+#[test]
+fn verify_effect_compatibility_with_multiple_effects() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let expected = vec![Effect::Async, Effect::Alloc];
+    let actual = vec![Effect::Async, Effect::Alloc, Effect::Nondet];
+
+    assert!(checker.effects_compatible(&expected, &actual));
+}
+
+#[test]
+fn verify_effect_compatibility_order_independent() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let expected = vec![Effect::Alloc, Effect::Async];
+    let actual = vec![Effect::Async, Effect::Alloc];
+
+    assert!(checker.effects_compatible(&expected, &actual));
 }

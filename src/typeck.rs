@@ -237,7 +237,7 @@ impl Checker {
         })
     }
 
-    fn effects_equal(&self, e1: &crate::ty::Effect, e2: &crate::ty::Effect) -> bool {
+    pub fn effects_equal(&self, e1: &crate::ty::Effect, e2: &crate::ty::Effect) -> bool {
         match (e1, e2) {
             (crate::ty::Effect::Total, crate::ty::Effect::Total) => true,
             (crate::ty::Effect::Async, crate::ty::Effect::Async) => true,
