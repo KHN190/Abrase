@@ -1,17 +1,28 @@
 use crate::ast::Span;
 
+/// A segment of a string literal that contains interpolation.
+/// `"hello {name}, age {user.age}"` →
+///   [Literal("hello "), Interp(["name"]), Literal(", age "), Interp(["user", "age"])]
+#[derive(Debug, PartialEq, Clone)]
+pub enum StringPart {
+    Literal(String),
+    Interp(Vec<String>), // path segments, e.g. ["user", "name"] for {user.name}
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     // Keywords
-    Fn, Let, Const, If, Else, Match, For, While, Loop, Break, Continue, 
-    Return, Type, Trait, Impl, Import, Mod, Pub, Scope, Region, Handle, 
+    Fn, Let, Const, If, Else, Match, For, While, Loop, Break, Continue,
+    Return, Type, Trait, Impl, Import, Mod, Pub, Scope, Region, Handle,
     Throw, True, False, Where, Async, Await, In, As, SelfKW, SelfUpper, Mut, Thread,
+    Underscore,
 
     // Identifiers and Literals
     Ident(String),
     Int(i64),
     Float(f64),
     String(String),
+    StringInterp(Vec<StringPart>),
     Char(char),
 
     // Operators
@@ -115,6 +126,7 @@ impl<'a> Lexer<'a> {
             "Self" => Token::SelfUpper,
             "mut" => Token::Mut,
             "thread" => Token::Thread,
+            "_" => Token::Underscore,
             _ => Token::Ident(ident),
         }
     }
@@ -212,7 +224,7 @@ impl<'a> Lexer<'a> {
         (token, start_span)
     }
 
-    fn read_number(&mut self, span: Span) -> (Token, Span){
+    fn read_number(&mut self, span: Span) -> (Token, Span) {
         let mut number = String::new();
         let mut is_float = false;
 
@@ -220,11 +232,23 @@ impl<'a> Lexer<'a> {
             if c.is_ascii_digit() {
                 number.push(c);
                 self.read_char();
-            } else if c == '.' && self.peek_char != Some('.') {
+            } else if c == '.' && !is_float && self.peek_char != Some('.')
+                && matches!(self.peek_char, Some(d) if d.is_ascii_digit())
+            {
                 is_float = true;
                 number.push(c);
                 self.read_char();
-            } else { break; }
+            } else if (c == 'e' || c == 'E') && !number.is_empty() {
+                is_float = true;
+                number.push(c);
+                self.read_char();
+                if matches!(self.current_char, Some('+') | Some('-')) {
+                    number.push(self.current_char.unwrap());
+                    self.read_char();
+                }
+            } else {
+                break;
+            }
         }
 
         if is_float {
@@ -234,21 +258,105 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_string(&mut self, span: Span) -> (Token, Span) {
-        self.read_char(); // skip opening quote
-        let mut str_val = String::new();
-        while let Some(c) = self.current_char {
-            if c == '"' { self.read_char(); break; }
-            str_val.push(c);
-            self.read_char();
+    /// Reads a `\` escape sequence, advancing past all consumed characters.
+    /// Assumes current_char is `\` on entry.
+    fn read_escape(&mut self) -> char {
+        self.read_char(); // skip '\'
+        match self.current_char {
+            Some('n')  => { self.read_char(); '\n' }
+            Some('t')  => { self.read_char(); '\t' }
+            Some('r')  => { self.read_char(); '\r' }
+            Some('\\') => { self.read_char(); '\\' }
+            Some('"')  => { self.read_char(); '"'  }
+            Some('\'') => { self.read_char(); '\'' }
+            Some('0')  => { self.read_char(); '\0' }
+            Some('u')  => {
+                self.read_char(); // skip 'u'
+                if self.current_char == Some('{') {
+                    self.read_char(); // skip '{'
+                    let mut hex = String::new();
+                    while let Some(c) = self.current_char {
+                        if c == '}' { self.read_char(); break; }
+                        hex.push(c);
+                        self.read_char();
+                    }
+                    let codepoint = u32::from_str_radix(&hex, 16).unwrap_or(0);
+                    char::from_u32(codepoint).unwrap_or('\0')
+                } else {
+                    '\0'
+                }
+            }
+            Some(c) => { self.read_char(); c } // unknown escape: keep literal char
+            None => '\0',
         }
-        (Token::String(str_val), span)
+    }
+
+    fn read_string(&mut self, span: Span) -> (Token, Span) {
+        self.read_char(); // skip opening "
+        let mut parts: Vec<StringPart> = Vec::new();
+        let mut literal = String::new();
+        let mut has_interp = false;
+
+        while let Some(c) = self.current_char {
+            match c {
+                '"' => { self.read_char(); break; }
+                '\\' => literal.push(self.read_escape()),
+                '{' => {
+                    self.read_char(); // skip '{'
+                    if !literal.is_empty() {
+                        parts.push(StringPart::Literal(std::mem::take(&mut literal)));
+                    }
+                    let mut path: Vec<String> = Vec::new();
+                    let mut seg = String::new();
+                    while let Some(ic) = self.current_char {
+                        match ic {
+                            '}' => {
+                                self.read_char();
+                                if !seg.is_empty() { path.push(seg); }
+                                break;
+                            }
+                            '.' => {
+                                path.push(std::mem::take(&mut seg));
+                                self.read_char();
+                            }
+                            c if c.is_alphanumeric() || c == '_' => {
+                                seg.push(c);
+                                self.read_char();
+                            }
+                            _ => { self.read_char(); break; } // malformed interpolation
+                        }
+                    }
+                    if !path.is_empty() {
+                        has_interp = true;
+                        parts.push(StringPart::Interp(path));
+                    }
+                }
+                _ => { literal.push(c); self.read_char(); }
+            }
+        }
+
+        if !literal.is_empty() {
+            parts.push(StringPart::Literal(literal));
+        }
+
+        if !has_interp {
+            let s = parts.into_iter().map(|p| match p {
+                StringPart::Literal(s) => s,
+                StringPart::Interp(_) => unreachable!(),
+            }).collect();
+            return (Token::String(s), span);
+        }
+
+        (Token::StringInterp(parts), span)
     }
 
     fn read_char_literal(&mut self, span: Span) -> (Token, Span) {
-        self.read_char(); // skip opening tick
-        let c = self.current_char.unwrap_or('\0');
-        self.read_char(); // consume char
+        self.read_char(); // skip opening '
+        let c = match self.current_char {
+            Some('\\') => self.read_escape(),
+            Some(c) => { self.read_char(); c }
+            None => '\0',
+        };
         if self.current_char == Some('\'') { self.read_char(); }
         (Token::Char(c), span)
     }
