@@ -1,7 +1,7 @@
 // src/typeck.rs
 
 use std::collections::HashMap;
-use crate::ast::{self, Span, Spanned};
+use crate::ast::{self, Span};
 use crate::ty::{Ownership, Type};
 
 fn elem_name(ty: &ast::Type) -> String {

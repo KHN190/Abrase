@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use crate::ast;
-use crate::bytecode;
 use crate::host;
 
 pub struct Compiler<'a> {

@@ -1,6 +1,5 @@
-use std::collections::HashMap;
 use crate::ast;
-use crate::ast::{Span, Spanned};
+use crate::ast::Span;
 use crate::ty::{Ownership, Type};
 use super::*;
 

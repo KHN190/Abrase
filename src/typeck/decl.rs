@@ -147,7 +147,7 @@ impl Checker {
                 }
             },
 
-            ast::Decl::Impl { methods, for_type, trait_name, .. } => {
+            ast::Decl::Impl { methods,   .. } => {
                 for method in methods {
                     self.check_fn_decl(method);
                 }
