@@ -1,0 +1,464 @@
+use std::collections::HashMap;
+use crate::ast;
+use crate::ast::{Span, Spanned};
+use crate::ty::{Ownership, Type};
+use super::*;
+
+impl Checker {
+
+    // Type Environment Management
+
+    pub fn register_function(&mut self, name: String, params: Vec<Type>, ret: Type) {
+        self.fn_registry.insert(name, (params, ret));
+    }
+
+    pub fn get_function(&self, name: &str) -> Option<(Vec<Type>, Type)> {
+        self.fn_registry.get(name).cloned()
+    }
+
+    pub fn register_function_type(&mut self, name: String, sig: (Vec<Type>, Type)) {
+        self.fn_registry.insert(name, sig);
+    }
+
+    pub fn register_type(&mut self, name: String, body: ast::TypeBody) {
+        if let ast::TypeBody::Variant(cases) = &body {
+            let case_names: Vec<String> = cases.iter().map(|c| match c {
+                ast::VariantCase::Unit(n) => n.clone(),
+                ast::VariantCase::Tuple(n, _) => n.clone(),
+                ast::VariantCase::Record(n, _) => n.clone(),
+            }).collect();
+            self.variant_registry.insert(name.clone(), case_names);
+        }
+        self.type_registry.insert(name, body);
+    }
+
+    pub fn get_type(&self, name: &str) -> Option<ast::TypeBody> {
+        self.type_registry.get(name).cloned()
+    }
+
+    pub fn register_variant_cases(&mut self, type_name: String, cases: Vec<String>) {
+        self.variant_registry.insert(type_name, cases);
+    }
+
+    pub fn get_variant_cases(&self, type_name: &str) -> Option<&Vec<String>> {
+        self.variant_registry.get(type_name)
+    }
+
+    pub fn register_const(&mut self, name: String, ty: Type) {
+        self.const_registry.insert(name, ty);
+    }
+
+    pub fn get_const(&self, name: &str) -> Option<Type> {
+        self.const_registry.get(name).cloned()
+    }
+
+    // Generic Variance
+
+    pub fn register_type_variance(&mut self, type_name: String, variances: Vec<crate::ty::Variance>) {
+        self.variance_registry.insert(type_name, variances);
+    }
+
+    pub fn get_type_variance(&self, type_name: &str) -> Option<&Vec<crate::ty::Variance>> {
+        self.variance_registry.get(type_name)
+    }
+
+    pub fn register_named_subtype(&mut self, sub: String, sup: String) {
+        self.named_subtype_registry
+            .entry(sub)
+            .or_insert_with(Vec::new)
+            .push(sup);
+    }
+
+    pub fn is_subtype(&self, sub: &Type, sup: &Type) -> bool {
+        match (sub, sup) {
+            (Type::Unknown, _) | (_, Type::Unknown) => true,
+            (a, b) if a == b => true,
+            (Type::Generic { name: s1, args: a1 }, Type::Generic { name: s2, args: a2 }) => {
+                s1 == s2 && a1.len() == a2.len() &&
+                a1.iter().zip(a2.iter()).all(|(sa, pa)| self.is_subtype(sa, pa))
+            }
+            (Type::Named(s1), Type::Named(s2)) => {
+                self.is_generic_subtype(s1, s2) || self.is_named_subtype(s1, s2)
+            }
+            (Type::Function { params: p1, ret: r1, .. },
+             Type::Function { params: p2, ret: r2, .. }) => {
+                p1.len() == p2.len()
+                    && p1.iter().zip(p2.iter()).all(|(sp, pp)| self.is_subtype(pp, sp))
+                    && self.is_subtype(r1, r2)
+            }
+            (Type::Tuple(e1), Type::Tuple(e2)) => {
+                e1.len() == e2.len()
+                    && e1.iter().zip(e2.iter()).all(|(s, p)| self.is_subtype(s, p))
+            }
+            _ => false,
+        }
+    }
+
+    fn is_named_subtype(&self, sub: &str, sup: &str) -> bool {
+        if sub == sup {
+            return true;
+        }
+        if let Some(supertypes) = self.named_subtype_registry.get(sub) {
+            for supertype in supertypes {
+                if supertype == sup {
+                    return true;
+                }
+                if self.is_named_subtype_with_depth(sub, sup, 10) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn is_named_subtype_with_depth(&self, sub: &str, sup: &str, depth: usize) -> bool {
+        if depth == 0 || sub == sup {
+            return sub == sup;
+        }
+        if let Some(supertypes) = self.named_subtype_registry.get(sub) {
+            for supertype in supertypes {
+                if supertype == sup || self.is_named_subtype_with_depth(supertype, sup, depth - 1) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn is_generic_subtype(&self, sub_str: &str, sup_str: &str) -> bool {
+        if sub_str == sup_str {
+            return true;
+        }
+        match (Self::parse_generic_named(sub_str), Self::parse_generic_named(sup_str)) {
+            (Some((sub_name, sub_args)), Some((sup_name, sup_args)))
+                if sub_name == sup_name && sub_args.len() == sup_args.len() =>
+            {
+                let variances = match self.variance_registry.get(sub_name) {
+                    Some(v) => v.clone(),
+                    None => return sub_str == sup_str,
+                };
+                sub_args
+                    .iter()
+                    .zip(sup_args.iter())
+                    .enumerate()
+                    .all(|(i, (sa, pa))| {
+                        let variance = variances
+                            .get(i)
+                            .copied()
+                            .unwrap_or(crate::ty::Variance::Invariant);
+                        match variance {
+                            crate::ty::Variance::Covariant => {
+                                self.is_generic_subtype(sa.trim(), pa.trim())
+                                    || self.is_named_subtype(sa.trim(), pa.trim())
+                            }
+                            crate::ty::Variance::Contravariant => {
+                                self.is_generic_subtype(pa.trim(), sa.trim())
+                                    || self.is_named_subtype(pa.trim(), sa.trim())
+                            }
+                            crate::ty::Variance::Invariant => sa.trim() == pa.trim(),
+                        }
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    fn parse_generic_named(s: &str) -> Option<(&str, Vec<&str>)> {
+        let lt = s.find('<')?;
+        if !s.ends_with('>') {
+            return None;
+        }
+        let name = &s[..lt];
+        let args_str = &s[lt + 1..s.len() - 1];
+        let args = Self::split_top_level(args_str, ',');
+        Some((name, args))
+    }
+
+    fn split_top_level(s: &str, sep: char) -> Vec<&str> {
+        let mut result = Vec::new();
+        let mut current_start = 0;
+        let mut depth = 0;
+        for (i, c) in s.char_indices() {
+            if c == '<' {
+                depth += 1;
+            } else if c == '>' {
+                depth -= 1;
+            } else if c == sep && depth == 0 {
+                result.push(s[current_start..i].trim());
+                current_start = i + 1;
+            }
+        }
+        if current_start < s.len() {
+            result.push(s[current_start..].trim());
+        }
+        result.into_iter().filter(|x| !x.is_empty()).collect()
+    }
+
+    // Type Compatibility & Unification
+
+    pub fn types_compatible(&self, expected: &Type, actual: &Type) -> bool {
+        match (expected, actual) {
+            (a, b) if a == b => true,
+            (Type::Unknown, _) | (_, Type::Unknown) => true,
+            (Type::Generic { name: e_name, args: e_args }, Type::Generic { name: a_name, args: a_args }) => {
+                e_name == a_name && e_args.len() == a_args.len() &&
+                e_args.iter().zip(a_args.iter())
+                    .all(|(e, a)| self.types_compatible(e, a))
+            },
+            (Type::Named(exp_name), Type::Named(act_name)) => {
+                exp_name == act_name
+                    || self.are_types_equivalent(exp_name, act_name)
+                    || self.is_generic_subtype(act_name, exp_name)
+            },
+            (Type::Tuple(exp_elems), Type::Tuple(act_elems)) => {
+                exp_elems.len() == act_elems.len() &&
+                exp_elems.iter().zip(act_elems.iter())
+                    .all(|(e, a)| self.types_compatible(e, a))
+            },
+            (Type::Reference { is_mut: e_mut, inner: e_inner },
+             Type::Reference { is_mut: a_mut, inner: a_inner }) => {
+                e_mut == a_mut && self.types_compatible(e_inner, a_inner)
+            },
+            (Type::Function { params: e_params, ret: e_ret, .. },
+             Type::Function { params: a_params, ret: a_ret, .. }) => {
+                e_params.len() == a_params.len() &&
+                e_params.iter().zip(a_params.iter())
+                    .all(|(e, a)| self.types_compatible(e, a)) &&
+                self.types_compatible(e_ret, a_ret)
+            },
+            _ => false,
+        }
+    }
+
+    pub fn are_types_equivalent(&self, ty1: &str, ty2: &str) -> bool {
+        if ty1 == ty2 {
+            return true;
+        }
+
+        match (self.type_registry.get(ty1), self.type_registry.get(ty2)) {
+            (Some(def1), Some(def2)) => {
+
+                match (def1, def2) {
+                    (ast::TypeBody::Record(fields1), ast::TypeBody::Record(fields2)) => {
+                        if fields1.len() != fields2.len() {
+                            return false;
+                        }
+                        fields1.iter().zip(fields2.iter()).all(|(f1, f2)| {
+                            f1.name == f2.name && self.convert_type(&f1.ty) == self.convert_type(&f2.ty)
+                        })
+                    }
+                    (ast::TypeBody::Variant(vars1), ast::TypeBody::Variant(vars2)) => {
+                        if vars1.len() != vars2.len() {
+                            return false;
+                        }
+                        vars1.iter().zip(vars2.iter()).all(|(v1, v2)| {
+                            match (v1, v2) {
+                                (ast::VariantCase::Unit(n1), ast::VariantCase::Unit(n2)) => n1 == n2,
+                                (ast::VariantCase::Tuple(n1, ts1), ast::VariantCase::Tuple(n2, ts2)) => {
+                                    n1 == n2 && ts1.len() == ts2.len() &&
+                                    ts1.iter().zip(ts2.iter()).all(|(t1, t2)| self.convert_type(t1) == self.convert_type(t2))
+                                }
+                                (ast::VariantCase::Record(n1, f1), ast::VariantCase::Record(n2, f2)) => {
+                                    n1 == n2 && f1.len() == f2.len() &&
+                                    f1.iter().zip(f2.iter()).all(|(rf1, rf2)| {
+                                        rf1.name == rf2.name && self.convert_type(&rf1.ty) == self.convert_type(&rf2.ty)
+                                    })
+                                }
+                                _ => false,
+                            }
+                        })
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    pub fn unify_types(&self, ty1: &Type, ty2: &Type) -> Option<Type> {
+        match (ty1, ty2) {
+            (a, b) if a == b => Some(a.clone()),
+            (Type::Unknown, b) => Some(b.clone()),
+            (a, Type::Unknown) => Some(a.clone()),
+            (Type::Tuple(elems1), Type::Tuple(elems2)) if elems1.len() == elems2.len() => {
+                let unified: Option<Vec<_>> = elems1.iter().zip(elems2.iter())
+                    .map(|(e1, e2)| self.unify_types(e1, e2))
+                    .collect();
+                unified.map(Type::Tuple)
+            },
+            (Type::Reference { is_mut: m1, inner: i1 },
+             Type::Reference { is_mut: m2, inner: i2 }) if m1 == m2 => {
+                self.unify_types(i1, i2).map(|inner| Type::Reference {
+                    is_mut: *m1,
+                    inner: Box::new(inner),
+                })
+            },
+            (Type::Function { params: p1, ret: r1, .. },
+             Type::Function { params: p2, ret: r2, .. }) if p1.len() == p2.len() => {
+                let unified_params: Option<Vec<_>> = p1.iter().zip(p2.iter())
+                    .map(|(pp1, pp2)| self.unify_types(pp1, pp2))
+                    .collect();
+                let unified_ret = self.unify_types(r1, r2);
+                match (unified_params, unified_ret) {
+                    (Some(params), Some(ret)) => Some(Type::Function {
+                        params,
+                        effects: vec![],
+                        ret: Box::new(ret),
+                    }),
+                    _ => None,
+                }
+            },
+            _ => None,
+        }
+    }
+
+    pub fn is_assignable(&self, expected: &Type, actual: &Type) -> bool {
+        self.types_compatible(expected, actual) || self.is_subtype(actual, expected)
+    }
+
+    pub fn check_stmt(&mut self, stmt: &Spanned<ast::Stmt>) {
+        match &stmt.node {
+            ast::Stmt::Let { pattern, is_mut: _, ty, value } => {
+                let name = match &pattern.node {
+                    ast::Pattern::Bind(n) => n.clone(),
+                    _ => "<pattern>".into(),
+                };
+                self.context_stack.push(format!("In let binding for '{}'", name));
+                let mut val_ty = self.infer_expr(value);
+
+                if let Some(expected_ast_ty) = ty {
+                    let expected_ty = self.convert_type(expected_ast_ty);
+                    if expected_ty != val_ty && val_ty != Type::Unknown {
+                        self.report_error(
+                            format!("Type mismatch: expected {:?}, found {:?}", expected_ty, val_ty),
+                            value.span
+                        );
+                    }
+                    val_ty = expected_ty;
+                }
+                self.check_pattern(pattern, &val_ty, pattern.span);
+                self.context_stack.pop();
+            }
+            ast::Stmt::Expr(expr) => { self.infer_expr(expr); }
+            ast::Stmt::Empty => {}
+        }
+    }
+
+    pub fn check_recursive_type(&mut self, type_name: &str, body: &ast::TypeBody, span: Span) -> bool {
+        self.check_type_recursion(type_name, body, &mut std::collections::HashSet::new(), span)
+    }
+
+    pub fn check_type_recursion(
+        &mut self,
+        type_name: &str,
+        body: &ast::TypeBody,
+        visited: &mut std::collections::HashSet<String>,
+        span: Span,
+    ) -> bool {
+        if visited.contains(type_name) {
+            self.report_error(
+                format!("Recursive type cycle detected in '{}'", type_name),
+                span,
+            );
+            return false;
+        }
+        visited.insert(type_name.to_string());
+
+        let valid = match body {
+            ast::TypeBody::Record(fields) => {
+                let mut all_valid = true;
+                for field in fields {
+                    if !self.is_type_valid(&field.ty, type_name, visited, span) {
+                        all_valid = false;
+                    }
+                }
+                all_valid
+            }
+            ast::TypeBody::Variant(cases) => {
+                let mut all_valid = true;
+                for case in cases {
+                    match case {
+                        ast::VariantCase::Unit(_) => {}
+                        ast::VariantCase::Tuple(_, types) => {
+                            for ty in types {
+                                if !self.is_type_valid(ty, type_name, visited, span) {
+                                    all_valid = false;
+                                }
+                            }
+                        }
+                        ast::VariantCase::Record(_, fields) => {
+                            for field in fields {
+                                if !self.is_type_valid(&field.ty, type_name, visited, span) {
+                                    all_valid = false;
+                                }
+                            }
+                        }
+                    }
+                }
+                all_valid
+            }
+        };
+
+        visited.remove(type_name);
+        valid
+    }
+
+    fn is_type_valid(
+        &mut self,
+        ty: &ast::Type,
+        self_type: &str,
+        visited: &mut std::collections::HashSet<String>,
+        span: Span,
+    ) -> bool {
+        match ty {
+            ast::Type::Named(name) => {
+                if name == self_type {
+                    self.report_error(
+                        format!("Type '{}' has recursive cycle: direct self-reference detected", self_type),
+                        span,
+                    );
+                    return false;
+                }
+                if visited.contains(name) {
+                    self.report_error(
+                        format!("Type '{}' has recursive cycle detected", self_type),
+                        span,
+                    );
+                    return false;
+                }
+                if let Some(body) = self.get_type(name) {
+                    if !self.check_type_recursion(name, &body, visited, span) {
+                        return false;
+                    }
+                }
+                true
+            }
+            ast::Type::Reference { .. } => {
+                // References have fixed size, so self-reference through reference is allowed
+                // The reference breaks the cycle, so we don't check the inner type
+                true
+            }
+            ast::Type::Array { elem, .. } => {
+                // Arrays have fixed size (compile-time length), so recursion is ok
+                self.is_type_valid(elem, self_type, visited, span)
+            }
+            _ => true, // Primitive types and other constructs are valid
+        }
+    }
+
+    pub fn detect_type_cycles(&mut self) -> bool {
+        let type_names: Vec<String> = self.type_registry.keys().cloned().collect();
+        let mut has_cycles = false;
+        // ERROR: the size for values of type `str` cannot be known at compilation time
+        for type_name in type_names {
+            let body = self.type_registry.get(&type_name).cloned();
+            if let Some(body) = body {
+                let mut visited = std::collections::HashSet::new();
+                if !self.check_type_recursion(&type_name, &body, &mut visited, ast::Span { line: 0, col: 0 }) {
+                    has_cycles = true;
+                }
+            }
+        }
+        !has_cycles
+    }
+}

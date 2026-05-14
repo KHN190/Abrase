@@ -375,3 +375,103 @@ fn verify_field_access_on_unknown_type() {
     // Unknown propagates as Unknown
     assert_eq!(ty, Type::Unknown);
 }
+
+// Generic Field Type Substitution Tests
+
+#[test]
+fn verify_generic_field_type_substitution_with_int() {
+    let checker = Checker::new();
+
+    // When accessing a field of type T on Pair<Int>, substitute T with Int
+    let pair_int_ty = Type::Generic {
+        name: "Pair".into(),
+        args: vec![Type::Int],
+    };
+
+    let field_ty = Type::Named("T".into());
+
+    let substituted = checker.substitute_generic_field_type(&pair_int_ty, &field_ty);
+    assert_eq!(substituted, Type::Int);
+}
+
+#[test]
+fn verify_generic_field_type_substitution_with_string() {
+    let checker = Checker::new();
+
+    // When accessing a field of type T on Pair<String>, substitute T with String
+    let pair_string_ty = Type::Generic {
+        name: "Pair".into(),
+        args: vec![Type::String],
+    };
+
+    let field_ty = Type::Named("T".into());
+
+    let substituted = checker.substitute_generic_field_type(&pair_string_ty, &field_ty);
+    assert_eq!(substituted, Type::String);
+}
+
+#[test]
+fn verify_generic_field_type_no_substitution_for_non_t() {
+    let checker = Checker::new();
+
+    // Field type that's not T should not be substituted
+    let pair_int_ty = Type::Generic {
+        name: "Pair".into(),
+        args: vec![Type::Int],
+    };
+
+    let field_ty = Type::Named("U".into());
+
+    let substituted = checker.substitute_generic_field_type(&pair_int_ty, &field_ty);
+    assert_eq!(substituted, Type::Named("U".into()));
+}
+
+#[test]
+fn verify_generic_field_type_no_substitution_for_named_type() {
+    let checker = Checker::new();
+
+    // Named (non-generic) type should not substitute
+    let pair_ty = Type::Named("Pair".into());
+
+    let field_ty = Type::Named("T".into());
+
+    let substituted = checker.substitute_generic_field_type(&pair_ty, &field_ty);
+    assert_eq!(substituted, Type::Named("T".into()));
+}
+
+#[test]
+fn verify_field_access_on_generic_pair_returns_substituted_type() {
+    let mut checker = Checker::new();
+
+    // Register a Pair<T> record
+    let pair_type = ect::ast::TypeBody::Record(vec![
+        ect::ast::RecordField {
+            is_pub: true,
+            name: "first".into(),
+            ty: ect::ast::Type::Named("T".into()),
+        },
+        ect::ast::RecordField {
+            is_pub: true,
+            name: "second".into(),
+            ty: ect::ast::Type::Named("T".into()),
+        },
+    ]);
+    checker.register_type("Pair".into(), pair_type);
+
+    // Variable has type Pair<Int>
+    let pair_int_ty = Type::Generic {
+        name: "Pair".into(),
+        args: vec![Type::Int],
+    };
+    checker.insert_var("pair".into(), pair_int_ty, false, d_span());
+
+    let expr = sp(ect::ast::Expr::FieldAccess {
+        base: Box::new(sp(ect::ast::Expr::Identifier("pair".into()))),
+        field: "first".into(),
+    });
+
+    let ty = checker.infer_expr(&expr);
+    // With substitution, should return Int instead of T
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}

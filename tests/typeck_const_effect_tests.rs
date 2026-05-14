@@ -43,7 +43,7 @@ fn verify_const_with_variable_reference() {
     let mut checker = Checker::new();
 
     // Insert a const variable (compile-time constant)
-    checker.insert_const_var("MAX_SIZE".into(), Type::Int, d_span());
+    checker.insert_const_var("MAX_SIZE".into(), Type::Int);
 
     // Referencing a const variable should be pure
     let is_valid = checker.check_const_expr(&Expr::Identifier("MAX_SIZE".into()), d_span());
