@@ -709,7 +709,7 @@ fn verify_region_stack_multiple_levels() {
     assert!(checker.get_current_region().is_none());
 }
 
-// Phase 15: Visibility & Module Scoping
+// Visibility & Module Scoping
 
 #[test]
 fn verify_push_pop_module() {
@@ -990,7 +990,7 @@ fn verify_override_private_to_public() {
     assert!(public_items.len() > 0);
 }
 
-// Phase 16: Qualified Name Resolution
+// Qualified Name Resolution
 
 #[test]
 fn verify_register_qualified_name() {

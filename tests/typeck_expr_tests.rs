@@ -938,7 +938,7 @@ fn verify_region_expression() {
     assert!(checker.errors.is_empty());
 }
 
-// Phase 18: Record/Variant Exhaustiveness & Type Validation
+// Record/Variant Exhaustiveness & Type Validation
 
 #[test]
 fn verify_record_exhaustiveness_all_fields_present() {
@@ -1280,7 +1280,7 @@ fn verify_record_all_fields_required() {
     assert!(checker.errors[0].message.contains("email"));
 }
 
-// Phase 19: String Interpolation Validation
+// String Interpolation Validation
 
 #[test]
 fn verify_string_interpolation_defined_variable() {

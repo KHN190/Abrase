@@ -1053,7 +1053,7 @@ fn verify_effect_subsumption_order_independent() {
     assert!(checker.effects_subsume(&declared_b, &expected));
 }
 
-// Phase 17: Closure Effect Declaration Validation
+// Closure Effect Declaration Validation
 
 #[test]
 fn verify_closure_declared_pure_valid() {

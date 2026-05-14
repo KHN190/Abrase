@@ -8,7 +8,7 @@ fn d_span() -> ect::ast::Span {
     }
 }
 
-// Phase 20: Generic Type Variance Tests
+// Generic Type Variance Tests
 
 // Registration tests
 #[test]

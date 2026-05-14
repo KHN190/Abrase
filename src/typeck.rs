@@ -105,7 +105,7 @@ pub struct Checker {
     // Qualified Name Resolution
     qualified_names: HashMap<String, Vec<Vec<String>>>,
 
-    // Phase 20: Generic Variance
+    // Generic Variance
     variance_registry: HashMap<String, Vec<crate::ty::Variance>>,
     named_subtype_registry: HashMap<String, Vec<String>>,
 }
@@ -919,7 +919,7 @@ impl Checker {
         self.qualified_names.clear();
     }
 
-    // Phase 20: Generic Variance
+    // Generic Variance
     pub fn register_type_variance(&mut self, type_name: String, variances: Vec<crate::ty::Variance>) {
         self.variance_registry.insert(type_name, variances);
     }
