@@ -774,3 +774,99 @@ fn verify_compile_while_with_comparison() {
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Unit);
 }
+
+// F7: While loop with mutable variable
+#[test]
+fn verify_compile_while_loop_with_mutation() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![
+                Spanned {
+                    node: Stmt::Let {
+                        pattern: Spanned {
+                            node: Pattern::Bind("i".to_string()),
+                            span: Span::new(0, 0),
+                        },
+                        is_mut: true,
+                        ty: Some(Type::Named("Int".to_string())),
+                        value: Spanned {
+                            node: Expr::Literal(Literal::Int(0)),
+                            span: Span::new(0, 0),
+                        },
+                    },
+                    span: Span::new(0, 0),
+                },
+                Spanned {
+                    node: Stmt::Expr(Spanned {
+                        node: Expr::While {
+                            condition: Box::new(Spanned {
+                                node: Expr::Binary {
+                                    op: BinaryOp::Lt,
+                                    left: Box::new(Spanned {
+                                        node: Expr::Identifier("i".to_string()),
+                                        span: Span::new(0, 0),
+                                    }),
+                                    right: Box::new(Spanned {
+                                        node: Expr::Literal(Literal::Int(5)),
+                                        span: Span::new(0, 0),
+                                    }),
+                                },
+                                span: Span::new(0, 0),
+                            }),
+                            body: Block {
+                                stmts: vec![
+                                    Spanned {
+                                        node: Stmt::Expr(Spanned {
+                                            node: Expr::Binary {
+                                                op: BinaryOp::Assign,
+                                                left: Box::new(Spanned {
+                                                    node: Expr::Identifier("i".to_string()),
+                                                    span: Span::new(0, 0),
+                                                }),
+                                                right: Box::new(Spanned {
+                                                    node: Expr::Binary {
+                                                        op: BinaryOp::Add,
+                                                        left: Box::new(Spanned {
+                                                            node: Expr::Identifier("i".to_string()),
+                                                            span: Span::new(0, 0),
+                                                        }),
+                                                        right: Box::new(Spanned {
+                                                            node: Expr::Literal(Literal::Int(1)),
+                                                            span: Span::new(0, 0),
+                                                        }),
+                                                    },
+                                                    span: Span::new(0, 0),
+                                                }),
+                                            },
+                                            span: Span::new(0, 0),
+                                        }),
+                                        span: Span::new(0, 0),
+                                    },
+                                ],
+                                ret: None,
+                            },
+                        },
+                        span: Span::new(0, 0),
+                    }),
+                    span: Span::new(0, 0),
+                },
+            ],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Identifier("i".to_string()),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Int(5));
+}

@@ -169,6 +169,20 @@ fn test_neq_true() {
 }
 
 #[test]
+fn test_neq_false() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 0),
+            OpCode::Neq(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5)],
+    );
+    assert_eq!(result, Ok(Value::Bool(false)));
+}
+
+#[test]
 fn test_lt_true() {
     let result = run(
         vec![
@@ -211,6 +225,20 @@ fn test_gt_true() {
 }
 
 #[test]
+fn test_gt_false() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Gt(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(3), Value::Int(5)],
+    );
+    assert_eq!(result, Ok(Value::Bool(false)));
+}
+
+#[test]
 fn test_lte_true() {
     let result = run(
         vec![
@@ -222,6 +250,20 @@ fn test_lte_true() {
         vec![Value::Int(5), Value::Int(5)],
     );
     assert_eq!(result, Ok(Value::Bool(true)));
+}
+
+#[test]
+fn test_lte_false() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Lte(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5), Value::Int(3)],
+    );
+    assert_eq!(result, Ok(Value::Bool(false)));
 }
 
 #[test]
@@ -238,12 +280,26 @@ fn test_gte_true() {
     assert_eq!(result, Ok(Value::Bool(true)));
 }
 
+#[test]
+fn test_gte_false() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Gte(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(3), Value::Int(5)],
+    );
+    assert_eq!(result, Ok(Value::Bool(false)));
+}
+
 // Jump Instructions
 #[test]
 fn test_jz_takes_jump_when_zero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = 0 (false)
+            OpCode::PushConst(r(0), 0),       // r0 = 0 (false)
             OpCode::Jz(r(0), 3),              // if r0==0, jump to instruction 3
             OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
             OpCode::PushConst(r(1), 1),       // r1 = 42
@@ -258,7 +314,7 @@ fn test_jz_takes_jump_when_zero() {
 fn test_jz_skips_jump_when_nonzero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = 1 (true)
+            OpCode::PushConst(r(0), 0),       // r0 = 1 (true)
             OpCode::Jz(r(0), 4),              // if r0==0, jump (won't happen)
             OpCode::PushConst(r(1), 1),       // r1 = 99
             OpCode::Ret(r(1)),
@@ -272,7 +328,7 @@ fn test_jz_skips_jump_when_nonzero() {
 fn test_jnz_takes_jump_when_nonzero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = 5 (true)
+            OpCode::PushConst(r(0), 0),       // r0 = 5 (true)
             OpCode::Jnz(r(0), 3),             // if r0!=0, jump to instruction 3
             OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
             OpCode::PushConst(r(1), 1),       // r1 = 42
@@ -287,7 +343,7 @@ fn test_jnz_takes_jump_when_nonzero() {
 fn test_jnz_skips_jump_when_zero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = 0 (false)
+            OpCode::PushConst(r(0), 0),       // r0 = 0 (false)
             OpCode::Jnz(r(0), 4),             // if r0!=0, jump (won't happen)
             OpCode::PushConst(r(1), 1),       // r1 = 99
             OpCode::Ret(r(1)),
@@ -315,7 +371,7 @@ fn test_jmp_unconditional() {
 fn test_jz_with_bool_false_takes_jump() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = false
+            OpCode::PushConst(r(0), 0),       // r0 = false
             OpCode::Jz(r(0), 3),              // if r0==false (falsy), jump to instruction 3
             OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
             OpCode::PushConst(r(1), 1),       // r1 = 42
@@ -333,10 +389,10 @@ fn test_loop_counter() {
             OpCode::PushConst(r(0), 0), // i = 0
             OpCode::PushConst(r(1), 1), // limit = 3
             // Loop: check i < limit
-            OpCode::Lt(r(2), r(0), r(1)), // r2 = i < limit
+            OpCode::Lt(r(2), r(0), r(1)),  // r2 = i < limit
             OpCode::Jz(r(2), 7),           // if !r2, jump to end
             // Increment: i = i + 1
-            OpCode::PushConst(r(3), 2),   // r3 = 1
+            OpCode::PushConst(r(3), 2),    // r3 = 1
             OpCode::Add(r(0), r(0), r(3)), // i = i + 1
             OpCode::Jmp(2),                // jump back to loop check
             // End: return i

@@ -45,25 +45,40 @@ impl Compiler {
             }
 
             ast::Expr::Binary { op, left, right } => {
-                let lr = self.compile_expr(left)?;
-                let rr = self.compile_expr(right)?;
-                let dr = self.alloc_register()?;
-                let instr = match op {
-                    ast::BinaryOp::Add => OpCode::Add(dr, lr, rr),
-                    ast::BinaryOp::Sub => OpCode::Sub(dr, lr, rr),
-                    ast::BinaryOp::Mul => OpCode::Mul(dr, lr, rr),
-                    ast::BinaryOp::Div => OpCode::Div(dr, lr, rr),
-                    ast::BinaryOp::Mod => OpCode::Mod(dr, lr, rr),
-                    ast::BinaryOp::Eq => OpCode::Eq(dr, lr, rr),
-                    ast::BinaryOp::Neq => OpCode::Neq(dr, lr, rr),
-                    ast::BinaryOp::Lt => OpCode::Lt(dr, lr, rr),
-                    ast::BinaryOp::Gt => OpCode::Gt(dr, lr, rr),
-                    ast::BinaryOp::Lte => OpCode::Lte(dr, lr, rr),
-                    ast::BinaryOp::Gte => OpCode::Gte(dr, lr, rr),
-                    _ => return Err(format!("Unsupported binary op: {:?}", op)),
-                };
-                self.emit(instr);
-                Ok(dr)
+                match op {
+                    ast::BinaryOp::Assign => {
+                        if let ast::Expr::Identifier(name) = &left.node {
+                            let rr = self.compile_expr(right)?;
+                            let dest_reg = self.var_to_reg.get(name).copied()
+                                .ok_or_else(|| format!("Undefined variable: {}", name))?;
+                            self.emit(OpCode::Mov(dest_reg, rr));
+                            Ok(dest_reg)
+                        } else {
+                            Err("Assignment target must be a variable".to_string())
+                        }
+                    }
+                    _ => {
+                        let lr = self.compile_expr(left)?;
+                        let rr = self.compile_expr(right)?;
+                        let dr = self.alloc_register()?;
+                        let instr = match op {
+                            ast::BinaryOp::Add => OpCode::Add(dr, lr, rr),
+                            ast::BinaryOp::Sub => OpCode::Sub(dr, lr, rr),
+                            ast::BinaryOp::Mul => OpCode::Mul(dr, lr, rr),
+                            ast::BinaryOp::Div => OpCode::Div(dr, lr, rr),
+                            ast::BinaryOp::Mod => OpCode::Mod(dr, lr, rr),
+                            ast::BinaryOp::Eq => OpCode::Eq(dr, lr, rr),
+                            ast::BinaryOp::Neq => OpCode::Neq(dr, lr, rr),
+                            ast::BinaryOp::Lt => OpCode::Lt(dr, lr, rr),
+                            ast::BinaryOp::Gt => OpCode::Gt(dr, lr, rr),
+                            ast::BinaryOp::Lte => OpCode::Lte(dr, lr, rr),
+                            ast::BinaryOp::Gte => OpCode::Gte(dr, lr, rr),
+                            _ => return Err(format!("Unsupported binary op: {:?}", op)),
+                        };
+                        self.emit(instr);
+                        Ok(dr)
+                    }
+                }
             }
 
             ast::Expr::If { condition, consequence, alternative } => {
