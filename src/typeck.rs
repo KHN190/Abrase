@@ -2499,14 +2499,17 @@ impl Checker {
             }
             ast::Expr::For { pattern, iter, body } => {
                 self.context_stack.push("In for loop".into());
-                let _iter_ty = self.infer_expr(iter);
+                let iter_ty = self.infer_expr(iter);
 
                 self.enter_scope();
                 self.loop_depth += 1;
 
-                // Bind pattern variable
+                // Extract element type from iterator
+                let element_ty = self.extract_iterable_element_type(&iter_ty);
+
+                // Bind pattern variable to element type
                 if let ast::Pattern::Bind(name) = &pattern.node {
-                    self.insert_var(name.clone(), Type::Unknown, false, pattern.span);
+                    self.insert_var(name.clone(), element_ty, false, pattern.span);
                 }
 
                 let body_ty = self.infer_block(body);
@@ -3223,7 +3226,7 @@ impl Checker {
         self.scopes.pop();
     }
 
-    // Per-declaration checkers for Phase 1.3
+    // Per-declaration check
 
     pub fn check_type_decl(&mut self, name: &str, body: &ast::TypeBody, is_pub: bool, ownership: &Option<ast::OwnershipAttr>) {
         // Register type definition
@@ -3345,7 +3348,7 @@ impl Checker {
         }
     }
 
-    // Phase 2.1: Field Access Resolution
+    // Field Access Resolution
 
     fn resolve_field_access(&mut self, base_ty: &Type, field_name: &str, span: Span) -> Type {
         match base_ty {
@@ -3354,13 +3357,11 @@ impl Checker {
                 if let Some(type_body) = self.type_registry.get(type_name).cloned() {
                     match type_body {
                         ast::TypeBody::Record(fields) => {
-                            // Search for field by name
                             for field in fields {
                                 if field.name == field_name {
                                     return self.convert_type(&field.ty);
                                 }
                             }
-                            // Field not found
                             self.report_error(
                                 format!("Field '{}' not found in record type '{}'", field_name, type_name),
                                 span,
@@ -3376,7 +3377,6 @@ impl Checker {
                         }
                     }
                 } else {
-                    // Type not registered
                     self.report_error(
                         format!("Type '{}' not found - cannot resolve field '{}'", type_name, field_name),
                         span,
@@ -3416,15 +3416,63 @@ impl Checker {
                     Type::Unknown
                 }
             },
-            Type::Unknown => Type::Unknown, // Propagate Unknown
+            Type::Unknown => Type::Unknown,
             _ => {
-                // Other types don't support field access
                 self.report_error(
                     format!("Cannot access field '{}' on type {:?}", field_name, base_ty),
                     span,
                 );
                 Type::Unknown
             }
+        }
+    }
+
+    // Generic Type Propagation
+
+    pub fn extract_iterable_element_type(&self, iter_ty: &Type) -> Type {
+        match iter_ty {
+            // Generic types like List<T>, Vec<T>, Option<T>
+            Type::Generic { name, args } => {
+                match name.as_str() {
+                    "List" | "Vec" | "Array" => {
+                        if !args.is_empty() {
+                            args[0].clone()
+                        } else {
+                            Type::Unknown
+                        }
+                    },
+                    "Option" => {
+                        if !args.is_empty() {
+                            args[0].clone()
+                        } else {
+                            Type::Unknown
+                        }
+                    },
+                    "Result" => {
+                        if !args.is_empty() {
+                            args[0].clone()
+                        } else {
+                            Type::Unknown
+                        }
+                    },
+                    _ => Type::Unknown,
+                }
+            },
+            // String type iterates to Char
+            Type::String => Type::Char,
+            // Named types - try to look up in registry and extract element type
+            Type::Named(_type_name) => Type::Unknown, 
+            _ => Type::Unknown,
+        }
+    }
+
+    fn substitute_generic_field_type(&self, base_ty: &Type, field_ty: &Type) -> Type {
+        match (base_ty, field_ty) {
+            // If field type refers to a generic parameter, try to substitute
+            (Type::Generic { args, .. }, Type::Named(type_var)) if type_var == "T" && !args.is_empty() => {
+                args[0].clone()
+            },
+            _ => field_ty.clone(),
         }
     }
 
