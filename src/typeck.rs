@@ -1646,10 +1646,50 @@ impl Checker {
     }
 
     // Check if two named types are equivalent (through type definitions)
-    fn are_types_equivalent(&self, ty1: &str, ty2: &str) -> bool {
-        // TODO: Phase 5 - Use type registry to check equivalence
-        // For now, only exact name matches are equivalent
-        ty1 == ty2
+    pub fn are_types_equivalent(&self, ty1: &str, ty2: &str) -> bool {
+        if ty1 == ty2 {
+            return true;
+        }
+
+        // Check if both types are registered and have identical definitions
+        match (self.type_registry.get(ty1), self.type_registry.get(ty2)) {
+            (Some(def1), Some(def2)) => {
+                // Compare type definitions structurally
+                match (def1, def2) {
+                    (ast::TypeBody::Record(fields1), ast::TypeBody::Record(fields2)) => {
+                        if fields1.len() != fields2.len() {
+                            return false;
+                        }
+                        fields1.iter().zip(fields2.iter()).all(|(f1, f2)| {
+                            f1.name == f2.name && self.convert_type(&f1.ty) == self.convert_type(&f2.ty)
+                        })
+                    }
+                    (ast::TypeBody::Variant(vars1), ast::TypeBody::Variant(vars2)) => {
+                        if vars1.len() != vars2.len() {
+                            return false;
+                        }
+                        vars1.iter().zip(vars2.iter()).all(|(v1, v2)| {
+                            match (v1, v2) {
+                                (ast::VariantCase::Unit(n1), ast::VariantCase::Unit(n2)) => n1 == n2,
+                                (ast::VariantCase::Tuple(n1, ts1), ast::VariantCase::Tuple(n2, ts2)) => {
+                                    n1 == n2 && ts1.len() == ts2.len() &&
+                                    ts1.iter().zip(ts2.iter()).all(|(t1, t2)| self.convert_type(t1) == self.convert_type(t2))
+                                }
+                                (ast::VariantCase::Record(n1, f1), ast::VariantCase::Record(n2, f2)) => {
+                                    n1 == n2 && f1.len() == f2.len() &&
+                                    f1.iter().zip(f2.iter()).all(|(rf1, rf2)| {
+                                        rf1.name == rf2.name && self.convert_type(&rf1.ty) == self.convert_type(&rf2.ty)
+                                    })
+                                }
+                                _ => false,
+                            }
+                        })
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
     }
 
     // Try to unify two types (for generics)
