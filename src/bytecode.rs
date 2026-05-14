@@ -20,7 +20,17 @@ pub enum OpCode {
     Mul(Register, Register, Register),
     Div(Register, Register, Register),
     Mod(Register, Register, Register),
+    // Comparison
+    Eq(Register, Register, Register),
+    Neq(Register, Register, Register),
+    Lt(Register, Register, Register),
+    Gt(Register, Register, Register),
+    Lte(Register, Register, Register),
+    Gte(Register, Register, Register),
     // Control flow
+    Jz(Register, usize),
+    Jnz(Register, usize),
+    Jmp(usize),
     Ret(Register),
 }
 

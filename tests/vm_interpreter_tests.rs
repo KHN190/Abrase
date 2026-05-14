@@ -124,3 +124,225 @@ fn test_ret_empty_register_errors() {
     let result = run(vec![OpCode::Ret(r(0))], vec![]);
     assert!(result.is_err());
 }
+
+// Comparison Operators
+#[test]
+fn test_eq_true() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 0),
+            OpCode::Eq(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5)],
+    );
+    assert_eq!(result, Ok(Value::Bool(true)));
+}
+
+#[test]
+fn test_eq_false() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Eq(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5), Value::Int(3)],
+    );
+    assert_eq!(result, Ok(Value::Bool(false)));
+}
+
+#[test]
+fn test_neq_true() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Neq(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5), Value::Int(3)],
+    );
+    assert_eq!(result, Ok(Value::Bool(true)));
+}
+
+#[test]
+fn test_lt_true() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Lt(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(3), Value::Int(5)],
+    );
+    assert_eq!(result, Ok(Value::Bool(true)));
+}
+
+#[test]
+fn test_lt_false() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Lt(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5), Value::Int(3)],
+    );
+    assert_eq!(result, Ok(Value::Bool(false)));
+}
+
+#[test]
+fn test_gt_true() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Gt(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5), Value::Int(3)],
+    );
+    assert_eq!(result, Ok(Value::Bool(true)));
+}
+
+#[test]
+fn test_lte_true() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Lte(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5), Value::Int(5)],
+    );
+    assert_eq!(result, Ok(Value::Bool(true)));
+}
+
+#[test]
+fn test_gte_true() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Gte(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5), Value::Int(3)],
+    );
+    assert_eq!(result, Ok(Value::Bool(true)));
+}
+
+// Jump Instructions
+#[test]
+fn test_jz_takes_jump_when_zero() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = 0 (false)
+            OpCode::Jz(r(0), 3),              // if r0==0, jump to instruction 3
+            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
+            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(0), Value::Int(42)],
+    );
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_jz_skips_jump_when_nonzero() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = 1 (true)
+            OpCode::Jz(r(0), 4),              // if r0==0, jump (won't happen)
+            OpCode::PushConst(r(1), 1),       // r1 = 99
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(1), Value::Int(99)],
+    );
+    assert_eq!(result, Ok(Value::Int(99)));
+}
+
+#[test]
+fn test_jnz_takes_jump_when_nonzero() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = 5 (true)
+            OpCode::Jnz(r(0), 3),             // if r0!=0, jump to instruction 3
+            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
+            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(5), Value::Int(42)],
+    );
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_jnz_skips_jump_when_zero() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = 0 (false)
+            OpCode::Jnz(r(0), 4),             // if r0!=0, jump (won't happen)
+            OpCode::PushConst(r(1), 1),       // r1 = 99
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(0), Value::Int(99)],
+    );
+    assert_eq!(result, Ok(Value::Int(99)));
+}
+
+#[test]
+fn test_jmp_unconditional() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jmp(3),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Ret(r(0)),
+        ],
+        vec![Value::Int(42), Value::Int(99)],
+    );
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_jz_with_bool_false_takes_jump() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = false
+            OpCode::Jz(r(0), 3),              // if r0==false (falsy), jump to instruction 3
+            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
+            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Bool(false), Value::Int(42)],
+    );
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_loop_counter() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0), // i = 0
+            OpCode::PushConst(r(1), 1), // limit = 3
+            // Loop: check i < limit
+            OpCode::Lt(r(2), r(0), r(1)), // r2 = i < limit
+            OpCode::Jz(r(2), 7),           // if !r2, jump to end
+            // Increment: i = i + 1
+            OpCode::PushConst(r(3), 2),   // r3 = 1
+            OpCode::Add(r(0), r(0), r(3)), // i = i + 1
+            OpCode::Jmp(2),                // jump back to loop check
+            // End: return i
+            OpCode::Ret(r(0)),
+        ],
+        vec![Value::Int(0), Value::Int(3), Value::Int(1)],
+    );
+    assert_eq!(result, Ok(Value::Int(3)));
+}

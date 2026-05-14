@@ -54,10 +54,65 @@ impl Compiler {
                     ast::BinaryOp::Mul => OpCode::Mul(dr, lr, rr),
                     ast::BinaryOp::Div => OpCode::Div(dr, lr, rr),
                     ast::BinaryOp::Mod => OpCode::Mod(dr, lr, rr),
+                    ast::BinaryOp::Eq => OpCode::Eq(dr, lr, rr),
+                    ast::BinaryOp::Neq => OpCode::Neq(dr, lr, rr),
+                    ast::BinaryOp::Lt => OpCode::Lt(dr, lr, rr),
+                    ast::BinaryOp::Gt => OpCode::Gt(dr, lr, rr),
+                    ast::BinaryOp::Lte => OpCode::Lte(dr, lr, rr),
+                    ast::BinaryOp::Gte => OpCode::Gte(dr, lr, rr),
                     _ => return Err(format!("Unsupported binary op: {:?}", op)),
                 };
                 self.emit(instr);
                 Ok(dr)
+            }
+
+            ast::Expr::If { condition, consequence, alternative } => {
+                let cond_reg = self.compile_expr(condition)?;
+                let jz_idx = self.code.len();
+                self.emit(OpCode::Jz(cond_reg, 0)); // placeholder
+
+                let cons_reg = self.compile_expr(consequence)?;
+                let result_reg = self.alloc_register()?;
+                self.emit(OpCode::Mov(result_reg, cons_reg));
+
+                let jmp_idx = self.code.len();
+                self.emit(OpCode::Jmp(0)); // placeholder
+
+                let else_addr = self.code.len();
+                self.code[jz_idx] = OpCode::Jz(cond_reg, else_addr);
+
+                let alt_reg = if let Some(alt) = alternative {
+                    self.compile_expr(alt)?
+                } else {
+                    let r = self.alloc_register()?;
+                    let idx = self.add_constant(Value::Unit);
+                    self.emit(OpCode::PushConst(r, idx));
+                    r
+                };
+                self.emit(OpCode::Mov(result_reg, alt_reg));
+
+                let end_addr = self.code.len();
+                self.code[jmp_idx] = OpCode::Jmp(end_addr);
+
+                Ok(result_reg)
+            }
+
+            ast::Expr::While { condition, body } => {
+                let loop_addr = self.code.len();
+                let cond_reg = self.compile_expr(condition)?;
+                let jz_idx = self.code.len();
+                self.emit(OpCode::Jz(cond_reg, 0)); // placeholder
+
+                self.compile_block(body)?;
+                self.emit(OpCode::Jmp(loop_addr));
+
+                let exit_addr = self.code.len();
+                self.code[jz_idx] = OpCode::Jz(cond_reg, exit_addr);
+
+                let r = self.alloc_register()?;
+                let idx = self.add_constant(Value::Unit);
+                self.emit(OpCode::PushConst(r, idx));
+                Ok(r)
             }
 
             ast::Expr::Block(block) => self.compile_block(block),
