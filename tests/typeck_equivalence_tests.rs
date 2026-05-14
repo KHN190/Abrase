@@ -9,7 +9,7 @@ fn d_span() -> ect::ast::Span {
     }
 }
 
-// Phase 5: Type Equivalence Tests
+// Type Equivalence Tests
 
 // Basic equivalence tests
 #[test]

@@ -545,8 +545,8 @@ impl Checker {
         self.trait_registry.get(trait_name).cloned()
     }
 
-    pub fn register_impl(&mut self, type_name: String, trait_name: String) {
-        self.impl_registry.insert((type_name, trait_name), true);
+    pub fn register_impl(&mut self, type_name: &str, trait_name: &str) {
+        self.impl_registry.insert((type_name.to_string(), trait_name.to_string()), true);
     }
 
     pub fn has_impl(&self, type_name: &str, trait_name: &str) -> bool {
@@ -842,6 +842,163 @@ impl Checker {
         } else {
             // Unknown type - be lenient
             true
+        }
+    }
+
+    fn resolve_var_in_scopes(&self, name: &str) -> Option<Type> {
+        // Search from innermost to outermost scope
+        for scope in self.scopes.iter().rev() {
+            if let Some(var) = scope.vars.get(name) {
+                return Some(var.ty.clone());
+            }
+        }
+        None
+    }
+
+    fn get_field_type(&self, type_name: &str, field_name: &str) -> Option<Type> {
+        if let Some(body) = self.type_registry.get(type_name) {
+            if let ast::TypeBody::Record(fields) = body {
+                for field in fields {
+                    if field.name == field_name {
+                        return Some(self.convert_type(&field.ty));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn type_implements_show(&self, ty: &Type) -> bool {
+        // Handle reference types with auto-deref
+        let check_type = match ty {
+            Type::Reference { inner, .. } => inner.as_ref(),
+            t => t,
+        };
+
+        let type_name = match check_type {
+            Type::Named(n) => n.clone(),
+            Type::Int => "Int".into(),
+            Type::Float => "Float".into(),
+            Type::Bool => "Bool".into(),
+            Type::Char => "Char".into(),
+            Type::String => "String".into(),
+            Type::Unit => "Unit".into(),
+            _ => return false,
+        };
+
+        // Check direct implementation
+        if self.impl_registry.get(&(type_name.clone(), "Show".into())).copied().unwrap_or(false) {
+            return true;
+        }
+
+        // Check trait bounds for generic types
+        if self.trait_bounds.get(&type_name).map(|bounds| {
+            bounds.iter().any(|b| b == "Show")
+        }).unwrap_or(false) {
+            return true;
+        }
+
+        false
+    }
+
+    pub fn check_string_interpolation(&mut self, parts: &[ast::StringPart], span: Span) -> bool {
+        let mut all_valid = true;
+
+        for part in parts {
+            if let ast::StringPart::Interp(path) = part {
+                if path.is_empty() {
+                    continue;
+                }
+
+                // Resolve the base identifier (search all scopes)
+                let base_name = &path[0];
+                let base_var = self.resolve_var_in_scopes(base_name);
+
+                if base_var.is_none() {
+                    self.report_error(
+                        format!("Undefined variable '{}' in string interpolation", base_name),
+                        span
+                    );
+                    all_valid = false;
+                    continue;
+                }
+
+                let mut current_type = base_var.unwrap();
+
+                // Handle auto-deref for references
+                if let Type::Reference { inner, .. } = &current_type {
+                    current_type = inner.as_ref().clone();
+                }
+
+                // Resolve field accesses in the path
+                for field_name in &path[1..] {
+                    match &current_type {
+                        Type::Named(type_name) => {
+                            // Look up field type from type registry
+                            if let Some(field_type) = self.get_field_type(type_name, field_name) {
+                                current_type = field_type;
+
+                                // Auto-deref if field is a reference
+                                if let Type::Reference { inner, .. } = &current_type {
+                                    current_type = inner.as_ref().clone();
+                                }
+                            } else {
+                                self.report_error(
+                                    format!("Field '{}' not found in type '{}'", field_name, type_name),
+                                    span
+                                );
+                                all_valid = false;
+                                break;
+                            }
+                        }
+                        _ => {
+                            self.report_error(
+                                format!("Cannot access field '{}' on type {:?}", field_name, current_type),
+                                span
+                            );
+                            all_valid = false;
+                            break;
+                        }
+                    }
+                }
+
+                // Check if the final type implements Show
+                if all_valid && !self.type_implements_show(&current_type) {
+                    let type_name = match &current_type {
+                        Type::Named(n) => n.clone(),
+                        Type::Int => "Int".into(),
+                        Type::Float => "Float".into(),
+                        Type::Bool => "Bool".into(),
+                        Type::Char => "Char".into(),
+                        Type::String => "String".into(),
+                        Type::Unit => "Unit".into(),
+                        _ => "Unknown".into(),
+                    };
+
+                    self.report_error(
+                        format!("Type '{}' does not implement Show trait required for string interpolation", type_name),
+                        span
+                    );
+                    all_valid = false;
+                }
+            }
+        }
+
+        all_valid
+    }
+
+    pub fn infer_literal(&mut self, lit: &ast::Literal, span: Span) -> Type {
+        match lit {
+            ast::Literal::Int(_) => Type::Int,
+            ast::Literal::Float(_) => Type::Float,
+            ast::Literal::Bool(_) => Type::Bool,
+            ast::Literal::Char(_) => Type::Char,
+            ast::Literal::String(_) => Type::String,
+            ast::Literal::StringInterp(parts) => {
+                self.check_string_interpolation(parts, span);
+                Type::String
+            }
+            ast::Literal::Unit => Type::Unit,
         }
     }
 

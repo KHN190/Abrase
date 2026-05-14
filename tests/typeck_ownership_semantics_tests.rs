@@ -8,11 +8,7 @@ fn d_span() -> ect::ast::Span {
     }
 }
 
-// Phase 22: Ownership Attributes & Region-Based Reference Validation Tests
-
-// ============================================================================
-// Point 1: Integrate Ownership Attributes with Type Bodies
-// ============================================================================
+// Integrate Ownership Attributes with Type Bodies
 
 #[test]
 fn verify_ownership_attr_copy_linked_to_type() {
@@ -50,9 +46,7 @@ fn verify_variable_inherits_type_ownership() {
     assert_eq!(var_ty.ownership(), Ownership::Move);
 }
 
-// ============================================================================
-// Point 2: Differentiated Borrowing Rules for @share
-// ============================================================================
+// Differentiated Borrowing Rules for @share
 
 #[test]
 fn verify_share_type_allows_multiple_immut_borrows() {
@@ -104,9 +98,7 @@ fn verify_copy_type_can_be_freely_used() {
     assert!(result2.is_ok());
 }
 
-// ============================================================================
-// Point 3: Strict Move Enforcement and Scope Exit
-// ============================================================================
+// Strict Move Enforcement and Scope Exit
 
 #[test]
 fn verify_move_type_borrow_then_move_error() {
@@ -160,9 +152,7 @@ fn verify_immut_borrow_blocks_mut_borrow() {
     assert!(result2.unwrap_err().contains("immutable borrow already active"));
 }
 
-// ============================================================================
-// Point 4: Region-Aware Reference Validation
-// ============================================================================
+// Region-Aware Reference Validation
 
 #[test]
 fn verify_reference_in_region_created() {
@@ -231,9 +221,7 @@ fn verify_escape_analysis_different_regions_error() {
     assert!(checker.errors[0].message.contains("escapes"));
 }
 
-// ============================================================================
-// Point 5: Writer/Reader Exclusivity
-// ============================================================================
+// Writer/Reader Exclusivity
 
 #[test]
 fn verify_mut_borrow_requires_no_immut_borrows() {
@@ -281,9 +269,7 @@ fn verify_share_type_mut_borrow_blocks_immut() {
     assert!(result.is_err());
 }
 
-// ============================================================================
 // Integration Tests
-// ============================================================================
 
 #[test]
 fn verify_multiple_variables_independent_borrows() {

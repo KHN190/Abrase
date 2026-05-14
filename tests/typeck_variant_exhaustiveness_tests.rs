@@ -9,8 +9,6 @@ fn d_span() -> ect::ast::Span {
     }
 }
 
-// Phase 21: Variant Exhaustiveness Analysis Tests
-
 // Registry tests
 #[test]
 fn verify_register_variant_cases() {
