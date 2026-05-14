@@ -1,11 +1,13 @@
+pub mod value;
+pub mod frame;
 pub mod memory;
 pub mod interpreter;
 pub mod loader;
 pub mod scheduler;
 
-pub use memory::value::Value;
+pub use value::Value;
 
-use memory::frame::Frame;
+use frame::Frame;
 
 pub struct VirtualMachine {
     pub(crate) registers: [Option<Value>; 256],

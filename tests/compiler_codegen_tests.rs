@@ -165,16 +165,16 @@ fn parse_let_expr() -> Vec<Decl> {
     })]
 }
 
-// Phase 1: Feature 1 - Literals & Constants
+// Literals & Constants
 #[test]
-fn test_phase1_feature1_literal_int() {
+fn verify_compile_literal_int() {
     let ast = parse_literal_int(42);
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Int(42));
 }
 
 #[test]
-fn test_phase1_feature1_literal_bool_true() {
+fn verify_compile_literal_bool() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
@@ -199,7 +199,7 @@ fn test_phase1_feature1_literal_bool_true() {
 }
 
 #[test]
-fn test_phase1_feature1_literal_string() {
+fn verify_compile_literal_string() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
@@ -223,53 +223,53 @@ fn test_phase1_feature1_literal_string() {
     assert_eq!(result, Value::String("hello".to_string()));
 }
 
-// Phase 1: Feature 2 - Arithmetic (Int)
+// Arithmetic Operations
 #[test]
-fn test_phase1_feature2_add() {
+fn verify_compile_arithmetic_add() {
     let ast = parse_binary_int(2, BinaryOp::Add, 3);
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Int(5));
 }
 
 #[test]
-fn test_phase1_feature2_sub() {
+fn verify_compile_arithmetic_sub() {
     let ast = parse_binary_int(10, BinaryOp::Sub, 3);
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Int(7));
 }
 
 #[test]
-fn test_phase1_feature2_mul() {
+fn verify_compile_arithmetic_mul() {
     let ast = parse_binary_int(3, BinaryOp::Mul, 4);
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Int(12));
 }
 
 #[test]
-fn test_phase1_feature2_div() {
+fn verify_compile_arithmetic_div() {
     let ast = parse_binary_int(20, BinaryOp::Div, 4);
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Int(5));
 }
 
 #[test]
-fn test_phase1_feature2_mod() {
+fn verify_compile_arithmetic_mod() {
     let ast = parse_binary_int(10, BinaryOp::Mod, 3);
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Int(1));
 }
 
 #[test]
-fn test_phase1_feature2_complex_expression() {
+fn verify_compile_arithmetic_respects_precedence() {
     // 2 + 3 * 4 = 2 + 12 = 14
     let ast = parse_arithmetic_expr();
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Int(14));
 }
 
-// Phase 1: Feature 3 - Variables & Assignment
+// Variables & Assignment
 #[test]
-fn test_phase1_feature3_let_and_use() {
+fn verify_compile_variable_binding() {
     // let x = 5; let y = x + 1; y
     let ast = parse_let_expr();
     let result = compile_and_run(&ast).expect("Execution failed");
@@ -277,7 +277,7 @@ fn test_phase1_feature3_let_and_use() {
 }
 
 #[test]
-fn test_phase1_feature3_multiple_let() {
+fn verify_compile_multiple_variables() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
@@ -357,9 +357,9 @@ fn test_phase1_feature3_multiple_let() {
     assert_eq!(result, Value::Int(30));
 }
 
-// Regression: Ensure Phase 1 milestones
+// Regression: Ensure milestone tests still pass
 #[test]
-fn test_phase1_milestone_pure_arithmetic() {
+fn verify_compile_pure_functional_arithmetic() {
     // Verify we can run pure functional arithmetic
     let test_cases = vec![
         (parse_literal_int(0), Value::Int(0)),
