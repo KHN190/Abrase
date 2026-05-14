@@ -504,6 +504,7 @@ fn verify_while_loop_valid() {
 
 #[test]
 fn verify_loop_expression() {
+    // loop { 42 } has no break — it is an infinite loop, type is Never
     let mut checker = Checker::new();
     let body = ast::Block {
         stmts: vec![],
@@ -511,7 +512,7 @@ fn verify_loop_expression() {
     };
     let expr = sp(ast::Expr::Loop { body });
     let ty = checker.infer_expr(&expr);
-    assert_eq!(ty, Type::Int);
+    assert_eq!(ty, Type::Never);
     assert!(checker.errors.is_empty());
 }
 
@@ -2793,3 +2794,204 @@ fn verify_region_effect_isolation() {
     assert!(checker.errors.is_empty());
 }
 
+#[test]
+fn verify_question_on_result_unwraps_ok_type() {
+    let mut checker = Checker::new();
+    let inner = sp(ast::Expr::Literal(ast::Literal::Unit)); // placeholder; type injected below
+    checker.insert_var(
+        "r".into(),
+        Type::Generic { name: "Result".into(), args: vec![Type::Int, Type::Named("IoError".into())] },
+        false,
+        d_span(),
+    );
+    let expr = sp(ast::Expr::Question(Box::new(sp(ast::Expr::Identifier("r".into())))));
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_question_on_result_adds_exn_effect() {
+    use ect::ty::Effect;
+    let mut checker = Checker::new();
+    checker.insert_var(
+        "r".into(),
+        Type::Generic { name: "Result".into(), args: vec![Type::String, Type::Named("MyError".into())] },
+        false,
+        d_span(),
+    );
+    let expr = sp(ast::Expr::Question(Box::new(sp(ast::Expr::Identifier("r".into())))));
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::String);
+    let required = checker.get_fn_required_effects();
+    assert!(required.iter().any(|e| matches!(e, Effect::Exn(_))));
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_question_on_option_unwraps_inner_type() {
+    let mut checker = Checker::new();
+    checker.insert_var(
+        "o".into(),
+        Type::Generic { name: "Option".into(), args: vec![Type::Bool] },
+        false,
+        d_span(),
+    );
+    let expr = sp(ast::Expr::Question(Box::new(sp(ast::Expr::Identifier("o".into())))));
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Bool);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_question_on_non_result_errors() {
+    let mut checker = Checker::new();
+    checker.insert_var("x".into(), Type::Int, false, d_span());
+    let expr = sp(ast::Expr::Question(Box::new(sp(ast::Expr::Identifier("x".into())))));
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("'?' operator requires"));
+}
+
+#[test]
+fn verify_await_on_future_unwraps_output_type() {
+    let mut checker = Checker::new();
+    checker.insert_var(
+        "f".into(),
+        Type::Generic { name: "Future".into(), args: vec![Type::Int] },
+        false,
+        d_span(),
+    );
+    let expr = sp(ast::Expr::Await(Box::new(sp(ast::Expr::Identifier("f".into())))));
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_await_adds_async_effect() {
+    use ect::ty::Effect;
+    let mut checker = Checker::new();
+    checker.insert_var(
+        "f".into(),
+        Type::Generic { name: "Future".into(), args: vec![Type::String] },
+        false,
+        d_span(),
+    );
+    let expr = sp(ast::Expr::Await(Box::new(sp(ast::Expr::Identifier("f".into())))));
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::String);
+    let required = checker.get_fn_required_effects();
+    assert!(required.iter().any(|e| matches!(e, Effect::Async)));
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_await_on_non_future_errors() {
+    let mut checker = Checker::new();
+    checker.insert_var("x".into(), Type::Int, false, d_span());
+    let expr = sp(ast::Expr::Await(Box::new(sp(ast::Expr::Identifier("x".into())))));
+    checker.infer_expr(&expr);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains(".await"));
+}
+
+#[test]
+fn verify_loop_break_with_value_returns_that_type() {
+    let mut checker = Checker::new();
+    checker.insert_var("x".into(), Type::Int, false, d_span());
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Break(Some(Box::new(sp(ast::Expr::Identifier("x".into())))))))),
+    };
+    let expr = sp(ast::Expr::Loop { body });
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_loop_break_no_value_returns_never() {
+    let mut checker = Checker::new();
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Break(None)))),
+    };
+    let expr = sp(ast::Expr::Loop { body });
+    let ty = checker.infer_expr(&expr);
+    // loop without a break-value: loop is infinite → Never
+    assert_eq!(ty, Type::Never);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_loop_no_break_returns_never() {
+    let mut checker = Checker::new();
+    let body = ast::Block { stmts: vec![], ret: None };
+    let expr = sp(ast::Expr::Loop { body });
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Never);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_while_break_with_value_returns_that_type() {
+    let mut checker = Checker::new();
+    checker.insert_var("flag".into(), Type::Bool, false, d_span());
+    checker.insert_var("n".into(), Type::Float, false, d_span());
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Break(Some(Box::new(sp(ast::Expr::Identifier("n".into())))))))),
+    };
+    let expr = sp(ast::Expr::While {
+        condition: Box::new(sp(ast::Expr::Identifier("flag".into()))),
+        body,
+    });
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Float);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_break_value_type_mismatch_errors() {
+    let mut checker = Checker::new();
+    checker.insert_var("a".into(), Type::Int, false, d_span());
+    checker.insert_var("b".into(), Type::Bool, false, d_span());
+    // First break: Int; second break: Bool — should error
+    let body = ast::Block {
+        stmts: vec![
+            sp(ast::Stmt::Expr(sp(ast::Expr::Break(
+                Some(Box::new(sp(ast::Expr::Identifier("a".into()))))
+            )))),
+        ],
+        ret: Some(Box::new(sp(ast::Expr::Break(Some(Box::new(sp(ast::Expr::Identifier("b".into())))))))),
+    };
+    let expr = sp(ast::Expr::Loop { body });
+    checker.infer_expr(&expr);
+    assert!(!checker.errors.is_empty(), "Mismatched break value types should error");
+    assert!(checker.errors[0].message.contains("Break value type mismatch"));
+}
+
+#[test]
+fn verify_for_loop_break_with_value() {
+    let mut checker = Checker::new();
+    checker.insert_var(
+        "items".into(),
+        Type::Generic { name: "List".into(), args: vec![Type::Int] },
+        false,
+        d_span(),
+    );
+    checker.insert_var("found".into(), Type::Bool, false, d_span());
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Break(Some(Box::new(sp(ast::Expr::Identifier("found".into())))))))),
+    };
+    let expr = sp(ast::Expr::For {
+        pattern: sp(ast::Pattern::Bind("_item".into())),
+        iter: Box::new(sp(ast::Expr::Identifier("items".into()))),
+        body,
+    });
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Bool);
+    assert!(checker.errors.is_empty());
+}

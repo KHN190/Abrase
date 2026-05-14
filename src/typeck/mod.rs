@@ -52,6 +52,7 @@ pub struct Checker {
     pub errors: Vec<TypeError>,
     context_stack: Vec<String>,
     loop_depth: usize,
+    loop_break_types: Vec<Option<Type>>, // one entry per active loop; Some(T) if break T seen
     active_effects: Vec<String>,
     effect_stack: Vec<Vec<String>>,
 
@@ -143,6 +144,7 @@ impl Checker {
             errors: Vec::new(),
             context_stack: Vec::new(),
             loop_depth: 0,
+            loop_break_types: Vec::new(),
             active_effects: Vec::new(),
             effect_stack: vec![Vec::new()],
             fn_registry: HashMap::new(),

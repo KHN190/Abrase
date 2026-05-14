@@ -10,6 +10,13 @@ fn body_returning(name: &str) -> ast::Block {
         ret: Some(Box::new(sp(ast::Expr::Identifier(name.into())))),
     }
 }
+// Break with value so the for/while/loop expression type equals the element type
+fn body_breaking(name: &str) -> ast::Block {
+    ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp(ast::Expr::Break(Some(Box::new(sp(ast::Expr::Identifier(name.into())))))))),
+    }
+}
 
 // Type Equivalence Tests
 
@@ -1142,7 +1149,7 @@ fn verify_for_loop_list_int_binds_element_type() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("n".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("nums".into()))),
-        body: body_returning("n"),
+        body: body_breaking("n"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1163,7 +1170,7 @@ fn verify_for_loop_list_string_binds_element_type() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("s".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("strs".into()))),
-        body: body_returning("s"),
+        body: body_breaking("s"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1184,7 +1191,7 @@ fn verify_for_loop_vec_bool_binds_element_type() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("f".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("flags".into()))),
-        body: body_returning("f"),
+        body: body_breaking("f"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1205,7 +1212,7 @@ fn verify_for_loop_option_type_binds_element() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("n".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("maybe_num".into()))),
-        body: body_returning("n"),
+        body: body_breaking("n"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1226,7 +1233,7 @@ fn verify_for_loop_result_type_binds_ok_element() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("val".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("res".into()))),
-        body: body_returning("val"),
+        body: body_breaking("val"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1243,7 +1250,7 @@ fn verify_for_loop_string_binds_char() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("c".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("text".into()))),
-        body: body_returning("c"),
+        body: body_breaking("c"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1264,7 +1271,7 @@ fn verify_for_loop_array_generic_binds_element() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("v".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("values".into()))),
-        body: body_returning("v"),
+        body: body_breaking("v"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1281,7 +1288,7 @@ fn verify_for_loop_unknown_iterable_propagates_unknown() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("x".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("unknown".into()))),
-        body: body_returning("x"),
+        body: body_breaking("x"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1298,7 +1305,7 @@ fn verify_for_loop_non_iterable_type_binds_unknown() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("x".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("num".into()))),
-        body: body_returning("x"),
+        body: body_breaking("x"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1324,7 +1331,7 @@ fn verify_for_loop_nested_generic_list_option() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("maybe_n".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("maybe_nums".into()))),
-        body: body_returning("maybe_n"),
+        body: body_breaking("maybe_n"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1353,7 +1360,7 @@ fn verify_for_loop_nested_list_of_lists_binds_inner_list() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("row".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("matrix".into()))),
-        body: body_returning("row"),
+        body: body_breaking("row"),
     });
 
     let ty = checker.infer_expr(&for_expr);
@@ -1382,7 +1389,7 @@ fn verify_for_loop_option_list_binds_list() {
     let for_expr = sp(ect::ast::Expr::For {
         pattern: sp(Pattern::Bind("maybe_list".into())),
         iter: Box::new(sp(ect::ast::Expr::Identifier("maybe_strs".into()))),
-        body: body_returning("maybe_list"),
+        body: body_breaking("maybe_list"),
     });
 
     let ty = checker.infer_expr(&for_expr);

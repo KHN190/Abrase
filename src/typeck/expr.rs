@@ -173,6 +173,7 @@ impl Checker {
 
                 self.enter_scope();
                 self.loop_depth += 1;
+                self.loop_break_types.push(None);
 
                 // Extract element type from iterator
                 let element_ty = self.extract_iterable_element_type(&iter_ty);
@@ -182,12 +183,13 @@ impl Checker {
                     self.insert_var(name.clone(), element_ty, false, pattern.span);
                 }
 
-                let body_ty = self.infer_block(body);
+                let _body_ty = self.infer_block(body);
 
                 self.loop_depth -= 1;
+                let break_ty = self.loop_break_types.pop().flatten();
                 self.exit_scope();
                 self.context_stack.pop();
-                body_ty
+                break_ty.unwrap_or(Type::Unit)
             }
             ast::Expr::While { condition, body } => {
                 self.context_stack.push("In while loop".into());
@@ -198,23 +200,49 @@ impl Checker {
                 }
 
                 self.loop_depth += 1;
-                let body_ty = self.infer_block(body);
+                self.loop_break_types.push(None);
+                let _body_ty = self.infer_block(body);
                 self.loop_depth -= 1;
+                let break_ty = self.loop_break_types.pop().flatten();
 
                 self.context_stack.pop();
-                body_ty
+                break_ty.unwrap_or(Type::Unit)
             }
             ast::Expr::Loop { body } => {
                 self.context_stack.push("In loop".into());
                 self.loop_depth += 1;
-                let body_ty = self.infer_block(body);
+                self.loop_break_types.push(None);
+                let _body_ty = self.infer_block(body);
                 self.loop_depth -= 1;
+                let break_ty = self.loop_break_types.pop().flatten();
                 self.context_stack.pop();
-                body_ty
+                // loop {} without break yields Never; loop { break x } yields T
+                break_ty.unwrap_or(Type::Never)
             }
-            ast::Expr::Break(_break_val) => {
+            ast::Expr::Break(break_val) => {
                 if self.loop_depth == 0 {
                     self.report_error("Break outside of loop".into(), expr.span);
+                    return Type::Never;
+                }
+                if let Some(val) = break_val {
+                    let val_ty = self.infer_expr(val);
+                    // Unify with the innermost loop's break type
+                    let existing = self.loop_break_types.last().and_then(|s| s.clone());
+                    match existing {
+                        None => {
+                            if let Some(slot) = self.loop_break_types.last_mut() {
+                                *slot = Some(val_ty);
+                            }
+                        }
+                        Some(ref ex_ty) => {
+                            if !self.types_compatible(ex_ty, &val_ty) && val_ty != Type::Unknown {
+                                self.report_error(
+                                    format!("Break value type mismatch: expected {:?}, got {:?}", ex_ty, val_ty),
+                                    expr.span,
+                                );
+                            }
+                        }
+                    }
                 }
                 Type::Never
             }
@@ -432,11 +460,51 @@ impl Checker {
                 }
                 Type::Named("Range<Int>".into())
             }
-            ast::Expr::Question(_inner) => {
-                Type::Unknown // Error propagation, would need context
+            ast::Expr::Question(inner) => {
+                let inner_ty = self.infer_expr(inner);
+                match &inner_ty {
+                    Type::Generic { name, args } if name == "Result" => {
+                        // Result<T, E>? propagates exn<E> and unwraps T
+                        let ok_ty = args.first().cloned().unwrap_or(Type::Unknown);
+                        let err_ty = args.get(1).cloned().unwrap_or(Type::Unknown);
+                        self.add_required_effect(crate::ty::Effect::Exn(Box::new(err_ty)));
+                        ok_ty
+                    }
+                    Type::Generic { name, args } if name == "Option" => {
+                        // Option<T>? propagates exn and unwraps T
+                        let inner_t = args.first().cloned().unwrap_or(Type::Unknown);
+                        self.add_required_effect(crate::ty::Effect::Exn(
+                            Box::new(Type::Named("NoneError".into()))
+                        ));
+                        inner_t
+                    }
+                    Type::Unknown => Type::Unknown,
+                    _ => {
+                        self.report_error(
+                            format!("'?' operator requires Result<T,E> or Option<T>, got {:?}", inner_ty),
+                            inner.span,
+                        );
+                        Type::Unknown
+                    }
+                }
             }
-            ast::Expr::Await(_inner) => {
-                Type::Unknown // Async, would need effect tracking
+            ast::Expr::Await(inner) => {
+                let inner_ty = self.infer_expr(inner);
+                match &inner_ty {
+                    Type::Generic { name, args } if name == "Future" => {
+                        let output_ty = args.first().cloned().unwrap_or(Type::Unknown);
+                        self.add_required_effect(crate::ty::Effect::Async);
+                        output_ty
+                    }
+                    Type::Unknown => Type::Unknown,
+                    _ => {
+                        self.report_error(
+                            format!("'.await' requires Future<T>, got {:?}", inner_ty),
+                            inner.span,
+                        );
+                        Type::Unknown
+                    }
+                }
             }
             ast::Expr::Scope { label, options, body } => {
                 self.context_stack.push(format!("In scope{}",
