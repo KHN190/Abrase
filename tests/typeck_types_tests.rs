@@ -2438,3 +2438,26 @@ fn verify_single_case_variant_missing_errors() {
     assert!(!result);
     assert!(checker.errors[0].message.contains("Unit"));
 }
+
+// ── Gap tests ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn verify_type_alias_resolves_in_variable_type() {
+    // `type Num = Int` then a variable declared as `Num` should resolve to Int
+    let mut checker = Checker::new();
+    checker.check_program(&[
+        ast::Decl::TypeAlias {
+            is_pub: false,
+            name: "Num".into(),
+            generics: vec![],
+            ty: ast::Type::Named("Int".into()),
+        },
+    ]);
+    // After the alias is registered, convert_type on Named("Num") should
+    // yield Int (or at least not Unknown)
+    let resolved = checker.convert_type(&ast::Type::Named("Num".into()));
+    assert_ne!(resolved, ect::ty::Type::Unknown,
+        "type alias 'Num = Int' must not resolve to Unknown; got {:?}", resolved);
+    assert_eq!(resolved, ect::ty::Type::Int,
+        "type alias 'Num = Int' must resolve to Int; got {:?}", resolved);
+}

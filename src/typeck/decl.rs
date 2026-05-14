@@ -183,6 +183,11 @@ impl Checker {
             ast::Span { line: 0, col: 0 },
         );
 
+        // Async functions declare the Async effect
+        if fn_decl.is_async {
+            self.fn_declared_effects.push(crate::ty::Effect::Async);
+        }
+
         self.scopes.push(Scope { vars: HashMap::new() });
 
         for param in &fn_decl.params {

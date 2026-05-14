@@ -1629,7 +1629,45 @@ fn verify_const_rejects_any_nonpure_in_chain() {
     assert!(!is_valid);
 }
 
+// ── Gap tests ─────────────────────────────────────────────────────────────────
+
 #[test]
+fn verify_throw_adds_exn_to_required_effects() {
+    use ect::ty::Effect;
+    let mut checker = Checker::new();
+    let expr = sp(Expr::Throw(Box::new(sp(Expr::Literal(ect::ast::Literal::String("oops".into()))))));
+    checker.infer_expr(&expr);
+    let required = checker.get_fn_required_effects();
+    assert!(
+        required.iter().any(|e| matches!(e, Effect::Exn(_))),
+        "throw must add Exn to required effects; got {:?}", required
+    );
+}
+
+#[test]
+fn verify_async_fn_decl_adds_async_declared_effect() {
+    use ect::ty::Effect;
+    let fn_decl = ect::ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: true,
+        name: "fetch".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: None,
+        where_clause: vec![],
+        body: ect::ast::Block { stmts: vec![], ret: None },
+    };
+    let mut checker = Checker::new();
+    checker.check_fn_decl(&fn_decl);
+    let declared = checker.get_fn_declared_effects();
+    assert!(
+        declared.iter().any(|e| matches!(e, Effect::Async)),
+        "async fn must declare Async effect; got {:?}", declared
+    );
+}
+
 fn verify_effect_checked_on_const_value_assignment() {
     let mut checker = Checker::new();
 

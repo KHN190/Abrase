@@ -1055,3 +1055,39 @@ fn verify_const_registry() {
     assert!(result.is_some());
     assert_eq!(result.unwrap(), Type::Float);
 }
+
+// ── Gap tests ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn verify_return_expr_type_checked_against_fn_return_type() {
+    // fn bad() -> Int { return "oops" }
+    // The `return "oops"` should be type-checked against declared return type Int.
+    let mut checker = Checker::new();
+    let fn_decl = ect::ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "bad".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ect::ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![Spanned {
+                node: ect::ast::Stmt::Expr(Spanned {
+                    node: Expr::Return(Some(Box::new(Spanned {
+                        node: Expr::Literal(ect::ast::Literal::String("oops".into())),
+                        span: d_span(),
+                    }))),
+                    span: d_span(),
+                }),
+                span: d_span(),
+            }],
+            ret: None,
+        },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(!checker.errors.is_empty(),
+        "return with wrong type inside fn body must produce a type error");
+}

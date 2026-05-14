@@ -256,7 +256,8 @@ impl Checker {
                 Type::Never
             }
             ast::Expr::Throw(expr_val) => {
-                let _ex_ty = self.infer_expr(expr_val);
+                let ex_ty = self.infer_expr(expr_val);
+                self.add_required_effect(crate::ty::Effect::Exn(Box::new(ex_ty)));
                 Type::Never
             }
             ast::Expr::Call { callee, args } => {

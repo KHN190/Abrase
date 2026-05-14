@@ -404,7 +404,14 @@ impl Checker {
                 "Char" => Type::Char,
                 "String" => Type::String,
                 "Unit" => Type::Unit,
-                _ => Type::Named(name.clone()),
+                _ => {
+                    // Check if it's a registered type alias
+                    if let Some(resolved) = self.type_alias_registry.get(name) {
+                        resolved.clone()
+                    } else {
+                        Type::Named(name.clone())
+                    }
+                },
             },
             ast::Type::Qualified(parts) => Type::Named(parts.join(".")),
             ast::Type::Generic { name, args } => {
