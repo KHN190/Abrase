@@ -88,6 +88,10 @@ impl Checker {
             let module_key = current_module.join("::");
             if let Some(items) = self.module_registry.get(&module_key) {
                 if items.contains_key(segment) {
+                    // Visibility: each segment must be accessible from the caller's module
+                    if !self.is_accessible(segment, &current_module) {
+                        return None;
+                    }
                     current_module.push(segment.clone());
                     if i == name_parts.len() - 1 {
                         return Some(current_module);

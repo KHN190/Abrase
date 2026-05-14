@@ -23,7 +23,6 @@ impl Checker {
     fn check_decl_signature(&mut self, decl: &ast::Decl) {
         match decl {
             ast::Decl::Fn(fn_decl) => {
-
                 let params: Vec<Type> = fn_decl.params.iter()
                     .filter_map(|p| match p {
                         ast::Param::Named { ty, .. } => Some(self.convert_type(ty)),
@@ -38,6 +37,8 @@ impl Checker {
                     .unwrap_or_else(|| Box::new(Type::Unit));
 
                 let fn_type = Type::Function { params, effects, ret };
+                let module_path = self.current_module.clone();
+                self.register_module_item(&module_path, fn_decl.name.clone(), fn_type.clone());
                 self.insert_var(fn_decl.name.clone(), fn_type, false, ast::Span { line: 0, col: 0 });
 
                 if fn_decl.is_pub {
@@ -46,6 +47,8 @@ impl Checker {
             },
 
             ast::Decl::Type { name, body, is_pub, ownership, .. } => {
+                let module_path = self.current_module.clone();
+                self.register_module_item(&module_path, name.clone(), Type::Named(name.clone()));
                 self.register_type(name.clone(), body.clone());
 
                 if *is_pub {
@@ -65,6 +68,8 @@ impl Checker {
 
             ast::Decl::TypeAlias { name, ty, is_pub, .. } => {
                 let converted = self.convert_type(ty);
+                let module_path = self.current_module.clone();
+                self.register_module_item(&module_path, name.clone(), converted.clone());
                 self.type_alias_registry.insert(name.clone(), converted);
 
                 if *is_pub {
@@ -77,6 +82,8 @@ impl Checker {
                     ast::TraitItem::Required(sig) => Some(sig.name.clone()),
                     ast::TraitItem::Default(decl) => Some(decl.name.clone()),
                 }).collect();
+                let module_path = self.current_module.clone();
+                self.register_module_item(&module_path, name.clone(), Type::Named(name.clone()));
                 self.register_trait(name.clone(), method_names);
 
                 if *is_pub {
@@ -86,6 +93,8 @@ impl Checker {
 
             ast::Decl::Const { name, ty, is_pub, .. } => {
                 let const_type = self.convert_type(ty);
+                let module_path = self.current_module.clone();
+                self.register_module_item(&module_path, name.clone(), const_type.clone());
                 self.insert_const_var(name.clone(), const_type);
 
                 if *is_pub {
@@ -95,6 +104,8 @@ impl Checker {
 
             ast::Decl::Effect { name, is_pub, ops } => {
                 let op_names: Vec<String> = ops.iter().map(|o| o.name.clone()).collect();
+                let module_path = self.current_module.clone();
+                self.register_module_item(&module_path, name.clone(), Type::Named(name.clone()));
                 self.register_effect(name.clone(), op_names);
 
                 if *is_pub {
@@ -103,6 +114,9 @@ impl Checker {
             },
 
             ast::Decl::EffectAlias { name, is_pub, .. } => {
+                let module_path = self.current_module.clone();
+                self.register_module_item(&module_path, name.clone(), Type::Named(name.clone()));
+
                 if *is_pub {
                     self.mark_public(name.clone());
                 }
@@ -119,6 +133,10 @@ impl Checker {
             },
 
             ast::Decl::Mod(name) => {
+                // Register sub-module as an item in the parent, then enter it
+                let parent_module = self.current_module.clone();
+                self.register_module_item(&parent_module, name.clone(), Type::Named(format!("module::{}", name)));
+                self.mark_public(name.clone()); // sub-modules are public so they can be traversed
                 self.push_module(name.clone());
             },
 

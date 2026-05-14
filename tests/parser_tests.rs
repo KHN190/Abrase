@@ -65,7 +65,6 @@ fn test_type_function() {
         effects: vec![],
         ret: Box::new(Type::Named("Bool".into())),
     });
-    // nested generic return
     assert_eq!(ty("(Int) -> Option<String>"), Type::Function {
         params: vec![Type::Named("Int".into())],
         effects: vec![],
@@ -75,13 +74,11 @@ fn test_type_function() {
 
 #[test]
 fn test_type_function_effects() {
-    // (Int) -> <exn> String
     assert_eq!(ty("(Int) -> <exn> String"), Type::Function {
         params: vec![Type::Named("Int".into())],
         effects: vec![EffectItem { name: vec!["exn".into()], arg: None }],
         ret: Box::new(Type::Named("String".into())),
     });
-    // (Int) -> <exn, io> String  — multiple effects
     assert_eq!(ty("(Int) -> <exn, io> String"), Type::Function {
         params: vec![Type::Named("Int".into())],
         effects: vec![
@@ -90,7 +87,6 @@ fn test_type_function_effects() {
         ],
         ret: Box::new(Type::Named("String".into())),
     });
-    // (Int) -> <exn<E>> String  — parameterised effect
     assert_eq!(ty("(Int) -> <exn<E>> String"), Type::Function {
         params: vec![Type::Named("Int".into())],
         effects: vec![EffectItem { name: vec!["exn".into()], arg: Some(Box::new(Type::Named("E".into()))) }],
@@ -130,7 +126,6 @@ fn test_expr_if_else_if_chain() {
     let mut parser = Parser::new(Lexer::new(input));
     let expr = parser.parse_expr(Precedence::Lowest);
     if let Expr::If { alternative: Some(alt), .. } = expr.node {
-        // Alternative should be another if expression
         assert!(matches!(alt.node, Expr::If { .. }));
     } else {
         panic!("Expected If expression with else if");
@@ -157,9 +152,7 @@ fn test_expr_match_with_guard() {
     let expr = parser.parse_expr(Precedence::Lowest);
     if let Expr::Match { scrutinee: _, arms } = expr.node {
         assert_eq!(arms.len(), 2);
-        // First arm should have a guard
         assert!(arms[0].guard.is_some());
-        // Second arm should not have a guard
         assert!(arms[1].guard.is_none());
     } else {
         panic!("Expected Match expression");
@@ -198,9 +191,7 @@ fn test_expr_for_tuple_destructure() {
     let mut parser = Parser::new(Lexer::new(input));
     let expr = parser.parse_expr(Precedence::Lowest);
     if let Expr::For { pattern, iter, .. } = expr.node {
-        // Pattern should be tuple pattern
         assert!(matches!(pattern.node, Pattern::Tuple(_)));
-        // Iterator should be identifier pairs
         assert_eq!(iter.node, Expr::Identifier("pairs".into()));
     } else {
         panic!("Expected For expression");
@@ -226,9 +217,7 @@ fn test_expr_while_complex_condition() {
     let mut parser = Parser::new(Lexer::new(input));
     let expr = parser.parse_expr(Precedence::Lowest);
     if let Expr::While { condition, body } = expr.node {
-        // Condition should be a binary expression
         assert!(matches!(condition.node, Expr::Binary { .. }));
-        // Body should have at least one statement
         assert!(body.stmts.len() > 0 || body.ret.is_some());
     } else {
         panic!("Expected While expression");
@@ -254,7 +243,6 @@ fn test_expr_loop_with_continue() {
     let mut parser = Parser::new(Lexer::new(input));
     let expr = parser.parse_expr(Precedence::Lowest);
     if let Expr::Loop { body } = expr.node {
-        // If is the return expression of the loop, not a statement
         assert!(matches!(body.ret, Some(r) if matches!(r.node, Expr::If { .. })));
     } else {
         panic!("Expected Loop expression");
@@ -347,17 +335,12 @@ fn test_expr_handle_multiple_arms() {
 
 #[test]
 fn test_pattern_basic() {
-    // Bind pattern
     let mut p = Parser::new(Lexer::new("x"));
     let pat = p.parse_pattern().unwrap();
     assert_eq!(pat.node, Pattern::Bind("x".into()));
-
-    // Wildcard
     let mut p = Parser::new(Lexer::new("_"));
     let pat = p.parse_pattern().unwrap();
     assert_eq!(pat.node, Pattern::Wildcard);
-
-    // Literal
     let mut p = Parser::new(Lexer::new("42"));
     let pat = p.parse_pattern().unwrap();
     assert_eq!(pat.node, Pattern::Literal(Literal::Int(42)));
@@ -415,7 +398,6 @@ fn test_decl_impl() {
     let mut p = Parser::new(Lexer::new(input));
     let decl = p.parse_decl().unwrap();
     if let Decl::Impl { .. } = decl {
-        // impl parsed successfully
     } else {
         panic!("Expected Impl declaration");
     }
@@ -526,7 +508,6 @@ fn test_let_tuple_pattern() {
     if let Stmt::Let { pattern, is_mut, ty, .. } = spanned_stmt.node {
         assert!(!is_mut);
         assert!(ty.is_none());
-        // Check that pattern is a tuple pattern with 2 elements
         if let Pattern::Tuple(pats) = pattern.node {
             assert_eq!(pats.len(), 2);
             assert_eq!(pats[0].node, Pattern::Bind("x".into()));
@@ -566,11 +547,11 @@ fn test_let_nested_tuple_pattern() {
     if let Stmt::Let { pattern, is_mut, ty, value: _ } = spanned_stmt.node {
         assert!(!is_mut);
         assert!(ty.is_some());
-        // Check outer tuple pattern
+
         if let Pattern::Tuple(pats) = pattern.node {
             assert_eq!(pats.len(), 2);
             assert_eq!(pats[0].node, Pattern::Bind("x".into()));
-            // Check inner tuple pattern
+
             if let Pattern::Tuple(inner_pats) = &pats[1].node {
                 assert_eq!(inner_pats.len(), 2);
                 assert_eq!(inner_pats[0].node, Pattern::Bind("a".into()));
@@ -635,7 +616,6 @@ fn test_fn_declaration() {
 
 #[test]
 fn test_fn_type_with_effects() {
-    // Function type with single effect
     assert_eq!(
         ty("() -> <io> String"),
         Type::Function {
@@ -645,7 +625,6 @@ fn test_fn_type_with_effects() {
         }
     );
 
-    // Function type with multiple effects
     assert_eq!(
         ty("(Int) -> <io, exn> Bool"),
         Type::Function {
@@ -658,7 +637,6 @@ fn test_fn_type_with_effects() {
         }
     );
 
-    // Function type with parameterized effect
     assert_eq!(
         ty("() -> <exn<String>> Int"),
         Type::Function {
@@ -679,7 +657,6 @@ fn test_fn_decl_with_effects() {
         assert_eq!(fn_decl.name, "foo");
         assert_eq!(fn_decl.params.len(), 0);
 
-        // Check that effects are captured in the effects field
         assert_eq!(fn_decl.effects.len(), 1);
         assert_eq!(fn_decl.effects[0].name, vec!["io".to_string()]);
         assert_eq!(fn_decl.return_type, Some(Type::Named("String".to_string())));
