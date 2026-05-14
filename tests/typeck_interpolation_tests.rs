@@ -1,4 +1,4 @@
-use ect::ast::{Literal, StringPart};
+use ect::ast::{*, Type as AstType};
 use ect::ty::Type;
 use ect::typeck::Checker;
 
