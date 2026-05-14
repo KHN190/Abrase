@@ -1,9 +1,5 @@
-use ect::ast::{self, Pattern, Span, Spanned};
 use ect::ty::Type;
 use ect::typeck::Checker;
-
-fn d_span() -> Span { Span::new(0, 0) }
-fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
 
 // Generics & Trait Constraints Tests
 

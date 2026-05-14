@@ -1,4 +1,3 @@
-use ect::ast::{self, Span, Spanned};
 use ect::ty::{Type, Ownership};
 
 #[cfg(test)]

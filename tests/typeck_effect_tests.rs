@@ -1,4 +1,4 @@
-use ect::ast::{self, Pattern, Span, Spanned};
+use ect::ast::{self, Span, Spanned};
 use ect::ty::Type;
 use ect::typeck::Checker;
 
@@ -931,7 +931,7 @@ fn verify_function_type_subsumption_pure_for_async_exn() {
 
 #[test]
 fn verify_function_type_subsumption_incompatible_return() {
-    let checker = Checker::new();
+    let _checker = Checker::new();
     use ect::ty::Effect;
 
     // Function type: () -> <pure> Int
@@ -1051,4 +1051,233 @@ fn verify_effect_subsumption_order_independent() {
 
     assert!(checker.effects_subsume(&declared_a, &expected));
     assert!(checker.effects_subsume(&declared_b, &expected));
+}
+
+// Phase 17: Closure Effect Declaration Validation
+
+#[test]
+fn verify_closure_declared_pure_valid() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Total]; // <pure>
+    let inferred = vec![]; // body has no effects
+
+    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_closure_declared_pure_with_io_call_invalid() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Total]; // <pure>
+    let inferred = vec![Effect::Alloc]; // body calls IO function
+
+    assert!(!checker.validate_closure_effects(&declared, &inferred, d_span()));
+    assert!(checker.errors.len() > 0);
+}
+
+#[test]
+fn verify_closure_declared_async_valid() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Async];
+    let inferred = vec![Effect::Async];
+
+    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_closure_declared_async_exact_match() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Async];
+    let inferred = vec![Effect::Async];
+
+    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_closure_declared_multiple_effects_subset() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Closure declares <async, alloc>
+    let declared = vec![Effect::Async, Effect::Alloc];
+    // Body only uses async
+    let inferred = vec![Effect::Async];
+
+    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_closure_declared_insufficient_effects() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Closure declares <async>
+    let declared = vec![Effect::Async];
+    // Body uses both async and alloc
+    let inferred = vec![Effect::Async, Effect::Alloc];
+
+    assert!(!checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_closure_no_declaration_accepts_any() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![]; // No effects declared
+    let inferred = vec![Effect::Async, Effect::Alloc]; // Body has effects
+
+    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_inferred_effects_exceed_declared_single() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Total]; // <pure>
+    let inferred = vec![Effect::Alloc]; // has IO
+
+    let exceeds = checker.inferred_effects_exceed_declared(&declared, &inferred);
+    assert_eq!(exceeds.len(), 1);
+}
+
+#[test]
+fn verify_inferred_effects_exceed_declared_multiple() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Total]; // <pure>
+    let inferred = vec![Effect::Async, Effect::Alloc]; // has async and IO
+
+    let exceeds = checker.inferred_effects_exceed_declared(&declared, &inferred);
+    assert_eq!(exceeds.len(), 2);
+}
+
+#[test]
+fn verify_inferred_effects_subset_of_declared() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Async, Effect::Alloc, Effect::Nondet];
+    let inferred = vec![Effect::Async, Effect::Alloc];
+
+    let exceeds = checker.inferred_effects_exceed_declared(&declared, &inferred);
+    assert_eq!(exceeds.len(), 0);
+}
+
+#[test]
+fn verify_all_effects_declared_true() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Async, Effect::Alloc];
+    let inferred = vec![Effect::Async];
+
+    assert!(checker.all_effects_declared(&declared, &inferred));
+}
+
+#[test]
+fn verify_all_effects_declared_false() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Async];
+    let inferred = vec![Effect::Async, Effect::Alloc];
+
+    assert!(!checker.all_effects_declared(&declared, &inferred));
+}
+
+#[test]
+fn verify_all_effects_declared_exact_match() {
+    let checker = Checker::new();
+    use ect::ty::Effect;
+
+    let declared = vec![Effect::Async, Effect::Alloc];
+    let inferred = vec![Effect::Async, Effect::Alloc];
+
+    assert!(checker.all_effects_declared(&declared, &inferred));
+}
+
+#[test]
+fn verify_closure_with_pure_declaration_io_call_error() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Closure declared as |x| -> <pure> but calls IO
+    let declared = vec![Effect::Total];
+    let inferred = vec![Effect::Alloc];
+
+    let result = checker.validate_closure_effects(&declared, &inferred, d_span());
+    assert!(!result);
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("effect") &&
+            checker.errors[0].message.contains("not"));
+}
+
+#[test]
+fn verify_closure_declared_effects_with_exn_type() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Closure declared with specific exception type
+    let declared = vec![Effect::Exn(Box::new(Type::String))];
+    let inferred = vec![Effect::Exn(Box::new(Type::String))];
+
+    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_closure_exn_type_mismatch_in_declaration() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Closure declares <exn<String>> but body throws <exn<Int>>
+    let declared = vec![Effect::Exn(Box::new(Type::String))];
+    let inferred = vec![Effect::Exn(Box::new(Type::Int))];
+
+    assert!(!checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_closure_mixed_declared_vs_inferred() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Closure declares <pure, async, alloc>
+    let declared = vec![Effect::Total, Effect::Async, Effect::Alloc];
+    // Body only uses <async, alloc>
+    let inferred = vec![Effect::Async, Effect::Alloc];
+
+    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_closure_over_declared_single_extra_effect() {
+    let mut checker = Checker::new();
+    use ect::ty::Effect;
+
+    // Closure declares <async, alloc>
+    let declared = vec![Effect::Async, Effect::Alloc];
+    // Body uses <async, alloc, nondet>
+    let inferred = vec![Effect::Async, Effect::Alloc, Effect::Nondet];
+
+    assert!(!checker.validate_closure_effects(&declared, &inferred, d_span()));
+}
+
+#[test]
+fn verify_empty_declared_empty_inferred() {
+    let mut checker = Checker::new();
+
+    let declared = vec![];
+    let inferred = vec![];
+
+    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
 }

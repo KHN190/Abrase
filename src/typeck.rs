@@ -904,6 +904,75 @@ impl Checker {
         self.qualified_names.clear();
     }
 
+    // Phase 17: Closure Effect Declaration Validation
+    pub fn validate_closure_effects(&mut self,
+        declared_effects: &[crate::ty::Effect],
+        inferred_effects: &[crate::ty::Effect],
+        span: Span
+    ) -> bool {
+        // If no effects are declared, inferred effects are always valid
+        if declared_effects.is_empty() {
+            return true;
+        }
+
+        // If effects are declared, inferred effects must be a subset
+        // i.e., every inferred effect must exist in declared effects
+        for inferred in inferred_effects {
+            let is_covered = declared_effects.iter().any(|decl| {
+                self.effects_equal(inferred, decl)
+            });
+
+            if !is_covered {
+                self.report_error(
+                    format!("Closure body produces effect not declared in closure type"),
+                    span
+                );
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn check_closure_effect_declaration(&mut self,
+        declared_effects: &[crate::ty::Effect],
+        body_span: Span
+    ) -> bool {
+        // Check if declared effects cover all required effects from body
+        // fn_required_effects contains effects produced by closure body
+        let inferred = &self.fn_required_effects.clone();
+        self.validate_closure_effects(declared_effects, inferred, body_span)
+    }
+
+    pub fn inferred_effects_exceed_declared(&self,
+        declared: &[crate::ty::Effect],
+        inferred: &[crate::ty::Effect]
+    ) -> Vec<crate::ty::Effect> {
+        // Return effects that are inferred but not declared
+        let mut exceeds = Vec::new();
+        for inf in inferred {
+            let found = declared.iter().any(|decl| {
+                self.effects_equal(inf, decl)
+            });
+            if !found {
+                exceeds.push(inf.clone());
+            }
+        }
+        exceeds
+    }
+
+    pub fn all_effects_declared(&self,
+        declared: &[crate::ty::Effect],
+        inferred: &[crate::ty::Effect]
+    ) -> bool {
+        // True if all inferred effects are in declared set
+        inferred.iter().all(|inf| {
+            declared.iter().any(|decl| {
+                self.effects_equal(inf, decl)
+            })
+        })
+    }
+
     // Phase 5: Pattern Matching Support
     pub fn check_pattern(&mut self, pattern: &Spanned<ast::Pattern>, value_ty: &Type, _pattern_span: Span) {
         match &pattern.node {
@@ -1518,6 +1587,19 @@ impl Checker {
                     let expected = self.convert_type(expected_ret);
                     if expected != body_ty && expected != Type::Unknown && body_ty != Type::Unknown {
                         self.report_error("Closure body type mismatch".into(), body.span);
+                    }
+                }
+
+                // Phase 17: Validate closure effect declarations
+                // If effects are declared, check that inferred effects match declaration
+                if !declared_effects.is_empty() {
+                    let inferred = self.fn_required_effects.clone();
+                    let exceeds = self.inferred_effects_exceed_declared(&declared_effects, &inferred);
+                    if !exceeds.is_empty() {
+                        self.report_error(
+                            format!("Closure body produces effects not in declared effect set"),
+                            body.span
+                        );
                     }
                 }
 
