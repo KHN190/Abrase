@@ -1220,20 +1220,33 @@ impl Checker {
     pub fn is_public(&self, item_name: &str) -> bool {
         // Check if item is accessible from current module
         // An item is accessible if:
-        // 1. It's marked as public
-        // 2. It's in the same module as the current context
-        // 3. It's a built-in item
+        // 1. It's marked as public (accessible from anywhere)
+        // 2. It's in the same module as the current context (accessible, even if private)
+        // Note: "private" means "not exported", not "not accessible within the module"
 
-        // Check for public registration
+        // First check for public registration in any module
         for public_item in &self.public_items {
             if public_item.ends_with(&format!("::{}", item_name)) {
                 return true;
             }
         }
 
-        // Check if it's in the same module
-        let qualified_name = format!("{}::{}", self.current_module.join("::"), item_name);
-        !self.private_items.contains(&qualified_name)
+        // Check if it's in the current module
+        let current_qualified = format!("{}::{}", self.current_module.join("::"), item_name);
+
+        // If it's marked as private in the current module, it's still accessible
+        // (private means not exported, but accessible within the module)
+        if self.private_items.contains(&current_qualified) {
+            return true;
+        }
+
+        // Check if it exists in any other module
+        let exists_in_other_module = self.public_items.iter().any(|p| p.ends_with(&format!("::{}", item_name)) && !p.ends_with(&current_qualified)) ||
+                                      self.private_items.iter().any(|p| p.ends_with(&format!("::{}", item_name)) && !p.ends_with(&current_qualified));
+
+        // If it only exists in current module (marked as public/private there), it's accessible
+        // If it exists in another module, it's not accessible unless it's public there
+        !exists_in_other_module
     }
 
     pub fn is_accessible(&self, item_name: &str, item_module: &[String]) -> bool {
@@ -1246,6 +1259,24 @@ impl Checker {
         // Items marked as public are accessible from anywhere
         let qualified_name = format!("{}::{}", item_module.join("::"), item_name);
         self.public_items.contains(&qualified_name)
+    }
+
+    pub fn is_qualified_accessible(&self, path: &[String]) -> bool {
+        // Check if a fully qualified name path like ["std", "io", "read"] is accessible
+        // The last element is the item name, everything else is the module path
+        if path.is_empty() {
+            return false;
+        }
+
+        let item_name = path[path.len() - 1].clone();
+        let item_module: Vec<String> = if path.len() > 1 {
+            path[..path.len() - 1].to_vec()
+        } else {
+            // Item with no module prefix - check current module context
+            self.current_module.clone()
+        };
+
+        self.is_accessible(&item_name, &item_module)
     }
 
     pub fn validate_visibility(&mut self, item_name: &str, item_module: &[String], access_span: Span) -> bool {
