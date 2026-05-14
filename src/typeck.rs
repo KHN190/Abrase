@@ -61,6 +61,7 @@ pub struct Checker {
     // Type Environment
     fn_registry: HashMap<String, (Vec<Type>, Type)>,
     type_registry: HashMap<String, ast::TypeBody>,
+    variant_registry: HashMap<String, Vec<String>>, // type_name -> [case_names]
     const_registry: HashMap<String, Type>,
 
     // Ownership & Borrowing
@@ -123,6 +124,7 @@ impl Checker {
             effect_stack: vec![Vec::new()],
             fn_registry: HashMap::new(),
             type_registry: HashMap::new(),
+            variant_registry: HashMap::new(),
             const_registry: HashMap::new(),
             borrow_stack: Vec::new(),
             effect_registry: HashMap::new(),
@@ -204,11 +206,28 @@ impl Checker {
     }
 
     pub fn register_type(&mut self, name: String, body: ast::TypeBody) {
+        // Phase 21: Auto-populate variant_registry if this is a variant type
+        if let ast::TypeBody::Variant(cases) = &body {
+            let case_names: Vec<String> = cases.iter().map(|c| match c {
+                ast::VariantCase::Unit(n) => n.clone(),
+                ast::VariantCase::Tuple(n, _) => n.clone(),
+                ast::VariantCase::Record(n, _) => n.clone(),
+            }).collect();
+            self.variant_registry.insert(name.clone(), case_names);
+        }
         self.type_registry.insert(name, body);
     }
 
     pub fn get_type(&self, name: &str) -> Option<ast::TypeBody> {
         self.type_registry.get(name).cloned()
+    }
+
+    pub fn register_variant_cases(&mut self, type_name: String, cases: Vec<String>) {
+        self.variant_registry.insert(type_name, cases);
+    }
+
+    pub fn get_variant_cases(&self, type_name: &str) -> Option<&Vec<String>> {
+        self.variant_registry.get(type_name)
     }
 
     pub fn register_const(&mut self, name: String, ty: Type) {
@@ -740,6 +759,77 @@ impl Checker {
     pub fn is_pattern_exhaustive(&self, patterns: &[String]) -> bool {
         // Pattern set is exhaustive if it contains a wildcard
         patterns.contains(&"_".to_string())
+    }
+
+    // Phase 21: Collect variant case names from match arms
+    fn collect_arm_patterns(arms: &[ast::MatchArm]) -> (Vec<String>, bool) {
+        let mut covered = Vec::new();
+        let mut has_wildcard = false;
+
+        for arm in arms {
+            match &arm.pattern.node {
+                ast::Pattern::Wildcard => {
+                    has_wildcard = true;
+                }
+                ast::Pattern::Bind(_) => {
+                    // A bare binding like `x => body` covers all cases
+                    has_wildcard = true;
+                }
+                ast::Pattern::Variant { ty, .. } => {
+                    // Extract the last component of the type path (the variant case name)
+                    if let Some(case_name) = ty.last() {
+                        covered.push(case_name.clone());
+                    }
+                }
+                ast::Pattern::Or(pats) => {
+                    // Collect all cases from the or-pattern
+                    for pat in pats {
+                        if let ast::Pattern::Variant { ty, .. } = &pat.node {
+                            if let Some(case_name) = ty.last() {
+                                covered.push(case_name.clone());
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Other patterns (Literal, Bind, etc.) don't count as variant coverage
+                }
+            }
+        }
+
+        (covered, has_wildcard)
+    }
+
+    // Phase 21: Check exhaustiveness of variant cases in match
+    pub fn check_variant_exhaustiveness(
+        &mut self,
+        type_name: &str,
+        covered: &[String],
+        has_wildcard: bool,
+        span: Span,
+    ) -> bool {
+        // Wildcard covers all cases
+        if has_wildcard {
+            return true;
+        }
+
+        // Look up the variant cases for this type
+        if let Some(required_cases) = self.variant_registry.get(type_name).cloned() {
+            let mut all_covered = true;
+            for case in required_cases {
+                if !covered.contains(&case) {
+                    self.report_error(
+                        format!("Non-exhaustive pattern: variant case '{}' not covered in match on '{}'", case, type_name),
+                        span
+                    );
+                    all_covered = false;
+                }
+            }
+            all_covered
+        } else {
+            // Unknown type - be lenient
+            true
+        }
     }
 
     pub fn clear_pattern_analysis(&mut self) {
@@ -1889,7 +1979,19 @@ impl Checker {
             }
             ast::Expr::Match { scrutinee, arms } => {
                 self.context_stack.push("In match expression".into());
-                let _scrutinee_ty = self.infer_expr(scrutinee);
+                let scrutinee_ty = self.infer_expr(scrutinee);
+
+                // Phase 21: Pattern type checking and exhaustiveness analysis
+                for arm in arms {
+                    self.check_pattern(&arm.pattern, &scrutinee_ty, arm.pattern.span);
+                }
+
+                // Phase 21: Check variant exhaustiveness for Named types
+                if let Type::Named(type_name) = &scrutinee_ty {
+                    let type_name = type_name.clone();
+                    let (covered, has_wildcard) = Self::collect_arm_patterns(arms);
+                    self.check_variant_exhaustiveness(&type_name, &covered, has_wildcard, expr.span);
+                }
 
                 let mut arm_types = Vec::new();
                 for arm in arms {
