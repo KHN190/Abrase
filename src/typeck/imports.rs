@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use crate::ast;
+use crate::ty::Type;
 use super::*;
 
 impl Checker {
@@ -60,6 +62,46 @@ impl Checker {
         self.import_collisions.len()
     }
 
+    // Module Registry: segment-by-segment traversal
+
+    pub fn register_module_item(&mut self, module_path: &[String], item_name: String, ty: Type) {
+        let module_key = module_path.join("::");
+        self.module_registry
+            .entry(module_key)
+            .or_insert_with(HashMap::new)
+            .insert(item_name, ty);
+    }
+
+    pub fn lookup_module_item(&self, module_path: &[String], item_name: &str) -> Option<Type> {
+        let module_key = module_path.join("::");
+        self.module_registry.get(&module_key)?.get(item_name).cloned()
+    }
+
+    pub fn get_module_items(&self, module_path: &[String]) -> Option<&HashMap<String, Type>> {
+        let module_key = module_path.join("::");
+        self.module_registry.get(&module_key)
+    }
+
+    fn traverse_module_path(&self, starting_module: &[String], name_parts: &[String]) -> Option<Vec<String>> {
+        let mut current_module = starting_module.to_vec();
+        for (i, segment) in name_parts.iter().enumerate() {
+            let module_key = current_module.join("::");
+            if let Some(items) = self.module_registry.get(&module_key) {
+                if items.contains_key(segment) {
+                    current_module.push(segment.clone());
+                    if i == name_parts.len() - 1 {
+                        return Some(current_module);
+                    }
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        }
+        None
+    }
+
     pub fn register_qualified_name(&mut self, simple_name: String, qualified_path: Vec<String>) {
         self.qualified_names
             .entry(simple_name)
@@ -71,7 +113,27 @@ impl Checker {
         if name_parts.is_empty() {
             return None;
         }
-        // Try exact match
+
+        // Segment-by-segment traversal through module_registry (primary path)
+        if !self.module_registry.is_empty() {
+            // Try from root
+            let root = vec!["root".to_string()];
+            if let Some(resolved) = self.traverse_module_path(&root, name_parts) {
+                return Some(resolved);
+            }
+            // Try relative to current module
+            if let Some(resolved) = self.traverse_module_path(&self.current_module.clone(), name_parts) {
+                return Some(resolved);
+            }
+            // Try skipping explicit "root" prefix if caller included it
+            if name_parts[0] == "root" && name_parts.len() > 1 {
+                if let Some(resolved) = self.traverse_module_path(&root, &name_parts[1..]) {
+                    return Some(resolved);
+                }
+            }
+        }
+
+        // Fall back to qualified_names for backward compatibility
         if name_parts[0] == "root" {
             if let Some(paths_list) = self.qualified_names.get(&name_parts[name_parts.len() - 1]) {
                 for path in paths_list {
@@ -81,12 +143,10 @@ impl Checker {
                 }
             }
         }
-        // Try relative to current module
         let mut candidate = self.current_module.clone();
         for part in name_parts {
             candidate.push(part.clone());
         }
-        // Look in qualified_names
         if let Some(paths_list) = self.qualified_names.get(&name_parts[name_parts.len() - 1]) {
             for path in paths_list {
                 if path == &candidate {
@@ -94,7 +154,6 @@ impl Checker {
                 }
             }
         }
-        // Try as-is
         if let Some(paths_list) = self.qualified_names.get(&name_parts[name_parts.len() - 1]) {
             for path in paths_list {
                 if path == name_parts {

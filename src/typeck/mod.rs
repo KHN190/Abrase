@@ -66,6 +66,9 @@ pub struct Checker {
     imported_names: HashMap<String, (Vec<String>, String)>, // alias/name -> (module_path, original_name)
     import_collisions: std::collections::HashSet<String>,
 
+    // Module Registry: module_path -> (item_name -> Type)
+    module_registry: HashMap<String, HashMap<String, Type>>,
+
     // Ownership & Borrowing
     borrow_stack: Vec<(String, bool)>,
 
@@ -192,6 +195,7 @@ impl Checker {
             type_alias_registry: HashMap::new(),
             imported_names: HashMap::new(),
             import_collisions: std::collections::HashSet::new(),
+            module_registry: HashMap::new(),
         }
     }
     pub fn enter_scope(&mut self) {
