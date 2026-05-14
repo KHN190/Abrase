@@ -1,4 +1,4 @@
-# Appendix B: Open Questions
+# Appendix C: Open Questions
 
 The following design points are not yet finalized:
 
