@@ -1,17 +1,17 @@
 use std::collections::HashMap;
-use crate::vm::{Value, VirtualMachine};
+use crate::vm::{VirtualMachine, Value};
 use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::lexer::Lexer;
 
 pub type NativeFn = Box<dyn Fn(&[Value]) -> Result<Value, String>>;
 
-pub struct Module {
+pub struct HostModule {
     pub name: String,
     pub functions: HashMap<String, NativeFn>,
 }
 
-impl Module {
+impl HostModule {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -26,8 +26,8 @@ impl Module {
 
 pub struct Runtime {
     vm: VirtualMachine,
-    globals: HashMap<String, NativeFn>,
-    modules: HashMap<String, Module>,
+    pub globals: HashMap<String, NativeFn>,
+    pub modules: HashMap<String, HostModule>,
 }
 
 impl Runtime {
@@ -43,26 +43,24 @@ impl Runtime {
         self.globals.insert(name.to_string(), Box::new(func));
     }
 
-    pub fn register_module(&mut self, module: Module) {
+    pub fn register_module(&mut self, module: HostModule) {
         self.modules.insert(module.name.clone(), module);
     }
 
     pub fn eval(&mut self, source: &str) -> Result<Value, String> {
         let lexer = Lexer::new(source);
         let mut parser = Parser::new(lexer);
-        
+
         let ast = parser.parse_program();
         if !parser.errors.is_empty() {
-            let error_messages: Vec<String> = parser.errors
+            let msgs: Vec<String> = parser.errors
                 .iter()
-                .map(|e| format!("[Line {}:{}] {}", e.span.line, e.span.col, e.message))
+                .map(|e| format!("[{}:{}] {}", e.span.line, e.span.col, e.message))
                 .collect();
-            return Err(error_messages.join("\n"));
+            return Err(msgs.join("\n"));
         }
 
-        let mut compiler = Compiler::new(&self.globals, &self.modules);
-        let chunk = compiler.compile(&ast)?;
-        
+        let chunk = Compiler::new().compile(&ast)?;
         self.vm.run(&chunk)
     }
 }

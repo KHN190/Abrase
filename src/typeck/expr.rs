@@ -623,7 +623,6 @@ impl Checker {
                 self.clear_handle_context();
                 if arm_types.is_empty() { Type::Unknown } else { arm_types[0].clone() }
             }
-            _ => self.report_error("Expression not supported yet".into(), expr.span),
         }
     }
     

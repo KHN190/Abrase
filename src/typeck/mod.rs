@@ -36,6 +36,7 @@ struct VarMeta {
     ty: Type,
     is_mut: bool,
     is_moved: bool,
+    #[allow(dead_code)]
     defined_at: Span,
     moved_at: Option<Span>,
     immut_borrow_count: usize,

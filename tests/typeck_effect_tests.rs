@@ -1668,6 +1668,7 @@ fn verify_async_fn_decl_adds_async_declared_effect() {
     );
 }
 
+#[test]
 fn verify_effect_checked_on_const_value_assignment() {
     let mut checker = Checker::new();
 

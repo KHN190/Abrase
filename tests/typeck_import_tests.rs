@@ -1,4 +1,3 @@
-use ect::ast::{Pattern, Span, Spanned, self};
 use ect::ast::*;
 use ect::ty::Type;
 use ect::typeck::Checker;

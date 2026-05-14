@@ -4,12 +4,6 @@ use ect::typeck::Checker;
 
 fn d_span() -> Span { Span { line: 0, col: 0 } }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
-fn body_returning(name: &str) -> ast::Block {
-    ast::Block {
-        stmts: vec![],
-        ret: Some(Box::new(sp(ast::Expr::Identifier(name.into())))),
-    }
-}
 // Break with value so the for/while/loop expression type equals the element type
 fn body_breaking(name: &str) -> ast::Block {
     ast::Block {
