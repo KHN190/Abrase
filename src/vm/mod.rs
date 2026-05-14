@@ -11,9 +11,10 @@ use frame::Frame;
 
 pub struct VirtualMachine {
     pub(crate) registers: [Option<Value>; 256],
-    #[allow(dead_code)]
     pub(crate) frames: Vec<Frame>,
-    pc: usize,
+    pub(crate) pc: usize,
+    pub(crate) base_reg: usize,
+    pub(crate) current_func: usize,
 }
 
 impl VirtualMachine {
@@ -22,6 +23,8 @@ impl VirtualMachine {
             registers: std::array::from_fn(|_| None),
             frames: Vec::new(),
             pc: 0,
+            base_reg: 0,
+            current_func: 0,
         }
     }
 }

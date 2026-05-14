@@ -1,11 +1,50 @@
 // VM dispatch loop, register operations, arithmetic.
-use ect::bytecode::{Chunk, OpCode, Register};
+use ect::bytecode::{Chunk, OpCode, Register, Module};
 use ect::vm::{Value, VirtualMachine};
 
 fn r(n: u8) -> Register { Register(n) }
 
 fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
-    VirtualMachine::new().run(&Chunk { code: ops, constants })
+    let reg_count = 256;
+    VirtualMachine::new().run(&Chunk { code: ops, constants, reg_count })
+}
+
+fn run_module(functions: Vec<(Vec<OpCode>, Vec<Value>)>) -> Result<Value, String> {
+    let num_functions = functions.len();
+    let chunks: Vec<Chunk> = functions
+        .into_iter()
+        .map(|(code, constants)| {
+            // Calculate reg_count as the maximum register index used + 1
+            let mut max_reg = 0;
+            for op in &code {
+                match op {
+                    OpCode::PushConst(r, _) | OpCode::Mov(r, _) | OpCode::Ret(r) |
+                    OpCode::Jz(r, _) | OpCode::Jnz(r, _) => {
+                        max_reg = max_reg.max(r.to_usize() + 1);
+                    }
+                    OpCode::Add(d, l, r) | OpCode::Sub(d, l, r) | OpCode::Mul(d, l, r) |
+                    OpCode::Div(d, l, r) | OpCode::Mod(d, l, r) | OpCode::Eq(d, l, r) |
+                    OpCode::Neq(d, l, r) | OpCode::Lt(d, l, r) | OpCode::Gt(d, l, r) |
+                    OpCode::Lte(d, l, r) | OpCode::Gte(d, l, r) => {
+                        max_reg = max_reg.max(d.to_usize() + 1);
+                        max_reg = max_reg.max(l.to_usize() + 1);
+                        max_reg = max_reg.max(r.to_usize() + 1);
+                    }
+                    OpCode::Call(dest, _, first_arg, argc) => {
+                        max_reg = max_reg.max(dest.to_usize() + 1);
+                        max_reg = max_reg.max(first_arg.to_usize() + *argc as usize);
+                    }
+                    OpCode::Jmp(_) => {}
+                }
+            }
+            Chunk { code, constants, reg_count: max_reg }
+        })
+        .collect();
+    let module = Module {
+        functions: chunks,
+        entry: num_functions - 1,  // last function is main
+    };
+    VirtualMachine::new().run_module(&module)
 }
 
 #[test]
@@ -626,4 +665,127 @@ fn test_mul_empty_right_register_errors() {
         vec![Value::Int(5)],
     );
     assert!(result.is_err());
+}
+
+// Phase 3: Function calls
+
+#[test]
+fn test_call_simple() {
+    let result = run_module(vec![
+        // Function 0 (callee): takes args in r0, r1, adds them, returns in r0
+        (
+            vec![
+                OpCode::Add(r(0), r(0), r(1)),
+                OpCode::Ret(r(0)),
+            ],
+            vec![],
+        ),
+        // Function 1 (main): calls function 0 with args 2, 3
+        (
+            vec![
+                OpCode::PushConst(r(0), 0),  // r0 = 2
+                OpCode::PushConst(r(1), 1),  // r1 = 3
+                OpCode::Call(r(2), 0, r(0), 2),  // call func 0 with 2 args, result in r2
+                OpCode::Ret(r(2)),
+            ],
+            vec![Value::Int(2), Value::Int(3)],
+        ),
+    ]);
+    assert_eq!(result, Ok(Value::Int(5)));
+}
+
+#[test]
+fn test_call_passes_args_to_callee() {
+    let result = run_module(vec![
+        // Function 0 (callee): return second arg
+        (
+            vec![
+                OpCode::Ret(r(1)),  // r1 contains second arg
+            ],
+            vec![],
+        ),
+        // Function 1 (main): call with args 10, 20
+        (
+            vec![
+                OpCode::PushConst(r(0), 0),  // r0 = 10
+                OpCode::PushConst(r(1), 1),  // r1 = 20
+                OpCode::Call(r(2), 0, r(0), 2),
+                OpCode::Ret(r(2)),
+            ],
+            vec![Value::Int(10), Value::Int(20)],
+        ),
+    ]);
+    assert_eq!(result, Ok(Value::Int(20)));
+}
+
+#[test]
+fn test_call_return_value_in_dest() {
+    let result = run_module(vec![
+        // Function 0: increment first arg
+        (
+            vec![
+                OpCode::PushConst(r(1), 0),  // r1 = 1
+                OpCode::Add(r(0), r(0), r(1)),  // r0 = r0 + 1
+                OpCode::Ret(r(0)),
+            ],
+            vec![Value::Int(1)],
+        ),
+        // Function 1: call and return result
+        (
+            vec![
+                OpCode::PushConst(r(0), 0),  // r0 = 5
+                OpCode::Call(r(1), 0, r(0), 1),  // result in r1
+                OpCode::Ret(r(1)),
+            ],
+            vec![Value::Int(5)],
+        ),
+    ]);
+    assert_eq!(result, Ok(Value::Int(6)));
+}
+
+#[test]
+fn test_recursion_simple() {
+    let result = run_module(vec![
+        // Function 0: countdown(n) - if n <= 0 return 0, else call countdown(n-1)
+        (
+            vec![
+                // Check if r0 <= 0
+                OpCode::PushConst(r(1), 0),  // r1 = 0
+                OpCode::Lte(r(2), r(0), r(1)),  // r2 = (r0 <= 0)
+                OpCode::Jz(r(2), 5),  // if not (r0 <= 0), jump to else
+                // Then: return 0
+                OpCode::PushConst(r(0), 1),  // r0 = 0
+                OpCode::Ret(r(0)),
+                // Else: call countdown(n-1)
+                OpCode::PushConst(r(1), 2),  // r1 = 1
+                OpCode::Sub(r(0), r(0), r(1)),  // r0 = r0 - 1
+                OpCode::Call(r(3), 0, r(0), 1),  // call countdown(r0)
+                OpCode::Ret(r(3)),
+            ],
+            vec![Value::Int(0), Value::Int(0), Value::Int(1)],
+        ),
+        // Function 1: main - call countdown(2)
+        (
+            vec![
+                OpCode::PushConst(r(0), 0),  // r0 = 2
+                OpCode::Call(r(1), 0, r(0), 1),
+                OpCode::Ret(r(1)),
+            ],
+            vec![Value::Int(2)],
+        ),
+    ]);
+    assert_eq!(result, Ok(Value::Int(0)));
+}
+
+#[test]
+fn test_call_in_single_chunk_errors() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Call(r(1), 0, r(0), 1),
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(5)],
+    );
+    assert!(result.is_err(), "Call should fail in single-chunk mode");
 }

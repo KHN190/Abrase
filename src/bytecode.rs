@@ -32,11 +32,15 @@ pub enum OpCode {
     Jnz(Register, usize),
     Jmp(usize),
     Ret(Register),
+    // Functions
+    Call(Register, usize, Register, u8), // dest, func_id, first_arg_reg, arg_count
 }
 
+#[derive(Clone)]
 pub struct Chunk {
     pub code: Vec<OpCode>,
     pub constants: Vec<Value>,
+    pub reg_count: usize,
 }
 
 pub struct Module {

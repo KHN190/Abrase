@@ -10,6 +10,13 @@ fn compile_and_run(ast: &[Decl]) -> Result<Value, String> {
     vm.run(&chunk)
 }
 
+fn compile_module_and_run(ast: &[Decl]) -> Result<Value, String> {
+    let mut compiler = Compiler::new();
+    let module = compiler.compile_module(ast)?;
+    let mut vm = VirtualMachine::new();
+    vm.run_module(&module)
+}
+
 fn parse_literal_int(n: i64) -> Vec<Decl> {
     vec![Decl::Fn(FnDecl {
         attrs: vec![],
@@ -1741,4 +1748,253 @@ fn verify_compile_match_non_exhaustive_errors() {
 
     let result = compiler.compile(&ast);
     assert!(result.is_err(), "Expected error for non-exhaustive match");
+}
+
+// Phase 3: Functions
+
+#[test]
+fn verify_compile_simple_function_call() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "add".to_string(),
+            generics: vec![],
+            params: vec![
+                Param::Named {
+                    pattern: Spanned {
+                        node: Pattern::Bind("a".to_string()),
+                        span: Span::new(0, 0),
+                    },
+                    ty: Type::Named("Int".to_string()),
+                },
+                Param::Named {
+                    pattern: Spanned {
+                        node: Pattern::Bind("b".to_string()),
+                        span: Span::new(0, 0),
+                    },
+                    ty: Type::Named("Int".to_string()),
+                },
+            ],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Binary {
+                        op: BinaryOp::Add,
+                        left: Box::new(Spanned {
+                            node: Expr::Identifier("a".to_string()),
+                            span: Span::new(0, 0),
+                        }),
+                        right: Box::new(Spanned {
+                            node: Expr::Identifier("b".to_string()),
+                            span: Span::new(0, 0),
+                        }),
+                    },
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Call {
+                        callee: Box::new(Spanned {
+                            node: Expr::Identifier("add".to_string()),
+                            span: Span::new(0, 0),
+                        }),
+                        args: vec![
+                            Spanned {
+                                node: Expr::Literal(Literal::Int(2)),
+                                span: Span::new(0, 0),
+                            },
+                            Spanned {
+                                node: Expr::Literal(Literal::Int(3)),
+                                span: Span::new(0, 0),
+                            },
+                        ],
+                    },
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(5)));
+}
+
+#[test]
+fn verify_compile_return_explicit() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Return(Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(42)),
+                    span: Span::new(0, 0),
+                }))),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn verify_compile_undefined_function_call_errors() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Call {
+                    callee: Box::new(Spanned {
+                        node: Expr::Identifier("unknown".to_string()),
+                        span: Span::new(0, 0),
+                    }),
+                    args: vec![],
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let mut compiler = Compiler::new();
+    let result = compiler.compile_module(&ast);
+    assert!(result.is_err(), "Expected error for undefined function");
+}
+
+#[test]
+fn verify_compile_recursive_function() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "countdown".to_string(),
+            generics: vec![],
+            params: vec![Param::Named {
+                pattern: Spanned {
+                    node: Pattern::Bind("n".to_string()),
+                    span: Span::new(0, 0),
+                },
+                ty: Type::Named("Int".to_string()),
+            }],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::If {
+                        condition: Box::new(Spanned {
+                            node: Expr::Binary {
+                                op: BinaryOp::Lte,
+                                left: Box::new(Spanned {
+                                    node: Expr::Identifier("n".to_string()),
+                                    span: Span::new(0, 0),
+                                }),
+                                right: Box::new(Spanned {
+                                    node: Expr::Literal(Literal::Int(0)),
+                                    span: Span::new(0, 0),
+                                }),
+                            },
+                            span: Span::new(0, 0),
+                        }),
+                        consequence: Box::new(Spanned {
+                            node: Expr::Literal(Literal::Int(0)),
+                            span: Span::new(0, 0),
+                        }),
+                        alternative: Some(Box::new(Spanned {
+                            node: Expr::Call {
+                                callee: Box::new(Spanned {
+                                    node: Expr::Identifier("countdown".to_string()),
+                                    span: Span::new(0, 0),
+                                }),
+                                args: vec![Spanned {
+                                    node: Expr::Binary {
+                                        op: BinaryOp::Sub,
+                                        left: Box::new(Spanned {
+                                            node: Expr::Identifier("n".to_string()),
+                                            span: Span::new(0, 0),
+                                        }),
+                                        right: Box::new(Spanned {
+                                            node: Expr::Literal(Literal::Int(1)),
+                                            span: Span::new(0, 0),
+                                        }),
+                                    },
+                                    span: Span::new(0, 0),
+                                }],
+                            },
+                            span: Span::new(0, 0),
+                        })),
+                    },
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Call {
+                        callee: Box::new(Spanned {
+                            node: Expr::Identifier("countdown".to_string()),
+                            span: Span::new(0, 0),
+                        }),
+                        args: vec![Spanned {
+                            node: Expr::Literal(Literal::Int(3)),
+                            span: Span::new(0, 0),
+                        }],
+                    },
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(0)));
 }

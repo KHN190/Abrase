@@ -209,6 +209,44 @@ impl Compiler {
                 Ok(result_reg)
             }
 
+            ast::Expr::Call { callee, args } => {
+                if let ast::Expr::Identifier(name) = &callee.node {
+                    let func_id = self.func_map.get(name).copied()
+                        .ok_or_else(|| format!("Undefined function: {}", name))?;
+
+                    let first_arg_reg = self.alloc_register()?;
+                    let mut arg_regs = vec![first_arg_reg];
+
+                    for _ in 1..args.len() {
+                        arg_regs.push(self.alloc_register()?);
+                    }
+
+                    for (i, arg) in args.iter().enumerate() {
+                        let arg_val = self.compile_expr(arg)?;
+                        self.emit(OpCode::Mov(arg_regs[i], arg_val));
+                    }
+
+                    let dest = self.alloc_register()?;
+                    self.emit(OpCode::Call(dest, func_id, first_arg_reg, args.len() as u8));
+                    Ok(dest)
+                } else {
+                    Err("Call target must be a function identifier".to_string())
+                }
+            }
+
+            ast::Expr::Return(opt_expr) => {
+                let r = if let Some(expr) = opt_expr {
+                    self.compile_expr(expr)?
+                } else {
+                    let reg = self.alloc_register()?;
+                    let idx = self.add_constant(Value::Unit);
+                    self.emit(OpCode::PushConst(reg, idx));
+                    reg
+                };
+                self.emit(OpCode::Ret(r));
+                Ok(r)
+            }
+
             _ => Err(format!("Unsupported expression: {:?}", expr.node)),
         }
     }
