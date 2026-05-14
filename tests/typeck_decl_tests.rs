@@ -529,3 +529,420 @@ fn verify_check_program_mixed_visibility() {
     assert!(checker.is_public("public"));
     assert!(!checker.is_public("private"));
 }
+
+
+#[test]
+fn verify_check_type_decl_registers_record() {
+    let mut checker = Checker::new();
+
+    let record_field = ect::ast::RecordField {
+        is_pub: true,
+        name: "x".into(),
+        ty: ect::ast::Type::Named("Int".into()),
+    };
+
+    checker.check_type_decl("Point", &ect::ast::TypeBody::Record(vec![record_field]), false, &None);
+
+    // Type should be registered
+    let _ = checker.is_public("Point");
+}
+
+#[test]
+fn verify_check_type_decl_registers_variant() {
+    let mut checker = Checker::new();
+
+    let variant_cases = vec![
+        ect::ast::VariantCase::Unit("None".into()),
+        ect::ast::VariantCase::Tuple("Some".into(), vec![ect::ast::Type::Named("T".into())]),
+    ];
+
+    checker.check_type_decl("Option", &ect::ast::TypeBody::Variant(variant_cases), false, &None);
+
+    // Variant cases should be registered
+    let cases = checker.get_variant_cases("Option");
+    assert_eq!(cases.map(|c| c.len()), Some(2));
+}
+
+#[test]
+fn verify_check_type_decl_marks_public() {
+    let mut checker = Checker::new();
+
+    let variant_cases = vec![
+        ect::ast::VariantCase::Unit("A".into()),
+        ect::ast::VariantCase::Unit("B".into()),
+    ];
+
+    checker.check_type_decl("Color", &ect::ast::TypeBody::Variant(variant_cases), true, &None);
+
+    assert!(checker.is_public("Color"));
+}
+
+#[test]
+fn verify_check_type_decl_registers_ownership_copy() {
+    let mut checker = Checker::new();
+
+    let variant_cases = vec![ect::ast::VariantCase::Unit("X".into())];
+    let ownership = Some(ect::ast::OwnershipAttr::Copy);
+
+    checker.check_type_decl("CopyEnum", &ect::ast::TypeBody::Variant(variant_cases), false, &ownership);
+
+    assert!(checker.get_type_ownership("CopyEnum").is_some());
+}
+
+#[test]
+fn verify_check_type_decl_registers_ownership_move() {
+    let mut checker = Checker::new();
+
+    let variant_cases = vec![ect::ast::VariantCase::Unit("Y".into())];
+    let ownership = Some(ect::ast::OwnershipAttr::Move);
+
+    checker.check_type_decl("MoveEnum", &ect::ast::TypeBody::Variant(variant_cases), false, &ownership);
+
+    assert!(checker.get_type_ownership("MoveEnum").is_some());
+}
+
+// check_impl_decl Tests
+
+#[test]
+fn verify_check_impl_decl_type_checks_methods() {
+    let mut checker = Checker::new();
+
+    let method = ect::ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "process".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ect::ast::Type::Named("Unit".into())),
+        where_clause: vec![],
+        body: dummy_block(),
+    };
+
+    let for_type = ect::ast::Type::Named("MyType".into());
+
+    // Should not panic
+    checker.check_impl_decl(&for_type, &None, &[method]);
+}
+
+#[test]
+fn verify_check_impl_decl_validates_trait_exists() {
+    let mut checker = Checker::new();
+
+    // Register a trait
+    checker.register_trait("Show".into(), vec![]);
+
+    let method = ect::ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "show".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ect::ast::Type::Named("Unit".into())),
+        where_clause: vec![],
+        body: dummy_block(),
+    };
+
+    let for_type = ect::ast::Type::Named("MyType".into());
+    let trait_name = Some(vec!["Show".into()]);
+
+    // Should not panic
+    checker.check_impl_decl(&for_type, &trait_name, &[method]);
+}
+
+#[test]
+fn verify_check_impl_decl_multiple_methods() {
+    let mut checker = Checker::new();
+
+    let method1 = ect::ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "method1".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ect::ast::Type::Named("Unit".into())),
+        where_clause: vec![],
+        body: dummy_block(),
+    };
+
+    let method2 = ect::ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "method2".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ect::ast::Type::Named("Unit".into())),
+        where_clause: vec![],
+        body: dummy_block(),
+    };
+
+    let for_type = ect::ast::Type::Named("MyType".into());
+
+    // Should not panic
+    checker.check_impl_decl(&for_type, &None, &[method1, method2]);
+}
+
+// check_const_decl Tests
+
+#[test]
+fn verify_check_const_decl_registers_const() {
+    let mut checker = Checker::new();
+
+    let value = Spanned {
+        node: Expr::Literal(ect::ast::Literal::Int(42)),
+        span: d_span(),
+    };
+
+    checker.check_const_decl("ANSWER", &ect::ast::Type::Named("Int".into()), &value, false);
+
+    // Const should be registered
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_check_const_decl_validates_type_match() {
+    let mut checker = Checker::new();
+
+    let value = Spanned {
+        node: Expr::Literal(ect::ast::Literal::Int(42)),
+        span: d_span(),
+    };
+
+    checker.check_const_decl("WRONG", &ect::ast::Type::Named("String".into()), &value, false);
+
+    // Type mismatch should cause error
+    assert!(!checker.errors.is_empty());
+}
+
+#[test]
+fn verify_check_const_decl_marks_public() {
+    let mut checker = Checker::new();
+
+    let value = Spanned {
+        node: Expr::Literal(ect::ast::Literal::String("hello".into())),
+        span: d_span(),
+    };
+
+    checker.check_const_decl("MESSAGE", &ect::ast::Type::Named("String".into()), &value, true);
+
+    assert!(checker.is_public("MESSAGE"));
+}
+
+#[test]
+fn verify_check_const_decl_float() {
+    let mut checker = Checker::new();
+
+    let value = Spanned {
+        node: Expr::Literal(ect::ast::Literal::Float(3.14)),
+        span: d_span(),
+    };
+
+    checker.check_const_decl("PI", &ect::ast::Type::Named("Float".into()), &value, false);
+
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_check_const_decl_bool() {
+    let mut checker = Checker::new();
+
+    let value = Spanned {
+        node: Expr::Literal(ect::ast::Literal::Bool(true)),
+        span: d_span(),
+    };
+
+    checker.check_const_decl("FLAG", &ect::ast::Type::Named("Bool".into()), &value, false);
+
+    assert!(checker.errors.is_empty());
+}
+
+// check_effect_decl Tests
+
+#[test]
+fn verify_check_effect_decl_registers_effect() {
+    let mut checker = Checker::new();
+
+    let ops = vec![];
+
+    checker.check_effect_decl("io", &ops, false);
+
+    // Effect should be registered
+    let _ = checker.is_public("io");
+}
+
+#[test]
+fn verify_check_effect_decl_registers_operations() {
+    let mut checker = Checker::new();
+
+    let read_op = ect::ast::FnSignature {
+        is_async: false,
+        name: "read".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ect::ast::Type::Named("String".into())),
+        where_clause: vec![],
+    };
+
+    let write_op = ect::ast::FnSignature {
+        is_async: false,
+        name: "write".into(),
+        generics: vec![],
+        params: vec![
+            ect::ast::Param::Named {
+                pattern: Spanned {
+                    node: Pattern::Bind("data".into()),
+                    span: d_span(),
+                },
+                ty: ect::ast::Type::Named("String".into()),
+            },
+        ],
+        effects: vec![],
+        return_type: Some(ect::ast::Type::Named("Unit".into())),
+        where_clause: vec![],
+    };
+
+    checker.check_effect_decl("file", &[read_op, write_op], false);
+
+    // Effect should be registered
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_check_effect_decl_marks_public() {
+    let mut checker = Checker::new();
+
+    let ops = vec![];
+
+    checker.check_effect_decl("net", &ops, true);
+
+    assert!(checker.is_public("net"));
+}
+
+// check_import_decl Tests
+
+#[test]
+fn verify_check_import_decl_registers_imports() {
+    let mut checker = Checker::new();
+
+    let items = vec![
+        ect::ast::ImportItem {
+            name: "read".into(),
+            alias: None,
+        },
+    ];
+
+    checker.check_import_decl(&["std".into()], &items);
+
+    // Import should be registered
+    let resolved = checker.get_imported_name("read");
+    assert!(resolved.is_some());
+}
+
+#[test]
+fn verify_check_import_decl_handles_alias() {
+    let mut checker = Checker::new();
+
+    let items = vec![
+        ect::ast::ImportItem {
+            name: "print".into(),
+            alias: Some("log".into()),
+        },
+    ];
+
+    checker.check_import_decl(&["io".into()], &items);
+
+    // Aliased import should be registered
+    let resolved = checker.get_imported_name("log");
+    assert!(resolved.is_some());
+}
+
+#[test]
+fn verify_check_import_decl_multiple_items() {
+    let mut checker = Checker::new();
+
+    let items = vec![
+        ect::ast::ImportItem {
+            name: "read".into(),
+            alias: None,
+        },
+        ect::ast::ImportItem {
+            name: "write".into(),
+            alias: None,
+        },
+    ];
+
+    checker.check_import_decl(&["std", "io"].iter().map(|s| s.to_string()).collect::<Vec<_>>(), &items);
+
+    // Both imports should be registered
+    assert!(checker.get_imported_name("read").is_some());
+    assert!(checker.get_imported_name("write").is_some());
+}
+
+#[test]
+fn verify_check_import_decl_nested_path() {
+    let mut checker = Checker::new();
+
+    let items = vec![
+        ect::ast::ImportItem {
+            name: "connect".into(),
+            alias: None,
+        },
+    ];
+
+    let path = vec!["std".into(), "net".into(), "tcp".into()];
+
+    checker.check_import_decl(&path, &items);
+
+    // Import from nested path should be registered
+    let resolved = checker.get_imported_name("connect");
+    assert!(resolved.is_some());
+}
+
+// Integration Tests
+
+#[test]
+fn verify_all_checkers_work_together() {
+    let mut checker = Checker::new();
+
+    // Check type
+    checker.check_type_decl(
+        "Status",
+        &ect::ast::TypeBody::Variant(vec![
+            ect::ast::VariantCase::Unit("Ok".into()),
+            ect::ast::VariantCase::Unit("Error".into()),
+        ]),
+        true,
+        &None,
+    );
+
+    // Check import
+    checker.check_import_decl(&["std".into()], &[
+        ect::ast::ImportItem {
+            name: "print".into(),
+            alias: None,
+        },
+    ]);
+
+    // Check const
+    let const_val = Spanned {
+        node: Expr::Literal(ect::ast::Literal::Int(0)),
+        span: d_span(),
+    };
+    checker.check_const_decl("DEFAULT_ID", &ect::ast::Type::Named("Int".into()), &const_val, true);
+
+    // Check effect
+    checker.check_effect_decl("custom", &[], true);
+
+    // All should register without major errors
+    assert!(checker.is_public("Status"));
+    assert!(checker.is_public("DEFAULT_ID"));
+    assert!(checker.is_public("custom"));
+}

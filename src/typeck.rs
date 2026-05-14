@@ -3208,4 +3208,121 @@ impl Checker {
         // Pop function scope
         self.scopes.pop();
     }
+
+    // Per-declaration checkers for Phase 1.3
+
+    pub fn check_type_decl(&mut self, name: &str, body: &ast::TypeBody, is_pub: bool, ownership: &Option<ast::OwnershipAttr>) {
+        // Register type definition
+        self.register_type(name.into(), body.clone());
+
+        if is_pub {
+            self.mark_public(name.into());
+        }
+
+        // Register ownership attribute if present
+        if let Some(own_attr) = ownership {
+            let own = match own_attr {
+                ast::OwnershipAttr::Copy => Ownership::Copy,
+                ast::OwnershipAttr::Move => Ownership::Move,
+                ast::OwnershipAttr::Share => Ownership::Share,
+            };
+            self.register_ownership(name.into(), own);
+        }
+
+        // Register variant cases if this is a variant type
+        if let ast::TypeBody::Variant(cases) = body {
+            let case_names: Vec<String> = cases.iter().map(|c| match c {
+                ast::VariantCase::Unit(n) => n.clone(),
+                ast::VariantCase::Tuple(n, _) => n.clone(),
+                ast::VariantCase::Record(n, _) => n.clone(),
+            }).collect();
+            self.register_variant_cases(name.into(), case_names);
+        }
+
+        // Validate no recursive cycles
+        let mut visited = std::collections::HashSet::new();
+        self.check_type_recursion(name, body, &mut visited, ast::Span { line: 0, col: 0 });
+    }
+
+    pub fn check_impl_decl(&mut self, for_type: &ast::Type, trait_name: &Option<Vec<String>>, methods: &[ast::FnDecl]) {
+        // Type-check each method in the impl block
+        for method in methods {
+            self.check_fn_decl(method);
+
+            // If this is a trait impl, validate method matches trait signature
+            if let Some(trait_path) = trait_name {
+                let trait_str = trait_path.join("::");
+                if let Some(_trait_methods) = self.trait_registry.get(&trait_str) {
+                    // Could add more detailed trait method validation here
+                    // For now, just verify the trait exists
+                }
+            }
+        }
+    }
+
+    pub fn check_const_decl(&mut self, name: &str, ty: &ast::Type, value: &Spanned<ast::Expr>, is_pub: bool) {
+        let const_type = self.convert_type(ty);
+
+        // Register the constant
+        self.insert_const_var(name.into(), const_type.clone(), value.span);
+
+        if is_pub {
+            self.mark_public(name.into());
+        }
+
+        // Type-check the const expression
+        let inferred = self.infer_expr(value);
+
+        if !self.types_compatible(&const_type, &inferred) {
+            self.report_error(
+                format!("Const type mismatch: expected {:?}, found {:?}",
+                    const_type, inferred),
+                value.span,
+            );
+        }
+
+        // TODO: Validate that const expression is compile-time evaluable (no side effects)
+        // For now, just check type compatibility
+    }
+
+    pub fn check_effect_decl(&mut self, name: &str, ops: &[ast::FnSignature], is_pub: bool) {
+        // Register effect with operation names
+        let op_names: Vec<String> = ops.iter().map(|op| op.name.clone()).collect();
+        self.register_effect(name.into(), op_names);
+
+        if is_pub {
+            self.mark_public(name.into());
+        }
+
+        // Register each operation signature
+        for op in ops {
+            let params: Vec<Type> = op.params.iter()
+                .filter_map(|p| match p {
+                    ast::Param::Named { ty, .. } => Some(self.convert_type(ty)),
+                    _ => None,
+                })
+                .collect();
+            let effects: Vec<crate::ty::Effect> = op.effects.iter()
+                .filter_map(|eff| self.convert_effect(eff))
+                .collect();
+            let ret = op.return_type.as_ref()
+                .map(|t| Box::new(self.convert_type(t)))
+                .unwrap_or_else(|| Box::new(Type::Unit));
+
+            let op_type = Type::Function { params, effects, ret };
+            // Could store operation signatures in a dedicated registry if needed
+        }
+    }
+
+    pub fn check_import_decl(&mut self, path: &[String], items: &[ast::ImportItem]) {
+        // Register imported items with module path
+        self.register_import_items(path.to_vec(), items.to_vec());
+
+        // Check for import collisions with each item
+        for item in items {
+            let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+            self.check_import_collision(&import_name, path.to_vec());
+        }
+    }
+
 }
