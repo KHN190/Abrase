@@ -64,6 +64,10 @@ pub struct Checker {
     variant_registry: HashMap<String, Vec<String>>, // type_name -> [case_names]
     const_registry: HashMap<String, Type>,
 
+    // Import Namespace Mapping
+    imported_names: HashMap<String, (Vec<String>, String)>, // alias/name -> (module_path, original_name)
+    import_collisions: std::collections::HashSet<String>,
+
     // Ownership & Borrowing
     borrow_stack: Vec<(String, bool)>,
 
@@ -168,6 +172,8 @@ impl Checker {
             function_effects: HashMap::new(),
             const_vars: std::collections::HashSet::new(),
             op_effects: HashMap::new(),
+            imported_names: HashMap::new(),
+            import_collisions: std::collections::HashSet::new(),
         }
     }
 
@@ -213,6 +219,10 @@ impl Checker {
         self.fn_registry.get(name).cloned()
     }
 
+    pub fn register_function_type(&mut self, name: String, sig: (Vec<Type>, Type)) {
+        self.fn_registry.insert(name, sig);
+    }
+
     pub fn register_type(&mut self, name: String, body: ast::TypeBody) {
         // Auto-populate variant_registry if this is a variant type
         if let ast::TypeBody::Variant(cases) = &body {
@@ -244,6 +254,43 @@ impl Checker {
 
     pub fn get_const(&self, name: &str) -> Option<Type> {
         self.const_registry.get(name).cloned()
+    }
+
+    // Import Namespace Mapping
+    pub fn register_import_items(
+        &mut self,
+        module_path: Vec<String>,
+        items: Vec<ast::ImportItem>,
+    ) {
+        for item in items {
+            let accessible_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+            self.imported_names.insert(
+                accessible_name,
+                (module_path.clone(), item.name),
+            );
+        }
+    }
+
+    pub fn get_imported_name(&self, name: &str) -> Option<(Vec<String>, String)> {
+        self.imported_names.get(name).cloned()
+    }
+
+    pub fn check_import_collision(&mut self, name: &str, module_path: Vec<String>) -> bool {
+        // Check if name exists in current scope
+        if let Some(scope) = self.scopes.last() {
+            if scope.vars.contains_key(name) {
+                self.import_collisions.insert(name.to_string());
+                return true;
+            }
+        }
+
+        // Check if name is already imported
+        if self.imported_names.contains_key(name) {
+            self.import_collisions.insert(name.to_string());
+            return true;
+        }
+
+        false
     }
 
     // Ownership & Borrowing
@@ -1217,36 +1264,53 @@ impl Checker {
         self.public_items.remove(&qualified_name);
     }
 
-    pub fn is_public(&self, item_name: &str) -> bool {
-        // Check if item is accessible from current module
-        // An item is accessible if:
-        // 1. It's marked as public (accessible from anywhere)
-        // 2. It's in the same module as the current context (accessible, even if private)
-        // Note: "private" means "not exported", not "not accessible within the module"
+    pub fn mark_module_private(&mut self, qualified_path: String) {
+        self.private_items.insert(qualified_path);
+    }
 
-        // First check for public registration in any module
+    pub fn is_public(&self, item_name: &str) -> bool {
+        // Check if item is marked as public (accessible from anywhere)
+
+        // Built-in types are always public
+        match item_name {
+            "Int" | "String" | "Float" | "Bool" | "Unit" | "Char" => return true,
+            _ => {}
+        }
+
+        // Check if marked as public anywhere
         for public_item in &self.public_items {
             if public_item.ends_with(&format!("::{}", item_name)) {
                 return true;
             }
         }
 
-        // Check if it's in the current module
-        let current_qualified = format!("{}::{}", self.current_module.join("::"), item_name);
+        false
+    }
 
-        // If it's marked as private in the current module, it's still accessible
-        // (private means not exported, but accessible within the module)
-        if self.private_items.contains(&current_qualified) {
+    pub fn is_item_accessible(&self, item_name: &str) -> bool {
+        // Check if item is accessible from current context
+        // Returns true if item is in current module (public or private) or marked public
+
+        // Built-in types are always accessible
+        match item_name {
+            "Int" | "String" | "Float" | "Bool" | "Unit" | "Char" => return true,
+            _ => {}
+        }
+
+        // Check if marked as public
+        for public_item in &self.public_items {
+            if public_item.ends_with(&format!("::{}", item_name)) {
+                return true;
+            }
+        }
+
+        // Check if in current module
+        let current_qualified = format!("{}::{}", self.current_module.join("::"), item_name);
+        if self.public_items.contains(&current_qualified) || self.private_items.contains(&current_qualified) {
             return true;
         }
 
-        // Check if it exists in any other module
-        let exists_in_other_module = self.public_items.iter().any(|p| p.ends_with(&format!("::{}", item_name)) && !p.ends_with(&current_qualified)) ||
-                                      self.private_items.iter().any(|p| p.ends_with(&format!("::{}", item_name)) && !p.ends_with(&current_qualified));
-
-        // If it only exists in current module (marked as public/private there), it's accessible
-        // If it exists in another module, it's not accessible unless it's public there
-        !exists_in_other_module
+        false
     }
 
     pub fn is_accessible(&self, item_name: &str, item_module: &[String]) -> bool {
@@ -1254,6 +1318,17 @@ impl Checker {
         // Items from the same module are always accessible
         if item_module == self.current_module {
             return true;
+        }
+
+        // Check visibility of all intermediate modules in the path (skip checking "root" itself)
+        for i in 1..item_module.len() {
+            let module_segment_path = &item_module[..=i];
+            let segment_qualified = module_segment_path.join("::");
+
+            // If this segment is marked as private, block access
+            if self.private_items.contains(&segment_qualified) {
+                return false;
+            }
         }
 
         // Items marked as public are accessible from anywhere
@@ -1269,23 +1344,27 @@ impl Checker {
         }
 
         let item_name = path[path.len() - 1].clone();
-        let item_module: Vec<String> = if path.len() > 1 {
+        let mut item_module: Vec<String> = if path.len() > 1 {
             path[..path.len() - 1].to_vec()
         } else {
             // Item with no module prefix - check current module context
             self.current_module.clone()
         };
 
+        // If item_module doesn't start with "root", prepend it
+        if !item_module.is_empty() && item_module[0] != "root" {
+            let mut full_path = vec!["root".to_string()];
+            full_path.extend(item_module);
+            item_module = full_path;
+        }
+
         self.is_accessible(&item_name, &item_module)
     }
 
     pub fn validate_visibility(&mut self, item_name: &str, item_module: &[String], access_span: Span) -> bool {
-        // Validate that item_name from item_module is accessible
         if self.is_accessible(item_name, item_module) {
             return true;
         }
-
-        // Report visibility error
         let qualified = format!("{}::{}", item_module.join("::"), item_name);
         self.report_error(
             format!("Cannot access private item '{}'", qualified),
@@ -2764,5 +2843,125 @@ impl Checker {
         };
         self.exit_scope();
         ty
+    }
+
+    pub fn check_recursive_type(&mut self, type_name: &str, body: &ast::TypeBody, span: Span) -> bool {
+        self.check_type_recursion(type_name, body, &mut std::collections::HashSet::new(), span)
+    }
+
+    fn check_type_recursion(
+        &mut self,
+        type_name: &str,
+        body: &ast::TypeBody,
+        visited: &mut std::collections::HashSet<String>,
+        span: Span,
+    ) -> bool {
+        if visited.contains(type_name) {
+            return false; // Cycle detected
+        }
+        visited.insert(type_name.to_string());
+
+        let valid = match body {
+            ast::TypeBody::Record(fields) => {
+                let mut all_valid = true;
+                for field in fields {
+                    if !self.is_type_valid(&field.ty, type_name, visited, span) {
+                        all_valid = false;
+                    }
+                }
+                all_valid
+            }
+            ast::TypeBody::Variant(cases) => {
+                let mut all_valid = true;
+                for case in cases {
+                    match case {
+                        ast::VariantCase::Unit(_) => {}
+                        ast::VariantCase::Tuple(_, types) => {
+                            for ty in types {
+                                if !self.is_type_valid(ty, type_name, visited, span) {
+                                    all_valid = false;
+                                }
+                            }
+                        }
+                        ast::VariantCase::Record(_, fields) => {
+                            for field in fields {
+                                if !self.is_type_valid(&field.ty, type_name, visited, span) {
+                                    all_valid = false;
+                                }
+                            }
+                        }
+                    }
+                }
+                all_valid
+            }
+        };
+
+        visited.remove(type_name);
+        valid
+    }
+
+    fn is_type_valid(
+        &mut self,
+        ty: &ast::Type,
+        self_type: &str,
+        visited: &mut std::collections::HashSet<String>,
+        span: Span,
+    ) -> bool {
+        match ty {
+            ast::Type::Named(name) => {
+                if name == self_type {
+                    // Direct self-reference without indirection is invalid
+                    self.report_error(
+                        format!("Type '{}' has recursive cycle: direct self-reference detected", self_type),
+                        span,
+                    );
+                    return false;
+                }
+
+                // Check for indirect cycles
+                if visited.contains(name) {
+                    self.report_error(
+                        format!("Type '{}' has recursive cycle detected", self_type),
+                        span,
+                    );
+                    return false;
+                }
+
+                // Recursively check the referenced type
+                if let Some(body) = self.get_type(name) {
+                    if !self.check_type_recursion(name, &body, visited, span) {
+                        return false;
+                    }
+                }
+                true
+            }
+            ast::Type::Reference { inner, .. } => {
+                // References have fixed size, so self-reference through reference is allowed
+                // We don't need to check the inner type for cycles since the reference breaks the cycle
+                true
+            }
+            ast::Type::Array { elem, .. } => {
+                // Arrays have fixed size (compile-time length), so recursion is ok
+                self.is_type_valid(elem, self_type, visited, span)
+            }
+            _ => true, // Primitive types and other constructs are valid
+        }
+    }
+
+    pub fn detect_type_cycles(&mut self) -> bool {
+        let type_names: Vec<String> = self.type_registry.keys().cloned().collect();
+        let mut has_cycles = false;
+
+        for type_name in type_names {
+            let body = self.type_registry.get(&type_name).cloned();
+            if let Some(body) = body {
+                let mut visited = std::collections::HashSet::new();
+                if !self.check_type_recursion(&type_name, &body, &mut visited, ast::Span { line: 0, col: 0 }) {
+                    has_cycles = true;
+                }
+            }
+        }
+
+        !has_cycles // Return false if cycles detected, true if valid
     }
 }

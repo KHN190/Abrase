@@ -121,7 +121,7 @@ fn verify_private_item_accessible_in_same_module() {
     checker.mark_private("helper_fn".into());
 
     // Still in same module, should be accessible
-    let is_accessible = checker.is_public("helper_fn");
+    let is_accessible = checker.is_item_accessible("helper_fn");
     assert!(is_accessible, "Private items should be accessible within same module");
 
     checker.pop_module();
