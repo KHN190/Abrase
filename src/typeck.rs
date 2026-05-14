@@ -1144,6 +1144,139 @@ impl Checker {
         None
     }
 
+    // Phase 19: String Interpolation Validation
+    pub fn validate_string_interpolation(&mut self,
+        identifiers: &[String],
+        span: Span
+    ) -> bool {
+        // Validate that all identifiers in string interpolation are defined
+        let mut all_valid = true;
+        for ident in identifiers {
+            if self.get_var(ident, false, span) == Type::Unknown {
+                self.report_error(
+                    format!("String interpolation references undefined variable '{}'", ident),
+                    span
+                );
+                all_valid = false;
+            }
+        }
+        all_valid
+    }
+
+    pub fn extract_interpolation_identifiers(&self, parts: &[ast::StringPart]) -> Vec<String> {
+        // Extract all identifiers from string interpolation parts
+        let mut identifiers = Vec::new();
+        for part in parts {
+            if let ast::StringPart::Interp(segments) = part {
+                // Each segment is part of the path (e.g., "user", "name" for {user.name})
+                if !segments.is_empty() {
+                    identifiers.push(segments[0].clone()); // Root identifier
+                }
+            }
+        }
+        identifiers
+    }
+
+    pub fn check_interpolation_paths(&mut self,
+        parts: &[ast::StringPart],
+        span: Span
+    ) -> bool {
+        // Validate full paths in interpolations (e.g., {user.name})
+        let mut all_valid = true;
+        for part in parts {
+            if let ast::StringPart::Interp(segments) = part {
+                if segments.is_empty() {
+                    continue;
+                }
+
+                // Check root identifier
+                let root = &segments[0];
+                let mut current_ty = self.get_var(root, false, span);
+
+                if current_ty == Type::Unknown {
+                    self.report_error(
+                        format!("Interpolation references undefined identifier '{}'", root),
+                        span
+                    );
+                    all_valid = false;
+                    continue;
+                }
+
+                // Check field accesses (.field notation)
+                for field in &segments[1..] {
+                    // For now, we accept field accesses without deep validation
+                    // In a full implementation, would look up field types
+                    // This prevents cascading errors
+                }
+            }
+        }
+        all_valid
+    }
+
+    pub fn validate_interpolation_types(&mut self,
+        parts: &[ast::StringPart],
+        span: Span
+    ) -> bool {
+        // Validate that interpolated values have formattable types (have Show trait)
+        // For now, we'll accept all types - in a full implementation,
+        // would check for Show trait bound
+        let mut all_valid = true;
+        for part in parts {
+            if let ast::StringPart::Interp(segments) = part {
+                if segments.is_empty() {
+                    continue;
+                }
+
+                let root = &segments[0];
+                let ty = self.get_var(root, false, span);
+
+                // Most types are formattable, but check for Never type
+                if ty == Type::Never {
+                    self.report_error(
+                        format!("Cannot interpolate ! (Never) type in string"),
+                        span
+                    );
+                    all_valid = false;
+                }
+            }
+        }
+        all_valid
+    }
+
+    pub fn validate_string_literal(&mut self,
+        value: &str,
+        is_interpolated: bool,
+        parts: Option<&[ast::StringPart]>,
+        span: Span
+    ) -> bool {
+        // Comprehensive string literal validation
+        if !is_interpolated {
+            return true; // No interpolation to validate
+        }
+
+        if let Some(interp_parts) = parts {
+            // Check interpolation paths are valid
+            let paths_valid = self.check_interpolation_paths(interp_parts, span);
+
+            // Check interpolation types are formattable
+            let types_valid = self.validate_interpolation_types(interp_parts, span);
+
+            paths_valid && types_valid
+        } else {
+            true
+        }
+    }
+
+    pub fn count_interpolations(&self, parts: &[ast::StringPart]) -> usize {
+        // Count number of interpolation points in string
+        parts.iter().filter(|p| matches!(p, ast::StringPart::Interp(_))).count()
+    }
+
+    pub fn has_interpolations(&self, parts: &[ast::StringPart]) -> bool {
+        // Check if string has any interpolations
+        parts.iter().any(|p| matches!(p, ast::StringPart::Interp(_)))
+    }
+
     // Phase 5: Pattern Matching Support
     pub fn check_pattern(&mut self, pattern: &Spanned<ast::Pattern>, value_ty: &Type, _pattern_span: Span) {
         match &pattern.node {

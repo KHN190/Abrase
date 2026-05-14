@@ -1279,3 +1279,320 @@ fn verify_record_all_fields_required() {
     assert!(checker.errors.len() > 0);
     assert!(checker.errors[0].message.contains("email"));
 }
+
+// Phase 19: String Interpolation Validation
+
+#[test]
+fn verify_string_interpolation_defined_variable() {
+    let mut checker = Checker::new();
+
+    // Register a variable
+    checker.insert_var("name".into(), Type::String, false, d_span());
+
+    let identifiers = vec!["name".into()];
+    assert!(checker.validate_string_interpolation(&identifiers, d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_string_interpolation_undefined_variable() {
+    let mut checker = Checker::new();
+
+    // Don't register the variable
+    let identifiers = vec!["name".into()];
+    assert!(!checker.validate_string_interpolation(&identifiers, d_span()));
+    assert!(checker.errors.len() > 0);
+    assert!(checker.errors[0].message.contains("Undefined"));
+}
+
+#[test]
+fn verify_string_interpolation_multiple_variables() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("name".into(), Type::String, false, d_span());
+    checker.insert_var("age".into(), Type::Int, false, d_span());
+
+    let identifiers = vec!["name".into(), "age".into()];
+    assert!(checker.validate_string_interpolation(&identifiers, d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_string_interpolation_one_undefined() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("name".into(), Type::String, false, d_span());
+
+    let identifiers = vec!["name".into(), "age".into()];
+    assert!(!checker.validate_string_interpolation(&identifiers, d_span()));
+    assert!(checker.errors.len() > 0);
+}
+
+#[test]
+fn verify_extract_interpolation_identifiers_single() {
+    let checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Literal("Hello ".into()),
+        ast::StringPart::Interp(vec!["name".into()]),
+    ];
+
+    let identifiers = checker.extract_interpolation_identifiers(&parts);
+    assert_eq!(identifiers.len(), 1);
+    assert_eq!(identifiers[0], "name");
+}
+
+#[test]
+fn verify_extract_interpolation_identifiers_multiple() {
+    let checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Literal("Hello ".into()),
+        ast::StringPart::Interp(vec!["name".into()]),
+        ast::StringPart::Literal(", age ".into()),
+        ast::StringPart::Interp(vec!["age".into()]),
+    ];
+
+    let identifiers = checker.extract_interpolation_identifiers(&parts);
+    assert_eq!(identifiers.len(), 2);
+}
+
+#[test]
+fn verify_extract_interpolation_identifiers_with_fields() {
+    let checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["user".into(), "name".into()]),
+    ];
+
+    let identifiers = checker.extract_interpolation_identifiers(&parts);
+    assert_eq!(identifiers.len(), 1);
+    assert_eq!(identifiers[0], "user"); // Root identifier
+}
+
+#[test]
+fn verify_check_interpolation_paths_valid() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("user".into(), Type::Named("User".into()), false, d_span());
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["user".into()]),
+    ];
+
+    assert!(checker.check_interpolation_paths(&parts, d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_check_interpolation_paths_undefined() {
+    let mut checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["undefined".into()]),
+    ];
+
+    assert!(!checker.check_interpolation_paths(&parts, d_span()));
+    assert!(checker.errors.len() > 0);
+}
+
+#[test]
+fn verify_check_interpolation_paths_with_fields() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("obj".into(), Type::Named("Object".into()), false, d_span());
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["obj".into(), "field".into()]),
+    ];
+
+    assert!(checker.check_interpolation_paths(&parts, d_span()));
+}
+
+#[test]
+fn verify_validate_interpolation_types_string() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("name".into(), Type::String, false, d_span());
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["name".into()]),
+    ];
+
+    assert!(checker.validate_interpolation_types(&parts, d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_validate_interpolation_types_int() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("count".into(), Type::Int, false, d_span());
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["count".into()]),
+    ];
+
+    assert!(checker.validate_interpolation_types(&parts, d_span()));
+}
+
+#[test]
+fn verify_validate_interpolation_types_never() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("panic".into(), Type::Never, false, d_span());
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["panic".into()]),
+    ];
+
+    assert!(!checker.validate_interpolation_types(&parts, d_span()));
+    assert!(checker.errors.len() > 0);
+    assert!(checker.errors[0].message.contains("Never"));
+}
+
+#[test]
+fn verify_validate_string_literal_no_interpolation() {
+    let mut checker = Checker::new();
+
+    let result = checker.validate_string_literal("Hello, world!", false, None, d_span());
+    assert!(result);
+}
+
+#[test]
+fn verify_validate_string_literal_with_valid_interpolation() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("name".into(), Type::String, false, d_span());
+
+    let parts = vec![
+        ast::StringPart::Literal("Hello ".into()),
+        ast::StringPart::Interp(vec!["name".into()]),
+    ];
+
+    let result = checker.validate_string_literal("Hello {name}", true, Some(&parts), d_span());
+    assert!(result);
+}
+
+#[test]
+fn verify_validate_string_literal_undefined_in_interpolation() {
+    let mut checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["undefined".into()]),
+    ];
+
+    let result = checker.validate_string_literal("Hello {undefined}", true, Some(&parts), d_span());
+    assert!(!result);
+}
+
+#[test]
+fn verify_count_interpolations_zero() {
+    let checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Literal("Hello, world!".into()),
+    ];
+
+    assert_eq!(checker.count_interpolations(&parts), 0);
+}
+
+#[test]
+fn verify_count_interpolations_single() {
+    let checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Literal("Hello ".into()),
+        ast::StringPart::Interp(vec!["name".into()]),
+    ];
+
+    assert_eq!(checker.count_interpolations(&parts), 1);
+}
+
+#[test]
+fn verify_count_interpolations_multiple() {
+    let checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Literal("Hello ".into()),
+        ast::StringPart::Interp(vec!["name".into()]),
+        ast::StringPart::Literal(", age ".into()),
+        ast::StringPart::Interp(vec!["age".into()]),
+    ];
+
+    assert_eq!(checker.count_interpolations(&parts), 2);
+}
+
+#[test]
+fn verify_has_interpolations_true() {
+    let checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["name".into()]),
+    ];
+
+    assert!(checker.has_interpolations(&parts));
+}
+
+#[test]
+fn verify_has_interpolations_false() {
+    let checker = Checker::new();
+
+    let parts = vec![
+        ast::StringPart::Literal("Hello, world!".into()),
+    ];
+
+    assert!(!checker.has_interpolations(&parts));
+}
+
+#[test]
+fn verify_interpolation_in_context() {
+    let mut checker = Checker::new();
+
+    // Simulate: "Point at {x}, {y}"
+    checker.insert_var("x".into(), Type::Int, false, d_span());
+    checker.insert_var("y".into(), Type::Int, false, d_span());
+
+    let parts = vec![
+        ast::StringPart::Literal("Point at ".into()),
+        ast::StringPart::Interp(vec!["x".into()]),
+        ast::StringPart::Literal(", ".into()),
+        ast::StringPart::Interp(vec!["y".into()]),
+    ];
+
+    assert!(checker.validate_string_literal("Point at {x}, {y}", true, Some(&parts), d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_interpolation_field_access() {
+    let mut checker = Checker::new();
+
+    // Simulate: "User: {user.name}"
+    checker.insert_var("user".into(), Type::Named("User".into()), false, d_span());
+
+    let parts = vec![
+        ast::StringPart::Literal("User: ".into()),
+        ast::StringPart::Interp(vec!["user".into(), "name".into()]),
+    ];
+
+    let result = checker.check_interpolation_paths(&parts, d_span());
+    assert!(result);
+}
+
+#[test]
+fn verify_interpolation_multiple_fields() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("user".into(), Type::Named("User".into()), false, d_span());
+    checker.insert_var("post".into(), Type::Named("Post".into()), false, d_span());
+
+    let parts = vec![
+        ast::StringPart::Interp(vec!["user".into()]),
+        ast::StringPart::Literal(": ".into()),
+        ast::StringPart::Interp(vec!["post".into()]),
+    ];
+
+    let identifiers = checker.extract_interpolation_identifiers(&parts);
+    assert_eq!(identifiers.len(), 2);
+}
