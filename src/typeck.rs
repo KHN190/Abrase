@@ -102,6 +102,9 @@ pub struct Checker {
     current_module: Vec<String>, // current module path, e.g. ["io", "file"]
     public_items: std::collections::HashSet<String>, // items marked as pub (fully qualified names)
     private_items: std::collections::HashSet<String>, // items marked as private
+
+    // Phase 16: Qualified Name Resolution
+    qualified_names: HashMap<String, Vec<Vec<String>>>, // simple_name -> list of possible qualified paths
 }
 
 impl Checker {
@@ -139,6 +142,7 @@ impl Checker {
             current_module: vec!["root".into()],
             public_items: std::collections::HashSet::new(),
             private_items: std::collections::HashSet::new(),
+            qualified_names: HashMap::new(),
         }
     }
 
@@ -819,6 +823,85 @@ impl Checker {
         self.current_module = vec!["root".into()];
         self.public_items.clear();
         self.private_items.clear();
+    }
+
+    // Phase 16: Qualified Name Resolution
+    pub fn register_qualified_name(&mut self, simple_name: String, qualified_path: Vec<String>) {
+        self.qualified_names
+            .entry(simple_name)
+            .or_insert_with(Vec::new)
+            .push(qualified_path);
+    }
+
+    pub fn resolve_qualified_name(&self, name_parts: &[String]) -> Option<Vec<String>> {
+        // Try to resolve a potentially qualified name through module hierarchy
+        if name_parts.is_empty() {
+            return None;
+        }
+
+        // Try exact match first (fully qualified from root)
+        if name_parts[0] == "root" {
+            // This is a fully qualified name starting with root
+            if let Some(paths_list) = self.qualified_names.get(&name_parts[name_parts.len() - 1]) {
+                for path in paths_list {
+                    if path == name_parts {
+                        return Some(path.clone());
+                    }
+                }
+            }
+        }
+
+        // Try relative to current module
+        let mut candidate = self.current_module.clone();
+        for part in name_parts {
+            candidate.push(part.clone());
+        }
+
+        // Look for this full path in qualified_names
+        if let Some(paths_list) = self.qualified_names.get(&name_parts[name_parts.len() - 1]) {
+            for path in paths_list {
+                if path == &candidate {
+                    return Some(path.clone());
+                }
+            }
+        }
+
+        // Try as-is if it's in the registry
+        if let Some(paths_list) = self.qualified_names.get(&name_parts[name_parts.len() - 1]) {
+            for path in paths_list {
+                if path == name_parts {
+                    return Some(path.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn resolve_name(&self, name: &str) -> Option<Vec<String>> {
+        // Simple name resolution - get first possible path
+        if let Some(paths) = self.qualified_names.get(name) {
+            if !paths.is_empty() {
+                return Some(paths[0].clone());
+            }
+        }
+
+        None
+    }
+
+    pub fn is_name_resolvable(&self, name_parts: &[String]) -> bool {
+        self.resolve_qualified_name(name_parts).is_some()
+    }
+
+    pub fn get_all_resolutions(&self, name: &str) -> Vec<Vec<String>> {
+        self.qualified_names
+            .get(name)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn clear_name_resolution(&mut self) {
+        self.qualified_names.clear();
     }
 
     // Phase 5: Pattern Matching Support
