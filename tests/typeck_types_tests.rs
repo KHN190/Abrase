@@ -753,7 +753,7 @@ fn verify_generic_type_nested() {
 
 #[test]
 fn verify_convert_simple_generic_type() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     // Create ast::Type::Generic and convert it
     let ast_generic = ect::ast::Type::Generic {
@@ -771,7 +771,7 @@ fn verify_convert_simple_generic_type() {
 
 #[test]
 fn verify_convert_generic_with_multiple_args() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let ast_generic = ect::ast::Type::Generic {
         name: "Tuple".into(),
@@ -791,7 +791,7 @@ fn verify_convert_generic_with_multiple_args() {
 
 #[test]
 fn verify_convert_nested_generic_type() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let ast_generic = ect::ast::Type::Generic {
         name: "List".into(),
@@ -814,7 +814,7 @@ fn verify_convert_nested_generic_type() {
 
 #[test]
 fn verify_convert_generic_result_type() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let ast_generic = ect::ast::Type::Generic {
         name: "Result".into(),
@@ -836,7 +836,7 @@ fn verify_convert_generic_result_type() {
 
 #[test]
 fn verify_same_generic_types_compatible() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let list_int = Type::Generic {
         name: "List".into(),
@@ -848,7 +848,7 @@ fn verify_same_generic_types_compatible() {
 
 #[test]
 fn verify_different_generic_names_not_compatible() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let list_int = Type::Generic {
         name: "List".into(),
@@ -864,7 +864,7 @@ fn verify_different_generic_names_not_compatible() {
 
 #[test]
 fn verify_different_generic_args_not_compatible() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let list_int = Type::Generic {
         name: "List".into(),
@@ -880,7 +880,7 @@ fn verify_different_generic_args_not_compatible() {
 
 #[test]
 fn verify_generic_with_unknown_compatible() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let list_int = Type::Generic {
         name: "List".into(),
@@ -893,7 +893,7 @@ fn verify_generic_with_unknown_compatible() {
 
 #[test]
 fn verify_generic_with_different_arg_count_not_compatible() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let option_int = Type::Generic {
         name: "Option".into(),
@@ -911,7 +911,7 @@ fn verify_generic_with_different_arg_count_not_compatible() {
 
 #[test]
 fn verify_generic_subtype_same_type() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let list_int = Type::Generic {
         name: "List".into(),
@@ -923,7 +923,7 @@ fn verify_generic_subtype_same_type() {
 
 #[test]
 fn verify_generic_not_subtype_different_name() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let list_int = Type::Generic {
         name: "List".into(),
@@ -939,7 +939,7 @@ fn verify_generic_not_subtype_different_name() {
 
 #[test]
 fn verify_nested_generic_compatible() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let nested1 = Type::Generic {
         name: "List".into(),
@@ -1006,7 +1006,7 @@ fn verify_generic_with_no_args_is_copy() {
 
 #[test]
 fn verify_generic_in_function_signature() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let list_int = Type::Generic {
         name: "List".into(),
@@ -1024,7 +1024,7 @@ fn verify_generic_in_function_signature() {
 
 #[test]
 fn verify_generic_in_tuple() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let list_int = Type::Generic {
         name: "List".into(),
@@ -1057,7 +1057,7 @@ fn verify_empty_generic_args() {
 
 #[test]
 fn verify_deeply_nested_generics() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let deeply_nested = Type::Generic {
         name: "L1".into(),
@@ -1086,7 +1086,7 @@ fn verify_deeply_nested_generics() {
 
 #[test]
 fn verify_generic_with_reference_arg() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let ref_int = Type::Reference {
         is_mut: false,
@@ -1108,7 +1108,7 @@ fn verify_generic_with_reference_arg() {
 
 #[test]
 fn verify_generic_in_reference() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     let list_int = Type::Generic {
         name: "List".into(),
@@ -2459,7 +2459,7 @@ fn verify_type_alias_resolves_in_variable_type() {
 #[test]
 fn verify_dyn_trait_converts_to_named_type() {
     // dyn Show in an AST type must not become Unknown in ty::Type
-    let mut checker = Checker::new();
+    let checker = Checker::new();
     let ty = checker.convert_type(&ast::Type::DynTrait("Show".into()));
     assert_ne!(ty, ect::ty::Type::Unknown,
         "dyn Show must not convert to Unknown; got {:?}", ty);

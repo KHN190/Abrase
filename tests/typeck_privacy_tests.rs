@@ -267,7 +267,7 @@ fn verify_public_re_export_accessible() {
 
 #[test]
 fn verify_builtin_types_always_public() {
-    let mut checker = Checker::new();
+    let checker = Checker::new();
 
     // Built-in types like Int, String should be accessible
     let int_accessible = checker.is_public("Int");
