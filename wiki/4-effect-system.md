@@ -1,10 +1,13 @@
 # 4. Effect System
 
-Effect system tracks and controls side effects at the type level. Functions declare what effects they perform (e.g., throwing exceptions, async operations, state mutations) in their signatures. This makes side effects explicit and checkable by the compiler.
+Effect system controls side effects at the type level. Functions declare what effects they perform (e.g., throwing exceptions, async operations) in their signatures. This makes side effects explicit and checkable by the compiler.
 
-- **Explicit side effects**: No hidden I/O, exceptions, or state changes - behavior is visible in the function signature
-- **Composability**: Effects compose predictably when combining functions
-- **Error handling**: Separates recoverable errors (exn effect) from unrecoverable panics
+Thus we can achieve a few merits:
+
+1. Explicit over implicit, code signature shows what it does
+2. Control flow like exception in a handler and keep other functions pure.
+3. Side effects are constrained in a function's lifecycle.
+4. Compiler checks if all side effects are all handled.
 
 ## Internal Effects
 
