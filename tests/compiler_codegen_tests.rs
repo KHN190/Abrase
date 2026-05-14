@@ -1493,3 +1493,252 @@ fn verify_compile_unsupported_binary_op_add_assign_errors() {
     let result = compiler.compile(&ast);
     assert!(result.is_err(), "Expected error for unsupported AddAssign operator");
 }
+
+// Match expressions - properly exhaustive patterns
+#[test]
+fn verify_compile_match_literal_int_with_wildcard() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Match {
+                    scrutinee: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(5)),
+                        span: Span::new(0, 0),
+                    }),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Literal(Literal::Int(5)),
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(10)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Wildcard,
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(0)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                    ],
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Int(10));
+}
+
+#[test]
+fn verify_compile_match_wildcard_only() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Match {
+                    scrutinee: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(99)),
+                        span: Span::new(0, 0),
+                    }),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Wildcard,
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(42)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                    ],
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn verify_compile_match_bind_pattern() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Match {
+                    scrutinee: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(5)),
+                        span: Span::new(0, 0),
+                    }),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Bind("x".to_string()),
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Binary {
+                                    op: BinaryOp::Add,
+                                    left: Box::new(Spanned {
+                                        node: Expr::Identifier("x".to_string()),
+                                        span: Span::new(0, 0),
+                                    }),
+                                    right: Box::new(Spanned {
+                                        node: Expr::Literal(Literal::Int(10)),
+                                        span: Span::new(0, 0),
+                                    }),
+                                },
+                                span: Span::new(0, 0),
+                            },
+                        },
+                    ],
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Int(15));
+}
+
+#[test]
+fn verify_compile_match_bool_patterns() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Match {
+                    scrutinee: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Bool(true)),
+                        span: Span::new(0, 0),
+                    }),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Literal(Literal::Bool(true)),
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(1)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Wildcard,
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(0)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                    ],
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Int(1));
+}
+
+#[test]
+fn verify_compile_match_non_exhaustive_errors() {
+    let mut compiler = Compiler::new();
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Match {
+                    scrutinee: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(5)),
+                        span: Span::new(0, 0),
+                    }),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Literal(Literal::Int(1)),
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(10)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                    ],
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compiler.compile(&ast);
+    assert!(result.is_err(), "Expected error for non-exhaustive match");
+}

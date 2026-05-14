@@ -132,6 +132,83 @@ impl Compiler {
 
             ast::Expr::Block(block) => self.compile_block(block),
 
+            ast::Expr::Match { scrutinee, arms } => {
+                // Check exhaustiveness: last arm must be wildcard or bind
+                if !arms.is_empty() {
+                    let last_arm = &arms[arms.len() - 1];
+                    match &last_arm.pattern.node {
+                        ast::Pattern::Wildcard | ast::Pattern::Bind(_) => {},
+                        _ => return Err("Non-exhaustive match pattern".to_string()),
+                    }
+                } else {
+                    return Err("Empty match expression".to_string());
+                }
+
+                let scrutinee_reg = self.compile_expr(scrutinee)?;
+                let result_reg = self.alloc_register()?;
+                let mut exit_jumps = Vec::new();
+
+                // Try each arm
+                for arm in arms {
+                    match &arm.pattern.node {
+                        ast::Pattern::Wildcard => {
+                            // Wildcard always matches - compile body and we're done
+                            let body_reg = self.compile_expr(&arm.body)?;
+                            self.emit(OpCode::Mov(result_reg, body_reg));
+                            break; // Stop processing arms
+                        }
+                        ast::Pattern::Literal(lit) => {
+                            // Compile pattern as constant
+                            let pat_val = match lit {
+                                ast::Literal::Int(n)    => Value::Int(*n),
+                                ast::Literal::Float(f)  => Value::Float(*f),
+                                ast::Literal::Bool(b)   => Value::Bool(*b),
+                                ast::Literal::String(s) => Value::String(s.clone()),
+                                ast::Literal::Unit      => Value::Unit,
+                                _ => return Err("Unsupported literal in pattern".to_string()),
+                            };
+                            let pat_idx = self.add_constant(pat_val);
+                            let pat_reg = self.alloc_register()?;
+                            self.emit(OpCode::PushConst(pat_reg, pat_idx));
+
+                            // Compare scrutinee with pattern
+                            let eq_reg = self.alloc_register()?;
+                            self.emit(OpCode::Eq(eq_reg, scrutinee_reg, pat_reg));
+
+                            // Jump to next arm if not equal
+                            let jz_idx = self.code.len();
+                            self.emit(OpCode::Jz(eq_reg, 0)); // placeholder
+
+                            // Pattern matched: compile body
+                            let body_reg = self.compile_expr(&arm.body)?;
+                            self.emit(OpCode::Mov(result_reg, body_reg));
+                            exit_jumps.push(self.code.len());
+                            self.emit(OpCode::Jmp(0)); // placeholder to end
+
+                            // Patch jz to next arm
+                            let next_addr = self.code.len();
+                            self.code[jz_idx] = OpCode::Jz(eq_reg, next_addr);
+                        }
+                        ast::Pattern::Bind(name) => {
+                            // Bind pattern always matches and binds variable
+                            self.var_to_reg.insert(name.clone(), scrutinee_reg);
+                            let body_reg = self.compile_expr(&arm.body)?;
+                            self.emit(OpCode::Mov(result_reg, body_reg));
+                            break; // Stop processing arms
+                        }
+                        _ => return Err("Unsupported pattern in match".to_string()),
+                    }
+                }
+
+                // Patch all exit jumps to current position
+                let end_addr = self.code.len();
+                for &jmp_idx in &exit_jumps {
+                    self.code[jmp_idx] = OpCode::Jmp(end_addr);
+                }
+
+                Ok(result_reg)
+            }
+
             _ => Err(format!("Unsupported expression: {:?}", expr.node)),
         }
     }
