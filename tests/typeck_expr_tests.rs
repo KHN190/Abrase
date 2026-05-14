@@ -2995,3 +2995,132 @@ fn verify_for_loop_break_with_value() {
     assert_eq!(ty, Type::Bool);
     assert!(checker.errors.is_empty());
 }
+
+#[test]
+fn verify_generic_function_instantiation_with_int() {
+    let mut checker = Checker::new();
+    // identity :: <T> T -> T
+    let fn_type = Type::Function {
+        params: vec![Type::Generic { name: "T".into(), args: vec![] }],
+        effects: vec![],
+        ret: Box::new(Type::Generic { name: "T".into(), args: vec![] }),
+    };
+    checker.insert_var("identity".into(), fn_type, false, d_span());
+
+    let expr = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::Identifier("identity".into()))),
+        args: vec![sp(ast::Expr::Literal(ast::Literal::Int(42)))],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_generic_function_instantiation_with_string() {
+    let mut checker = Checker::new();
+    // identity :: <T> T -> T
+    let fn_type = Type::Function {
+        params: vec![Type::Generic { name: "T".into(), args: vec![] }],
+        effects: vec![],
+        ret: Box::new(Type::Generic { name: "T".into(), args: vec![] }),
+    };
+    checker.insert_var("identity".into(), fn_type, false, d_span());
+
+    let expr = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::Identifier("identity".into()))),
+        args: vec![sp(ast::Expr::Literal(ast::Literal::String("hello".into())))],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::String);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_generic_function_with_multiple_params() {
+    let mut checker = Checker::new();
+    // map_pair :: <T, U> T -> U -> (T, U)
+    let fn_type = Type::Function {
+        params: vec![
+            Type::Generic { name: "T".into(), args: vec![] },
+            Type::Generic { name: "U".into(), args: vec![] },
+        ],
+        effects: vec![],
+        ret: Box::new(Type::Tuple(vec![
+            Type::Generic { name: "T".into(), args: vec![] },
+            Type::Generic { name: "U".into(), args: vec![] },
+        ])),
+    };
+    checker.insert_var("map_pair".into(), fn_type, false, d_span());
+
+    let expr = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::Identifier("map_pair".into()))),
+        args: vec![
+            sp(ast::Expr::Literal(ast::Literal::Int(5))),
+            sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+        ],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Tuple(vec![Type::Int, Type::Bool]));
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_generic_function_with_list_return() {
+    let mut checker = Checker::new();
+    // make_list :: <T> T -> List<T>
+    let fn_type = Type::Function {
+        params: vec![Type::Generic { name: "T".into(), args: vec![] }],
+        effects: vec![],
+        ret: Box::new(Type::Generic {
+            name: "List".into(),
+            args: vec![Type::Generic { name: "T".into(), args: vec![] }],
+        }),
+    };
+    checker.insert_var("make_list".into(), fn_type, false, d_span());
+
+    let expr = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::Identifier("make_list".into()))),
+        args: vec![sp(ast::Expr::Literal(ast::Literal::Int(42)))],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Generic {
+        name: "List".into(),
+        args: vec![Type::Int],
+    });
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_generic_function_with_nested_generics() {
+    let mut checker = Checker::new();
+    // pair :: <T> T -> T -> (T, T)
+    let fn_type = Type::Function {
+        params: vec![
+            Type::Generic { name: "T".into(), args: vec![] },
+            Type::Generic { name: "T".into(), args: vec![] },
+        ],
+        effects: vec![],
+        ret: Box::new(Type::Tuple(vec![
+            Type::Generic { name: "T".into(), args: vec![] },
+            Type::Generic { name: "T".into(), args: vec![] },
+        ])),
+    };
+    checker.insert_var("pair".into(), fn_type, false, d_span());
+
+    let expr = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::Identifier("pair".into()))),
+        args: vec![
+            sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+            sp(ast::Expr::Literal(ast::Literal::Bool(false))),
+        ],
+    });
+
+    let ty = checker.infer_expr(&expr);
+    assert_eq!(ty, Type::Tuple(vec![Type::Bool, Type::Bool]));
+    assert!(checker.errors.is_empty());
+}

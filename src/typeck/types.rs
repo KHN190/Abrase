@@ -279,6 +279,9 @@ impl Checker {
             (a, b) if a == b => Some(a.clone()),
             (Type::Unknown, b) => Some(b.clone()),
             (a, Type::Unknown) => Some(a.clone()),
+            // Unify generic type variable with concrete type
+            (Type::Generic { .. }, _) => Some(ty2.clone()),
+            (_, Type::Generic { .. }) => Some(ty1.clone()),
             (Type::Tuple(elems1), Type::Tuple(elems2)) if elems1.len() == elems2.len() => {
                 let unified: Option<Vec<_>> = elems1.iter().zip(elems2.iter())
                     .map(|(e1, e2)| self.unify_types(e1, e2))
@@ -313,6 +316,80 @@ impl Checker {
 
     pub fn is_assignable(&self, expected: &Type, actual: &Type) -> bool {
         self.types_compatible(expected, actual) || self.is_subtype(actual, expected)
+    }
+
+    pub fn build_substitution_map(
+        &self,
+        param_types: &[Type],
+        arg_types: &[Type],
+    ) -> std::collections::HashMap<String, Type> {
+        let mut subst = std::collections::HashMap::new();
+        for (param, arg) in param_types.iter().zip(arg_types.iter()) {
+            if let Some(unified) = self.unify_types(param, arg) {
+                self.extract_substitutions(param, &unified, &mut subst);
+            }
+        }
+        subst
+    }
+
+    fn extract_substitutions(
+        &self,
+        param: &Type,
+        unified: &Type,
+        subst: &mut std::collections::HashMap<String, Type>,
+    ) {
+        match (param, unified) {
+            (Type::Generic { name, .. }, _) => {
+                subst.insert(name.clone(), unified.clone());
+            }
+            (Type::Tuple(p_elems), Type::Tuple(u_elems)) => {
+                for (p, u) in p_elems.iter().zip(u_elems.iter()) {
+                    self.extract_substitutions(p, u, subst);
+                }
+            }
+            (Type::Reference { inner: p_inner, .. }, Type::Reference { inner: u_inner, .. }) => {
+                self.extract_substitutions(p_inner, u_inner, subst);
+            }
+            (Type::Function { params: p_params, ret: p_ret, .. },
+             Type::Function { params: u_params, ret: u_ret, .. }) => {
+                for (p, u) in p_params.iter().zip(u_params.iter()) {
+                    self.extract_substitutions(p, u, subst);
+                }
+                self.extract_substitutions(p_ret, u_ret, subst);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn apply_substitution(&self, ty: &Type, subst: &std::collections::HashMap<String, Type>) -> Type {
+        match ty {
+            Type::Generic { name, args } => {
+                if let Some(substituted) = subst.get(name) {
+                    return substituted.clone();
+                }
+                Type::Generic {
+                    name: name.clone(),
+                    args: args.iter().map(|arg| self.apply_substitution(arg, subst)).collect(),
+                }
+            }
+            Type::Tuple(elems) => {
+                Type::Tuple(elems.iter().map(|e| self.apply_substitution(e, subst)).collect())
+            }
+            Type::Reference { is_mut, inner } => {
+                Type::Reference {
+                    is_mut: *is_mut,
+                    inner: Box::new(self.apply_substitution(inner, subst)),
+                }
+            }
+            Type::Function { params, effects, ret } => {
+                Type::Function {
+                    params: params.iter().map(|p| self.apply_substitution(p, subst)).collect(),
+                    effects: effects.clone(),
+                    ret: Box::new(self.apply_substitution(ret, subst)),
+                }
+            }
+            _ => ty.clone(),
+        }
     }
 
     pub fn check_stmt(&mut self, stmt: &Spanned<ast::Stmt>) {

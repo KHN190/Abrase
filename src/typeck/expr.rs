@@ -175,10 +175,7 @@ impl Checker {
                 self.loop_depth += 1;
                 self.loop_break_types.push(None);
 
-                // Extract element type from iterator
                 let element_ty = self.extract_iterable_element_type(&iter_ty);
-
-                // Bind pattern variable to element type
                 if let ast::Pattern::Bind(name) = &pattern.node {
                     self.insert_var(name.clone(), element_ty, false, pattern.span);
                 }
@@ -262,7 +259,6 @@ impl Checker {
                 let _ex_ty = self.infer_expr(expr_val);
                 Type::Never
             }
-            // Complex Expressions
             ast::Expr::Call { callee, args } => {
                 self.context_stack.push(format!("In function call"));
 
@@ -274,25 +270,32 @@ impl Checker {
                             expr.span
                         );
                     }
-                    for (i, (arg, param_ty)) in args.iter().zip(params.iter()).enumerate() {
+
+                    let mut arg_types = Vec::new();
+                    for (i, arg) in args.iter().enumerate() {
                         self.context_stack.push(format!("Argument {}", i + 1));
                         let arg_ty = self.infer_expr(arg);
                         self.context_stack.pop();
+                        arg_types.push(arg_ty);
+                    }
 
-                        if arg_ty != *param_ty && arg_ty != Type::Unknown && *param_ty != Type::Unknown {
+                    let subst = self.build_substitution_map(&params, &arg_types);
+                    for (i, (arg_ty, param_ty)) in arg_types.iter().zip(params.iter()).enumerate() {
+                        // Skip strict type checking if parameter is a generic type variable
+                        let is_param_generic = matches!(param_ty, Type::Generic { .. });
+                        if !is_param_generic && arg_ty != param_ty && *arg_ty != Type::Unknown && *param_ty != Type::Unknown {
                             self.report_error(
                                 format!("Argument {} type mismatch: expected {:?}, got {:?}", i, param_ty, arg_ty),
-                                arg.span
+                                args[i].span
                             );
                         }
                     }
 
-                    // Check effect compatibility
                     for effect in &effects {
                         self.add_required_effect(effect.clone());
                     }
+                    self.apply_substitution(&ret, &subst)
 
-                    *ret
                 } else {
                     self.report_error("Callee must be function type".into(), callee.span)
                 };
@@ -357,8 +360,6 @@ impl Checker {
             ast::Expr::FieldAccess { base, field } => {
                 self.context_stack.push(format!("In field access '{}'", field));
                 let base_ty = self.infer_expr(base);
-
-                // Resolve field access
                 let field_type = self.resolve_field_access(&base_ty, field, base.span);
 
                 self.context_stack.pop();
@@ -521,7 +522,6 @@ impl Checker {
                 // Push new scope effect context
                 self.effect_stack.push(self.active_effects.clone());
                 let body_ty = self.infer_block(body);
-                // Pop scope effect context
                 self.effect_stack.pop();
 
                 self.context_stack.pop();
@@ -540,13 +540,12 @@ impl Checker {
                 // Push new region effect context
                 self.effect_stack.push(self.active_effects.clone());
                 let body_ty = self.infer_block(body);
-                // Pop region effect context
                 self.effect_stack.pop();
 
                 // Pop region and validate no escapes
                 self.pop_region();
-
                 self.context_stack.pop();
+
                 body_ty
             }
             ast::Expr::Handle { expr: handler_expr, arms } => {
