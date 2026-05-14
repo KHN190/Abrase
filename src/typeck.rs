@@ -3007,4 +3007,205 @@ impl Checker {
 
         !has_cycles // Return false if cycles detected, true if valid
     }
+
+    // Two-pass declaration checking pipeline
+    pub fn check_program(&mut self, decls: &[ast::Decl]) {
+        // Pass 1: Collect signatures (register all types, functions, effects, traits, imports)
+        for decl in decls {
+            self.check_decl_signature(decl);
+        }
+
+        // Pass 2: Check bodies (type-check function bodies, impl methods, const expressions)
+        for decl in decls {
+            self.check_decl_body(decl);
+        }
+    }
+
+    fn check_decl_signature(&mut self, decl: &ast::Decl) {
+        match decl {
+            ast::Decl::Fn(fn_decl) => {
+                // Register function signature
+                let params: Vec<Type> = fn_decl.params.iter()
+                    .filter_map(|p| match p {
+                        ast::Param::Named { ty, .. } => Some(self.convert_type(ty)),
+                        _ => None,
+                    })
+                    .collect();
+                let effects: Vec<crate::ty::Effect> = fn_decl.effects.iter()
+                    .filter_map(|eff| self.convert_effect(eff))
+                    .collect();
+                let ret = fn_decl.return_type.as_ref()
+                    .map(|t| Box::new(self.convert_type(t)))
+                    .unwrap_or_else(|| Box::new(Type::Unit));
+
+                let fn_type = Type::Function { params, effects, ret };
+                self.insert_var(fn_decl.name.clone(), fn_type, false, ast::Span { line: 0, col: 0 });
+
+                if fn_decl.is_pub {
+                    self.mark_public(fn_decl.name.clone());
+                }
+            },
+
+            ast::Decl::Type { name, body, is_pub, ownership, .. } => {
+                // Register type and check for cycles
+                self.register_type(name.clone(), body.clone());
+
+                if *is_pub {
+                    self.mark_public(name.clone());
+                }
+
+                // Register ownership attribute if present
+                if let Some(own_attr) = ownership {
+                    let ownership = match own_attr {
+                        ast::OwnershipAttr::Copy => Ownership::Copy,
+                        ast::OwnershipAttr::Move => Ownership::Move,
+                        ast::OwnershipAttr::Share => Ownership::Share,
+                    };
+                    self.register_ownership(name.clone(), ownership);
+                }
+
+                // Validate no cycles
+                let mut visited = std::collections::HashSet::new();
+                self.check_type_recursion(name, body, &mut visited, ast::Span { line: 0, col: 0 });
+            },
+
+            ast::Decl::TypeAlias { name, ty, is_pub, .. } => {
+                // Register type alias (for now, store in a simple way)
+                // Could enhance with a dedicated type_alias_registry
+                if *is_pub {
+                    self.mark_public(name.clone());
+                }
+            },
+
+            ast::Decl::Trait { name, is_pub, .. } => {
+                // Register trait with empty method list for now
+                // Enhanced trait method tracking could be added later
+                self.register_trait(name.clone(), vec![]);
+
+                if *is_pub {
+                    self.mark_public(name.clone());
+                }
+            },
+
+            ast::Decl::Const { name, ty, is_pub, .. } => {
+                // Register constant with its type
+                let const_type = self.convert_type(ty);
+                self.insert_const_var(name.clone(), const_type, ast::Span { line: 0, col: 0 });
+
+                if *is_pub {
+                    self.mark_public(name.clone());
+                }
+            },
+
+            ast::Decl::Effect { name, is_pub, .. } => {
+                // Register effect with empty operations for now
+                self.register_effect(name.clone(), vec![]);
+
+                if *is_pub {
+                    self.mark_public(name.clone());
+                }
+            },
+
+            ast::Decl::EffectAlias { name, is_pub, .. } => {
+                // Register effect alias
+                if *is_pub {
+                    self.mark_public(name.clone());
+                }
+            },
+
+            ast::Decl::Import { path, items } => {
+                // Register imported items with module path
+                self.register_import_items(path.clone(), items.clone());
+
+                // Check for import collisions
+                for item in items {
+                    let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+                    self.check_import_collision(&import_name, path.clone());
+                }
+            },
+
+            ast::Decl::Mod(name) => {
+                // Push module for subsequent declarations
+                self.push_module(name.clone());
+            },
+
+            ast::Decl::Impl { .. } => {
+                // Impl blocks are checked in pass 2
+            },
+        }
+    }
+
+    fn check_decl_body(&mut self, decl: &ast::Decl) {
+        match decl {
+            ast::Decl::Fn(fn_decl) => {
+                // Type-check function body
+                self.check_fn_decl(fn_decl);
+            },
+
+            ast::Decl::Const { value, ty, .. } => {
+                // Type-check constant expression
+                let const_type = self.convert_type(ty);
+                let inferred = self.infer_expr(value);
+
+                if !self.types_compatible(&const_type, &inferred) {
+                    self.report_error(
+                        format!("Const expression type mismatch: expected {}, got {}",
+                            format!("{:?}", const_type), format!("{:?}", inferred)),
+                        value.span,
+                    );
+                }
+            },
+
+            ast::Decl::Impl { methods, for_type, trait_name, .. } => {
+                // Type-check implementation methods
+                for method in methods {
+                    self.check_fn_decl(method);
+                }
+            },
+
+            // Other declarations have no body to check
+            _ => {},
+        }
+    }
+
+    fn check_fn_decl(&mut self, fn_decl: &ast::FnDecl) {
+        // Push function scope
+        self.scopes.push(Scope {
+            vars: HashMap::new(),
+        });
+
+        // Bind parameters
+        for param in &fn_decl.params {
+            match param {
+                ast::Param::Named { pattern, ty } => {
+                    let param_type = self.convert_type(ty);
+                    // Extract name from pattern (simplified - just handles Bind for now)
+                    if let ast::Pattern::Bind(name) = &pattern.node {
+                        self.insert_var(name.clone(), param_type, false, ast::Span { line: 0, col: 0 });
+                    }
+                },
+                ast::Param::SelfVal | ast::Param::SelfRef { .. } => {
+                    // Handle self parameter if needed
+                },
+            }
+        }
+
+        // Infer function body
+        let body_type = self.infer_block(&fn_decl.body);
+
+        // Check return type if specified
+        if let Some(return_ty) = &fn_decl.return_type {
+            let expected_return = self.convert_type(return_ty);
+            if !self.types_compatible(&expected_return, &body_type) {
+                self.report_error(
+                    format!("Return type mismatch in '{}': expected {}, got {}",
+                        fn_decl.name, format!("{:?}", expected_return), format!("{:?}", body_type)),
+                    ast::Span { line: 0, col: 0 },
+                );
+            }
+        }
+
+        // Pop function scope
+        self.scopes.pop();
+    }
 }
