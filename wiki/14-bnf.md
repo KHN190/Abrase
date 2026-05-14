@@ -246,7 +246,7 @@ p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
                     | <scope-expr>
                     | <region-expr>
                     | <handle-expr>
-                    | <thread-expr>
+                    | <coroutine-expr>
                     | <for-expr>
                     | <while-expr>
                     | <loop-expr>
@@ -322,7 +322,7 @@ p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
                     | 'exn' <pattern> '=>' <match-body>
                     | <qualified-name> <pattern>? '=>' <match-body>
 
-<thread-expr>     ::= <identifier> '.' 'thread' '(' <expr> ')'
+<coroutine-expr>  ::= <identifier> '.' 'spawn' '(' <expr> ')'
 ```
 
 ### 11 Pattern
