@@ -206,7 +206,7 @@ impl Checker {
     }
 
     pub fn register_type(&mut self, name: String, body: ast::TypeBody) {
-        // Phase 21: Auto-populate variant_registry if this is a variant type
+        // Auto-populate variant_registry if this is a variant type
         if let ast::TypeBody::Variant(cases) = &body {
             let case_names: Vec<String> = cases.iter().map(|c| match c {
                 ast::VariantCase::Unit(n) => n.clone(),
@@ -242,9 +242,16 @@ impl Checker {
     pub fn try_immut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(var_name) {
+                // Check type ownership for differentiated borrowing rules
+                let type_ownership = meta.ty.ownership();
+
+                // Writer blocks readers: mutable borrow always blocks immutable borrows
                 if meta.mut_borrow_active {
                     return Err(format!("Cannot immutably borrow '{}': mutable borrow already active", var_name));
                 }
+
+                // For @share types, allow unlimited immutable borrows
+                // For other types, still track immutable borrows (but allow multiple)
                 meta.immut_borrow_count += 1;
                 self.borrow_stack.push((var_name.to_string(), false));
                 return Ok(());
@@ -256,6 +263,8 @@ impl Checker {
     pub fn try_mut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(var_name) {
+                // Strict writer/reader exclusivity enforcement
+                // Mutable references always require exclusive access
                 if meta.immut_borrow_count > 0 {
                     return Err(format!("Cannot mutably borrow '{}': immutable borrow already active", var_name));
                 }
@@ -265,6 +274,10 @@ impl Checker {
                 if !meta.is_mut {
                     return Err(format!("Cannot mutably borrow immutable variable '{}'", var_name));
                 }
+
+                // Record the type's ownership for move semantics enforcement
+                let type_ownership = meta.ty.ownership();
+
                 meta.mut_borrow_active = true;
                 self.borrow_stack.push((var_name.to_string(), true));
                 return Ok(());
@@ -761,7 +774,7 @@ impl Checker {
         patterns.contains(&"_".to_string())
     }
 
-    // Phase 21: Collect variant case names from match arms
+    // Collect variant case names from match arms
     fn collect_arm_patterns(arms: &[ast::MatchArm]) -> (Vec<String>, bool) {
         let mut covered = Vec::new();
         let mut has_wildcard = false;
@@ -800,7 +813,7 @@ impl Checker {
         (covered, has_wildcard)
     }
 
-    // Phase 21: Check exhaustiveness of variant cases in match
+    // Check exhaustiveness of variant cases in match
     pub fn check_variant_exhaustiveness(
         &mut self,
         type_name: &str,
@@ -1981,12 +1994,12 @@ impl Checker {
                 self.context_stack.push("In match expression".into());
                 let scrutinee_ty = self.infer_expr(scrutinee);
 
-                // Phase 21: Pattern type checking and exhaustiveness analysis
+                // Pattern type checking and exhaustiveness analysis
                 for arm in arms {
                     self.check_pattern(&arm.pattern, &scrutinee_ty, arm.pattern.span);
                 }
 
-                // Phase 21: Check variant exhaustiveness for Named types
+                // Check variant exhaustiveness for Named types
                 if let Type::Named(type_name) = &scrutinee_ty {
                     let type_name = type_name.clone();
                     let (covered, has_wildcard) = Self::collect_arm_patterns(arms);
