@@ -1,4 +1,4 @@
-// Compiler tests: code generation, optimization, phases
+// Code generation, optimization, phases
 use ect::ast::*;
 use ect::compiler::Compiler;
 use ect::vm::{Value, VirtualMachine};
@@ -271,6 +271,31 @@ fn verify_compile_literal_unit() {
 
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Unit);
+}
+
+#[test]
+fn verify_compile_literal_bool_false() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Bool".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::Bool(false)),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(false));
 }
 
 // Arithmetic Operations
@@ -869,4 +894,345 @@ fn verify_compile_while_loop_with_mutation() {
 
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Int(5));
+}
+
+// If without else returning Unit
+#[test]
+fn verify_compile_if_without_else_returns_unit() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Unit".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::If {
+                    condition: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Bool(true)),
+                        span: Span::new(0, 0),
+                    }),
+                    consequence: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Unit),
+                        span: Span::new(0, 0),
+                    }),
+                    alternative: None,
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Unit);
+}
+
+// While that never executes
+#[test]
+fn verify_compile_while_never_executes() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Unit".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::While {
+                    condition: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Bool(false)),
+                        span: Span::new(0, 0),
+                    }),
+                    body: Block {
+                        stmts: vec![],
+                        ret: None,
+                    },
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Unit);
+}
+
+// Error cases
+#[test]
+fn verify_compile_undefined_variable_errors() {
+    let mut compiler = Compiler::new();
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Identifier("undefined_var".to_string()),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compiler.compile(&ast);
+    assert!(result.is_err(), "Expected error for undefined variable");
+}
+
+#[test]
+fn verify_compile_non_bind_pattern_errors() {
+    let mut compiler = Compiler::new();
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![
+                Spanned {
+                    node: Stmt::Let {
+                        pattern: Spanned {
+                            node: Pattern::Tuple(vec![
+                                Spanned {
+                                    node: Pattern::Bind("x".to_string()),
+                                    span: Span::new(0, 0),
+                                },
+                                Spanned {
+                                    node: Pattern::Bind("y".to_string()),
+                                    span: Span::new(0, 0),
+                                },
+                            ]),
+                            span: Span::new(0, 0),
+                        },
+                        is_mut: false,
+                        ty: None,
+                        value: Spanned {
+                            node: Expr::Literal(Literal::Int(5)),
+                            span: Span::new(0, 0),
+                        },
+                    },
+                    span: Span::new(0, 0),
+                },
+            ],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::Int(0)),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compiler.compile(&ast);
+    assert!(result.is_err(), "Expected error for non-bind pattern");
+}
+
+// Assignment with literals
+#[test]
+fn verify_compile_assignment_literal_int() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![
+                Spanned {
+                    node: Stmt::Let {
+                        pattern: Spanned {
+                            node: Pattern::Bind("x".to_string()),
+                            span: Span::new(0, 0),
+                        },
+                        is_mut: true,
+                        ty: Some(Type::Named("Int".to_string())),
+                        value: Spanned {
+                            node: Expr::Literal(Literal::Int(10)),
+                            span: Span::new(0, 0),
+                        },
+                    },
+                    span: Span::new(0, 0),
+                },
+                Spanned {
+                    node: Stmt::Expr(Spanned {
+                        node: Expr::Binary {
+                            op: BinaryOp::Assign,
+                            left: Box::new(Spanned {
+                                node: Expr::Identifier("x".to_string()),
+                                span: Span::new(0, 0),
+                            }),
+                            right: Box::new(Spanned {
+                                node: Expr::Literal(Literal::Int(42)),
+                                span: Span::new(0, 0),
+                            }),
+                        },
+                        span: Span::new(0, 0),
+                    }),
+                    span: Span::new(0, 0),
+                },
+            ],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Identifier("x".to_string()),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn verify_compile_assignment_multiple() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![
+                Spanned {
+                    node: Stmt::Let {
+                        pattern: Spanned {
+                            node: Pattern::Bind("x".to_string()),
+                            span: Span::new(0, 0),
+                        },
+                        is_mut: true,
+                        ty: Some(Type::Named("Int".to_string())),
+                        value: Spanned {
+                            node: Expr::Literal(Literal::Int(1)),
+                            span: Span::new(0, 0),
+                        },
+                    },
+                    span: Span::new(0, 0),
+                },
+                Spanned {
+                    node: Stmt::Expr(Spanned {
+                        node: Expr::Binary {
+                            op: BinaryOp::Assign,
+                            left: Box::new(Spanned {
+                                node: Expr::Identifier("x".to_string()),
+                                span: Span::new(0, 0),
+                            }),
+                            right: Box::new(Spanned {
+                                node: Expr::Literal(Literal::Int(2)),
+                                span: Span::new(0, 0),
+                            }),
+                        },
+                        span: Span::new(0, 0),
+                    }),
+                    span: Span::new(0, 0),
+                },
+                Spanned {
+                    node: Stmt::Expr(Spanned {
+                        node: Expr::Binary {
+                            op: BinaryOp::Assign,
+                            left: Box::new(Spanned {
+                                node: Expr::Identifier("x".to_string()),
+                                span: Span::new(0, 0),
+                            }),
+                            right: Box::new(Spanned {
+                                node: Expr::Literal(Literal::Int(3)),
+                                span: Span::new(0, 0),
+                            }),
+                        },
+                        span: Span::new(0, 0),
+                    }),
+                    span: Span::new(0, 0),
+                },
+            ],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Identifier("x".to_string()),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn verify_compile_assignment_bool() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Bool".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![
+                Spanned {
+                    node: Stmt::Let {
+                        pattern: Spanned {
+                            node: Pattern::Bind("flag".to_string()),
+                            span: Span::new(0, 0),
+                        },
+                        is_mut: true,
+                        ty: Some(Type::Named("Bool".to_string())),
+                        value: Spanned {
+                            node: Expr::Literal(Literal::Bool(true)),
+                            span: Span::new(0, 0),
+                        },
+                    },
+                    span: Span::new(0, 0),
+                },
+                Spanned {
+                    node: Stmt::Expr(Spanned {
+                        node: Expr::Binary {
+                            op: BinaryOp::Assign,
+                            left: Box::new(Spanned {
+                                node: Expr::Identifier("flag".to_string()),
+                                span: Span::new(0, 0),
+                            }),
+                            right: Box::new(Spanned {
+                                node: Expr::Literal(Literal::Bool(false)),
+                                span: Span::new(0, 0),
+                            }),
+                        },
+                        span: Span::new(0, 0),
+                    }),
+                    span: Span::new(0, 0),
+                },
+            ],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Identifier("flag".to_string()),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(false));
 }

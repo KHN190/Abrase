@@ -1,4 +1,4 @@
-// Tests for vm/interpreter.rs: VM dispatch loop, register operations, arithmetic.
+// VM dispatch loop, register operations, arithmetic.
 use ect::bytecode::{Chunk, OpCode, Register};
 use ect::vm::{Value, VirtualMachine};
 
@@ -401,4 +401,117 @@ fn test_loop_counter() {
         vec![Value::Int(0), Value::Int(3), Value::Int(1)],
     );
     assert_eq!(result, Ok(Value::Int(3)));
+}
+
+// Boundary conditions for comparisons
+#[test]
+fn test_lte_equal_boundary() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 0),
+            OpCode::Lte(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5)],
+    );
+    assert_eq!(result, Ok(Value::Bool(true)));
+}
+
+#[test]
+fn test_gte_equal_boundary() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 0),
+            OpCode::Gte(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5)],
+    );
+    assert_eq!(result, Ok(Value::Bool(true)));
+}
+
+// is_falsy edge cases
+#[test]
+fn test_jz_falsy_int_zero() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = 0 (falsy)
+            OpCode::Jz(r(0), 3),              // if r0 is falsy, jump
+            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
+            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(0), Value::Int(42)],
+    );
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_jz_truthy_int_nonzero() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = 7 (truthy)
+            OpCode::Jz(r(0), 3),              // if r0 is falsy, jump (won't happen)
+            OpCode::PushConst(r(1), 1),       // r1 = 99
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(7), Value::Int(99)],
+    );
+    assert_eq!(result, Ok(Value::Int(99)));
+}
+
+#[test]
+fn test_jnz_truthy_int_nonzero() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = 7 (truthy)
+            OpCode::Jnz(r(0), 3),             // if r0 is truthy, jump
+            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
+            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(7), Value::Int(42)],
+    );
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_jnz_falsy_int_zero() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = 0 (falsy)
+            OpCode::Jnz(r(0), 3),             // if r0 is truthy, jump (won't happen)
+            OpCode::PushConst(r(1), 1),       // r1 = 99
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(0), Value::Int(99)],
+    );
+    assert_eq!(result, Ok(Value::Int(99)));
+}
+
+// Error cases
+#[test]
+fn test_mov_empty_source_register_errors() {
+    let result = run(
+        vec![
+            OpCode::Mov(r(0), r(1)),  // r1 is uninitialized
+            OpCode::Ret(r(0)),
+        ],
+        vec![],
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_jz_empty_register_errors() {
+    let result = run(
+        vec![
+            OpCode::Jz(r(0), 1),  // r0 is uninitialized
+            OpCode::Ret(r(1)),
+        ],
+        vec![],
+    );
+    assert!(result.is_err());
 }
