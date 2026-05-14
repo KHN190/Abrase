@@ -16,6 +16,13 @@ pub enum Effect {
     Nondet,
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Variance {
+    Covariant,
+    Contravariant,
+    Invariant,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Int,

@@ -39,9 +39,8 @@ struct VarMeta {
     is_moved: bool,
     defined_at: Span,
     moved_at: Option<Span>,
-    // Phase 7: Ownership & Borrowing
-    immut_borrow_count: usize, // count of active immutable borrows
-    mut_borrow_active: bool,   // whether a mutable borrow is active
+    immut_borrow_count: usize,
+    mut_borrow_active: bool,
 }
 
 #[derive(Clone)]
@@ -56,55 +55,59 @@ pub struct Checker {
     loop_depth: usize,
     in_function: bool,
     fn_return_type: Option<crate::ty::Type>,
-    active_effects: Vec<String>, // track active effect handlers
-    effect_stack: Vec<Vec<String>>, // stack of effect scopes for region/scope
+    active_effects: Vec<String>,
+    effect_stack: Vec<Vec<String>>,
 
-    // Type Environment (Phase 5)
-    fn_registry: HashMap<String, (Vec<Type>, Type)>, // name -> (params, return_type)
-    type_registry: HashMap<String, ast::TypeBody>, // name -> type definition
-    const_registry: HashMap<String, Type>, // name -> const type
+    // Type Environment
+    fn_registry: HashMap<String, (Vec<Type>, Type)>,
+    type_registry: HashMap<String, ast::TypeBody>,
+    const_registry: HashMap<String, Type>,
 
-    // Phase 7: Ownership & Borrowing
-    borrow_stack: Vec<(String, bool)>, // stack of (var_name, is_mutable)
+    // Ownership & Borrowing
+    borrow_stack: Vec<(String, bool)>,
 
-    // Phase 8: Effects System
-    effect_registry: HashMap<String, Vec<String>>, // effect_name -> list of operations
-    effect_alias_registry: HashMap<String, Vec<crate::ty::Effect>>, // alias_name -> effects
-    current_effects: Vec<crate::ty::Effect>, // effects in current function context
+    // Effects System
+    effect_registry: HashMap<String, Vec<String>>,
+    effect_alias_registry: HashMap<String, Vec<crate::ty::Effect>>,
+    current_effects: Vec<crate::ty::Effect>,
 
-    // Phase 9: Type Ownership Attributes
-    ownership_registry: HashMap<String, Ownership>, // type_name -> ownership
+    // Type Ownership Attributes
+    ownership_registry: HashMap<String, Ownership>,
 
-    // Phase 10: Effect Unification & Inference
-    fn_declared_effects: Vec<crate::ty::Effect>, // declared effects for current function
-    fn_required_effects: Vec<crate::ty::Effect>, // required effects from function body
+    // Effect Unification & Inference
+    fn_declared_effects: Vec<crate::ty::Effect>,
+    fn_required_effects: Vec<crate::ty::Effect>,
 
-    // Phase 11: Effect Shadowing, Propagation & Scope Semantics
-    handled_effects: Vec<String>, // effects handled in current handle block
-    unhandled_effects: Vec<crate::ty::Effect>, // effects not handled, propagated up
+    // Effect Shadowing, Propagation & Scope Semantics
+    handled_effects: Vec<String>,
+    unhandled_effects: Vec<crate::ty::Effect>,
 
-    // Phase 12: Generics & Trait Constraints
-    trait_registry: HashMap<String, Vec<String>>, // trait_name -> list of methods/requirements
-    impl_registry: HashMap<(String, String), bool>, // (type_name, trait_name) -> implemented
-    generic_params: HashMap<String, Vec<String>>, // fn_name -> list of generic type params
-    trait_bounds: HashMap<String, Vec<String>>, // generic_param -> list of trait bounds
+    // Generics & Trait Constraints
+    trait_registry: HashMap<String, Vec<String>>,
+    impl_registry: HashMap<(String, String), bool>,
+    generic_params: HashMap<String, Vec<String>>,
+    trait_bounds: HashMap<String, Vec<String>>,
 
-    // Phase 13: Region Escape Analysis & Advanced Borrow Checking
-    region_stack: Vec<String>, // stack of active region names
-    reference_lifetimes: HashMap<String, String>, // ref_name -> region_name (lifetime)
-    pattern_borrows: HashMap<String, Vec<String>>, // pattern_var -> list of borrow constraints
+    // Region Escape Analysis & Advanced Borrow Checking
+    region_stack: Vec<String>,
+    reference_lifetimes: HashMap<String, String>,
+    pattern_borrows: HashMap<String, Vec<String>>,
 
-    // Phase 14: Pattern Matching Analysis (Exhaustiveness & Unreachability)
-    covered_patterns: Vec<String>, // patterns covered so far in match
-    unreachable_patterns: Vec<usize>, // indices of unreachable patterns
+    // Pattern Matching Analysis (Exhaustiveness & Unreachability)
+    covered_patterns: Vec<String>,
+    unreachable_patterns: Vec<usize>,
 
-    // Phase 15: Visibility & Module Scoping
-    current_module: Vec<String>, // current module path, e.g. ["io", "file"]
-    public_items: std::collections::HashSet<String>, // items marked as pub (fully qualified names)
-    private_items: std::collections::HashSet<String>, // items marked as private
+    // Visibility & Module Scoping
+    current_module: Vec<String>,
+    public_items: std::collections::HashSet<String>,
+    private_items: std::collections::HashSet<String>,
 
-    // Phase 16: Qualified Name Resolution
-    qualified_names: HashMap<String, Vec<Vec<String>>>, // simple_name -> list of possible qualified paths
+    // Qualified Name Resolution
+    qualified_names: HashMap<String, Vec<Vec<String>>>,
+
+    // Phase 20: Generic Variance
+    variance_registry: HashMap<String, Vec<crate::ty::Variance>>,
+    named_subtype_registry: HashMap<String, Vec<String>>,
 }
 
 impl Checker {
@@ -143,6 +146,18 @@ impl Checker {
             public_items: std::collections::HashSet::new(),
             private_items: std::collections::HashSet::new(),
             qualified_names: HashMap::new(),
+            variance_registry: {
+                let mut m = HashMap::new();
+                use crate::ty::Variance::*;
+                m.insert("List".into(),   vec![Covariant]);
+                m.insert("Option".into(), vec![Covariant]);
+                m.insert("Array".into(),  vec![Covariant]);
+                m.insert("Result".into(), vec![Covariant, Covariant]);
+                m.insert("Cell".into(),   vec![Invariant]);
+                m.insert("Fn".into(),     vec![Contravariant, Covariant]);
+                m
+            },
+            named_subtype_registry: HashMap::new(),
         }
     }
 
@@ -179,7 +194,7 @@ impl Checker {
         }
     }
 
-    // Phase 5: Type Environment Management
+    // Type Environment Management
     pub fn register_function(&mut self, name: String, params: Vec<Type>, ret: Type) {
         self.fn_registry.insert(name, (params, ret));
     }
@@ -204,7 +219,7 @@ impl Checker {
         self.const_registry.get(name).cloned()
     }
 
-    // Phase 7: Ownership & Borrowing
+    // Ownership & Borrowing
     pub fn try_immut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(var_name) {
@@ -257,7 +272,7 @@ impl Checker {
         ty.ownership()
     }
 
-    // Phase 8: Effects System
+    // Effects System
     pub fn register_effect(&mut self, name: String, operations: Vec<String>) {
         self.effect_registry.insert(name, operations);
     }
@@ -317,7 +332,7 @@ impl Checker {
         }
     }
 
-    // Phase 9: Type Ownership Attributes
+    // Type Ownership Attributes
     pub fn register_ownership(&mut self, type_name: String, ownership: Ownership) {
         self.ownership_registry.insert(type_name, ownership);
     }
@@ -357,11 +372,11 @@ impl Checker {
             Some(ast::OwnershipAttr::Copy) => Ownership::Copy,
             Some(ast::OwnershipAttr::Move) => Ownership::Move,
             Some(ast::OwnershipAttr::Share) => Ownership::Share,
-            None => Ownership::Move, // default
+            None => Ownership::Move,
         }
     }
 
-    // Phase 10: Effect Unification & Inference
+    // Effect Unification & Inference
     pub fn set_fn_declared_effects(&mut self, effects: Vec<crate::ty::Effect>) {
         self.fn_declared_effects = effects;
     }
@@ -426,7 +441,7 @@ impl Checker {
             .collect()
     }
 
-    // Phase 11: Effect Shadowing, Propagation & Scope Semantics
+    // Effect Shadowing, Propagation & Scope Semantics
     pub fn mark_effect_handled(&mut self, effect_name: String) {
         if !self.handled_effects.contains(&effect_name) {
             self.handled_effects.push(effect_name);
@@ -489,7 +504,7 @@ impl Checker {
         self.unhandled_effects.clear();
     }
 
-    // Phase 12: Generics & Trait Constraints
+    // Generics & Trait Constraints
     pub fn register_trait(&mut self, trait_name: String, methods: Vec<String>) {
         self.trait_registry.insert(trait_name, methods);
     }
@@ -561,7 +576,7 @@ impl Checker {
         }
     }
 
-    // Phase 13: Region Escape Analysis & Advanced Borrow Checking
+    // Region Escape Analysis & Advanced Borrow Checking
     pub fn push_region(&mut self, region_name: String) {
         self.region_stack.push(region_name);
     }
@@ -645,7 +660,7 @@ impl Checker {
         self.pattern_borrows.clear();
     }
 
-    // Phase 14: Pattern Matching Analysis (Exhaustiveness & Unreachability)
+    // Pattern Matching Analysis (Exhaustiveness & Unreachability)
     pub fn add_covered_pattern(&mut self, pattern: String) {
         self.covered_patterns.push(pattern);
     }
@@ -732,7 +747,7 @@ impl Checker {
         self.unreachable_patterns.clear();
     }
 
-    // Phase 15: Visibility & Module Scoping
+    // Visibility & Module Scoping
     pub fn push_module(&mut self, module_name: String) {
         self.current_module.push(module_name);
     }
@@ -825,7 +840,7 @@ impl Checker {
         self.private_items.clear();
     }
 
-    // Phase 16: Qualified Name Resolution
+    // Qualified Name Resolution
     pub fn register_qualified_name(&mut self, simple_name: String, qualified_path: Vec<String>) {
         self.qualified_names
             .entry(simple_name)
@@ -904,7 +919,145 @@ impl Checker {
         self.qualified_names.clear();
     }
 
-    // Phase 17: Closure Effect Declaration Validation
+    // Phase 20: Generic Variance
+    pub fn register_type_variance(&mut self, type_name: String, variances: Vec<crate::ty::Variance>) {
+        self.variance_registry.insert(type_name, variances);
+    }
+
+    pub fn get_type_variance(&self, type_name: &str) -> Option<&Vec<crate::ty::Variance>> {
+        self.variance_registry.get(type_name)
+    }
+
+    pub fn register_named_subtype(&mut self, sub: String, sup: String) {
+        self.named_subtype_registry
+            .entry(sub)
+            .or_insert_with(Vec::new)
+            .push(sup);
+    }
+
+    pub fn is_subtype(&self, sub: &Type, sup: &Type) -> bool {
+        match (sub, sup) {
+            (Type::Unknown, _) | (_, Type::Unknown) => true,
+            (a, b) if a == b => true,
+            (Type::Named(s1), Type::Named(s2)) => {
+                self.is_generic_subtype(s1, s2) || self.is_named_subtype(s1, s2)
+            }
+            (Type::Function { params: p1, ret: r1, .. },
+             Type::Function { params: p2, ret: r2, .. }) => {
+                p1.len() == p2.len()
+                    && p1.iter().zip(p2.iter()).all(|(sp, pp)| self.is_subtype(pp, sp))
+                    && self.is_subtype(r1, r2)
+            }
+            (Type::Tuple(e1), Type::Tuple(e2)) => {
+                e1.len() == e2.len()
+                    && e1.iter().zip(e2.iter()).all(|(s, p)| self.is_subtype(s, p))
+            }
+            _ => false,
+        }
+    }
+
+    fn is_named_subtype(&self, sub: &str, sup: &str) -> bool {
+        if sub == sup {
+            return true;
+        }
+        if let Some(supertypes) = self.named_subtype_registry.get(sub) {
+            for supertype in supertypes {
+                if supertype == sup {
+                    return true;
+                }
+                // Recursive check with depth limit to avoid infinite loops
+                if self.is_named_subtype_with_depth(sub, sup, 10) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn is_named_subtype_with_depth(&self, sub: &str, sup: &str, depth: usize) -> bool {
+        if depth == 0 || sub == sup {
+            return sub == sup;
+        }
+        if let Some(supertypes) = self.named_subtype_registry.get(sub) {
+            for supertype in supertypes {
+                if supertype == sup || self.is_named_subtype_with_depth(supertype, sup, depth - 1) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn is_generic_subtype(&self, sub_str: &str, sup_str: &str) -> bool {
+        if sub_str == sup_str {
+            return true;
+        }
+        match (Self::parse_generic_named(sub_str), Self::parse_generic_named(sup_str)) {
+            (Some((sub_name, sub_args)), Some((sup_name, sup_args)))
+                if sub_name == sup_name && sub_args.len() == sup_args.len() =>
+            {
+                let variances = match self.variance_registry.get(sub_name) {
+                    Some(v) => v.clone(),
+                    None => return sub_str == sup_str,
+                };
+                sub_args
+                    .iter()
+                    .zip(sup_args.iter())
+                    .enumerate()
+                    .all(|(i, (sa, pa))| {
+                        let variance = variances
+                            .get(i)
+                            .copied()
+                            .unwrap_or(crate::ty::Variance::Invariant);
+                        match variance {
+                            crate::ty::Variance::Covariant => {
+                                self.is_generic_subtype(sa.trim(), pa.trim())
+                                    || self.is_named_subtype(sa.trim(), pa.trim())
+                            }
+                            crate::ty::Variance::Contravariant => {
+                                self.is_generic_subtype(pa.trim(), sa.trim())
+                                    || self.is_named_subtype(pa.trim(), sa.trim())
+                            }
+                            crate::ty::Variance::Invariant => sa.trim() == pa.trim(),
+                        }
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    fn parse_generic_named(s: &str) -> Option<(&str, Vec<&str>)> {
+        let lt = s.find('<')?;
+        if !s.ends_with('>') {
+            return None;
+        }
+        let name = &s[..lt];
+        let args_str = &s[lt + 1..s.len() - 1];
+        let args = Self::split_top_level(args_str, ',');
+        Some((name, args))
+    }
+
+    fn split_top_level(s: &str, sep: char) -> Vec<&str> {
+        let mut result = Vec::new();
+        let mut current_start = 0;
+        let mut depth = 0;
+        for (i, c) in s.char_indices() {
+            if c == '<' {
+                depth += 1;
+            } else if c == '>' {
+                depth -= 1;
+            } else if c == sep && depth == 0 {
+                result.push(s[current_start..i].trim());
+                current_start = i + 1;
+            }
+        }
+        if current_start < s.len() {
+            result.push(s[current_start..].trim());
+        }
+        result.into_iter().filter(|x| !x.is_empty()).collect()
+    }
+
+    // Closure Effect Declaration Validation
     pub fn validate_closure_effects(&mut self,
         declared_effects: &[crate::ty::Effect],
         inferred_effects: &[crate::ty::Effect],
@@ -973,7 +1126,7 @@ impl Checker {
         })
     }
 
-    // Phase 18: Record/Variant Exhaustiveness & Type Validation
+    // Record/Variant Exhaustiveness & Type Validation
     pub fn validate_record_exhaustiveness(&mut self,
         type_name: &str,
         provided_fields: &[String],
@@ -1144,7 +1297,7 @@ impl Checker {
         None
     }
 
-    // Phase 19: String Interpolation Validation
+    // String Interpolation Validation
     pub fn validate_string_interpolation(&mut self,
         identifiers: &[String],
         span: Span
@@ -1277,7 +1430,7 @@ impl Checker {
         parts.iter().any(|p| matches!(p, ast::StringPart::Interp(_)))
     }
 
-    // Phase 5: Pattern Matching Support
+    // Pattern Matching Support
     pub fn check_pattern(&mut self, pattern: &Spanned<ast::Pattern>, value_ty: &Type, _pattern_span: Span) {
         match &pattern.node {
             ast::Pattern::Bind(name) => {
@@ -1423,14 +1576,14 @@ impl Checker {
             },
             ast::Type::Qualified(parts) => Type::Named(parts.join(".")),
             ast::Type::Generic { name, args } => {
-                // Phase 6: Better generic handling - preserve type arguments
+                // Better generic handling - preserve type arguments
                 let arg_strs: Vec<String> = args.iter()
                     .map(|arg| format!("{:?}", self.convert_type(arg)))
                     .collect();
                 Type::Named(format!("{}<{}>", name, arg_strs.join(", ")))
             },
             ast::Type::Array { elem, size } => {
-                // Phase 6: Track array sizes
+                // Track array sizes
                 Type::Named(format!("[{}; {}]", elem_name(elem), size))
             },
             ast::Type::Tuple(tys) => {
@@ -1454,16 +1607,18 @@ impl Checker {
         }
     }
 
-    // Phase 6: Type Compatibility & Unification
+    // Type Compatibility & Unification
     pub fn types_compatible(&self, expected: &Type, actual: &Type) -> bool {
         match (expected, actual) {
             // Same types are compatible
             (a, b) if a == b => true,
             // Unknown types are compatible with anything
             (Type::Unknown, _) | (_, Type::Unknown) => true,
-            // Named types might be compatible via type definitions
+            // Named types might be compatible via type definitions or variance
             (Type::Named(exp_name), Type::Named(act_name)) => {
-                exp_name == act_name || self.are_types_equivalent(exp_name, act_name)
+                exp_name == act_name
+                    || self.are_types_equivalent(exp_name, act_name)
+                    || self.is_generic_subtype(act_name, exp_name)
             },
             // Tuples must have same length and compatible elements
             (Type::Tuple(exp_elems), Type::Tuple(act_elems)) => {
@@ -1543,7 +1698,7 @@ impl Checker {
 
     // Check if type can be assigned to expected type (subtyping)
     pub fn is_assignable(&self, expected: &Type, actual: &Type) -> bool {
-        self.types_compatible(expected, actual)
+        self.types_compatible(expected, actual) || self.is_subtype(actual, expected)
     }
 
     pub fn check_stmt(&mut self, stmt: &Spanned<ast::Stmt>) {
@@ -1578,7 +1733,7 @@ impl Checker {
 
     pub fn infer_expr(&mut self, expr: &Spanned<ast::Expr>) -> Type {
         match &expr.node {
-            ast::Expr::Error => Type::Unknown, // Silently propagate unknown to prevent cascades
+            ast::Expr::Error => Type::Unknown,
             ast::Expr::Literal(lit) => match lit {
                 ast::Literal::Int(_) => Type::Int,
                 ast::Literal::Float(_) => Type::Float,
@@ -1785,7 +1940,7 @@ impl Checker {
                 let _ex_ty = self.infer_expr(expr_val);
                 Type::Never
             }
-            // Phase 2: Complex Expressions
+            // Complex Expressions
             ast::Expr::Call { callee, args } => {
                 let callee_ty = self.infer_expr(callee);
                 if let Type::Function { params, effects, ret } = callee_ty {
@@ -1805,7 +1960,7 @@ impl Checker {
                         }
                     }
 
-                    // Phase 10: Check effect compatibility
+                    // Check effect compatibility
                     for effect in &effects {
                         self.add_required_effect(effect.clone());
                     }
@@ -1862,11 +2017,11 @@ impl Checker {
                 let _base_ty = self.infer_expr(base);
                 Type::Unknown // Would need record type registry
             }
-            // Phase 3: Advanced Expressions (updated Phase 10: Effect Inference)
+            // Advanced Expressions (updated Effect Inference)
             ast::Expr::Closure { is_move: _, params, effects, ret_ty, body } => {
                 self.enter_scope();
 
-                // Phase 10: Set declared effects for the closure
+                // Set declared effects for the closure
                 let declared_effects = self.convert_effect_items(effects);
                 let saved_required = std::mem::take(&mut self.fn_required_effects);
 
@@ -1894,7 +2049,7 @@ impl Checker {
                     }
                 }
 
-                // Phase 17: Validate closure effect declarations
+                // Validate closure effect declarations
                 // If effects are declared, check that inferred effects match declaration
                 if !declared_effects.is_empty() {
                     let inferred = self.fn_required_effects.clone();
@@ -1907,14 +2062,14 @@ impl Checker {
                     }
                 }
 
-                // Phase 10: Infer closure effects and clear context
+                // Infer closure effects and clear context
                 let inferred_effects = self.infer_closure_effects(&self.fn_required_effects);
                 self.fn_declared_effects.clear();
                 self.fn_required_effects = saved_required;
 
                 self.exit_scope();
 
-                // Phase 10: Return function type with inferred effects
+                // Return function type with inferred effects
                 Type::Function {
                     params: vec![],
                     effects: inferred_effects,
@@ -1960,7 +2115,7 @@ impl Checker {
                 self.context_stack.push(format!("In scope{}",
                     label.as_ref().map(|l| format!(" '{}'", l)).unwrap_or_default()));
 
-                // Phase 11: Validate scope with context expression
+                // Validate scope with context expression
                 if let Some(opts) = options {
                     let opts_ty = self.infer_expr(opts);
                     if !self.validate_scope_with_context(&opts_ty) {
@@ -1981,7 +2136,7 @@ impl Checker {
                 self.context_stack.push(format!("In region{}",
                     label.as_ref().map(|l| format!(" '{}'", l)).unwrap_or_default()));
 
-                // Phase 13: Push region for escape analysis
+                // Push region for escape analysis
                 let region_name = label.as_ref()
                     .map(|l| l.clone())
                     .unwrap_or_else(|| format!("region_{}", self.region_stack.len()));
@@ -1993,7 +2148,7 @@ impl Checker {
                 // Pop region effect context
                 self.effect_stack.pop();
 
-                // Phase 13: Pop region and validate no escapes
+                // Pop region and validate no escapes
                 self.pop_region();
 
                 self.context_stack.pop();
@@ -2015,9 +2170,9 @@ impl Checker {
                     if let Some(pat) = &arm.pattern {
                         match &pat.node {
                             ast::Pattern::Bind(name) => {
-                                // Phase 11: For parameterized exceptions, bind with correct type
+                                // For parameterized exceptions, bind with correct type
                                 let var_ty = match &arm.kind {
-                                    ast::HandleArmKind::Exn => Type::Unknown, // Would need exn parameter type
+                                    ast::HandleArmKind::Exn => Type::Unknown,
                                     _ => Type::Unknown,
                                 };
                                 self.insert_var(name.clone(), var_ty, false, pat.span);
@@ -2026,13 +2181,13 @@ impl Checker {
                         }
                     }
 
-                    // Phase 11: Register handled effect based on kind
+                    // Register handled effect based on kind
                     match &arm.kind {
                         ast::HandleArmKind::Return => {
                             // Return handler doesn't remove an effect
                         }
                         ast::HandleArmKind::Exn => {
-                            // Exception handler - Phase 11: mark exn as handled
+                            // Exception handler - mark exn as handled
                             if !self.active_effects.contains(&"exn".to_string()) {
                                 self.report_error(
                                     "Handling exn but no exn effect is active".into(),
@@ -2054,7 +2209,7 @@ impl Checker {
                     }
                 }
 
-                // Phase 11: Compute unhandled effects and propagate them
+                // Compute unhandled effects and propagate them
                 let required_effects = self.fn_required_effects.clone();
                 self.compute_unhandled_effects(&required_effects);
                 self.propagate_effects_to_parent();
