@@ -109,6 +109,11 @@ pub struct Checker {
     // Generic Variance
     variance_registry: HashMap<String, Vec<crate::ty::Variance>>,
     named_subtype_registry: HashMap<String, Vec<String>>,
+
+    // Const Effect Checking
+    function_effects: HashMap<String, Vec<ast::EffectItem>>,
+    const_vars: std::collections::HashSet<String>,
+    op_effects: HashMap<String, Vec<ast::EffectItem>>,
 }
 
 impl Checker {
@@ -160,6 +165,9 @@ impl Checker {
                 m
             },
             named_subtype_registry: HashMap::new(),
+            function_effects: HashMap::new(),
+            const_vars: std::collections::HashSet::new(),
+            op_effects: HashMap::new(),
         }
     }
 
@@ -999,6 +1007,175 @@ impl Checker {
                 Type::String
             }
             ast::Literal::Unit => Type::Unit,
+        }
+    }
+
+    // Const Effect Checking
+    pub fn register_function_effects(&mut self, fn_name: String, effects: Vec<ast::EffectItem>) {
+        self.function_effects.insert(fn_name, effects);
+    }
+
+    pub fn register_effect_for_op(&mut self, op_name: &str, effects: Vec<ast::EffectItem>) {
+        self.op_effects.insert(op_name.into(), effects);
+    }
+
+    pub fn insert_const_var(&mut self, name: String, ty: Type, span: Span) {
+        self.const_vars.insert(name.clone());
+        self.const_registry.insert(name, ty);
+    }
+
+    fn has_pure_effects(effects: &[ast::EffectItem]) -> bool {
+        effects.is_empty()
+    }
+
+    pub fn infer_expr_effects(&self, expr: &ast::Expr) -> Vec<ast::EffectItem> {
+        match expr {
+            ast::Expr::Literal(_) => vec![],
+            ast::Expr::Identifier(name) => {
+                // If referencing a const var, it's pure
+                if self.const_vars.contains(name) {
+                    vec![]
+                } else if let Some(effects) = self.function_effects.get(name) {
+                    effects.clone()
+                } else {
+                    vec![]
+                }
+            }
+            ast::Expr::Call { callee, args: _ } => {
+                // Get effects of the function being called
+                if let ast::Expr::Identifier(fn_name) = &callee.node {
+                    if let Some(effects) = self.function_effects.get(fn_name) {
+                        effects.clone()
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                }
+            }
+            ast::Expr::If { condition: _, consequence, alternative } => {
+                let mut effects = self.infer_expr_effects(&consequence.node);
+                if let Some(alt) = alternative {
+                    let alt_effects = self.infer_expr_effects(&alt.node);
+                    effects.extend(alt_effects);
+                }
+                effects
+            }
+            ast::Expr::Binary { op, .. } => {
+                // Assignment operations have mutation effect
+                match op {
+                    ast::BinaryOp::Assign | ast::BinaryOp::AddAssign | ast::BinaryOp::SubAssign |
+                    ast::BinaryOp::MulAssign | ast::BinaryOp::DivAssign | ast::BinaryOp::ModAssign => {
+                        vec![ast::EffectItem {
+                            name: vec!["mutation".into()],
+                            arg: None,
+                        }]
+                    }
+                    _ => vec![],
+                }
+            }
+            _ => vec![],
+        }
+    }
+
+    pub fn check_const_expr(&mut self, expr: &ast::Expr, span: Span) -> bool {
+        match expr {
+            // Literals are always pure
+            ast::Expr::Literal(_) => true,
+
+            // Identifiers: check if they refer to const vars
+            ast::Expr::Identifier(name) => {
+                if self.const_vars.contains(name) {
+                    true
+                } else if let Some(meta) = self.scopes.last().and_then(|s| s.vars.get(name)) {
+                    if meta.is_mut {
+                        self.report_error(
+                            format!("Mutable variable '{}' cannot be used in const expression", name),
+                            span
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    true // Unknown identifier, let other checks handle it
+                }
+            }
+
+            // Function calls: check if function has pure effects AND all arguments are pure
+            ast::Expr::Call { callee, args } => {
+                // Check arguments first
+                for arg in args {
+                    if !self.check_const_expr(&arg.node, arg.span) {
+                        return false;
+                    }
+                }
+
+                if let ast::Expr::Identifier(fn_name) = &callee.node {
+                    if let Some(effects) = self.function_effects.get(fn_name) {
+                        if Self::has_pure_effects(effects) {
+                            true
+                        } else {
+                            let effect_names: Vec<String> = effects.iter()
+                                .map(|e| e.name.join("."))
+                                .collect();
+                            self.report_error(
+                                format!(
+                                    "Function call to '{}' with effects {:?} cannot be used in const expression. \
+                                     Const expressions must be pure (no io, exn, etc.)",
+                                    fn_name, effect_names
+                                ),
+                                span
+                            );
+                            false
+                        }
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            }
+
+            // Binary operations: assignments are not allowed in const
+            ast::Expr::Binary { op, left, right } => {
+                match op {
+                    ast::BinaryOp::Assign | ast::BinaryOp::AddAssign | ast::BinaryOp::SubAssign |
+                    ast::BinaryOp::MulAssign | ast::BinaryOp::DivAssign | ast::BinaryOp::ModAssign => {
+                        self.report_error(
+                            "Assignment is not allowed in const expression".into(),
+                            span
+                        );
+                        false
+                    }
+                    _ => {
+                        // Check operands are also const-compatible
+                        self.check_const_expr(&left.node, left.span) &&
+                        self.check_const_expr(&right.node, right.span)
+                    }
+                }
+            }
+
+            // If-expressions: both branches must be pure
+            ast::Expr::If { condition, consequence, alternative } => {
+                let cond_ok = self.check_const_expr(&condition.node, condition.span);
+                let cons_ok = self.check_const_expr(&consequence.node, consequence.span);
+                let alt_ok = if let Some(alt) = alternative {
+                    self.check_const_expr(&alt.node, alt.span)
+                } else {
+                    true
+                };
+
+                cond_ok && cons_ok && alt_ok
+            }
+
+            // Closures: check that the body doesn't use mutable state
+            ast::Expr::Closure { body, .. } => {
+                self.check_const_expr(&body.node, body.span)
+            }
+
+            // Default: be conservative, allow if we can't prove it's impure
+            _ => true,
         }
     }
 
