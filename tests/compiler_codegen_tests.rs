@@ -1236,3 +1236,260 @@ fn verify_compile_assignment_bool() {
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::Bool(false));
 }
+
+// Comparison false cases
+#[test]
+fn verify_compile_comparison_eq_false() {
+    let ast = parse_binary_int(5, BinaryOp::Eq, 3);
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn verify_compile_comparison_neq_false() {
+    let ast = parse_binary_int(5, BinaryOp::Neq, 5);
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn verify_compile_comparison_lt_false() {
+    let ast = parse_binary_int(5, BinaryOp::Lt, 3);
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn verify_compile_comparison_gt_false() {
+    let ast = parse_binary_int(3, BinaryOp::Gt, 5);
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn verify_compile_comparison_lte_false() {
+    let ast = parse_binary_int(5, BinaryOp::Lte, 3);
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn verify_compile_comparison_gte_false() {
+    let ast = parse_binary_int(3, BinaryOp::Gte, 5);
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(false));
+}
+
+// Boundary cases for lte/gte
+#[test]
+fn verify_compile_comparison_lte_equal() {
+    let ast = parse_binary_int(5, BinaryOp::Lte, 5);
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn verify_compile_comparison_gte_equal() {
+    let ast = parse_binary_int(5, BinaryOp::Gte, 5);
+    let result = compile_and_run(&ast).expect("Execution failed");
+    assert_eq!(result, Value::Bool(true));
+}
+
+// Error cases
+#[test]
+fn verify_compile_unsupported_literal_char_errors() {
+    let mut compiler = Compiler::new();
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Char".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::Char('a')),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compiler.compile(&ast);
+    assert!(result.is_err(), "Expected error for unsupported Char literal");
+}
+
+#[test]
+fn verify_compile_unsupported_literal_string_interp_errors() {
+    let mut compiler = Compiler::new();
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("String".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::StringInterp(vec![
+                    StringPart::Literal("hello".to_string()),
+                ])),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compiler.compile(&ast);
+    assert!(result.is_err(), "Expected error for unsupported StringInterp literal");
+}
+
+#[test]
+fn verify_compile_assignment_to_literal_errors() {
+    let mut compiler = Compiler::new();
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Binary {
+                    op: BinaryOp::Assign,
+                    left: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(1)),
+                        span: Span::new(0, 0),
+                    }),
+                    right: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(2)),
+                        span: Span::new(0, 0),
+                    }),
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compiler.compile(&ast);
+    assert!(result.is_err(), "Expected error for assignment to literal");
+}
+
+#[test]
+fn verify_compile_unsupported_binary_op_and_errors() {
+    let mut compiler = Compiler::new();
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Bool".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Binary {
+                    op: BinaryOp::And,
+                    left: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Bool(true)),
+                        span: Span::new(0, 0),
+                    }),
+                    right: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Bool(false)),
+                        span: Span::new(0, 0),
+                    }),
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compiler.compile(&ast);
+    assert!(result.is_err(), "Expected error for unsupported And operator");
+}
+
+#[test]
+fn verify_compile_unsupported_binary_op_or_errors() {
+    let mut compiler = Compiler::new();
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Bool".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Binary {
+                    op: BinaryOp::Or,
+                    left: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Bool(true)),
+                        span: Span::new(0, 0),
+                    }),
+                    right: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Bool(false)),
+                        span: Span::new(0, 0),
+                    }),
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compiler.compile(&ast);
+    assert!(result.is_err(), "Expected error for unsupported Or operator");
+}
+
+#[test]
+fn verify_compile_unsupported_binary_op_add_assign_errors() {
+    let mut compiler = Compiler::new();
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Binary {
+                    op: BinaryOp::AddAssign,
+                    left: Box::new(Spanned {
+                        node: Expr::Identifier("x".to_string()),
+                        span: Span::new(0, 0),
+                    }),
+                    right: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(1)),
+                        span: Span::new(0, 0),
+                    }),
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compiler.compile(&ast);
+    assert!(result.is_err(), "Expected error for unsupported AddAssign operator");
+}

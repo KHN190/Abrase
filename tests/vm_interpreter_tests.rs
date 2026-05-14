@@ -515,3 +515,115 @@ fn test_jz_empty_register_errors() {
     );
     assert!(result.is_err());
 }
+
+// Jz with Unit (falsy)
+#[test]
+fn test_jz_with_unit_falsy() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = Unit (falsy)
+            OpCode::Jz(r(0), 3),              // if r0 is falsy, jump to instruction 3
+            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
+            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Unit, Value::Int(42)],
+    );
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+// Jnz with Bool(true) (truthy)
+#[test]
+fn test_jnz_with_bool_true() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),      // r0 = true (truthy)
+            OpCode::Jnz(r(0), 3),             // if r0 is truthy, jump to instruction 3
+            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
+            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Bool(true), Value::Int(42)],
+    );
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+// Mod by zero
+#[test]
+fn test_mod_by_zero_returns_unit() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Mod(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(10), Value::Int(0)],
+    );
+    assert_eq!(result, Ok(Value::Unit));
+}
+
+// Error cases
+#[test]
+fn test_jnz_empty_register_errors() {
+    let result = run(
+        vec![
+            OpCode::Jnz(r(0), 1),  // r0 is uninitialized
+            OpCode::Ret(r(1)),
+        ],
+        vec![],
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_add_empty_left_register_errors() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(1), 0),
+            OpCode::Add(r(2), r(0), r(1)),  // r0 is uninitialized
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5)],
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_add_empty_right_register_errors() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Add(r(2), r(0), r(1)),  // r1 is uninitialized
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5)],
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_sub_empty_left_register_errors() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(1), 0),
+            OpCode::Sub(r(2), r(0), r(1)),  // r0 is uninitialized
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5)],
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mul_empty_right_register_errors() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Mul(r(2), r(0), r(1)),  // r1 is uninitialized
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(5)],
+    );
+    assert!(result.is_err());
+}
