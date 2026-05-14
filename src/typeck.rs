@@ -2655,9 +2655,13 @@ impl Checker {
             }
             ast::Expr::FieldAccess { base, field } => {
                 self.context_stack.push(format!("In field access '{}'", field));
-                let _base_ty = self.infer_expr(base);
+                let base_ty = self.infer_expr(base);
+
+                // Resolve field access
+                let field_type = self.resolve_field_access(&base_ty, field, base.span);
+
                 self.context_stack.pop();
-                Type::Unknown // Would need record type registry
+                field_type
             }
             // Advanced Expressions (updated Effect Inference)
             ast::Expr::Closure { is_move: _, params, effects, ret_ty, body } => {
@@ -3338,6 +3342,89 @@ impl Checker {
         for item in items {
             let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
             self.check_import_collision(&import_name, path.to_vec());
+        }
+    }
+
+    // Phase 2.1: Field Access Resolution
+
+    fn resolve_field_access(&mut self, base_ty: &Type, field_name: &str, span: Span) -> Type {
+        match base_ty {
+            Type::Named(type_name) => {
+                // Look up the type definition
+                if let Some(type_body) = self.type_registry.get(type_name).cloned() {
+                    match type_body {
+                        ast::TypeBody::Record(fields) => {
+                            // Search for field by name
+                            for field in fields {
+                                if field.name == field_name {
+                                    return self.convert_type(&field.ty);
+                                }
+                            }
+                            // Field not found
+                            self.report_error(
+                                format!("Field '{}' not found in record type '{}'", field_name, type_name),
+                                span,
+                            );
+                            Type::Unknown
+                        },
+                        ast::TypeBody::Variant(_) => {
+                            self.report_error(
+                                format!("Cannot access field '{}' on variant type '{}'", field_name, type_name),
+                                span,
+                            );
+                            Type::Unknown
+                        }
+                    }
+                } else {
+                    // Type not registered
+                    self.report_error(
+                        format!("Type '{}' not found - cannot resolve field '{}'", type_name, field_name),
+                        span,
+                    );
+                    Type::Unknown
+                }
+            },
+            Type::Generic { name, args: _ } => {
+                // Look up the generic type base name in registry
+                if let Some(type_body) = self.type_registry.get(name).cloned() {
+                    match type_body {
+                        ast::TypeBody::Record(fields) => {
+                            for field in fields {
+                                if field.name == field_name {
+                                    return self.convert_type(&field.ty);
+                                }
+                            }
+                            self.report_error(
+                                format!("Field '{}' not found in record type '{}'", field_name, name),
+                                span,
+                            );
+                            Type::Unknown
+                        },
+                        _ => {
+                            self.report_error(
+                                format!("Cannot access field '{}' on type '{}'", field_name, name),
+                                span,
+                            );
+                            Type::Unknown
+                        }
+                    }
+                } else {
+                    self.report_error(
+                        format!("Type '{}' not found - cannot resolve field '{}'", name, field_name),
+                        span,
+                    );
+                    Type::Unknown
+                }
+            },
+            Type::Unknown => Type::Unknown, // Propagate Unknown
+            _ => {
+                // Other types don't support field access
+                self.report_error(
+                    format!("Cannot access field '{}' on type {:?}", field_name, base_ty),
+                    span,
+                );
+                Type::Unknown
+            }
         }
     }
 

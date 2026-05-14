@@ -776,6 +776,22 @@ fn verify_index_on_tuple() {
 #[test]
 fn verify_field_access() {
     let mut checker = Checker::new();
+
+    // Register Point type with x and y fields
+    let point_type = ect::ast::TypeBody::Record(vec![
+        ect::ast::RecordField {
+            is_pub: true,
+            name: "x".into(),
+            ty: ect::ast::Type::Named("Int".into()),
+        },
+        ect::ast::RecordField {
+            is_pub: true,
+            name: "y".into(),
+            ty: ect::ast::Type::Named("Int".into()),
+        },
+    ]);
+    checker.register_type("Point".into(), point_type);
+
     checker.insert_var("obj".into(), Type::Named("Point".into()), false, d_span());
 
     let expr = sp(ast::Expr::FieldAccess {
@@ -783,8 +799,9 @@ fn verify_field_access() {
         field: "x".into(),
     });
 
-    let _ty = checker.infer_expr(&expr);
+    let ty = checker.infer_expr(&expr);
     assert!(checker.errors.is_empty());
+    assert_eq!(ty, Type::Int);
 }
 
 // Advanced Expressions
