@@ -1750,7 +1750,359 @@ fn verify_compile_match_non_exhaustive_errors() {
     assert!(result.is_err(), "Expected error for non-exhaustive match");
 }
 
-// Phase 3: Functions
+// Match Expr
+
+#[test]
+fn verify_compile_match_multiple_literals_with_wildcard() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Match {
+                    scrutinee: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(2)),
+                        span: Span::new(0, 0),
+                    }),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Literal(Literal::Int(1)),
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(10)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Literal(Literal::Int(2)),
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(20)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Literal(Literal::Int(3)),
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(30)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Wildcard,
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(99)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                    ],
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(20)));
+}
+
+#[test]
+fn verify_compile_match_nested_in_if() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::If {
+                    condition: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Bool(true)),
+                        span: Span::new(0, 0),
+                    }),
+                    consequence: Box::new(Spanned {
+                        node: Expr::Match {
+                            scrutinee: Box::new(Spanned {
+                                node: Expr::Literal(Literal::Int(2)),
+                                span: Span::new(0, 0),
+                            }),
+                            arms: vec![
+                                MatchArm {
+                                    pattern: Spanned {
+                                        node: Pattern::Literal(Literal::Int(1)),
+                                        span: Span::new(0, 0),
+                                    },
+                                    guard: None,
+                                    body: Spanned {
+                                        node: Expr::Literal(Literal::Int(10)),
+                                        span: Span::new(0, 0),
+                                    },
+                                },
+                                MatchArm {
+                                    pattern: Spanned {
+                                        node: Pattern::Literal(Literal::Int(2)),
+                                        span: Span::new(0, 0),
+                                    },
+                                    guard: None,
+                                    body: Spanned {
+                                        node: Expr::Literal(Literal::Int(20)),
+                                        span: Span::new(0, 0),
+                                    },
+                                },
+                                MatchArm {
+                                    pattern: Spanned {
+                                        node: Pattern::Wildcard,
+                                        span: Span::new(0, 0),
+                                    },
+                                    guard: None,
+                                    body: Spanned {
+                                        node: Expr::Literal(Literal::Int(99)),
+                                        span: Span::new(0, 0),
+                                    },
+                                },
+                            ],
+                        },
+                        span: Span::new(0, 0),
+                    }),
+                    alternative: None,
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(20)));
+}
+
+#[test]
+fn verify_compile_if_non_bool_condition_truthy() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::If {
+                    condition: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(5)),
+                        span: Span::new(0, 0),
+                    }),
+                    consequence: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(100)),
+                        span: Span::new(0, 0),
+                    }),
+                    alternative: Some(Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(200)),
+                        span: Span::new(0, 0),
+                    })),
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(100)), "Truthy int (5) should take consequence");
+}
+
+#[test]
+fn verify_compile_if_zero_condition_falsy() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::If {
+                    condition: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(0)),
+                        span: Span::new(0, 0),
+                    }),
+                    consequence: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(100)),
+                        span: Span::new(0, 0),
+                    }),
+                    alternative: Some(Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(200)),
+                        span: Span::new(0, 0),
+                    })),
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(200)), "Falsy int (0) should take alternative");
+}
+
+#[test]
+fn verify_compile_match_variant_pattern_unsupported() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Match {
+                    scrutinee: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(1)),
+                        span: Span::new(0, 0),
+                    }),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Variant {
+                                    ty: vec!["Color".to_string()],
+                                    args: vec![Spanned {
+                                        node: Pattern::Bind("x".to_string()),
+                                        span: Span::new(0, 0),
+                                    }],
+                                },
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(1)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Wildcard,
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(0)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                    ],
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast);
+    assert!(result.is_err(), "Variant patterns should not be supported in Phase 2");
+}
+
+#[test]
+fn verify_compile_match_or_pattern_unsupported() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Match {
+                    scrutinee: Box::new(Spanned {
+                        node: Expr::Literal(Literal::Int(1)),
+                        span: Span::new(0, 0),
+                    }),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Or(vec![
+                                    Spanned {
+                                        node: Pattern::Literal(Literal::Int(1)),
+                                        span: Span::new(0, 0),
+                                    },
+                                    Spanned {
+                                        node: Pattern::Literal(Literal::Int(2)),
+                                        span: Span::new(0, 0),
+                                    },
+                                ]),
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(99)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                        MatchArm {
+                            pattern: Spanned {
+                                node: Pattern::Wildcard,
+                                span: Span::new(0, 0),
+                            },
+                            guard: None,
+                            body: Spanned {
+                                node: Expr::Literal(Literal::Int(0)),
+                                span: Span::new(0, 0),
+                            },
+                        },
+                    ],
+                },
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+
+    let result = compile_and_run(&ast);
+    assert!(result.is_err(), "Or patterns should not be supported in Phase 2");
+}
+
+// Functions
 
 #[test]
 fn verify_compile_simple_function_call() {

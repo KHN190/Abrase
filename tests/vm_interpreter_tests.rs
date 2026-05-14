@@ -667,7 +667,7 @@ fn test_mul_empty_right_register_errors() {
     assert!(result.is_err());
 }
 
-// Phase 3: Function calls
+// Function calls
 
 #[test]
 fn test_call_simple() {
