@@ -937,3 +937,345 @@ fn verify_region_expression() {
     assert_eq!(ty, Type::String);
     assert!(checker.errors.is_empty());
 }
+
+// Phase 18: Record/Variant Exhaustiveness & Type Validation
+
+#[test]
+fn verify_record_exhaustiveness_all_fields_present() {
+    let mut checker = Checker::new();
+
+    let provided = vec!["x".into(), "y".into()];
+    let required = vec!["x".into(), "y".into()];
+
+    assert!(checker.validate_record_exhaustiveness("Point", &provided, &required, d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_record_exhaustiveness_missing_field() {
+    let mut checker = Checker::new();
+
+    let provided = vec!["x".into()];
+    let required = vec!["x".into(), "y".into()];
+
+    assert!(!checker.validate_record_exhaustiveness("Point", &provided, &required, d_span()));
+    assert!(checker.errors.len() > 0);
+    assert!(checker.errors[0].message.contains("missing"));
+}
+
+#[test]
+fn verify_record_exhaustiveness_extra_field() {
+    let mut checker = Checker::new();
+
+    let provided = vec!["x".into(), "y".into(), "z".into()];
+    let required = vec!["x".into(), "y".into()];
+
+    // Extra fields are allowed (not checked in exhaustiveness, but in validation)
+    assert!(checker.validate_record_exhaustiveness("Point", &provided, &required, d_span()));
+}
+
+#[test]
+fn verify_record_field_type_match() {
+    let mut checker = Checker::new();
+
+    let field_types = vec![
+        ("x".into(), Type::Int),
+        ("y".into(), Type::Int),
+    ];
+    let provided_values = vec![
+        ("x".into(), Type::Int),
+        ("y".into(), Type::Int),
+    ];
+
+    assert!(checker.validate_record_fields("Point", &field_types, &provided_values, d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_record_field_type_mismatch() {
+    let mut checker = Checker::new();
+
+    let field_types = vec![
+        ("x".into(), Type::Int),
+        ("y".into(), Type::Int),
+    ];
+    let provided_values = vec![
+        ("x".into(), Type::String), // Wrong type
+        ("y".into(), Type::Int),
+    ];
+
+    assert!(!checker.validate_record_fields("Point", &field_types, &provided_values, d_span()));
+    assert!(checker.errors.len() > 0);
+    assert!(checker.errors[0].message.contains("type mismatch"));
+}
+
+#[test]
+fn verify_check_record_initialization_valid() {
+    let mut checker = Checker::new();
+
+    let field_types = vec![
+        ("x".into(), Type::Int),
+        ("y".into(), Type::Int),
+    ];
+    let provided_fields = vec!["x".into(), "y".into()];
+    let provided_values = vec![
+        ("x".into(), Type::Int),
+        ("y".into(), Type::Int),
+    ];
+
+    assert!(checker.check_record_initialization(
+        "Point",
+        &field_types,
+        &provided_fields,
+        &provided_values,
+        d_span()
+    ));
+}
+
+#[test]
+fn verify_check_record_initialization_missing_field() {
+    let mut checker = Checker::new();
+
+    let field_types = vec![
+        ("x".into(), Type::Int),
+        ("y".into(), Type::Int),
+    ];
+    let provided_fields = vec!["x".into()];
+    let provided_values = vec![
+        ("x".into(), Type::Int),
+    ];
+
+    assert!(!checker.check_record_initialization(
+        "Point",
+        &field_types,
+        &provided_fields,
+        &provided_values,
+        d_span()
+    ));
+}
+
+#[test]
+fn verify_check_record_initialization_wrong_type() {
+    let mut checker = Checker::new();
+
+    let field_types = vec![
+        ("x".into(), Type::Int),
+        ("y".into(), Type::Int),
+    ];
+    let provided_fields = vec!["x".into(), "y".into()];
+    let provided_values = vec![
+        ("x".into(), Type::Float), // Wrong type
+        ("y".into(), Type::Int),
+    ];
+
+    assert!(!checker.check_record_initialization(
+        "Point",
+        &field_types,
+        &provided_fields,
+        &provided_values,
+        d_span()
+    ));
+}
+
+#[test]
+fn verify_variant_arguments_correct_count() {
+    let mut checker = Checker::new();
+
+    assert!(checker.validate_variant_arguments("Some", 1, 1, d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_variant_arguments_wrong_count() {
+    let mut checker = Checker::new();
+
+    assert!(!checker.validate_variant_arguments("Some", 1, 2, d_span()));
+    assert!(checker.errors.len() > 0);
+    assert!(checker.errors[0].message.contains("expects"));
+}
+
+#[test]
+fn verify_variant_arguments_zero() {
+    let mut checker = Checker::new();
+
+    assert!(checker.validate_variant_arguments("None", 0, 0, d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_variant_argument_types_match() {
+    let mut checker = Checker::new();
+
+    let expected = vec![Type::Int, Type::String];
+    let provided = vec![Type::Int, Type::String];
+
+    assert!(checker.validate_variant_argument_types("Pair", &expected, &provided, d_span()));
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_variant_argument_types_mismatch() {
+    let mut checker = Checker::new();
+
+    let expected = vec![Type::Int, Type::String];
+    let provided = vec![Type::String, Type::Int]; // Swapped types
+
+    assert!(!checker.validate_variant_argument_types("Pair", &expected, &provided, d_span()));
+    assert!(checker.errors.len() > 0);
+}
+
+#[test]
+fn verify_check_variant_construction_valid() {
+    let mut checker = Checker::new();
+
+    let expected = vec![Type::Int];
+    let provided = vec![Type::Int];
+
+    assert!(checker.check_variant_construction("Some", &expected, &provided, d_span()));
+}
+
+#[test]
+fn verify_check_variant_construction_wrong_count() {
+    let mut checker = Checker::new();
+
+    let expected = vec![Type::Int];
+    let provided = vec![Type::Int, Type::String];
+
+    assert!(!checker.check_variant_construction("Some", &expected, &provided, d_span()));
+}
+
+#[test]
+fn verify_check_variant_construction_wrong_type() {
+    let mut checker = Checker::new();
+
+    let expected = vec![Type::Int];
+    let provided = vec![Type::String];
+
+    assert!(!checker.check_variant_construction("Some", &expected, &provided, d_span()));
+}
+
+#[test]
+fn verify_get_record_field_types_found() {
+    let mut checker = Checker::new();
+
+    // Register a Point type
+    let fields = vec![
+        ast::RecordField {
+            is_pub: false,
+            name: "x".into(),
+            ty: ast::Type::Named("Int".into()),
+        },
+        ast::RecordField {
+            is_pub: false,
+            name: "y".into(),
+            ty: ast::Type::Named("Int".into()),
+        },
+    ];
+    checker.register_type("Point".into(), ast::TypeBody::Record(fields));
+
+    let field_types = checker.get_record_field_types("Point");
+    assert!(field_types.is_some());
+    let fields = field_types.unwrap();
+    assert_eq!(fields.len(), 2);
+}
+
+#[test]
+fn verify_get_record_field_types_not_found() {
+    let checker = Checker::new();
+
+    let field_types = checker.get_record_field_types("NonExistent");
+    assert!(field_types.is_none());
+}
+
+#[test]
+fn verify_get_variant_arg_types_unit() {
+    let mut checker = Checker::new();
+
+    // Register an Option type with None variant
+    let variants = vec![
+        ast::VariantCase::Unit("None".into()),
+        ast::VariantCase::Tuple("Some".into(), vec![ast::Type::Named("T".into())]),
+    ];
+    checker.register_type("Option".into(), ast::TypeBody::Variant(variants));
+
+    let arg_types = checker.get_variant_arg_types("Option", "None");
+    assert_eq!(arg_types, Some(vec![]));
+}
+
+#[test]
+fn verify_get_variant_arg_types_tuple() {
+    let mut checker = Checker::new();
+
+    // Register an Option type with Some variant
+    let variants = vec![
+        ast::VariantCase::Unit("None".into()),
+        ast::VariantCase::Tuple("Some".into(), vec![ast::Type::Named("T".into())]),
+    ];
+    checker.register_type("Option".into(), ast::TypeBody::Variant(variants));
+
+    let arg_types = checker.get_variant_arg_types("Option", "Some");
+    assert!(arg_types.is_some());
+    assert_eq!(arg_types.unwrap().len(), 1);
+}
+
+#[test]
+fn verify_get_variant_arg_types_not_found() {
+    let checker = Checker::new();
+
+    let arg_types = checker.get_variant_arg_types("NonExistent", "NonExistent");
+    assert!(arg_types.is_none());
+}
+
+#[test]
+fn verify_record_point_missing_y_field() {
+    let mut checker = Checker::new();
+
+    // Simulate: Point { x: 1 } when Point requires { x: Int, y: Int }
+    let field_types = vec![
+        ("x".into(), Type::Int),
+        ("y".into(), Type::Int),
+    ];
+    let provided_fields = vec!["x".into()];
+    let provided_values = vec![
+        ("x".into(), Type::Int),
+    ];
+
+    let result = checker.check_record_initialization(
+        "Point",
+        &field_types,
+        &provided_fields,
+        &provided_values,
+        d_span()
+    );
+
+    assert!(!result);
+    assert!(checker.errors.len() > 0);
+    assert!(checker.errors[0].message.contains("missing") &&
+            checker.errors[0].message.contains("y"));
+}
+
+#[test]
+fn verify_record_all_fields_required() {
+    let mut checker = Checker::new();
+
+    let field_types = vec![
+        ("name".into(), Type::String),
+        ("age".into(), Type::Int),
+        ("email".into(), Type::String),
+    ];
+    let provided_fields = vec!["name".into(), "age".into()];
+    let provided_values = vec![
+        ("name".into(), Type::String),
+        ("age".into(), Type::Int),
+    ];
+
+    assert!(!checker.check_record_initialization(
+        "Person",
+        &field_types,
+        &provided_fields,
+        &provided_values,
+        d_span()
+    ));
+    assert!(checker.errors.len() > 0);
+    assert!(checker.errors[0].message.contains("email"));
+}
