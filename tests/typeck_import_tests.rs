@@ -123,7 +123,7 @@ fn verify_import_collision_with_local_var() {
     checker.insert_var("helper".into(), Type::String, false, d_span());
 
     // Try to import a name that collides
-    let items = vec![ImportItem {
+    let _items = vec![ImportItem {
         name: "helper".into(),
         alias: None,
     }];
@@ -140,7 +140,7 @@ fn verify_import_no_collision_with_different_name() {
     checker.insert_var("helper".into(), Type::String, false, d_span());
 
     // Try to import a different name
-    let items = vec![ImportItem {
+    let _items = vec![ImportItem {
         name: "util_fn".into(),
         alias: None,
     }];
@@ -157,7 +157,7 @@ fn verify_import_collision_resolved_with_alias() {
     checker.insert_var("helper".into(), Type::String, false, d_span());
 
     // Import with alias avoids collision
-    let items = vec![ImportItem {
+    let _items = vec![ImportItem {
         name: "helper".into(),
         alias: Some("util_helper".into()),
     }];
@@ -321,7 +321,7 @@ fn verify_import_star_all_public_items() {
 
     // Both should be accessible (if wildcard is supported)
     let read_ok = checker.get_imported_name("read").is_some();
-    let write_ok = checker.get_imported_name("write").is_some();
+    let _write_ok = checker.get_imported_name("write").is_some();
 
     assert!(read_ok || !read_ok, "Wildcard import test - implementation dependent");
 }

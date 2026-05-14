@@ -2797,7 +2797,7 @@ fn verify_region_effect_isolation() {
 #[test]
 fn verify_question_on_result_unwraps_ok_type() {
     let mut checker = Checker::new();
-    let inner = sp(ast::Expr::Literal(ast::Literal::Unit)); // placeholder; type injected below
+    let _inner = sp(ast::Expr::Literal(ast::Literal::Unit)); // placeholder; type injected below
     checker.insert_var(
         "r".into(),
         Type::Generic { name: "Result".into(), args: vec![Type::Int, Type::Named("IoError".into())] },
