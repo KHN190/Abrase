@@ -185,6 +185,39 @@ fn run_typeck() {
         checker.check_stmt(&stmt2);
         println!("  let y: Bool = 0 → error: \"{}\"", checker.errors[0].message);
     });
+
+    typeck_show("error reporting with context stack", |checker| {
+        // Build: func_call(1 + "oops")
+        // This should show context: Call to func_call, then within the arg, error on Add
+        let d_span = ect::ast::Span::new(0, 0);
+
+        // Register a dummy function
+        checker.insert_var("func_call".into(),
+            ect::ty::Type::Function {
+                params: vec![ect::ty::Type::Int],
+                effects: vec![],
+                ret: Box::new(ect::ty::Type::Unit),
+            },
+            false, d_span);
+
+        let bad_arg = sp(ast::Expr::Binary {
+            op: ast::BinaryOp::Add,
+            left:  Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+            right: Box::new(sp(ast::Expr::Literal(ast::Literal::String("oops".into())))),
+        });
+
+        let call_expr = sp(ast::Expr::Call {
+            callee: Box::new(sp(ast::Expr::Identifier("func_call".into()))),
+            args: vec![bad_arg],
+        });
+
+        checker.infer_expr(&call_expr);
+
+        if !checker.errors.is_empty() {
+            println!("  Detailed error with context stack:");
+            println!("  {}", checker.errors[0].display());
+        }
+    });
 }
 
 fn sp<T>(node: T) -> Spanned<T> {
