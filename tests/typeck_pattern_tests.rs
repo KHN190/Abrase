@@ -1,6 +1,9 @@
-use ect::ast::Span;
+use ect::ast::{self, Pattern, Span, Spanned};
 use ect::ty::Type;
 use ect::typeck::Checker;
+
+fn d_span() -> Span { Span::new(0, 0) }
+fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
 
 // Pattern Matching Analysis (Exhaustiveness & Unreachability)
 
@@ -338,3 +341,222 @@ fn verify_reference_lifetime_overwrite() {
     checker.bind_reference_lifetime("ref_x".into(), "region_b".into());
     assert_eq!(checker.get_reference_lifetime("ref_x"), Some("region_b".into()));
 }
+
+// --- typeck_scope_tests (typeck_pattern_tests) ---
+
+#[test]
+fn verify_pattern_bind() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Bind("x".into()));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+
+    let var_ty = checker.get_var("x", false, d_span());
+    assert_eq!(var_ty, Type::Int);
+}
+
+#[test]
+fn verify_pattern_wildcard() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Wildcard);
+    checker.check_pattern(&pattern, &Type::String, d_span());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_literal_match() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Literal(ast::Literal::Int(42)));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_literal_mismatch() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Literal(ast::Literal::Int(42)));
+    checker.check_pattern(&pattern, &Type::Bool, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Pattern type mismatch"));
+}
+
+#[test]
+fn verify_pattern_tuple_match() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Tuple(vec![
+        sp(Pattern::Bind("x".into())),
+        sp(Pattern::Bind("y".into())),
+    ]));
+    let tuple_ty = Type::Tuple(vec![Type::Int, Type::Bool]);
+    checker.check_pattern(&pattern, &tuple_ty, d_span());
+
+    assert_eq!(checker.get_var("x", false, d_span()), Type::Int);
+    assert_eq!(checker.get_var("y", false, d_span()), Type::Bool);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_tuple_length_mismatch() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Tuple(vec![
+        sp(Pattern::Bind("x".into())),
+        sp(Pattern::Bind("y".into())),
+    ]));
+    let tuple_ty = Type::Tuple(vec![Type::Int]);
+    checker.check_pattern(&pattern, &tuple_ty, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Tuple pattern length mismatch"));
+}
+
+#[test]
+fn verify_pattern_or() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Or(vec![
+        sp(Pattern::Bind("a".into())),
+        sp(Pattern::Bind("b".into())),
+    ]));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+
+    assert_eq!(checker.get_var("a", false, d_span()), Type::Int);
+    assert_eq!(checker.get_var("b", false, d_span()), Type::Int);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_range_int() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Range {
+        start: Some(ast::Literal::Int(0)),
+        end: Some(ast::Literal::Int(10)),
+        inclusive: false,
+    });
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_range_non_int() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Range {
+        start: Some(ast::Literal::Int(0)),
+        end: Some(ast::Literal::Int(10)),
+        inclusive: false,
+    });
+    checker.check_pattern(&pattern, &Type::Bool, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Range pattern requires Int"));
+}
+
+#[test]
+fn verify_pattern_array() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Array(vec![
+        sp(Pattern::Bind("x".into())),
+        sp(Pattern::Bind("y".into())),
+    ]));
+    let array_ty = Type::Named("Array<Int>".into());
+    checker.check_pattern(&pattern, &array_ty, d_span());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_array_wrong_type() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Array(vec![sp(Pattern::Wildcard)]));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Expected array pattern"));
+}
+
+#[test]
+fn verify_pattern_ref() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Ref(Box::new(sp(Pattern::Bind("x".into())))));
+    let ref_ty = Type::Reference { is_mut: false, inner: Box::new(Type::String) };
+    checker.check_pattern(&pattern, &ref_ty, d_span());
+
+    assert_eq!(checker.get_var("x", false, d_span()), Type::String);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_ref_non_reference() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Ref(Box::new(sp(Pattern::Wildcard))));
+    checker.check_pattern(&pattern, &Type::Int, d_span());
+    assert_eq!(checker.errors.len(), 1);
+    assert!(checker.errors[0].message.contains("Expected reference pattern"));
+}
+
+#[test]
+fn verify_let_with_tuple_pattern() {
+    let mut checker = Checker::new();
+    let stmt = sp(ast::Stmt::Let {
+        pattern: sp(Pattern::Tuple(vec![
+            sp(Pattern::Bind("x".into())),
+            sp(Pattern::Bind("y".into())),
+        ])),
+        is_mut: false,
+        ty: None,
+        value: sp(ast::Expr::Tuple(vec![
+            sp(ast::Expr::Literal(ast::Literal::Int(1))),
+            sp(ast::Expr::Literal(ast::Literal::Bool(true))),
+        ])),
+    });
+
+    checker.check_stmt(&stmt);
+
+    assert_eq!(checker.get_var("x", false, d_span()), Type::Int);
+    assert_eq!(checker.get_var("y", false, d_span()), Type::Bool);
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_record() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Record {
+        ty: vec!["Point".into()],
+        fields: vec![
+            ast::FieldPattern {
+                name: "x".into(),
+                pattern: Some(sp(Pattern::Bind("px".into()))),
+            },
+        ],
+        rest: false,
+    });
+    checker.check_pattern(&pattern, &Type::Named("Point".into()), d_span());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_pattern_variant() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Variant {
+        ty: vec!["Option".into()],
+        args: vec![sp(Pattern::Bind("val".into()))],
+    });
+    checker.check_pattern(&pattern, &Type::Named("Option".into()), d_span());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_nested_pattern_tuple_and_bind() {
+    let mut checker = Checker::new();
+    let pattern = sp(Pattern::Tuple(vec![
+        sp(Pattern::Bind("x".into())),
+        sp(Pattern::Tuple(vec![
+            sp(Pattern::Bind("a".into())),
+            sp(Pattern::Bind("b".into())),
+        ])),
+    ]));
+    let tuple_ty = Type::Tuple(vec![
+        Type::Int,
+        Type::Tuple(vec![Type::Bool, Type::String]),
+    ]);
+    checker.check_pattern(&pattern, &tuple_ty, d_span());
+
+    assert_eq!(checker.get_var("x", false, d_span()), Type::Int);
+    assert_eq!(checker.get_var("a", false, d_span()), Type::Bool);
+    assert_eq!(checker.get_var("b", false, d_span()), Type::String);
+    assert!(checker.errors.is_empty());
+}
+

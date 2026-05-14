@@ -1,3 +1,4 @@
+use ect::ast::{Pattern, Span, Spanned, self};
 use ect::ty::Type;
 use ect::typeck::Checker;
 
@@ -405,3 +406,287 @@ fn verify_privacy_enforcement_on_qualified_path() {
 
     checker.pop_module();
 }
+
+// --- typeck_scope_tests (typeck_privacy_tests) ---
+
+// Visibility & Module Scoping
+
+#[test]
+fn verify_push_pop_module() {
+    let mut checker = Checker::new();
+
+    assert_eq!(checker.get_current_module(), vec!["root"]);
+
+    checker.push_module("io".into());
+    assert_eq!(checker.get_current_module(), vec!["root", "io"]);
+
+    checker.push_module("file".into());
+    assert_eq!(checker.get_current_module(), vec!["root", "io", "file"]);
+
+    checker.pop_module();
+    assert_eq!(checker.get_current_module(), vec!["root", "io"]);
+
+    checker.pop_module();
+    assert_eq!(checker.get_current_module(), vec!["root"]);
+}
+
+#[test]
+fn verify_pop_module_does_not_pop_root() {
+    let mut checker = Checker::new();
+
+    assert_eq!(checker.get_current_module(), vec!["root"]);
+
+    checker.pop_module();
+    assert_eq!(checker.get_current_module(), vec!["root"]);
+}
+
+#[test]
+fn verify_set_current_module() {
+    let mut checker = Checker::new();
+
+    checker.set_current_module(vec!["network".into(), "http".into()]);
+    assert_eq!(checker.get_current_module(), vec!["network", "http"]);
+}
+
+#[test]
+fn verify_mark_public() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+
+    checker.mark_public("Read".into());
+
+    let public_items = checker.get_public_items();
+    assert!(public_items.iter().any(|item| item.contains("Read")));
+}
+
+#[test]
+fn verify_mark_private() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+
+    checker.mark_private("read_impl".into());
+
+    let private_items = checker.get_private_items();
+    assert!(private_items.iter().any(|item| item.contains("read_impl")));
+}
+
+#[test]
+fn verify_is_public_in_same_module() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+
+    checker.mark_public("Read".into());
+
+    assert!(checker.is_public("Read"));
+}
+
+#[test]
+fn verify_is_public_from_root() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+
+    checker.mark_public("Read".into());
+
+    // Switch to root module
+    checker.set_current_module(vec!["root".into()]);
+
+    assert!(checker.is_public("Read"));
+}
+
+#[test]
+fn verify_is_private_item() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+
+    checker.mark_private("internal_buffer".into());
+
+    assert!(!checker.is_public("internal_buffer"));
+}
+
+#[test]
+fn verify_is_accessible_same_module() {
+    let mut checker = Checker::new();
+    checker.set_current_module(vec!["io".into()]);
+
+    let item_module = vec!["io".into()];
+    assert!(checker.is_accessible("Read", &item_module));
+}
+
+#[test]
+fn verify_is_accessible_public_item() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+    checker.mark_public("Read".into());
+
+    // Switch to different module
+    checker.set_current_module(vec!["root".into(), "net".into()]);
+
+    assert!(checker.is_accessible("Read", &["root".into(), "io".into()]));
+}
+
+#[test]
+fn verify_is_accessible_private_item_different_module() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+    checker.mark_private("internal_buffer".into());
+
+    // Switch to different module
+    checker.set_current_module(vec!["root".into(), "net".into()]);
+
+    assert!(!checker.is_accessible("internal_buffer", &["root".into(), "io".into()]));
+}
+
+#[test]
+fn verify_validate_visibility_public() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+    checker.mark_public("Read".into());
+
+    let span = Span::new(1, 1);
+    let result = checker.validate_visibility("Read", &["root".into(), "io".into()], span);
+
+    assert!(result);
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_validate_visibility_private_from_different_module() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+    checker.mark_private("internal_buffer".into());
+
+    // Switch to different module
+    checker.set_current_module(vec!["net".into()]);
+
+    let span = Span::new(1, 1);
+    let result = checker.validate_visibility("internal_buffer", &["io".into()], span);
+
+    assert!(!result);
+    assert_eq!(checker.errors.len(), 1);
+}
+
+#[test]
+fn verify_get_public_items() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+
+    checker.mark_public("Read".into());
+    checker.mark_public("Write".into());
+
+    let public_items = checker.get_public_items();
+    assert_eq!(public_items.len(), 2);
+}
+
+#[test]
+fn verify_get_private_items() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+
+    checker.mark_private("buffer_impl".into());
+    checker.mark_private("internal_read".into());
+
+    let private_items = checker.get_private_items();
+    assert_eq!(private_items.len(), 2);
+}
+
+#[test]
+fn verify_clear_visibility_context() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+    checker.mark_public("Read".into());
+    checker.mark_private("buffer".into());
+
+    assert_eq!(checker.get_current_module(), vec!["root", "io"]);
+    assert_eq!(checker.get_public_items().len(), 1);
+    assert_eq!(checker.get_private_items().len(), 1);
+
+    checker.clear_visibility_context();
+
+    assert_eq!(checker.get_current_module(), vec!["root"]);
+    assert_eq!(checker.get_public_items().len(), 0);
+    assert_eq!(checker.get_private_items().len(), 0);
+}
+
+#[test]
+fn verify_module_hierarchy() {
+    let mut checker = Checker::new();
+
+    checker.push_module("io".into());
+    assert_eq!(checker.get_current_module(), vec!["root", "io"]);
+
+    checker.push_module("file".into());
+    assert_eq!(checker.get_current_module(), vec!["root", "io", "file"]);
+
+    checker.mark_public("FileReader".into());
+
+    checker.pop_module();
+    let module = checker.get_current_module();
+    assert_eq!(module.len(), 2);
+}
+
+#[test]
+fn verify_multiple_modules_visibility() {
+    let mut checker = Checker::new();
+
+    // Module io
+    checker.push_module("io".into());
+    checker.mark_public("Read".into());
+    checker.pop_module();
+
+    // Module net
+    checker.push_module("net".into());
+    checker.mark_public("Connection".into());
+    checker.pop_module();
+
+    let public_items = checker.get_public_items();
+    assert_eq!(public_items.len(), 2);
+}
+
+#[test]
+fn verify_accessibility_within_module_hierarchy() {
+    let mut checker = Checker::new();
+
+    // Create module hierarchy: root -> io
+    checker.set_current_module(vec!["root".into(), "io".into()]);
+
+    // Mark item as public in same module
+    let io_module = vec!["root".into(), "io".into()];
+
+    // Check accessibility (items in same module are always accessible)
+    assert!(checker.is_accessible("SomeFile", &io_module));
+}
+
+#[test]
+fn verify_visibility_with_qualified_names() {
+    let mut checker = Checker::new();
+
+    checker.push_module("io".into());
+    checker.mark_public("BufferedReader".into());
+
+    // Verify qualified name
+    let public_items = checker.get_public_items();
+    let has_qualified = public_items.iter()
+        .any(|item| item.contains("io") && item.contains("BufferedReader"));
+
+    assert!(has_qualified);
+}
+
+#[test]
+fn verify_override_private_to_public() {
+    let mut checker = Checker::new();
+    checker.push_module("io".into());
+
+    // First mark as private
+    checker.mark_private("Item".into());
+    let private_items = checker.get_private_items();
+    assert!(private_items.len() > 0);
+
+    // Then mark as public (should override)
+    checker.mark_public("Item".into());
+    let private_items_after = checker.get_private_items();
+    assert!(private_items_after.len() == 0);
+
+    let public_items = checker.get_public_items();
+    assert!(public_items.len() > 0);
+}
+

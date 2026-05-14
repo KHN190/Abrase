@@ -1,3 +1,4 @@
+use ect::ast::{Pattern, Span, Spanned, self};
 use ect::ast::*;
 use ect::ty::Type;
 use ect::typeck::Checker;
@@ -837,4 +838,335 @@ fn verify_partial_public_path() {
     assert!(!is_accessible, "Path with private module c should be blocked");
 
     checker.pop_module();
+}
+
+// --- typeck_import_collision_tests ---
+
+#[test]
+fn verify_import_collision_with_existing_var() {
+    let mut checker = Checker::new();
+
+    // Insert a variable in current scope
+    checker.insert_var("foo".into(), Type::Int, false, d_span());
+
+    // Check collision - should return true
+    let has_collision = checker.check_import_collision("foo", vec!["module".into()]);
+    assert!(has_collision);
+    assert!(checker.has_import_collision("foo"));
+}
+
+#[test]
+fn verify_import_collision_from_different_module() {
+    let mut checker = Checker::new();
+
+    // Register an import from module1
+    checker.register_import_items(
+        vec!["module1".into()],
+        vec![ect::ast::ImportItem {
+            name: "foo".into(),
+            alias: None,
+        }],
+    );
+
+    // Check collision with same name from different module - should return true
+    let has_collision = checker.check_import_collision("foo", vec!["module2".into()]);
+    assert!(has_collision);
+    assert!(checker.has_import_collision("foo"));
+}
+
+#[test]
+fn verify_no_collision_same_module_reimport() {
+    let mut checker = Checker::new();
+
+    // Register an import from module1
+    checker.register_import_items(
+        vec!["module1".into()],
+        vec![ect::ast::ImportItem {
+            name: "foo".into(),
+            alias: None,
+        }],
+    );
+
+    // Check collision with same name from same module - should return false
+    let has_collision = checker.check_import_collision("foo", vec!["module1".into()]);
+    assert!(!has_collision);
+}
+
+#[test]
+fn verify_no_import_collision_with_unique_name() {
+    let mut checker = Checker::new();
+
+    // Check collision with unique name - should return false
+    let has_collision = checker.check_import_collision("unique_name", vec!["module".into()]);
+    assert!(!has_collision);
+    assert!(!checker.has_import_collision("unique_name"));
+}
+
+#[test]
+fn verify_multiple_import_collisions_tracked() {
+    let mut checker = Checker::new();
+
+    checker.insert_var("a".into(), Type::Int, false, d_span());
+    checker.insert_var("b".into(), Type::String, false, d_span());
+
+    checker.check_import_collision("a", vec!["module".into()]);
+    checker.check_import_collision("b", vec!["module".into()]);
+
+    assert!(checker.has_import_collision("a"));
+    assert!(checker.has_import_collision("b"));
+    assert_eq!(checker.get_import_collisions(), 2);
+}
+
+// --- typeck_scope_tests (typeck_import_tests) ---
+
+// Qualified Name Resolution
+
+#[test]
+fn verify_register_qualified_name() {
+    let mut checker = Checker::new();
+
+    let path = vec!["root".into(), "io".into(), "File".into()];
+    checker.register_qualified_name("File".into(), path.clone());
+
+    let resolutions = checker.get_all_resolutions("File");
+    assert_eq!(resolutions.len(), 1);
+    assert_eq!(resolutions[0], path);
+}
+
+#[test]
+fn verify_resolve_qualified_name_fully_qualified() {
+    let mut checker = Checker::new();
+
+    let path = vec!["root".into(), "io".into(), "File".into()];
+    checker.register_qualified_name("File".into(), path.clone());
+
+    // Resolve fully qualified name from root
+    let resolved = checker.resolve_qualified_name(&path);
+    assert_eq!(resolved, Some(path.clone()));
+}
+
+#[test]
+fn verify_resolve_qualified_name_relative() {
+    let mut checker = Checker::new();
+
+    // Register File in root.io.File
+    let path = vec!["root".into(), "io".into(), "File".into()];
+    checker.register_qualified_name("File".into(), path.clone());
+
+    // Set current module to root
+    checker.set_current_module(vec!["root".into()]);
+
+    // Resolve relative path "io.File" from root
+    let resolved = checker.resolve_qualified_name(&["io".into(), "File".into()]);
+    assert_eq!(resolved, Some(path));
+}
+
+#[test]
+fn verify_resolve_qualified_name_from_submodule() {
+    let mut checker = Checker::new();
+
+    // Register types in module hierarchy
+    let file_path = vec!["root".into(), "io".into(), "File".into()];
+    checker.register_qualified_name("File".into(), file_path.clone());
+
+    // Set current module to root.io
+    checker.set_current_module(vec!["root".into(), "io".into()]);
+
+    // Try to resolve just "File" from root.io
+    let resolved = checker.resolve_name("File");
+    assert_eq!(resolved, Some(file_path));
+}
+
+#[test]
+fn verify_resolve_name_simple() {
+    let mut checker = Checker::new();
+
+    let path = vec!["root".into(), "io".into(), "Read".into()];
+    checker.register_qualified_name("Read".into(), path.clone());
+
+    let resolved = checker.resolve_name("Read");
+    assert_eq!(resolved, Some(path));
+}
+
+#[test]
+fn verify_resolve_name_not_found() {
+    let checker = Checker::new();
+
+    let resolved = checker.resolve_name("NonExistent");
+    assert_eq!(resolved, None);
+}
+
+#[test]
+fn verify_is_name_resolvable() {
+    let mut checker = Checker::new();
+
+    let path = vec!["root".into(), "io".into(), "Error".into()];
+    checker.register_qualified_name("Error".into(), path.clone());
+
+    assert!(checker.is_name_resolvable(&["root".into(), "io".into(), "Error".into()]));
+}
+
+#[test]
+fn verify_is_name_resolvable_false() {
+    let checker = Checker::new();
+
+    assert!(!checker.is_name_resolvable(&["unknown".into(), "Type".into()]));
+}
+
+#[test]
+fn verify_qualified_name_resolution_multiple_paths() {
+    let mut checker = Checker::new();
+
+    // Register same simple name with different paths (overloading)
+    let path1 = vec!["root".into(), "io".into(), "Error".into()];
+    let path2 = vec!["root".into(), "net".into(), "Error".into()];
+
+    checker.register_qualified_name("Error".into(), path1.clone());
+    checker.register_qualified_name("Error".into(), path2.clone());
+
+    let resolutions = checker.get_all_resolutions("Error");
+    assert_eq!(resolutions.len(), 2);
+}
+
+#[test]
+fn verify_resolve_qualified_name_nested_path() {
+    let mut checker = Checker::new();
+
+    let path = vec!["root".into(), "io".into(), "file".into(), "Reader".into()];
+    checker.register_qualified_name("Reader".into(), path.clone());
+
+    let resolved = checker.resolve_qualified_name(&["io".into(), "file".into(), "Reader".into()]);
+    assert!(resolved.is_some());
+}
+
+#[test]
+fn verify_qualified_name_with_module_context() {
+    let mut checker = Checker::new();
+
+    // Register in root.io
+    let path = vec!["root".into(), "io".into(), "Write".into()];
+    checker.register_qualified_name("Write".into(), path.clone());
+
+    // Access from root module
+    checker.set_current_module(vec!["root".into()]);
+    let resolved = checker.resolve_name("Write");
+    assert_eq!(resolved, Some(path.clone()));
+
+    // Access from root.io module
+    checker.set_current_module(vec!["root".into(), "io".into()]);
+    let resolved = checker.resolve_name("Write");
+    assert_eq!(resolved, Some(path.clone()));
+}
+
+#[test]
+fn verify_resolve_qualified_name_from_different_module() {
+    let mut checker = Checker::new();
+
+    // Register in root.io
+    let io_path = vec!["root".into(), "io".into(), "Stream".into()];
+    checker.register_qualified_name("Stream".into(), io_path.clone());
+
+    // From root.net module, simple name resolution returns the registered path
+    checker.set_current_module(vec!["root".into(), "net".into()]);
+
+    let resolved = checker.resolve_name("Stream");
+    // Simple name resolution returns the first registered path
+    assert_eq!(resolved, Some(io_path));
+}
+
+#[test]
+fn verify_resolve_full_path_from_different_module() {
+    let mut checker = Checker::new();
+
+    // Register in root.io
+    let io_path = vec!["root".into(), "io".into(), "Connection".into()];
+    checker.register_qualified_name("Connection".into(), io_path.clone());
+
+    // From root.net, can still resolve with full path
+    checker.set_current_module(vec!["root".into(), "net".into()]);
+    let resolved = checker.resolve_qualified_name(&["root".into(), "io".into(), "Connection".into()]);
+    assert_eq!(resolved, Some(io_path));
+}
+
+#[test]
+fn verify_clear_name_resolution() {
+    let mut checker = Checker::new();
+
+    let path = vec!["root".into(), "io".into(), "File".into()];
+    checker.register_qualified_name("File".into(), path);
+
+    assert!(checker.resolve_name("File").is_some());
+
+    checker.clear_name_resolution();
+
+    assert_eq!(checker.resolve_name("File"), None);
+}
+
+#[test]
+fn verify_qualified_name_hierarchy_traversal() {
+    let mut checker = Checker::new();
+
+    // Create a hierarchy: root.std.io
+    let file_path = vec!["root".into(), "std".into(), "io".into(), "File".into()];
+    checker.register_qualified_name("File".into(), file_path.clone());
+
+    // Set current to root.std
+    checker.set_current_module(vec!["root".into(), "std".into()]);
+
+    // Resolve relative to current module
+    let resolved = checker.resolve_qualified_name(&["io".into(), "File".into()]);
+    assert_eq!(resolved, Some(file_path));
+}
+
+#[test]
+fn verify_multiple_qualified_names_same_module() {
+    let mut checker = Checker::new();
+
+    // Register multiple items in root.io
+    let read_path = vec!["root".into(), "io".into(), "Read".into()];
+    let write_path = vec!["root".into(), "io".into(), "Write".into()];
+
+    checker.register_qualified_name("Read".into(), read_path.clone());
+    checker.register_qualified_name("Write".into(), write_path.clone());
+
+    // Both should be resolvable
+    assert_eq!(checker.resolve_name("Read"), Some(read_path));
+    assert_eq!(checker.resolve_name("Write"), Some(write_path));
+}
+
+#[test]
+fn verify_qualified_name_resolution_order() {
+    let mut checker = Checker::new();
+
+    // Register same name with different fully qualified paths
+    let path1 = vec!["root".into(), "io".into(), "Error".into()];
+    let path2 = vec!["root".into(), "net".into(), "Error".into()];
+
+    checker.register_qualified_name("Error".into(), path1.clone());
+    checker.register_qualified_name("Error".into(), path2);
+
+    // First registered should be returned by resolve_name
+    let resolved = checker.resolve_name("Error");
+    assert_eq!(resolved, Some(path1));
+}
+
+#[test]
+fn verify_resolve_with_deeply_nested_module() {
+    let mut checker = Checker::new();
+
+    let path = vec![
+        "root".into(),
+        "sys".into(),
+        "io".into(),
+        "file".into(),
+        "Reader".into(),
+    ];
+    checker.register_qualified_name("Reader".into(), path.clone());
+
+    // Set to root.sys.io
+    checker.set_current_module(vec!["root".into(), "sys".into(), "io".into()]);
+
+    // Resolve relative path
+    let resolved = checker.resolve_qualified_name(&["file".into(), "Reader".into()]);
+    assert_eq!(resolved, Some(path));
 }

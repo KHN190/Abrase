@@ -1,6 +1,6 @@
 use ect::ty::Type;
 use ect::typeck::Checker;
-use ect::ast::{Span, Spanned, Pattern, Block, Expr};
+use ect::ast::{Block, Expr, Pattern, Span, Spanned, self};
 
 fn d_span() -> Span {
     Span { line: 0, col: 0 }
@@ -1012,4 +1012,46 @@ fn verify_check_fn_decl_allows_correct_return_type() {
     // Should not have type mismatch error
     let has_mismatch = checker.errors.iter().any(|e| e.message.contains("mismatch"));
     assert!(!has_mismatch, "Correct return type should not cause error");
+}
+
+// --- typeck_scope_tests (typeck_decl_tests) ---
+
+// Infrastructure & Context Management
+
+#[test]
+fn verify_function_registry() {
+    let mut checker = Checker::new();
+    checker.register_function(
+        "add".into(),
+        vec![Type::Int, Type::Int],
+        Type::Int,
+    );
+
+    let result = checker.get_function("add");
+    assert!(result.is_some());
+    let (params, ret) = result.unwrap();
+    assert_eq!(params, vec![Type::Int, Type::Int]);
+    assert_eq!(ret, Type::Int);
+}
+
+#[test]
+fn verify_type_registry() {
+    let mut checker = Checker::new();
+    checker.register_type(
+        "Point".into(),
+        ast::TypeBody::Record(vec![]),
+    );
+
+    let result = checker.get_type("Point");
+    assert!(result.is_some());
+}
+
+#[test]
+fn verify_const_registry() {
+    let mut checker = Checker::new();
+    checker.register_const("PI".into(), Type::Float);
+
+    let result = checker.get_const("PI");
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), Type::Float);
 }
