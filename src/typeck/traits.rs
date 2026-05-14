@@ -56,10 +56,14 @@ impl Checker {
     }
 
     pub fn check_all_trait_bounds(&self, fn_name: &str, type_args: &[(String, Type)]) -> bool {
-        if let Some(_params) = self.get_generic_params(fn_name) {
+        if let Some(params) = self.get_generic_params(fn_name) {
             for (param_name, arg_type) in type_args {
+                // skip still-abstract generic type variables
+                if let Type::Named(n) = arg_type {
+                    if params.contains(n) { continue; }
+                }
                 if let Some(bounds) = self.get_trait_bounds(param_name) {
-                    let type_str = format!("{:?}", arg_type);
+                    let type_str = Self::type_name_for_bound(arg_type);
                     for trait_name in bounds {
                         if !self.has_impl(&type_str, &trait_name) {
                             return false;
@@ -70,6 +74,62 @@ impl Checker {
             true
         } else {
             true
+        }
+    }
+
+    fn type_name_for_bound(ty: &Type) -> String {
+        match ty {
+            Type::Int    => "Int".into(),
+            Type::Float  => "Float".into(),
+            Type::Bool   => "Bool".into(),
+            Type::Char   => "Char".into(),
+            Type::String => "String".into(),
+            Type::Unit   => "Unit".into(),
+            Type::Named(n) => n.clone(),
+            _ => format!("{:?}", ty),
+        }
+    }
+
+    pub fn enforce_where_clause(
+        &mut self,
+        fn_name: &str,
+        generics: &[crate::ast::GenericParam],
+        where_clause: &[crate::ast::WhereBound],
+        type_args: &[(String, Type)],
+        span: crate::ast::Span,
+    ) {
+        let param_names: Vec<String> = generics.iter().map(|g| g.name.clone()).collect();
+        if !param_names.is_empty() {
+            self.register_generic_params(fn_name.into(), param_names.clone());
+        }
+
+        for bound in where_clause {
+            if let crate::ast::Type::Named(var) = &bound.ty {
+                for trait_path in &bound.bounds {
+                    let trait_name = trait_path.last().cloned().unwrap_or_default();
+                    if !trait_name.is_empty() {
+                        self.register_trait_bound(var.clone(), trait_name);
+                    }
+                }
+            }
+        }
+
+        for (param_name, actual_type) in type_args {
+            if let Type::Named(n) = actual_type {
+                if param_names.contains(n) { continue; } // still abstract
+            }
+            if let Some(bounds) = self.get_trait_bounds(param_name) {
+                let type_str = Self::type_name_for_bound(actual_type);
+                for trait_name in &bounds {
+                    if !self.has_impl(&type_str, trait_name) {
+                        self.report_error(
+                            format!("Type '{}' does not satisfy bound '{}' required for type parameter '{}'",
+                                type_str, trait_name, param_name),
+                            span,
+                        );
+                    }
+                }
+            }
         }
     }
 }

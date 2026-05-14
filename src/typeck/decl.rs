@@ -125,7 +125,6 @@ impl Checker {
             ast::Decl::Import { path, items } => {
                 self.register_import_items(path.clone(), items.clone());
 
-                // Check for import collisions
                 for item in items {
                     let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
                     self.check_import_collision(&import_name, path.clone());
@@ -165,10 +164,8 @@ impl Checker {
                 }
             },
 
-            ast::Decl::Impl { methods,   .. } => {
-                for method in methods {
-                    self.check_fn_decl(method);
-                }
+            ast::Decl::Impl { methods, for_type, trait_name, generics, where_clause, .. } => {
+                self.check_impl_decl(for_type, trait_name, generics, where_clause, methods);
             },
 
             _ => {},
@@ -176,10 +173,17 @@ impl Checker {
     }
 
     pub fn check_fn_decl(&mut self, fn_decl: &ast::FnDecl) {
-        // Push function & params
-        self.scopes.push(Scope {
-            vars: HashMap::new(),
-        });
+        // Register generics and enforce where clause bounds.
+        // type_args is empty at definition time; abstract generic vars are skipped.
+        self.enforce_where_clause(
+            &fn_decl.name,
+            &fn_decl.generics,
+            &fn_decl.where_clause,
+            &[],
+            ast::Span { line: 0, col: 0 },
+        );
+
+        self.scopes.push(Scope { vars: HashMap::new() });
 
         for param in &fn_decl.params {
             match param {
@@ -194,10 +198,8 @@ impl Checker {
                 },
             }
         }
-        // Infer function body
         let body_type = self.infer_block(&fn_decl.body);
 
-        // Check return type if specified
         if let Some(return_ty) = &fn_decl.return_type {
             let expected_return = self.convert_type(return_ty);
             if !self.types_compatible(&expected_return, &body_type) {
@@ -219,7 +221,6 @@ impl Checker {
             self.mark_public(name.into());
         }
 
-        // Register ownership attribute if present
         if let Some(own_attr) = ownership {
             let own = match own_attr {
                 ast::OwnershipAttr::Copy => Ownership::Copy,
@@ -229,7 +230,6 @@ impl Checker {
             self.register_ownership(name.into(), own);
         }
 
-        // Register variant cases if this is a variant type
         if let ast::TypeBody::Variant(cases) = body {
             let case_names: Vec<String> = cases.iter().map(|c| match c {
                 ast::VariantCase::Unit(n) => n.clone(),
@@ -239,24 +239,46 @@ impl Checker {
             self.register_variant_cases(name.into(), case_names);
         }
 
-        // Validate no recursive cycles
         let mut visited = std::collections::HashSet::new();
         self.check_type_recursion(name, body, &mut visited, ast::Span { line: 0, col: 0 });
     }
 
-    pub fn check_impl_decl(&mut self, for_type: &ast::Type, trait_name: &Option<Vec<String>>, methods: &[ast::FnDecl]) {
+    pub fn check_impl_decl(
+        &mut self,
+        for_type: &ast::Type,
+        trait_name: &Option<Vec<String>>,
+        generics: &[ast::GenericParam],
+        where_clause: &[ast::WhereBound],
+        methods: &[ast::FnDecl],
+    ) {
         let type_name = match for_type {
             ast::Type::Named(n) => n.clone(),
             ast::Type::Qualified(parts) => parts.join("::"),
             _ => "UnknownType".into(),
         };
 
-        // Type-check each method in the impl block
+        // Build concrete type_args from for_type's generic arguments.
+        // e.g. impl<T: Show> Wrapper<Int> -> T = Int.
+        let converted = self.convert_type(for_type);
+        let type_args: Vec<(String, Type)> = match &converted {
+            Type::Generic { args, .. } => generics.iter().zip(args.iter())
+                .map(|(g, arg)| (g.name.clone(), arg.clone()))
+                .collect(),
+            _ => vec![],
+        };
+
+        self.enforce_where_clause(
+            &type_name,
+            generics,
+            where_clause,
+            &type_args,
+            ast::Span { line: 0, col: 0 },
+        );
+
         for method in methods {
             self.check_fn_decl(method);
         }
 
-        // Register impl association
         if let Some(trait_path) = trait_name {
             let trait_str = trait_path.join("::");
             self.register_impl(&type_name, &trait_str);

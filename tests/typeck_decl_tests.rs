@@ -623,7 +623,7 @@ fn verify_check_impl_decl_type_checks_methods() {
     let for_type = ect::ast::Type::Named("MyType".into());
 
     // Should not panic
-    checker.check_impl_decl(&for_type, &None, &[method]);
+    checker.check_impl_decl(&for_type, &None, &[], &[], &[method]);
 }
 
 #[test]
@@ -650,7 +650,7 @@ fn verify_check_impl_decl_validates_trait_exists() {
     let trait_name = Some(vec!["Show".into()]);
 
     // Should not panic
-    checker.check_impl_decl(&for_type, &trait_name, &[method]);
+    checker.check_impl_decl(&for_type, &trait_name, &[], &[], &[method]);
 }
 
 #[test]
@@ -686,7 +686,7 @@ fn verify_check_impl_decl_multiple_methods() {
     let for_type = ect::ast::Type::Named("MyType".into());
 
     // Should not panic
-    checker.check_impl_decl(&for_type, &None, &[method1, method2]);
+    checker.check_impl_decl(&for_type, &None, &[], &[], &[method1, method2]);
 }
 
 // check_const_decl Tests
