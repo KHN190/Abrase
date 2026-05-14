@@ -2461,3 +2461,12 @@ fn verify_type_alias_resolves_in_variable_type() {
     assert_eq!(resolved, ect::ty::Type::Int,
         "type alias 'Num = Int' must resolve to Int; got {:?}", resolved);
 }
+
+#[test]
+fn verify_dyn_trait_converts_to_named_type() {
+    // dyn Show in an AST type must not become Unknown in ty::Type
+    let mut checker = Checker::new();
+    let ty = checker.convert_type(&ast::Type::DynTrait("Show".into()));
+    assert_ne!(ty, ect::ty::Type::Unknown,
+        "dyn Show must not convert to Unknown; got {:?}", ty);
+}

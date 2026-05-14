@@ -819,7 +819,7 @@ fn verify_closure_expression_type() {
             },
         ],
         effects: vec![],
-        ret_ty: Some(ast::Type::Named("Bool".into())),
+        return_type: Some(ast::Type::Named("Bool".into())),
         body: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
     });
 
@@ -835,7 +835,7 @@ fn verify_closure_return_type_mismatch() {
         is_move: false,
         params: vec![],
         effects: vec![],
-        ret_ty: Some(ast::Type::Named("Int".into())),
+        return_type: Some(ast::Type::Named("Int".into())),
         body: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
     });
 
@@ -3123,4 +3123,25 @@ fn verify_generic_function_with_nested_generics() {
     let ty = checker.infer_expr(&expr);
     assert_eq!(ty, Type::Tuple(vec![Type::Bool, Type::Bool]));
     assert!(checker.errors.is_empty());
+}
+
+// ── Gap tests ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn verify_move_closure_is_valid() {
+    // move |x: Int| -> Int { x }  must not produce errors
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Closure {
+        is_move: true,
+        params: vec![ast::ClosureParam {
+            pattern: sp(ast::Pattern::Bind("x".into())),
+            ty: Some(ast::Type::Named("Int".into())),
+        }],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        body: Box::new(sp(ast::Expr::Identifier("x".into()))),
+    });
+    let ty = checker.infer_expr(&expr);
+    assert!(checker.errors.is_empty(), "move closure must not produce errors; got {:?}", checker.errors);
+    assert!(matches!(ty, Type::Function { .. }), "move closure must produce Function type; got {:?}", ty);
 }

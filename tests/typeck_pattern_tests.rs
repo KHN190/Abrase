@@ -560,3 +560,42 @@ fn verify_nested_pattern_tuple_and_bind() {
     assert!(checker.errors.is_empty());
 }
 
+// ── Gap tests ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn verify_record_pattern_with_rest_is_valid() {
+    // Point { x: px, .. } — rest: true should be accepted without error
+    let mut checker = Checker::new();
+    checker.register_type("Point".into(), ast::TypeBody::Record(vec![
+        ast::RecordField { name: "x".into(), ty: ast::Type::Named("Int".into()), is_pub: true },
+        ast::RecordField { name: "y".into(), ty: ast::Type::Named("Int".into()), is_pub: true },
+    ]));
+    let pattern = sp(Pattern::Record {
+        ty: vec!["Point".into()],
+        fields: vec![ast::FieldPattern { name: "x".into(), pattern: Some(sp(Pattern::Bind("px".into()))) }],
+        rest: true,
+    });
+    checker.check_pattern(&pattern, &Type::Named("Point".into()), d_span());
+    assert!(checker.errors.is_empty(), "record pattern with .. rest must be valid; got {:?}", checker.errors);
+}
+
+#[test]
+fn verify_range_pattern_inclusive_vs_exclusive() {
+    // inclusive (..=) and exclusive (..) both accepted on Int scrutinee
+    let mut checker = Checker::new();
+    let incl = sp(Pattern::Range {
+        start: Some(ast::Literal::Int(1)),
+        end: Some(ast::Literal::Int(10)),
+        inclusive: true,
+    });
+    checker.check_pattern(&incl, &Type::Int, d_span());
+    assert!(checker.errors.is_empty(), "inclusive range pattern ..= must be valid");
+
+    let excl = sp(Pattern::Range {
+        start: Some(ast::Literal::Int(1)),
+        end: Some(ast::Literal::Int(10)),
+        inclusive: false,
+    });
+    checker.check_pattern(&excl, &Type::Int, d_span());
+    assert!(checker.errors.is_empty(), "exclusive range pattern .. must be valid");
+}

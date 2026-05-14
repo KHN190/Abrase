@@ -367,7 +367,7 @@ impl Checker {
                 field_type
             }
             // Advanced Expressions (updated Effect Inference)
-            ast::Expr::Closure { is_move: _, params, effects, ret_ty, body } => {
+            ast::Expr::Closure { is_move: _, params, effects, return_type, body } => {
                 self.context_stack.push("In closure expression".into());
                 self.enter_scope();
 
@@ -392,7 +392,7 @@ impl Checker {
                     }
                 }
                 let body_ty = self.infer_expr(body);
-                if let Some(expected_ret) = ret_ty {
+                if let Some(expected_ret) = return_type {
                     let expected = self.convert_type(expected_ret);
                     if expected != body_ty && expected != Type::Unknown && body_ty != Type::Unknown {
                         self.report_error("Closure body type mismatch".into(), body.span);

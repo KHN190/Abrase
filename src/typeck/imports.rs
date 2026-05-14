@@ -14,6 +14,19 @@ impl Checker {
     ) {
         for item in items {
             let accessible_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+            // Check if this name is already imported from a different module
+            if let Some((existing_module, _)) = self.imported_names.get(&accessible_name) {
+                if existing_module != &module_path {
+                    // Collision detected - mark as collision but allow insertion
+                    self.import_collisions.insert(accessible_name.clone());
+                    self.report_error(
+                        format!("'{}' already imported from {:?}, cannot import from {:?}",
+                            accessible_name, existing_module, module_path),
+                        crate::ast::Span { line: 0, col: 0 },
+                    );
+                    continue; // Skip adding this conflicting import
+                }
+            }
             self.imported_names.insert(
                 accessible_name,
                 (module_path.clone(), item.name),
@@ -51,6 +64,8 @@ impl Checker {
             return true;
         }
 
+        // Record the import if no collision
+        self.imported_names.insert(name.to_string(), (module_path, name.to_string()));
         false
     }
 

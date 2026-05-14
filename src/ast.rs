@@ -185,7 +185,7 @@ pub enum Expr {
         is_move: bool,
         params: Vec<ClosureParam>,
         effects: Vec<EffectItem>,
-        ret_ty: Option<Type>,
+        return_type: Option<Type>,
         body: Box<Spanned<Expr>>,
     },
 

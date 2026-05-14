@@ -1170,3 +1170,38 @@ fn verify_resolve_with_deeply_nested_module() {
     let resolved = checker.resolve_qualified_name(&["file".into(), "Reader".into()]);
     assert_eq!(resolved, Some(path));
 }
+
+// ── Gap tests ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn verify_import_collision_with_existing_var_reports_error() {
+    // Importing a name that already exists as a local var should report an error
+    let mut checker = Checker::new();
+    checker.insert_var("foo".into(), ect::ty::Type::Int, false, ect::ast::Span::new(0, 0));
+    checker.register_import_items(vec!["math".into()], vec![ect::ast::ImportItem {
+        name: "foo".into(),
+        alias: None,
+    }]);
+    checker.check_import_collision("foo", vec!["math".into()]);
+    assert!(!checker.errors.is_empty(),
+        "importing 'foo' when local var 'foo' already exists must produce an error");
+}
+
+#[test]
+fn verify_import_collision_between_two_imports_reports_error() {
+    // Importing the same name from two different modules should report an error
+    let mut checker = Checker::new();
+    checker.register_import_items(vec!["mod_a".into()], vec![ect::ast::ImportItem {
+        name: "Bar".into(),
+        alias: None,
+    }]);
+    checker.check_import_collision("Bar", vec!["mod_a".into()]);
+    // second import of same name from different module
+    checker.register_import_items(vec!["mod_b".into()], vec![ect::ast::ImportItem {
+        name: "Bar".into(),
+        alias: None,
+    }]);
+    checker.check_import_collision("Bar", vec!["mod_b".into()]);
+    assert!(!checker.errors.is_empty(),
+        "importing 'Bar' from two different modules must produce an error");
+}

@@ -1091,3 +1091,54 @@ fn verify_return_expr_type_checked_against_fn_return_type() {
     assert!(!checker.errors.is_empty(),
         "return with wrong type inside fn body must produce a type error");
 }
+
+#[test]
+fn verify_effect_alias_decl_registers_alias() {
+    // effect alias io_async = <io, async>
+    // check_program must call register_effect_alias so get_effect_alias returns the effects
+    use ect::ty::Effect;
+    let mut checker = Checker::new();
+    checker.check_program(&[
+        ect::ast::Decl::EffectAlias {
+            is_pub: false,
+            name: "io_async".into(),
+            effects: vec![
+                ect::ast::EffectItem { name: vec!["io".into()],    arg: None },
+                ect::ast::EffectItem { name: vec!["async".into()], arg: None },
+            ],
+        },
+    ]);
+    let alias = checker.get_effect_alias("io_async");
+    assert!(alias.is_some(), "effect alias 'io_async' must be registered; got None");
+    let effects = alias.unwrap();
+    assert!(!effects.is_empty(), "effect alias must store at least one resolved effect");
+    assert!(effects.iter().any(|e| matches!(e, Effect::Async)),
+        "effect alias must include Async; got {:?}", effects);
+}
+
+#[test]
+fn verify_self_param_does_not_error_in_impl_method() {
+    // impl methods with self / &self / &mut self must not produce spurious errors
+    let mut checker = Checker::new();
+    let method = ect::ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "get_x".into(),
+        generics: vec![],
+        params: vec![ect::ast::Param::SelfRef { is_mut: false }],
+        effects: vec![],
+        return_type: None,
+        where_clause: vec![],
+        body: Block { stmts: vec![], ret: None },
+    };
+    checker.check_impl_decl(
+        &ect::ast::Type::Named("Point".into()),
+        &None,
+        &[],
+        &[],
+        &[method],
+    );
+    assert!(checker.errors.is_empty(),
+        "impl method with &self must not produce errors; got {:?}", checker.errors);
+}

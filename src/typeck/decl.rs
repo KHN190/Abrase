@@ -113,9 +113,13 @@ impl Checker {
                 }
             },
 
-            ast::Decl::EffectAlias { name, is_pub, .. } => {
+            ast::Decl::EffectAlias { name, is_pub, effects } => {
                 let module_path = self.current_module.clone();
                 self.register_module_item(&module_path, name.clone(), Type::Named(name.clone()));
+
+                // Convert and register the effect alias
+                let converted_effects = self.convert_effect_items(effects);
+                self.register_effect_alias(name.clone(), converted_effects);
 
                 if *is_pub {
                     self.mark_public(name.clone());

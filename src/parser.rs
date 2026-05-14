@@ -915,7 +915,7 @@ impl<'a> Parser<'a> {
         if !self.expect_peek(Token::Pipe) {
             return Err("Expected '|' after closure params".into());
         }
-        let ret_ty = if self.peek_token == Token::Arrow {
+        let return_type = if self.peek_token == Token::Arrow {
             self.next_token();
             let (_, ret) = self.parse_fn_type_tail()?;
             Some(ret)
@@ -926,7 +926,7 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_expr(Precedence::Lowest)
         });
-        Ok(Expr::Closure { is_move: false, params, effects: vec![], ret_ty, body })
+        Ok(Expr::Closure { is_move: false, params, effects: vec![], return_type, body })
     }
 
     fn parse_scope_expr(&mut self) -> Result<Expr, String> {

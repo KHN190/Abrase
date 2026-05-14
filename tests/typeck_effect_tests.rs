@@ -519,7 +519,7 @@ fn verify_effect_inference_in_closure_type() {
         is_move: false,
         params: vec![],
         effects: vec![],
-        ret_ty: Some(ast::Type::Named("Int".into())),
+        return_type: Some(ast::Type::Named("Int".into())),
         body: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(42)))),
     });
 
@@ -544,7 +544,7 @@ fn verify_fn_declared_effects_cleared_after_closure() {
         is_move: false,
         params: vec![],
         effects: vec![],
-        ret_ty: None,
+        return_type: None,
         body: Box::new(sp(ast::Expr::Literal(ast::Literal::Unit))),
     });
 
