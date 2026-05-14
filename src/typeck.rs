@@ -118,6 +118,12 @@ pub struct Checker {
     function_effects: HashMap<String, Vec<ast::EffectItem>>,
     const_vars: std::collections::HashSet<String>,
     op_effects: HashMap<String, Vec<ast::EffectItem>>,
+
+    // Effect Operations (effect_name::op_name -> Type)
+    effect_ops_registry: HashMap<String, Type>,
+
+    // Type Aliases
+    type_alias_registry: HashMap<String, Type>,
 }
 
 impl Checker {
@@ -172,6 +178,8 @@ impl Checker {
             function_effects: HashMap::new(),
             const_vars: std::collections::HashSet::new(),
             op_effects: HashMap::new(),
+            effect_ops_registry: HashMap::new(),
+            type_alias_registry: HashMap::new(),
             imported_names: HashMap::new(),
             import_collisions: std::collections::HashSet::new(),
         }
@@ -3070,8 +3078,10 @@ impl Checker {
             },
 
             ast::Decl::TypeAlias { name, ty, is_pub, .. } => {
-                // Register type alias (for now, store in a simple way)
-                // Could enhance with a dedicated type_alias_registry
+                // Register type alias
+                let converted = self.convert_type(ty);
+                self.type_alias_registry.insert(name.clone(), converted);
+
                 if *is_pub {
                     self.mark_public(name.clone());
                 }
@@ -3168,7 +3178,7 @@ impl Checker {
         }
     }
 
-    fn check_fn_decl(&mut self, fn_decl: &ast::FnDecl) {
+    pub fn check_fn_decl(&mut self, fn_decl: &ast::FnDecl) {
         // Push function scope
         self.scopes.push(Scope {
             vars: HashMap::new(),
@@ -3245,18 +3255,22 @@ impl Checker {
     }
 
     pub fn check_impl_decl(&mut self, for_type: &ast::Type, trait_name: &Option<Vec<String>>, methods: &[ast::FnDecl]) {
+        // Extract type name from for_type
+        let type_name = match for_type {
+            ast::Type::Named(n) => n.clone(),
+            ast::Type::Qualified(parts) => parts.join("::"),
+            _ => "UnknownType".into(),
+        };
+
         // Type-check each method in the impl block
         for method in methods {
             self.check_fn_decl(method);
+        }
 
-            // If this is a trait impl, validate method matches trait signature
-            if let Some(trait_path) = trait_name {
-                let trait_str = trait_path.join("::");
-                if let Some(_trait_methods) = self.trait_registry.get(&trait_str) {
-                    // Could add more detailed trait method validation here
-                    // For now, just verify the trait exists
-                }
-            }
+        // Register impl association
+        if let Some(trait_path) = trait_name {
+            let trait_str = trait_path.join("::");
+            self.register_impl(&type_name, &trait_str);
         }
     }
 
@@ -3310,7 +3324,9 @@ impl Checker {
                 .unwrap_or_else(|| Box::new(Type::Unit));
 
             let op_type = Type::Function { params, effects, ret };
-            // Could store operation signatures in a dedicated registry if needed
+            // Store operation signature in effect_ops_registry
+            let op_key = format!("{}::{}", name, op.name);
+            self.effect_ops_registry.insert(op_key, op_type);
         }
     }
 

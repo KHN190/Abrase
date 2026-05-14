@@ -39,7 +39,7 @@ fn verify_check_program_registers_function() {
             },
         ],
         effects: vec![],
-        return_type: Some(ect::ast::Type::Named("Int".into())),
+        return_type: Some(ect::ast::Type::Named("Unit".into())),
         where_clause: vec![],
         body: dummy_block(),
     };
@@ -53,7 +53,7 @@ fn verify_check_program_registers_function() {
     assert_eq!(fn_type, Type::Function {
         params: vec![Type::Int, Type::Int],
         effects: vec![],
-        ret: Box::new(Type::Int),
+        ret: Box::new(Type::Unit),
     });
 }
 
@@ -375,7 +375,7 @@ fn verify_check_program_two_pass_execution() {
         generics: vec![],
         params: vec![],
         effects: vec![],
-        return_type: Some(ect::ast::Type::Named("Int".into())),
+        return_type: Some(ect::ast::Type::Named("Unit".into())),
         where_clause: vec![],
         body: dummy_block(),
     };
@@ -388,7 +388,7 @@ fn verify_check_program_two_pass_execution() {
         generics: vec![],
         params: vec![],
         effects: vec![],
-        return_type: Some(ect::ast::Type::Named("Int".into())),
+        return_type: Some(ect::ast::Type::Named("Unit".into())),
         where_clause: vec![],
         body: dummy_block(),
     };
@@ -407,13 +407,13 @@ fn verify_check_program_two_pass_execution() {
     assert_eq!(fn1_type, Type::Function {
         params: vec![],
         effects: vec![],
-        ret: Box::new(Type::Int),
+        ret: Box::new(Type::Unit),
     });
 
     assert_eq!(fn2_type, Type::Function {
         params: vec![],
         effects: vec![],
-        ret: Box::new(Type::Int),
+        ret: Box::new(Type::Unit),
     });
 }
 
@@ -945,4 +945,71 @@ fn verify_all_checkers_work_together() {
     assert!(checker.is_public("Status"));
     assert!(checker.is_public("DEFAULT_ID"));
     assert!(checker.is_public("custom"));
+}
+
+// Issue #5: Function body type mismatch detection
+
+#[test]
+fn verify_check_fn_decl_detects_return_type_mismatch() {
+    let mut checker = Checker::new();
+
+    // Create function that declares return type Int but has body that returns String
+    let fn_decl = ect::ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "bad_fn".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ect::ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        // Block with a String literal return expression
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(ect::ast::Literal::String("oops".into())),
+                span: d_span(),
+            })),
+        },
+    };
+
+    checker.check_fn_decl(&fn_decl);
+
+    // Should have caught the type mismatch
+    assert!(!checker.errors.is_empty(), "Function body type mismatch should be detected");
+    assert!(checker.errors[0].message.contains("Return type mismatch")
+        || checker.errors[0].message.contains("type mismatch"),
+        "Error message should mention return type mismatch, got: {}",
+        checker.errors[0].message);
+}
+
+#[test]
+fn verify_check_fn_decl_allows_correct_return_type() {
+    let mut checker = Checker::new();
+
+    let fn_decl = ect::ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "good_fn".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ect::ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(ect::ast::Literal::Int(42)),
+                span: d_span(),
+            })),
+        },
+    };
+
+    checker.check_fn_decl(&fn_decl);
+
+    // Should not have type mismatch error
+    let has_mismatch = checker.errors.iter().any(|e| e.message.contains("mismatch"));
+    assert!(!has_mismatch, "Correct return type should not cause error");
 }
