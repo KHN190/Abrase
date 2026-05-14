@@ -2331,7 +2331,9 @@ impl Checker {
             },
             ast::Expr::Identifier(name) => self.get_var(name, false, expr.span),
             ast::Expr::Unary { op, right } => {
-                match op {
+                self.context_stack.push(format!("In unary operation {:?}", op));
+
+                let result = match op {
                     ast::UnaryOp::Ref => {
                         if let ast::Expr::Identifier(name) = &right.node {
                             match self.try_immut_borrow(name, expr.span) {
@@ -2370,7 +2372,10 @@ impl Checker {
                         let r_ty = self.infer_expr(right);
                         if let Type::Reference { inner, .. } = r_ty { *inner } else { self.report_error("Expected reference".into(), right.span) }
                     }
-                }
+                };
+
+                self.context_stack.pop();
+                result
             }
             ast::Expr::Binary { op, left, right } => {
                 self.context_stack.push("In binary expression".into());
@@ -2541,8 +2546,10 @@ impl Checker {
             }
             // Complex Expressions
             ast::Expr::Call { callee, args } => {
+                self.context_stack.push(format!("In function call"));
+
                 let callee_ty = self.infer_expr(callee);
-                if let Type::Function { params, effects, ret } = callee_ty {
+                let result = if let Type::Function { params, effects, ret } = callee_ty {
                     if args.len() != params.len() {
                         self.report_error(
                             format!("Expected {} arguments, got {}", params.len(), args.len()),
@@ -2550,7 +2557,10 @@ impl Checker {
                         );
                     }
                     for (i, (arg, param_ty)) in args.iter().zip(params.iter()).enumerate() {
+                        self.context_stack.push(format!("Argument {}", i + 1));
                         let arg_ty = self.infer_expr(arg);
+                        self.context_stack.pop();
+
                         if arg_ty != *param_ty && arg_ty != Type::Unknown && *param_ty != Type::Unknown {
                             self.report_error(
                                 format!("Argument {} type mismatch: expected {:?}, got {:?}", i, param_ty, arg_ty),
@@ -2567,14 +2577,20 @@ impl Checker {
                     *ret
                 } else {
                     self.report_error("Callee must be function type".into(), callee.span)
-                }
+                };
+
+                self.context_stack.pop();
+                result
             }
             ast::Expr::Tuple(elems) => {
+                self.context_stack.push("In tuple construction".into());
                 let elem_types: Vec<_> = elems.iter().map(|e| self.infer_expr(e)).collect();
+                self.context_stack.pop();
                 Type::Tuple(elem_types)
             }
             ast::Expr::Array(elems) => {
-                if elems.is_empty() {
+                self.context_stack.push("In array construction".into());
+                let result = if elems.is_empty() {
                     Type::Named("Array<Unknown>".into())
                 } else {
                     let first_ty = self.infer_expr(&elems[0]);
@@ -2585,17 +2601,22 @@ impl Checker {
                         }
                     }
                     Type::Named(format!("Array<{:?}>", first_ty))
-                }
+                };
+                self.context_stack.pop();
+                result
             }
             ast::Expr::ArrayRepeat { elem, count } => {
+                self.context_stack.push("In array repeat".into());
                 let _elem_ty = self.infer_expr(elem);
                 let count_ty = self.infer_expr(count);
                 if count_ty != Type::Int && count_ty != Type::Unknown {
                     self.report_error("Array repeat count must be Int".into(), count.span);
                 }
+                self.context_stack.pop();
                 Type::Named("Array<Unknown>".into())
             }
             ast::Expr::Index { base, index } => {
+                self.context_stack.push("In array indexing".into());
                 let base_ty = self.infer_expr(base);
                 let index_ty = self.infer_expr(index);
 
@@ -2603,21 +2624,27 @@ impl Checker {
                     self.report_error("Index must be Int".into(), index.span);
                 }
 
-                match base_ty {
+                let result = match base_ty {
                     Type::Named(ref name) if name.starts_with("Array") => Type::Unknown,
                     Type::Tuple(ref elems) => {
                         if elems.is_empty() { Type::Unknown }
                         else { elems[0].clone() }
                     }
                     _ => self.report_error("Can only index arrays or tuples".into(), base.span),
-                }
+                };
+
+                self.context_stack.pop();
+                result
             }
-            ast::Expr::FieldAccess { base, field: _ } => {
+            ast::Expr::FieldAccess { base, field } => {
+                self.context_stack.push(format!("In field access '{}'", field));
                 let _base_ty = self.infer_expr(base);
+                self.context_stack.pop();
                 Type::Unknown // Would need record type registry
             }
             // Advanced Expressions (updated Effect Inference)
             ast::Expr::Closure { is_move: _, params, effects, ret_ty, body } => {
+                self.context_stack.push("In closure expression".into());
                 self.enter_scope();
 
                 // Set declared effects for the closure
@@ -2669,24 +2696,31 @@ impl Checker {
                 self.exit_scope();
 
                 // Return function type with inferred effects
-                Type::Function {
+                let result = Type::Function {
                     params: vec![],
                     effects: inferred_effects,
                     ret: Box::new(body_ty),
-                }
+                };
+
+                self.context_stack.pop();
+                result
             }
             ast::Expr::Record { ty, fields } => {
+                self.context_stack.push(format!("In record construction of '{}'", ty.join(".")));
                 for field in fields {
                     if let Some(value) = &field.value {
                         let _field_ty = self.infer_expr(value);
                     }
                 }
+                self.context_stack.pop();
                 Type::Named(ty.join("."))
             }
             ast::Expr::Variant { ty, args } => {
+                self.context_stack.push(format!("In variant construction of '{}'", ty.join(".")));
                 for arg in args {
                     let _arg_ty = self.infer_expr(arg);
                 }
+                self.context_stack.pop();
                 Type::Named(ty.join("."))
             }
             ast::Expr::Range { start, end, inclusive: _ } => {
