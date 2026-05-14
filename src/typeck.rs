@@ -1486,6 +1486,10 @@ impl Checker {
         match (sub, sup) {
             (Type::Unknown, _) | (_, Type::Unknown) => true,
             (a, b) if a == b => true,
+            (Type::Generic { name: s1, args: a1 }, Type::Generic { name: s2, args: a2 }) => {
+                s1 == s2 && a1.len() == a2.len() &&
+                a1.iter().zip(a2.iter()).all(|(sa, pa)| self.is_subtype(sa, pa))
+            }
             (Type::Named(s1), Type::Named(s2)) => {
                 self.is_generic_subtype(s1, s2) || self.is_named_subtype(s1, s2)
             }
@@ -2123,11 +2127,10 @@ impl Checker {
             },
             ast::Type::Qualified(parts) => Type::Named(parts.join(".")),
             ast::Type::Generic { name, args } => {
-                // Better generic handling - preserve type arguments
-                let arg_strs: Vec<String> = args.iter()
-                    .map(|arg| format!("{:?}", self.convert_type(arg)))
-                    .collect();
-                Type::Named(format!("{}<{}>", name, arg_strs.join(", ")))
+                Type::Generic {
+                    name: name.clone(),
+                    args: args.iter().map(|arg| self.convert_type(arg)).collect(),
+                }
             },
             ast::Type::Array { elem, size } => {
                 // Track array sizes
@@ -2161,6 +2164,12 @@ impl Checker {
             (a, b) if a == b => true,
             // Unknown types are compatible with anything
             (Type::Unknown, _) | (_, Type::Unknown) => true,
+            // Generic types must have same name and compatible arguments
+            (Type::Generic { name: e_name, args: e_args }, Type::Generic { name: a_name, args: a_args }) => {
+                e_name == a_name && e_args.len() == a_args.len() &&
+                e_args.iter().zip(a_args.iter())
+                    .all(|(e, a)| self.types_compatible(e, a))
+            },
             // Named types might be compatible via type definitions or variance
             (Type::Named(exp_name), Type::Named(act_name)) => {
                 exp_name == act_name

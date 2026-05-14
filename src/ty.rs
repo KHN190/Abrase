@@ -33,6 +33,7 @@ pub enum Type {
     Unit,
     Never,
     Named(String),
+    Generic { name: String, args: Vec<Type> },
     Tuple(Vec<Type>),
     Reference { is_mut: bool, inner: Box<Type> },
     Function { params: Vec<Type>, effects: Vec<Effect>, ret: Box<Type> },
@@ -49,6 +50,13 @@ impl Type {
             Type::Reference { .. } => Ownership::Copy,
             Type::Tuple(tys) => {
                 if tys.iter().all(|t| t.ownership() == Ownership::Copy) {
+                    Ownership::Copy
+                } else {
+                    Ownership::Move
+                }
+            }
+            Type::Generic { args, .. } => {
+                if args.iter().all(|t| t.ownership() == Ownership::Copy) {
                     Ownership::Copy
                 } else {
                     Ownership::Move
