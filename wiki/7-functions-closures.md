@@ -2,7 +2,7 @@
 
 Functions are first-class. Signatures must declare effects and types explicitly for clarity. Traits enable polymorphism.
 
-Ect provides:
+Abe provides:
 
 * Functions with mandatory signature annotations. 
 * Generics with `where` constraints. 

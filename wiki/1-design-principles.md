@@ -1,8 +1,8 @@
 # 1. Design Principles
 
-Ect is a Rust dialect with static types, effect system, region-based lifetime management.
+**Abrase** (.abe) is a Rust dialect with static types, effect system, region-based lifetime management.
 
-Ect makes code explicit and checkable at compile time, so LLMs can reason about code with minimal local context, and the runtime stays simple after compiler. All side effects, ownership, and type constraints visible in signatures.
+Abe makes code explicit and checkable at compile time, so LLMs can reason about code with minimal local context, and the runtime stays simple after compiler. All side effects, ownership, and type constraints visible in signatures.
 
 ## Language Design
 
@@ -13,7 +13,7 @@ Ect makes code explicit and checkable at compile time, so LLMs can reason about 
 
 ## Virtual Machine Design
 
-The bytecode is **Polka**; the host runtime that executes Polka is called **Myriad**. Compiling Ect produces a Polka module (`.pk`); any conforming Myriad host can load and run it.
+The bytecode is **Polka**; the host runtime that executes Polka is called **Myriad**. Compiling Abe produces a Polka module (`.pk`); any conforming Myriad host can load and run it.
 
 * Minimal — Polka is a small instruction set; Myriad fits in any Rust app.
 * Safety — enforced by the compiler; Myriad executes only.

@@ -1,11 +1,11 @@
 # 8. Module System
 
-Explicit module imports prevent accidental shadowing (where a later-defined name hides an earlier one with the same name). Names come from users or Rust; Ect reserves no namespaces. Naming conflicts between user and Rust-provided cause compile error instead.
+Explicit module imports prevent accidental shadowing (where a later-defined name hides an earlier one with the same name). Names come from users or Rust; Abe reserves no namespaces. Naming conflicts between user and Rust-provided cause compile error instead.
 
 Modules correspond to file paths. Two visibility levels: `pub` (public) or private.
 
 ```rust
-// path: claws/teeth.ect
+// path: claws/teeth.abe
 mod claws.teeth
 
 pub fn bite(x: Int) -> Int { x * 2 }

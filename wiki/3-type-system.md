@@ -2,7 +2,7 @@
 
 Static typing with local, bidirectional inference. Types are fully explicit in signatures.
 
-Ect provides:
+Abe provides:
 
 * Primitives (Int, Float, Bool, Char, String, Unit, Never), 
 * Compound types (tuple, array, list, record, variant), 

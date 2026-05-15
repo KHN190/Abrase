@@ -1,15 +1,15 @@
 # 12. Rust Integration
 
-Ect has no stdlib; a Rust host provides all globals, modules, capabilities.
+Abe has no stdlib; a Rust host provides all globals, modules, capabilities.
 
-Rust registers globals (no import) or modules (import required). Ect calls Rust via effects. Opaque types, capability injection, `@export` for callbacks.
+Rust registers globals (no import) or modules (import required). Abe calls Rust via effects. Opaque types, capability injection, `@export` for callbacks.
 
 ```rust
 // Rust-side
 runtime.register_global("read_file", read_file_impl);
 runtime.register_module("io", io_mod());
 
-// Ect-side
+// Abe-side
 let content = read_file("config.toml")?;
 
 import io.{File, open_file};
