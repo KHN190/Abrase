@@ -1,6 +1,8 @@
 # Appendix B: Bytecode Specification
 
-This specification defines the bytecode structure. The VM only handles registers, control flow, memory, and device ports; it is entirely unaware of types or data structures. High-level semantics are lowered by the compiler.
+**Polka** is the bytecode. **Myriad** is the host runtime that executes it. The compiler emits Polka; any conforming Myriad host can load and run a Polka module.
+
+The VM is a part of the Myriad. It completes itself with a host. The VM handles only registers, control flow, memory, and device ports; it is entirely unaware of types or data structures. High-level semantics are lowered by the compiler before reaching Polka.
 
 ## 1. Instruction Encoding
 
@@ -159,7 +161,7 @@ When `call r_a, fn_id` executes:
 3. Caller must arrange arguments in the new window's `r0–r(param_count - 1)`before calling.
 4. On ret `r_x`, the VM writes `r_x` to the caller's target register and pops the frame.
 
-## 5. Module Format (`.ecm`)
+## 5. Module Format (`.pk`)
 
 All multi-byte integers are little-endian.
 

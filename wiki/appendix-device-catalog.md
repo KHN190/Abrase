@@ -1,13 +1,13 @@
 # Appendix C: Device Catalog
 
-This document extends the [bytecode spec](./appendix-bytecode-sped.md) and fixes the meaning of standard port for hosts. A host is a machine that can execute VM bytecode.
+This document extends the [Polka bytecode spec](./appendix-bytecode-spec.md) and fixes the meaning of standard ports for Myriad hosts. A **Myriad** host is any runtime that can execute Polka bytecode; this catalog defines the device contract every conforming Myriad implementation must honour for the ports it claims to provide.
 
-A module declares the device IDs it requires in its `.ecm` header. The loader rejects modules referring to devices the host does not provide.
+A Polka module declares the device IDs it requires in its `.pk` header. The loader rejects modules referring to devices the host does not provide.
 
 ## Conventions
 
 - All values are 64-bit. Smaller logical types (bytes, u16, i32) sit in the low bits with the upper bits zeroed.
-- "in" means readable via `dei`; "out" means writable via `deo`. A port may be either or both.
+- "in" means readable via `DEI`; "out" means writable via `DEO`. A port may be either or both.
 - `-1` is the standard "error / EOF / no value" sentinel where noted.
 - Unmapped ports within an implemented device are reserved. Reads return 0; writes are silently dropped.
 
