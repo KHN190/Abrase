@@ -1,4 +1,3 @@
-// VM dispatch loop, register operations, arithmetic.
 use ect::bytecode::{Chunk, OpCode, Register, Module};
 use ect::vm::{Value, VirtualMachine};
 
@@ -6,59 +5,18 @@ fn r(n: u8) -> Register { Register(n) }
 
 fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
     let reg_count = 256;
-    VirtualMachine::new().run(&Chunk { code: ops, constants, reg_count })
+    VirtualMachine::new().run(&Chunk { code: ops, constants, reg_count, param_count: 0 })
 }
 
-fn run_module(functions: Vec<(Vec<OpCode>, Vec<Value>)>) -> Result<Value, String> {
+fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, usize)>) -> Result<Value, String> {
     let num_functions = functions.len();
     let chunks: Vec<Chunk> = functions
         .into_iter()
-        .map(|(code, constants)| {
-            // Calculate reg_count as the maximum register index used + 1
-            let mut max_reg = 0;
-            for op in &code {
-                match op {
-                    OpCode::PushConst(r, _) | OpCode::Drop(r) | OpCode::Ret(r)
-                    | OpCode::Jz(r, _) | OpCode::Jnz(r, _) => {
-                        max_reg = max_reg.max(r.to_usize() + 1);
-                    }
-                    OpCode::Copy(d, s) | OpCode::Move(d, s)
-                    | OpCode::MakeShared(d, s) | OpCode::Ref(d, s) | OpCode::Deref(d, s)
-                    | OpCode::GetTag(d, s) | OpCode::GetField(d, s, _) => {
-                        max_reg = max_reg.max(d.to_usize() + 1);
-                        max_reg = max_reg.max(s.to_usize() + 1);
-                    }
-                    OpCode::MakeRecord(d, _, first, count) | OpCode::MakeArray(d, first, count) => {
-                        max_reg = max_reg.max(d.to_usize() + 1);
-                        max_reg = max_reg.max(first.to_usize() + *count as usize);
-                    }
-                    OpCode::GetIndex(d, b, i) => {
-                        max_reg = max_reg.max(d.to_usize() + 1);
-                        max_reg = max_reg.max(b.to_usize() + 1);
-                        max_reg = max_reg.max(i.to_usize() + 1);
-                    }
-                    OpCode::Add(d, l, r) | OpCode::Sub(d, l, r) | OpCode::Mul(d, l, r) |
-                    OpCode::Div(d, l, r) | OpCode::Mod(d, l, r) | OpCode::Eq(d, l, r) |
-                    OpCode::Neq(d, l, r) | OpCode::Lt(d, l, r) | OpCode::Gt(d, l, r) |
-                    OpCode::Lte(d, l, r) | OpCode::Gte(d, l, r) => {
-                        max_reg = max_reg.max(d.to_usize() + 1);
-                        max_reg = max_reg.max(l.to_usize() + 1);
-                        max_reg = max_reg.max(r.to_usize() + 1);
-                    }
-                    OpCode::Call(dest, _, first_arg, argc) => {
-                        max_reg = max_reg.max(dest.to_usize() + 1);
-                        max_reg = max_reg.max(first_arg.to_usize() + *argc as usize);
-                    }
-                    OpCode::Jmp(_) => {}
-                }
-            }
-            Chunk { code, constants, reg_count: max_reg }
+        .map(|(code, constants, reg_count, param_count)| {
+            Chunk { code, constants, reg_count, param_count }
         })
         .collect();
-    let module = Module {
-        functions: chunks,
-        entry: num_functions - 1,  // last function is main
-    };
+    let module = Module { functions: chunks, entry: num_functions - 1 };
     VirtualMachine::new().run_module(&module)
 }
 
@@ -141,7 +99,7 @@ fn test_div() {
 }
 
 #[test]
-fn test_div_by_zero_returns_unit() {
+fn test_div_by_zero_traps() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -151,7 +109,7 @@ fn test_div_by_zero_returns_unit() {
         ],
         vec![Value::Int(10), Value::Int(0)],
     );
-    assert_eq!(result, Ok(Value::Unit));
+    assert!(result.is_err());
 }
 
 #[test]
@@ -170,7 +128,7 @@ fn test_mod() {
 
 #[test]
 fn test_empty_chunk_returns_unit() {
-    assert_eq!(run(vec![], vec![]), Ok(Value::Unit));
+    assert!(run(vec![], vec![]).is_err());
 }
 
 #[test]
@@ -179,7 +137,6 @@ fn test_ret_empty_register_errors() {
     assert!(result.is_err());
 }
 
-// Comparison Operators
 #[test]
 fn test_eq_true() {
     let result = run(
@@ -348,15 +305,20 @@ fn test_gte_false() {
     assert_eq!(result, Ok(Value::Bool(false)));
 }
 
-// Jump Instructions
 #[test]
 fn test_jz_takes_jump_when_zero() {
+    // Layout:
+    //   pc 0: PushConst r0
+    //   pc 1: Jz r0, +1 (skip pc 2, land on pc 3)
+    //   pc 2: PushConst r1 (skipped)
+    //   pc 3: PushConst r1
+    //   pc 4: Ret r1
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),       // r0 = 0 (false)
-            OpCode::Jz(r(0), 3),              // if r0==0, jump to instruction 3
-            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
-            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jz(r(0), 1),
+            OpCode::PushConst(r(1), 1),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Int(0), Value::Int(42)],
@@ -366,11 +328,12 @@ fn test_jz_takes_jump_when_zero() {
 
 #[test]
 fn test_jz_skips_jump_when_nonzero() {
+    // pc 0: PushConst, pc 1: Jz (offset 2 to past Ret, not taken), pc 2: PushConst, pc 3: Ret
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),       // r0 = 1 (true)
-            OpCode::Jz(r(0), 4),              // if r0==0, jump (won't happen)
-            OpCode::PushConst(r(1), 1),       // r1 = 99
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jz(r(0), 2),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Int(1), Value::Int(99)],
@@ -382,10 +345,10 @@ fn test_jz_skips_jump_when_nonzero() {
 fn test_jnz_takes_jump_when_nonzero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),       // r0 = 5 (true)
-            OpCode::Jnz(r(0), 3),             // if r0!=0, jump to instruction 3
-            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
-            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jnz(r(0), 1),
+            OpCode::PushConst(r(1), 1),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Int(5), Value::Int(42)],
@@ -397,9 +360,9 @@ fn test_jnz_takes_jump_when_nonzero() {
 fn test_jnz_skips_jump_when_zero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),       // r0 = 0 (false)
-            OpCode::Jnz(r(0), 4),             // if r0!=0, jump (won't happen)
-            OpCode::PushConst(r(1), 1),       // r1 = 99
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jnz(r(0), 2),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Int(0), Value::Int(99)],
@@ -412,7 +375,7 @@ fn test_jmp_unconditional() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
-            OpCode::Jmp(3),
+            OpCode::Jmp(1),
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(0)),
         ],
@@ -425,10 +388,10 @@ fn test_jmp_unconditional() {
 fn test_jz_with_bool_false_takes_jump() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),       // r0 = false
-            OpCode::Jz(r(0), 3),              // if r0==false (falsy), jump to instruction 3
-            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
-            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jz(r(0), 1),
+            OpCode::PushConst(r(1), 1),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Bool(false), Value::Int(42)],
@@ -438,18 +401,24 @@ fn test_jz_with_bool_false_takes_jump() {
 
 #[test]
 fn test_loop_counter() {
+    // Layout:
+    //   pc 0: PushConst r0, 0  ; i = 0
+    //   pc 1: PushConst r1, 1  ; limit = 3
+    //   pc 2: Lt r2, r0, r1
+    //   pc 3: Jz r2, +3        ; if !(i<limit), jump past loop body to pc 7
+    //   pc 4: PushConst r3, 2  ; one
+    //   pc 5: Add r0, r0, r3
+    //   pc 6: Jmp -5           ; back to pc 2
+    //   pc 7: Ret r0
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0), // i = 0
-            OpCode::PushConst(r(1), 1), // limit = 3
-            // Loop: check i < limit
-            OpCode::Lt(r(2), r(0), r(1)),  // r2 = i < limit
-            OpCode::Jz(r(2), 7),           // if !r2, jump to end
-            // Increment: i = i + 1
-            OpCode::PushConst(r(3), 2),    // r3 = 1
-            OpCode::Add(r(0), r(0), r(3)), // i = i + 1
-            OpCode::Jmp(2),                // jump back to loop check
-            // End: return i
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Lt(r(2), r(0), r(1)),
+            OpCode::Jz(r(2), 3),
+            OpCode::PushConst(r(3), 2),
+            OpCode::Add(r(0), r(0), r(3)),
+            OpCode::Jmp(-5),
             OpCode::Ret(r(0)),
         ],
         vec![Value::Int(0), Value::Int(3), Value::Int(1)],
@@ -457,7 +426,6 @@ fn test_loop_counter() {
     assert_eq!(result, Ok(Value::Int(3)));
 }
 
-// Boundary conditions for comparisons
 #[test]
 fn test_lte_equal_boundary() {
     let result = run(
@@ -486,15 +454,14 @@ fn test_gte_equal_boundary() {
     assert_eq!(result, Ok(Value::Bool(true)));
 }
 
-// is_falsy edge cases
 #[test]
 fn test_jz_falsy_int_zero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = 0 (falsy)
-            OpCode::Jz(r(0), 3),              // if r0 is falsy, jump
-            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
-            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jz(r(0), 1),
+            OpCode::PushConst(r(1), 1),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Int(0), Value::Int(42)],
@@ -506,9 +473,9 @@ fn test_jz_falsy_int_zero() {
 fn test_jz_truthy_int_nonzero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = 7 (truthy)
-            OpCode::Jz(r(0), 3),              // if r0 is falsy, jump (won't happen)
-            OpCode::PushConst(r(1), 1),       // r1 = 99
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jz(r(0), 1),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Int(7), Value::Int(99)],
@@ -520,10 +487,10 @@ fn test_jz_truthy_int_nonzero() {
 fn test_jnz_truthy_int_nonzero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = 7 (truthy)
-            OpCode::Jnz(r(0), 3),             // if r0 is truthy, jump
-            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
-            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jnz(r(0), 1),
+            OpCode::PushConst(r(1), 1),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Int(7), Value::Int(42)],
@@ -535,9 +502,9 @@ fn test_jnz_truthy_int_nonzero() {
 fn test_jnz_falsy_int_zero() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = 0 (falsy)
-            OpCode::Jnz(r(0), 3),             // if r0 is truthy, jump (won't happen)
-            OpCode::PushConst(r(1), 1),       // r1 = 99
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jnz(r(0), 1),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Int(0), Value::Int(99)],
@@ -545,12 +512,11 @@ fn test_jnz_falsy_int_zero() {
     assert_eq!(result, Ok(Value::Int(99)));
 }
 
-// Error cases
 #[test]
 fn test_mov_empty_source_register_errors() {
     let result = run(
         vec![
-            OpCode::Copy(r(0), r(1)),  // r1 is uninitialized
+            OpCode::Copy(r(0), r(1)),
             OpCode::Ret(r(0)),
         ],
         vec![],
@@ -562,7 +528,7 @@ fn test_mov_empty_source_register_errors() {
 fn test_jz_empty_register_errors() {
     let result = run(
         vec![
-            OpCode::Jz(r(0), 1),  // r0 is uninitialized
+            OpCode::Jz(r(0), 0),
             OpCode::Ret(r(1)),
         ],
         vec![],
@@ -570,15 +536,14 @@ fn test_jz_empty_register_errors() {
     assert!(result.is_err());
 }
 
-// Jz with Unit (falsy)
 #[test]
 fn test_jz_with_unit_falsy() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = Unit (falsy)
-            OpCode::Jz(r(0), 3),              // if r0 is falsy, jump to instruction 3
-            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
-            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jz(r(0), 1),
+            OpCode::PushConst(r(1), 1),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Unit, Value::Int(42)],
@@ -586,15 +551,14 @@ fn test_jz_with_unit_falsy() {
     assert_eq!(result, Ok(Value::Int(42)));
 }
 
-// Jnz with Bool(true) (truthy)
 #[test]
 fn test_jnz_with_bool_true() {
     let result = run(
         vec![
-            OpCode::PushConst(r(0), 0),      // r0 = true (truthy)
-            OpCode::Jnz(r(0), 3),             // if r0 is truthy, jump to instruction 3
-            OpCode::PushConst(r(1), 1),       // (skipped) r1 = 99
-            OpCode::PushConst(r(1), 1),       // r1 = 42
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jnz(r(0), 1),
+            OpCode::PushConst(r(1), 1),
+            OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Bool(true), Value::Int(42)],
@@ -602,9 +566,8 @@ fn test_jnz_with_bool_true() {
     assert_eq!(result, Ok(Value::Int(42)));
 }
 
-// Mod by zero
 #[test]
-fn test_mod_by_zero_returns_unit() {
+fn test_mod_by_zero_traps() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -614,15 +577,14 @@ fn test_mod_by_zero_returns_unit() {
         ],
         vec![Value::Int(10), Value::Int(0)],
     );
-    assert_eq!(result, Ok(Value::Unit));
+    assert!(result.is_err());
 }
 
-// Error cases
 #[test]
 fn test_jnz_empty_register_errors() {
     let result = run(
         vec![
-            OpCode::Jnz(r(0), 1),  // r0 is uninitialized
+            OpCode::Jnz(r(0), 0),
             OpCode::Ret(r(1)),
         ],
         vec![],
@@ -635,7 +597,7 @@ fn test_add_empty_left_register_errors() {
     let result = run(
         vec![
             OpCode::PushConst(r(1), 0),
-            OpCode::Add(r(2), r(0), r(1)),  // r0 is uninitialized
+            OpCode::Add(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
         vec![Value::Int(5)],
@@ -648,7 +610,7 @@ fn test_add_empty_right_register_errors() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
-            OpCode::Add(r(2), r(0), r(1)),  // r1 is uninitialized
+            OpCode::Add(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
         vec![Value::Int(5)],
@@ -661,7 +623,7 @@ fn test_sub_empty_left_register_errors() {
     let result = run(
         vec![
             OpCode::PushConst(r(1), 0),
-            OpCode::Sub(r(2), r(0), r(1)),  // r0 is uninitialized
+            OpCode::Sub(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
         vec![Value::Int(5)],
@@ -674,7 +636,7 @@ fn test_mul_empty_right_register_errors() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
-            OpCode::Mul(r(2), r(0), r(1)),  // r1 is uninitialized
+            OpCode::Mul(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
         vec![Value::Int(5)],
@@ -682,28 +644,28 @@ fn test_mul_empty_right_register_errors() {
     assert!(result.is_err());
 }
 
-// Function calls
-
 #[test]
 fn test_call_simple() {
-    let result = run_module(vec![
-        // Function 0 (callee): takes args in r0, r1, adds them, returns in r0
+    // Callee adds r0 and r1.
+    // Main has reg_count=1 (just dest r0); args land at r1, r2 = caller_reg_count + 0, +1.
+    let result = run_module_with_param_counts(vec![
         (
             vec![
                 OpCode::Add(r(0), r(0), r(1)),
                 OpCode::Ret(r(0)),
             ],
             vec![],
+            2, 2,
         ),
-        // Function 1 (main): calls function 0 with args 2, 3
         (
             vec![
-                OpCode::PushConst(r(0), 0),  // r0 = 2
-                OpCode::PushConst(r(1), 1),  // r1 = 3
-                OpCode::Call(r(2), 0, r(0), 2),  // call func 0 with 2 args, result in r2
-                OpCode::Ret(r(2)),
+                OpCode::PushConst(r(1), 0),
+                OpCode::PushConst(r(2), 1),
+                OpCode::Call(r(0), 0),
+                OpCode::Ret(r(0)),
             ],
             vec![Value::Int(2), Value::Int(3)],
+            1, 0,
         ),
     ]);
     assert_eq!(result, Ok(Value::Int(5)));
@@ -711,23 +673,21 @@ fn test_call_simple() {
 
 #[test]
 fn test_call_passes_args_to_callee() {
-    let result = run_module(vec![
-        // Function 0 (callee): return second arg
+    let result = run_module_with_param_counts(vec![
         (
-            vec![
-                OpCode::Ret(r(1)),  // r1 contains second arg
-            ],
+            vec![OpCode::Ret(r(1))],
             vec![],
+            2, 2,
         ),
-        // Function 1 (main): call with args 10, 20
         (
             vec![
-                OpCode::PushConst(r(0), 0),  // r0 = 10
-                OpCode::PushConst(r(1), 1),  // r1 = 20
-                OpCode::Call(r(2), 0, r(0), 2),
-                OpCode::Ret(r(2)),
+                OpCode::PushConst(r(1), 0),
+                OpCode::PushConst(r(2), 1),
+                OpCode::Call(r(0), 0),
+                OpCode::Ret(r(0)),
             ],
             vec![Value::Int(10), Value::Int(20)],
+            1, 0,
         ),
     ]);
     assert_eq!(result, Ok(Value::Int(20)));
@@ -735,24 +695,24 @@ fn test_call_passes_args_to_callee() {
 
 #[test]
 fn test_call_return_value_in_dest() {
-    let result = run_module(vec![
-        // Function 0: increment first arg
+    let result = run_module_with_param_counts(vec![
         (
             vec![
-                OpCode::PushConst(r(1), 0),  // r1 = 1
-                OpCode::Add(r(0), r(0), r(1)),  // r0 = r0 + 1
+                OpCode::PushConst(r(1), 0),
+                OpCode::Add(r(0), r(0), r(1)),
                 OpCode::Ret(r(0)),
             ],
             vec![Value::Int(1)],
+            2, 1,
         ),
-        // Function 1: call and return result
         (
             vec![
-                OpCode::PushConst(r(0), 0),  // r0 = 5
-                OpCode::Call(r(1), 0, r(0), 1),  // result in r1
-                OpCode::Ret(r(1)),
+                OpCode::PushConst(r(1), 0),
+                OpCode::Call(r(0), 0),
+                OpCode::Ret(r(0)),
             ],
             vec![Value::Int(5)],
+            1, 0,
         ),
     ]);
     assert_eq!(result, Ok(Value::Int(6)));
@@ -760,47 +720,47 @@ fn test_call_return_value_in_dest() {
 
 #[test]
 fn test_recursion_simple() {
-    let result = run_module(vec![
-        // Function 0: countdown(n) - if n <= 0 return 0, else call countdown(n-1)
+    // countdown(n): if n<=0 return 0 else countdown(n-1)
+    // Locals: r0=n, r1=tmp, r2=cmp, r3=call_dest. reg_count=4, param_count=1.
+    // Recursive arg lives at r4 (caller_reg_count + 0).
+    //
+    // pc 0: PushConst r1, 0   ; r1 = 0
+    // pc 1: Lte r2, r0, r1
+    // pc 2: Jz r2, +3         ; if !(n<=0), jump to pc 6
+    // pc 3: PushConst r0, 1   ; r0 = 0 (return value)
+    // pc 4: Ret r0
+    // pc 5: (unreachable)
+    // pc 6: PushConst r1, 2   ; r1 = 1
+    // pc 7: Sub r0, r0, r1    ; r0 = n - 1
+    // pc 8: Copy r4, r0       ; outbound arg
+    // pc 9: Call r3, 0
+    // pc 10: Ret r3
+    let result = run_module_with_param_counts(vec![
         (
             vec![
-                // Check if r0 <= 0
-                OpCode::PushConst(r(1), 0),  // r1 = 0
-                OpCode::Lte(r(2), r(0), r(1)),  // r2 = (r0 <= 0)
-                OpCode::Jz(r(2), 5),  // if not (r0 <= 0), jump to else
-                // Then: return 0
-                OpCode::PushConst(r(0), 1),  // r0 = 0
+                OpCode::PushConst(r(1), 0),
+                OpCode::Lte(r(2), r(0), r(1)),
+                OpCode::Jz(r(2), 2),
+                OpCode::PushConst(r(0), 1),
                 OpCode::Ret(r(0)),
-                // Else: call countdown(n-1)
-                OpCode::PushConst(r(1), 2),  // r1 = 1
-                OpCode::Sub(r(0), r(0), r(1)),  // r0 = r0 - 1
-                OpCode::Call(r(3), 0, r(0), 1),  // call countdown(r0)
+                OpCode::PushConst(r(1), 2),
+                OpCode::Sub(r(0), r(0), r(1)),
+                OpCode::Copy(r(4), r(0)),
+                OpCode::Call(r(3), 0),
                 OpCode::Ret(r(3)),
             ],
             vec![Value::Int(0), Value::Int(0), Value::Int(1)],
+            4, 1,
         ),
-        // Function 1: main - call countdown(2)
         (
             vec![
-                OpCode::PushConst(r(0), 0),  // r0 = 2
-                OpCode::Call(r(1), 0, r(0), 1),
-                OpCode::Ret(r(1)),
+                OpCode::PushConst(r(1), 0),
+                OpCode::Call(r(0), 0),
+                OpCode::Ret(r(0)),
             ],
             vec![Value::Int(2)],
+            1, 0,
         ),
     ]);
     assert_eq!(result, Ok(Value::Int(0)));
-}
-
-#[test]
-fn test_call_in_single_chunk_errors() {
-    let result = run(
-        vec![
-            OpCode::PushConst(r(0), 0),
-            OpCode::Call(r(1), 0, r(0), 1),
-            OpCode::Ret(r(1)),
-        ],
-        vec![Value::Int(5)],
-    );
-    assert!(result.is_err(), "Call should fail in single-chunk mode");
 }

@@ -11,34 +11,61 @@ impl Register {
 
 #[derive(Debug, Clone)]
 pub enum OpCode {
-    PushConst(Register, usize),
-    Copy(Register, Register),
-    Move(Register, Register),
     Add(Register, Register, Register),
     Sub(Register, Register, Register),
     Mul(Register, Register, Register),
     Div(Register, Register, Register),
     Mod(Register, Register, Register),
+    Neg(Register, Register),
+    FAdd(Register, Register, Register),
+    FSub(Register, Register, Register),
+    FMul(Register, Register, Register),
+    FDiv(Register, Register, Register),
+
     Eq(Register, Register, Register),
     Neq(Register, Register, Register),
     Lt(Register, Register, Register),
     Gt(Register, Register, Register),
     Lte(Register, Register, Register),
     Gte(Register, Register, Register),
-    Jz(Register, usize),
-    Jnz(Register, usize),
-    Jmp(usize),
+    FLt(Register, Register, Register),
+
+    And(Register, Register, Register),
+    Or(Register, Register, Register),
+    Xor(Register, Register, Register),
+    Shl(Register, Register, Register),
+    Shr(Register, Register, Register),
+
+    Jmp(i16),
+    Jz(Register, i16),
+    Jnz(Register, i16),
+    Call(Register, u16),
     Ret(Register),
-    Call(Register, usize, Register, u8),
-    MakeShared(Register, Register),
+
+    PushConst(Register, u16),
+    Copy(Register, Register),
+    Move(Register, Register),
+
+    Ld(Register, Register, u16),
+    St(Register, Register, u16),
+    LdIdx(Register, Register, Register),
+    StIdx(Register, Register, Register),
+    Lea(Register, Register, u16),
     Ref(Register, Register),
-    Deref(Register, Register),
+
+    Alloc(Register, u16),
+    Free(Register),
     Drop(Register),
-    MakeRecord(Register, u32, Register, u8),
-    GetField(Register, Register, u32),
-    GetTag(Register, Register),
-    MakeArray(Register, Register, u8),
-    GetIndex(Register, Register, Register),
+
+    Dei(Register, Register),
+    Deo(Register, Register),
+
+    Spawn(Register, u16),
+    Await(Register),
+    Yield,
+
+    Handle(Register, u16),
+    Resume(Register),
 }
 
 #[derive(Clone)]
@@ -46,6 +73,7 @@ pub struct Chunk {
     pub code: Vec<OpCode>,
     pub constants: Vec<Value>,
     pub reg_count: usize,
+    pub param_count: usize,
 }
 
 pub struct Module {

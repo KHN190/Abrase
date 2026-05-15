@@ -11,19 +11,7 @@ use crate::error::{Error, ErrorCode};
 use crate::vm::Value;
 use std::collections::HashMap;
 
-#[derive(Clone, Debug)]
-pub(super) enum VariantShape {
-    Unit,
-    Tuple(usize),
-    Record(Vec<String>),
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct VariantInfo {
-    pub type_name: String,
-    pub tag: u32,
-    pub shape: VariantShape,
-}
+use self::hir::LayoutCtx;
 
 pub struct Compiler {
     pub(super) constants: Vec<Value>,
@@ -33,8 +21,8 @@ pub struct Compiler {
     pub(super) var_types: HashMap<String, ast::Type>,
     pub(super) func_map: HashMap<String, usize>,
     pub(super) functions: Vec<Chunk>,
-    pub(super) record_fields: HashMap<String, Vec<String>>,
-    pub(super) variant_info: HashMap<String, VariantInfo>,
+    pub(super) layouts: LayoutCtx,
+    pub(super) pending_arg_patches: Vec<(usize, u8)>,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -49,8 +37,8 @@ impl Compiler {
             var_types: HashMap::new(),
             func_map: HashMap::new(),
             functions: Vec::new(),
-            record_fields: HashMap::new(),
-            variant_info: HashMap::new(),
+            layouts: LayoutCtx::new(),
+            pending_arg_patches: Vec::new(),
             errors: Vec::new(),
             source: String::new(),
         }
@@ -69,31 +57,6 @@ impl Compiler {
             .join("\n")
     }
 
-    pub(super) fn register_type_decl(&mut self, name: &str, body: &ast::TypeBody) {
-        match body {
-            ast::TypeBody::Record(fields) => {
-                let names = fields.iter().map(|f| f.name.clone()).collect();
-                self.record_fields.insert(name.to_string(), names);
-            }
-            ast::TypeBody::Variant(cases) => {
-                for (tag, case) in cases.iter().enumerate() {
-                    let (vname, shape) = match case {
-                        ast::VariantCase::Unit(n) => (n.clone(), VariantShape::Unit),
-                        ast::VariantCase::Tuple(n, tys) => (n.clone(), VariantShape::Tuple(tys.len())),
-                        ast::VariantCase::Record(n, fs) => {
-                            (n.clone(), VariantShape::Record(fs.iter().map(|f| f.name.clone()).collect()))
-                        }
-                    };
-                    self.variant_info.insert(vname, VariantInfo {
-                        type_name: name.to_string(),
-                        tag: tag as u32,
-                        shape,
-                    });
-                }
-            }
-        }
-    }
-
     pub fn compile(&mut self, ast: &[ast::Decl]) -> Result<Chunk, String> {
         for decl in ast {
             if let ast::Decl::Fn(fn_decl) = decl {
@@ -107,6 +70,7 @@ impl Compiler {
             code: self.code.clone(),
             constants: self.constants.clone(),
             reg_count: self.next_reg as usize,
+            param_count: 0,
         })
     }
 
@@ -122,11 +86,12 @@ impl Compiler {
                         code: Vec::new(),
                         constants: Vec::new(),
                         reg_count: 0,
+                        param_count: 0,
                     });
                     fn_decls.push((idx, fn_decl.clone()));
                 }
                 ast::Decl::Type { name, body, .. } => {
-                    self.register_type_decl(name, body);
+                    lower::register_type_decl(&mut self.layouts, name, body);
                 }
                 _ => {}
             }
@@ -188,6 +153,8 @@ impl Compiler {
             return Err(self.errors.clone());
         }
 
+        let param_count = fn_decl.params.iter().filter(|p| matches!(p, ast::Param::Named { .. })).count();
+
         match self.compile_block(&fn_decl.body) {
             Ok(result_reg) => {
                 self.emit(OpCode::Ret(result_reg));
@@ -202,11 +169,21 @@ impl Compiler {
             }
         }
 
+        if let Err(msg) = self.finalize_arg_patches() {
+            self.errors.push(Error::new(
+                ErrorCode::CodegenError,
+                ast::Span::new(0, 0),
+                msg,
+            ));
+            return Err(self.errors.clone());
+        }
+
         let reg_count = self.next_reg as usize;
         let chunk = Chunk {
             code: std::mem::take(&mut self.code),
             constants: std::mem::take(&mut self.constants),
             reg_count,
+            param_count,
         };
 
         self.code = saved_code;

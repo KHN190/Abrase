@@ -2,155 +2,13 @@ use super::{VirtualMachine, Value};
 use crate::bytecode::{Chunk, OpCode, Register, Module};
 use crate::vm::frame::Frame;
 
-// Max 2.5~3 MB
 const MAX_REGISTERS: usize = 1 << 16;
 const MAX_RECURSION_DEPTH: usize = 2048;
 
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
-        self.pc = 0;
-        if chunk.reg_count > self.registers.len() {
-            self.registers.resize(chunk.reg_count, None);
-        }
-        while self.pc < chunk.code.len() {
-            let opcode = &chunk.code[self.pc];
-            self.pc += 1;
-            match opcode {
-                OpCode::PushConst(reg, const_idx) => {
-                    if *const_idx >= chunk.constants.len() {
-                        return Err("Constant index out of bounds".to_string());
-                    }
-                    self.registers[reg.to_usize()] = Some(chunk.constants[*const_idx].clone());
-                }
-                OpCode::Copy(dest, src) => {
-                    let val = self.registers[src.to_usize()].clone()
-                        .ok_or("Source register is empty")?;
-                    self.registers[dest.to_usize()] = Some(val);
-                }
-                OpCode::Move(dest, src) => {
-                    let val = self.registers[src.to_usize()].take()
-                        .ok_or("Source register is empty (already moved?)")?;
-                    self.registers[dest.to_usize()] = Some(val);
-                }
-                OpCode::MakeShared(dest, src) => {
-                    let val = self.registers[src.to_usize()].take()
-                        .ok_or("Source register is empty")?;
-                    self.registers[dest.to_usize()] = Some(Value::Shared(std::rc::Rc::new(val)));
-                }
-                OpCode::Ref(dest, src) => {
-                    let val = self.registers[src.to_usize()].clone()
-                        .ok_or("Source register is empty")?;
-                    self.registers[dest.to_usize()] = Some(Value::Reference(Box::new(val)));
-                }
-                OpCode::Deref(dest, src) => {
-                    let val = self.registers[src.to_usize()].clone()
-                        .ok_or("Source register is empty")?;
-                    let inner = match val {
-                        Value::Reference(b) => *b,
-                        Value::Shared(rc) => (*rc).clone(),
-                        v => v,
-                    };
-                    self.registers[dest.to_usize()] = Some(inner);
-                }
-                OpCode::Drop(reg) => {
-                    self.registers[reg.to_usize()] = None;
-                }
-                OpCode::Add(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Sub(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Mul(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Div(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) if b != 0 => Value::Int(a / b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Mod(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) if b != 0 => Value::Int(a % b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Eq(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| {
-                        Value::Bool(l == r)
-                    })?;
-                }
-                OpCode::Neq(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| {
-                        Value::Bool(l != r)
-                    })?;
-                }
-                OpCode::Lt(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
-                        (Value::Float(a), Value::Float(b)) => Value::Bool(a < b),
-                        _ => Value::Bool(false),
-                    })?;
-                }
-                OpCode::Gt(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Bool(a > b),
-                        (Value::Float(a), Value::Float(b)) => Value::Bool(a > b),
-                        _ => Value::Bool(false),
-                    })?;
-                }
-                OpCode::Lte(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Bool(a <= b),
-                        (Value::Float(a), Value::Float(b)) => Value::Bool(a <= b),
-                        _ => Value::Bool(false),
-                    })?;
-                }
-                OpCode::Gte(dest, left, right) => {
-                    self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Bool(a >= b),
-                        (Value::Float(a), Value::Float(b)) => Value::Bool(a >= b),
-                        _ => Value::Bool(false),
-                    })?;
-                }
-                OpCode::Jz(reg, target) => {
-                    let cond = self.registers[reg.to_usize()].clone()
-                        .ok_or("Jump register is empty")?;
-                    if is_falsy(&cond) {
-                        self.pc = *target;
-                    }
-                }
-                OpCode::Jnz(reg, target) => {
-                    let cond = self.registers[reg.to_usize()].clone()
-                        .ok_or("Jump register is empty")?;
-                    if !is_falsy(&cond) {
-                        self.pc = *target;
-                    }
-                }
-                OpCode::Jmp(target) => {
-                    self.pc = *target;
-                }
-                OpCode::Ret(reg) => {
-                    return self.registers[reg.to_usize()].clone()
-                        .ok_or_else(|| "Return register is empty".to_string());
-                }
-                OpCode::Call(_, _, _, _) => {
-                    return Err("Call opcode not supported in single-chunk mode; use run_module()".to_string());
-                }
-                _ => return Err("opcode not supported in single-chunk mode; use run_module()".to_string()),
-            }
-        }
-        Ok(Value::Unit)
+        let module = Module { functions: vec![chunk.clone()], entry: 0 };
+        self.run_module(&module)
     }
 
     pub fn run_module(&mut self, module: &Module) -> Result<Value, String> {
@@ -163,9 +21,9 @@ impl VirtualMachine {
         self.base_reg = 0;
         self.current_func = module.entry;
         self.frames.clear();
-        let entry_regs = module.functions[module.entry].reg_count;
-        if entry_regs > self.registers.len() {
-            self.registers.resize(entry_regs, None);
+        let needed = 256;
+        if needed > self.registers.len() {
+            self.registers.resize(needed, None);
         }
 
         loop {
@@ -186,262 +44,261 @@ impl VirtualMachine {
                 }
             }
 
-            let opcode = &current_chunk.code[self.pc].clone();
+            let opcode = current_chunk.code[self.pc].clone();
             self.pc += 1;
+            self.exec(module, &opcode)?;
+        }
+    }
 
-            match opcode {
-                OpCode::PushConst(reg, const_idx) => {
-                    if *const_idx >= current_chunk.constants.len() {
-                        return Err("Constant index out of bounds".to_string());
-                    }
-                    self.registers[self.base_reg + reg.to_usize()] = Some(current_chunk.constants[*const_idx].clone());
-                }
-                OpCode::Copy(dest, src) => {
-                    let val = self.registers[self.base_reg + src.to_usize()].clone()
-                        .ok_or("Source register is empty")?;
-                    self.registers[self.base_reg + dest.to_usize()] = Some(val);
-                }
-                OpCode::Move(dest, src) => {
-                    let val = self.registers[self.base_reg + src.to_usize()].take()
-                        .ok_or("Source register is empty (already moved?)")?;
-                    self.registers[self.base_reg + dest.to_usize()] = Some(val);
-                }
-                OpCode::MakeShared(dest, src) => {
-                    let val = self.registers[self.base_reg + src.to_usize()].take()
-                        .ok_or("Source register is empty")?;
-                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Shared(std::rc::Rc::new(val)));
-                }
-                OpCode::Ref(dest, src) => {
-                    let val = self.registers[self.base_reg + src.to_usize()].clone()
-                        .ok_or("Source register is empty")?;
-                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Reference(Box::new(val)));
-                }
-                OpCode::Deref(dest, src) => {
-                    let val = self.registers[self.base_reg + src.to_usize()].clone()
-                        .ok_or("Source register is empty")?;
-                    let inner = match val {
-                        Value::Reference(b) => *b,
-                        Value::Shared(rc) => (*rc).clone(),
-                        v => v,
-                    };
-                    self.registers[self.base_reg + dest.to_usize()] = Some(inner);
-                }
-                OpCode::Drop(reg) => {
-                    self.registers[self.base_reg + reg.to_usize()] = None;
-                }
-                OpCode::MakeRecord(dest, tag, first, count) => {
-                    let mut fields = Vec::with_capacity(*count as usize);
-                    for i in 0..*count as usize {
-                        let v = self.registers[self.base_reg + first.to_usize() + i].clone()
-                            .ok_or("Record field register is empty")?;
-                        fields.push(v);
-                    }
-                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Record { tag: *tag, fields });
-                }
-                OpCode::GetField(dest, src, idx) => {
-                    let v = self.registers[self.base_reg + src.to_usize()].clone()
-                        .ok_or("Source register is empty")?;
-                    let inner = match v {
-                        Value::Record { fields, .. } => fields.get(*idx as usize).cloned()
-                            .ok_or_else(|| format!("Field index {} out of bounds", idx))?,
-                        Value::Tuple(items) => items.get(*idx as usize).cloned()
-                            .ok_or_else(|| format!("Tuple index {} out of bounds", idx))?,
-                        _ => return Err("GetField on non-record value".to_string()),
-                    };
-                    self.registers[self.base_reg + dest.to_usize()] = Some(inner);
-                }
-                OpCode::GetTag(dest, src) => {
-                    let v = self.registers[self.base_reg + src.to_usize()].clone()
-                        .ok_or("Source register is empty")?;
-                    let tag = match v {
-                        Value::Record { tag, .. } => tag as i64,
-                        _ => return Err("GetTag on non-record value".to_string()),
-                    };
-                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Int(tag));
-                }
-                OpCode::MakeArray(dest, first, count) => {
-                    let mut items = Vec::with_capacity(*count as usize);
-                    for i in 0..*count as usize {
-                        let v = self.registers[self.base_reg + first.to_usize() + i].clone()
-                            .ok_or("Array element register is empty")?;
-                        items.push(v);
-                    }
-                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Array(items));
-                }
-                OpCode::GetIndex(dest, base, idx) => {
-                    let arr = self.registers[self.base_reg + base.to_usize()].clone()
-                        .ok_or("Array register is empty")?;
-                    let idx_val = self.registers[self.base_reg + idx.to_usize()].clone()
-                        .ok_or("Index register is empty")?;
-                    let i = match idx_val { Value::Int(n) => n as usize, _ => return Err("Index must be Int".to_string()) };
-                    let elem = match arr {
-                        Value::Array(items) | Value::Tuple(items) => items.get(i).cloned()
-                            .ok_or_else(|| format!("Index {} out of bounds", i))?,
-                        _ => return Err("GetIndex on non-array value".to_string()),
-                    };
-                    self.registers[self.base_reg + dest.to_usize()] = Some(elem);
-                }
-                OpCode::Add(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Sub(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Mul(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Div(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) if b != 0 => Value::Int(a / b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Mod(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) if b != 0 => Value::Int(a % b),
-                        _ => Value::Unit,
-                    })?;
-                }
-                OpCode::Eq(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| {
-                        Value::Bool(l == r)
-                    })?;
-                }
-                OpCode::Neq(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| {
-                        Value::Bool(l != r)
-                    })?;
-                }
-                OpCode::Lt(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
-                        (Value::Float(a), Value::Float(b)) => Value::Bool(a < b),
-                        _ => Value::Bool(false),
-                    })?;
-                }
-                OpCode::Gt(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Bool(a > b),
-                        (Value::Float(a), Value::Float(b)) => Value::Bool(a > b),
-                        _ => Value::Bool(false),
-                    })?;
-                }
-                OpCode::Lte(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Bool(a <= b),
-                        (Value::Float(a), Value::Float(b)) => Value::Bool(a <= b),
-                        _ => Value::Bool(false),
-                    })?;
-                }
-                OpCode::Gte(dest, left, right) => {
-                    self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
-                        (Value::Int(a), Value::Int(b)) => Value::Bool(a >= b),
-                        (Value::Float(a), Value::Float(b)) => Value::Bool(a >= b),
-                        _ => Value::Bool(false),
-                    })?;
-                }
-                OpCode::Jz(reg, target) => {
-                    let cond = self.registers[self.base_reg + reg.to_usize()].clone()
-                        .ok_or("Jump register is empty")?;
-                    if is_falsy(&cond) {
-                        self.pc = *target;
-                    }
-                }
-                OpCode::Jnz(reg, target) => {
-                    let cond = self.registers[self.base_reg + reg.to_usize()].clone()
-                        .ok_or("Jump register is empty")?;
-                    if !is_falsy(&cond) {
-                        self.pc = *target;
-                    }
-                }
-                OpCode::Jmp(target) => {
-                    self.pc = *target;
-                }
-                OpCode::Call(dest, func_id, first_arg_reg, arg_count) => {
-                    let dest_abs = self.base_reg + dest.to_usize();
-                    let new_base = self.base_reg + current_chunk.reg_count;
-                    let callee_reg_count = module.functions[*func_id].reg_count;
-                    let needed = new_base + callee_reg_count;
-                    if needed > MAX_REGISTERS {
-                        return Err(format!(
-                            "Stack overflow: register window {} exceeds limit {}",
-                            needed, MAX_REGISTERS
-                        ));
-                    }
-                    if needed > self.registers.len() {
-                        self.registers.resize(needed, None);
-                    }
+    fn exec(&mut self, module: &Module, op: &OpCode) -> Result<(), String> {
+        match op {
+            OpCode::Add(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_add(y)),
+            OpCode::Sub(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_sub(y)),
+            OpCode::Mul(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_mul(y)),
+            OpCode::Div(d, a, b)  => self.bin_i64_checked(*d, *a, *b, "div by zero", |x, y| x.checked_div(y)),
+            OpCode::Mod(d, a, b)  => self.bin_i64_checked(*d, *a, *b, "mod by zero", |x, y| x.checked_rem(y)),
+            OpCode::Neg(d, a)     => {
+                let v = self.read_i64(*a)?;
+                self.write(*d, Value::Int(v.wrapping_neg()))
+            }
+            OpCode::FAdd(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x + y),
+            OpCode::FSub(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x - y),
+            OpCode::FMul(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x * y),
+            OpCode::FDiv(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x / y),
 
-                    if self.frames.len() >= MAX_RECURSION_DEPTH {
-                        return Err(format!(
-                            "Stack overflow: recursion depth {} exceeds limit {}",
-                            self.frames.len(),
-                            MAX_RECURSION_DEPTH
-                        ));
-                    }
+            OpCode::Eq(d, a, b)  => self.bin_cmp(*d, *a, *b, |x, y| x == y),
+            OpCode::Neq(d, a, b) => self.bin_cmp(*d, *a, *b, |x, y| x != y),
+            OpCode::Lt(d, a, b)  => self.bin_i64_cmp(*d, *a, *b, |x, y| x < y),
+            OpCode::Gt(d, a, b)  => self.bin_i64_cmp(*d, *a, *b, |x, y| x > y),
+            OpCode::Lte(d, a, b) => self.bin_i64_cmp(*d, *a, *b, |x, y| x <= y),
+            OpCode::Gte(d, a, b) => self.bin_i64_cmp(*d, *a, *b, |x, y| x >= y),
+            OpCode::FLt(d, a, b) => {
+                let x = self.read_f64(*a)?;
+                let y = self.read_f64(*b)?;
+                let r = if x.is_nan() || y.is_nan() { false } else { x < y };
+                self.write(*d, Value::Bool(r))
+            }
 
-                    self.frames.push(Frame {
-                        func_id: self.current_func,
-                        ip: self.pc,
-                        base_reg: self.base_reg,
-                        dest_reg: dest_abs,
-                    });
+            OpCode::And(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x & y),
+            OpCode::Or(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x | y),
+            OpCode::Xor(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x ^ y),
+            OpCode::Shl(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_shl((y as u32) & 63)),
+            OpCode::Shr(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_shr((y as u32) & 63)),
 
-                    for i in 0..*arg_count as usize {
-                        let src_idx = self.base_reg + first_arg_reg.to_usize() + i;
-                        if let Some(val) = self.registers[src_idx].clone() {
-                            self.registers[new_base + i] = Some(val);
-                        }
-                    }
+            OpCode::Jmp(off) => { self.branch(*off); Ok(()) }
+            OpCode::Jz(r, off) => {
+                let v = self.read(*r)?;
+                if is_falsy(&v) { self.branch(*off); }
+                Ok(())
+            }
+            OpCode::Jnz(r, off) => {
+                let v = self.read(*r)?;
+                if !is_falsy(&v) { self.branch(*off); }
+                Ok(())
+            }
+            OpCode::Call(dest, fn_id) => self.do_call(module, *dest, *fn_id as usize),
+            OpCode::Ret(reg) => self.do_ret(*reg),
 
-                    self.base_reg = new_base;
-                    self.current_func = *func_id;
-                    self.pc = 0;
+            OpCode::PushConst(reg, pool_idx) => {
+                let chunk = &module.functions[self.current_func];
+                let idx = *pool_idx as usize;
+                if idx >= chunk.constants.len() {
+                    return Err("Constant index out of bounds".to_string());
                 }
-                OpCode::Ret(reg) => {
-                    let return_val = self.registers[self.base_reg + reg.to_usize()].clone()
-                        .ok_or("Return register is empty")?;
+                self.write(*reg, chunk.constants[idx].clone())
+            }
+            OpCode::Copy(d, s) => {
+                let v = self.read(*s)?;
+                self.write(*d, v)
+            }
+            OpCode::Move(d, s) => {
+                let v = self.take(*s)?;
+                self.write(*d, v)
+            }
 
-                    if let Some(frame) = self.frames.pop() {
-                        self.pc = frame.ip;
-                        self.base_reg = frame.base_reg;
-                        self.current_func = frame.func_id;
-                        self.registers[frame.dest_reg] = Some(return_val);
-                    } else {
-                        return Ok(return_val);
-                    }
-                }
+            OpCode::Ld(d, b, off) => {
+                let h = self.read_handle(*b)?;
+                let v = self.heap.ld(h, *off as usize)?;
+                self.write(*d, v)
+            }
+            OpCode::St(s, b, off) => {
+                let h = self.read_handle(*b)?;
+                let v = self.read(*s)?;
+                self.heap.st(h, *off as usize, v)
+            }
+            OpCode::LdIdx(d, b, i) => {
+                let h = self.read_handle(*b)?;
+                let off = self.read_i64(*i)? as usize;
+                let v = self.heap.ld(h, off)?;
+                self.write(*d, v)
+            }
+            OpCode::StIdx(s, b, i) => {
+                let h = self.read_handle(*b)?;
+                let off = self.read_i64(*i)? as usize;
+                let v = self.read(*s)?;
+                self.heap.st(h, off, v)
+            }
+            OpCode::Lea(d, b, off) => {
+                let h = self.read_handle(*b)? as i64;
+                self.write(*d, Value::Int(h + *off as i64))
+            }
+            OpCode::Ref(d, s) => {
+                let v = self.read(*s)?;
+                let h = self.heap.alloc(1);
+                self.heap.st(h, 0, v)?;
+                self.write(*d, Value::Int(h as i64))
+            }
+
+            OpCode::Alloc(d, size) => {
+                let h = self.heap.alloc(*size as usize) as i64;
+                self.write(*d, Value::Int(h))
+            }
+            OpCode::Free(reg) => {
+                let h = self.read_handle(*reg)?;
+                self.heap.free(h)
+            }
+            OpCode::Drop(reg) => {
+                let abs = self.base_reg + reg.to_usize();
+                self.registers[abs] = None;
+                Ok(())
+            }
+
+            OpCode::Dei(_, _) | OpCode::Deo(_, _) => {
+                Err("device I/O not yet implemented".to_string())
+            }
+            OpCode::Spawn(_, _) | OpCode::Await(_) | OpCode::Yield => {
+                Err("async not yet implemented".to_string())
+            }
+            OpCode::Handle(_, _) | OpCode::Resume(_) => {
+                Err("effect handlers not yet implemented".to_string())
             }
         }
     }
 
-    fn binary_op_windowed<F>(&mut self, dest: Register, left: Register, right: Register, op: F) -> Result<(), String>
-    where
-        F: Fn(Value, Value) -> Value,
-    {
-        let lv = self.registers[self.base_reg + left.to_usize()].clone().ok_or("Left operand register is empty")?;
-        let rv = self.registers[self.base_reg + right.to_usize()].clone().ok_or("Right operand register is empty")?;
-        self.registers[self.base_reg + dest.to_usize()] = Some(op(lv, rv));
+    fn do_call(&mut self, module: &Module, dest: Register, fn_id: usize) -> Result<(), String> {
+        if fn_id >= module.functions.len() {
+            return Err(format!("call: unknown fn_id {}", fn_id));
+        }
+        let caller_chunk = &module.functions[self.current_func];
+        let caller_reg_count = caller_chunk.reg_count;
+        let dest_abs = self.base_reg + dest.to_usize();
+        let new_base = self.base_reg + caller_reg_count;
+        let needed = new_base + 256;
+        if needed > MAX_REGISTERS {
+            return Err(format!(
+                "Stack overflow: register window {} exceeds limit {}",
+                needed, MAX_REGISTERS
+            ));
+        }
+        if needed > self.registers.len() {
+            self.registers.resize(needed, None);
+        }
+        if self.frames.len() >= MAX_RECURSION_DEPTH {
+            return Err(format!(
+                "Stack overflow: recursion depth {} exceeds limit {}",
+                self.frames.len(),
+                MAX_RECURSION_DEPTH
+            ));
+        }
+        self.frames.push(Frame {
+            func_id: self.current_func,
+            ip: self.pc,
+            base_reg: self.base_reg,
+            dest_reg: dest_abs,
+        });
+        self.base_reg = new_base;
+        self.current_func = fn_id;
+        self.pc = 0;
         Ok(())
     }
 
-    fn binary_op<F>(&mut self, dest: Register, left: Register, right: Register, op: F) -> Result<(), String>
-    where
-        F: Fn(Value, Value) -> Value,
-    {
-        let lv = self.registers[left.to_usize()].clone().ok_or("Left operand register is empty")?;
-        let rv = self.registers[right.to_usize()].clone().ok_or("Right operand register is empty")?;
-        self.registers[dest.to_usize()] = Some(op(lv, rv));
+    fn do_ret(&mut self, reg: Register) -> Result<(), String> {
+        let abs = self.base_reg + reg.to_usize();
+        let return_val = self.registers[abs].clone()
+            .ok_or("Return register is empty")?;
+        if let Some(frame) = self.frames.pop() {
+            self.pc = frame.ip;
+            self.base_reg = frame.base_reg;
+            self.current_func = frame.func_id;
+            self.registers[frame.dest_reg] = Some(return_val);
+            Ok(())
+        } else {
+            self.registers[self.base_reg] = Some(return_val);
+            self.pc = usize::MAX;
+            Ok(())
+        }
+    }
+
+    fn branch(&mut self, offset: i16) {
+        let new_pc = (self.pc as isize) + (offset as isize);
+        self.pc = new_pc as usize;
+    }
+
+    fn read(&self, r: Register) -> Result<Value, String> {
+        self.registers[self.base_reg + r.to_usize()].clone()
+            .ok_or_else(|| format!("read: r{} is empty", r.0))
+    }
+
+    fn take(&mut self, r: Register) -> Result<Value, String> {
+        self.registers[self.base_reg + r.to_usize()].take()
+            .ok_or_else(|| format!("move: r{} is empty (already moved?)", r.0))
+    }
+
+    fn write(&mut self, r: Register, v: Value) -> Result<(), String> {
+        self.registers[self.base_reg + r.to_usize()] = Some(v);
         Ok(())
+    }
+
+    fn read_i64(&self, r: Register) -> Result<i64, String> {
+        match self.read(r)? {
+            Value::Int(n) => Ok(n),
+            v => Err(format!("expected i64, got {:?}", v)),
+        }
+    }
+
+    fn read_f64(&self, r: Register) -> Result<f64, String> {
+        match self.read(r)? {
+            Value::Float(n) => Ok(n),
+            v => Err(format!("expected f64, got {:?}", v)),
+        }
+    }
+
+    fn read_handle(&self, r: Register) -> Result<usize, String> {
+        match self.read(r)? {
+            Value::Int(n) => Ok(n as usize),
+            v => Err(format!("expected pointer, got {:?}", v)),
+        }
+    }
+
+    fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
+        let x = self.read_i64(a)?;
+        let y = self.read_i64(b)?;
+        self.write(d, Value::Int(f(x, y)))
+    }
+
+    fn bin_i64_checked<F: Fn(i64, i64) -> Option<i64>>(&mut self, d: Register, a: Register, b: Register, msg: &str, f: F) -> Result<(), String> {
+        let x = self.read_i64(a)?;
+        let y = self.read_i64(b)?;
+        let r = f(x, y).ok_or_else(|| msg.to_string())?;
+        self.write(d, Value::Int(r))
+    }
+
+    fn bin_f64<F: Fn(f64, f64) -> f64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
+        let x = self.read_f64(a)?;
+        let y = self.read_f64(b)?;
+        self.write(d, Value::Float(f(x, y)))
+    }
+
+    fn bin_cmp<F: Fn(&Value, &Value) -> bool>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
+        let x = self.read(a)?;
+        let y = self.read(b)?;
+        self.write(d, Value::Bool(f(&x, &y)))
+    }
+
+    fn bin_i64_cmp<F: Fn(i64, i64) -> bool>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
+        let x = self.read_i64(a)?;
+        let y = self.read_i64(b)?;
+        self.write(d, Value::Bool(f(x, y)))
     }
 }
 

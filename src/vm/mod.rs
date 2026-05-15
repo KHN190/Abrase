@@ -8,6 +8,7 @@ pub mod scheduler;
 pub use value::Value;
 
 use frame::Frame;
+use memory::Heap;
 
 pub struct VirtualMachine {
     pub(crate) registers: Vec<Option<Value>>,
@@ -15,6 +16,7 @@ pub struct VirtualMachine {
     pub(crate) pc: usize,
     pub(crate) base_reg: usize,
     pub(crate) current_func: usize,
+    pub(crate) heap: Heap,
 }
 
 impl VirtualMachine {
@@ -25,6 +27,7 @@ impl VirtualMachine {
             pc: 0,
             base_reg: 0,
             current_func: 0,
+            heap: Heap::new(),
         }
     }
 }
