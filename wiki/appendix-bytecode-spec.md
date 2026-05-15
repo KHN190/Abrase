@@ -2,9 +2,9 @@
 
 Bytecode never changes over the language iteration. We implement a host so it can run the dumped bytecode on different platforms, and we use a compiler to produce this product.
 
-Since the design is only 40 instructions, thus the VM does not know about types or data structures, only primitive integers and basic operations. A VM does not check, it only executes. We keep it simple so it can be migrated to different platform implementations.
+Since the design is only 40 instructions, thus the VM does not know about types or data structures, only primitive integers and basic operations. A VM does not check, it only executes. We keep it simple to export to different platform implementations.
 
-But the compiler thus needs 2 passes — one yields High Level Representation (HIR), which contains tags, types, data structure annotations, etc. Another lowers them to basic integers that the VM can directly execute.
+But the compiler thus needs 2 passes — one yields high level representation (HIR), which contains tags, types, data structure tags, etc. Another lowers them to basic integers that the VM can directly execute.
 
 * The VM knows: registers, control flow, memory, two ports.
 * The compiler knows: types, layouts, devices, lowering.
@@ -12,15 +12,7 @@ But the compiler thus needs 2 passes — one yields High Level Representation (H
 
 Below is the definition.
 
-## 1. Design Principles
-
-1. **Stable artifact.** Compilers evolve, host VMs evolve; the `.ecm` (ECT Module) binary format does not.
-2. **Strict 4-byte encoding.** Every instruction is exactly 4 bytes: `[opcode:8][a:8][b:8][c:8]`. No trailers, no prefixes, no multi-word instructions. `pc += 4` advances one instruction, always.
-3. **Type erasure at the boundary.** Registers hold 64-bit scalars and pointers. Composites live on the heap. The VM never inspects type at runtime.
-4. **Compiler does the heavy lifting.** Generics → monomorphized. Effects → desugared. Ownership → explicit `copy`/`move`/`drop`. Closures → lambda-lifted. Large literals → const pool. The VM is a flat switch over ~40 opcodes.
-5. **Host I/O is device I/O.** All host interaction flows through `dei` (device input) and `deo` (device output) on numbered ports. The standard device catalog (`appendix-device-catalog.md`) fixes port semantics. Hosts implement the devices they support; modules declare the devices they require; load-time validation does the matching.
-
-## 2. Instruction Encoding
+## 1. Instruction Encoding
 
 Every instruction is 4 bytes, laid out in one of three forms:
 
@@ -30,23 +22,16 @@ reg + imm16:        [op:8] [r_a:8] [imm:16  little-endian]
 imm16 only:         [op:8] [pad:8] [imm:16  little-endian]
 ```
 
-The opcode selects the form. There is no instruction-prefix byte, no length escape, no multi-word encoding. Register indices are unsigned 8-bit. Immediates are unsigned 16-bit unless the semantics column says otherwise (jump offsets are signed 16-bit).
+Values that don't fit in 16 bits — full 64-bit integers, f64 literals, interned strings — go in the module's _constant pool_ and are loaded with `pushconst r_a, pool_idx`. The pool holds up to 65 536 entries; each entry is 64 bits.
 
-Values that don't fit in 16 bits — full 64-bit integers, f64 literals, interned strings — go in the module's **constant pool** and are loaded with `pushconst r_a, pool_idx`. The pool holds up to 65 536 entries; each entry is 64 bits.
-
-## 3. Register Model
+## 2. Register Model
 
 * **Per-frame**: 256 registers (`r0`–`r255`), each 64 bits.
 * **Frame stack**: each function call opens a new register window. The VM maintains a window stack and a return-address stack.
-* **Value representation**:
-  - Integers (i64) and floats (f64) live directly in registers.
-  - Pointers (heap handles) live directly in registers as 64-bit values.
-  - Composites (records, variants, arrays, strings) live on the heap; the register holds the pointer.
-* **No runtime type information.** The VM does not tag, check, or dispatch on type. The compiler emits the correct ops; the VM trusts them.
 
-## 4. Instruction Set
+## 3. Instruction Set
 
-### 4.1 Arithmetic — 10 opcodes (`0x00`–`0x09`)
+### 3.1 Arithmetic — 10 opcodes (`0x00`–`0x09`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
@@ -61,9 +46,9 @@ Values that don't fit in 16 bits — full 64-bit integers, f64 literals, interne
 | `0x08` | `fmul r_a, r_b, r_c` | 3-reg | `r_a := r_b × r_c` (f64) |
 | `0x09` | `fdiv r_a, r_b, r_c` | 3-reg | `r_a := r_b / r_c` (f64; produces ±∞/NaN per IEEE 754) |
 
-Integer overflow wraps (two's complement). Float NaN/Inf are not trapped.
+Integer overflow wraps. Float NaN/Inf are not trapped.
 
-### 4.2 Comparison — 7 opcodes (`0x0a`–`0x10`)
+### 3.2 Comparison — 7 opcodes (`0x0a`–`0x10`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
@@ -77,7 +62,7 @@ Integer overflow wraps (two's complement). Float NaN/Inf are not trapped.
 
 Comparison always produces 0 or 1 in `r_a`.
 
-### 4.3 Bitwise — 5 opcodes (`0x11`–`0x15`)
+### 3.3 Bitwise — 5 opcodes (`0x11`–`0x15`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
@@ -89,7 +74,7 @@ Comparison always produces 0 or 1 in `r_a`.
 
 Shift count is taken modulo 64.
 
-### 4.4 Control Flow — 5 opcodes (`0x16`–`0x1a`)
+### 3.4 Control Flow — 5 opcodes (`0x16`–`0x1a`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
@@ -103,7 +88,7 @@ Jump offsets are in **instruction units** (each instruction is 4 bytes), signed 
 
 Functions are identified by a 16-bit id from the module's function table (up to 65 536 functions per module). Argument count is fixed by the function table; `call` does not encode it. See §5 for the calling convention.
 
-### 4.5 Data Movement — 3 opcodes (`0x1b`–`0x1d`)
+### 3.5 Data Movement — 3 opcodes (`0x1b`–`0x1d`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
@@ -113,7 +98,7 @@ Functions are identified by a 16-bit id from the module's function table (up to 
 
 All literal values — integers larger than 16 bits, floats, interned strings — enter the program through `pushconst`. The compiler manages the pool.
 
-### 4.6 Memory — 6 opcodes (`0x1e`–`0x23`)
+### 3.6 Memory — 6 opcodes (`0x1e`–`0x23`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
@@ -128,7 +113,7 @@ All literal values — integers larger than 16 bits, floats, interned strings �
 
 Offsets are in 64-bit slot units, not bytes.
 
-### 4.7 Heap — 3 opcodes (`0x24`–`0x26`)
+### 3.7 Heap — 3 opcodes (`0x24`–`0x26`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
@@ -138,9 +123,9 @@ Offsets are in 64-bit slot units, not bytes.
 
 `alloc` size is in 64-bit slots. The maximum single allocation is 65 535 slots ≈ 512 KB; larger objects must be chunked.
 
-The VM does not garbage-collect. The compiler emits `drop` and `free` at scope boundaries. Reference counting (for `Shared<T>`) is synthesized by the compiler — allocate one extra slot for the rc cell, inline atomic-ish increments/decrements — and needs no dedicated opcode.
+The compiler emits `drop` and `free` at scope boundaries. Reference counting (for `Shared<T>`) is synthesized by the compiler — allocate one extra slot for the rc cell, inline atomic-ish increments/decrements — and needs no dedicated opcode.
 
-### 4.8 Host I/O — 2 opcodes (`0x27`–`0x28`)
+### 3.8 Host I/O — 2 opcodes (`0x27`–`0x28`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
@@ -163,9 +148,9 @@ A **port** is a 16-bit address: the high byte names the device (`0x00`–`0xFF`,
 
 A module declares the device IDs it requires in its header (§6). The loader rejects modules whose devices the host does not provide; stub implementations are forbidden.
 
-There are no `import` or `export` opcodes. Host-defined functions are device ports: write arguments to argument ports, write a command index to a trigger port, read the result port. The compiler hides this protocol behind language-level call syntax.
+Host-defined functions are device ports: write arguments to argument ports, write a command index to a trigger port, read the result port. The compiler hides this protocol behind language-level call syntax.
 
-### 4.9 Coroutine — 3 opcodes (`0x29`–`0x2b`)
+### 3.9 Coroutine — 3 opcodes (`0x29`–`0x2b`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
@@ -173,20 +158,20 @@ There are no `import` or `export` opcodes. Host-defined functions are device por
 | `0x2a` | `join r_a` | 3-reg (`r_b`, `r_c` unused) | suspend until the coroutine handle in `r_a` completes |
 | `0x2b` | `yield` | imm16 only (unused) | voluntarily yield to the scheduler |
 
-These are runtime primitives the host scheduler uses when implementing a suspending effect handler — the language itself has no `async`, `await`, `spawn`, or `scope`. The compiler emits these opcodes only when lowering a handler the host has registered as a suspending one.
+These are runtime primitives the host scheduler uses when implementing a suspending effect handler. The compiler emits these opcodes only when lowering a handler the host has registered as a suspending one.
 
-Scheduling is cooperative. Suspension happens only at these opcodes (and at `resume` re-entry from §4.10). No preemption, no locks, no atomics.
+Scheduling is cooperative. Suspension happens only at these opcodes (and at `resume` re-entry from §3.10). No preemption, no locks, no atomics.
 
-### 4.10 Effect Handlers — 2 opcodes (`0x2c`–`0x2d`)
+### 3.10 Effect Handlers — 2 opcodes (`0x2c`–`0x2d`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
 | `0x2c` | `handle r_a, effect_id` | reg + imm16 | enter an effect handler frame for `effect_id`; dispatch table pointer in `r_a` |
 | `0x2d` | `resume r_a` | 3-reg (`r_b`, `r_c` unused) | resume a captured continuation in `r_a` |
 
-These are the lowering targets for the language's effect system. Exceptions are lowered to a single effect (`exn`); user-defined effects use `handle` with a custom dispatch table built at compile time. A handler whose body uses §4.9 opcodes is a suspending handler — that is how the host implements scheduler-like behavior without the language naming it.
+These are the lowering targets for the language's effect system. Exceptions are lowered to a single effect (`exn`); user-defined effects use `handle` with a custom dispatch table built at compile time. A handler whose body uses §3.9 opcodes is a suspending handler — that is how the host implements scheduler-like behavior without the language naming it.
 
-### 4.11 Opcode Summary
+### 3.11 Opcode Summary
 
 Total: **40 opcodes** (`0x00`–`0x2d`). Slots `0x2e`–`0xFF` are reserved for compatible extension.
 
@@ -238,8 +223,6 @@ All multi-byte integers are little-endian.
   symbol_names:    function and parameter names
   type_names:      for pretty-printing
 ```
-
-The header carries no type metadata. Composite layouts are entirely a compile-time concern; the compiler emits `ld`/`st` with fixed offsets and `alloc` with fixed sizes, and that is sufficient.
 
 The `device_mask` is the contract between module and host. If a module sets bit `i` in the mask and the host does not implement device `i`, the load fails immediately.
 
