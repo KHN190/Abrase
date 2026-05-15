@@ -1,0 +1,17 @@
+fn through_ref(x: &Int) -> Int {
+  *x + *x
+}
+
+fn main() -> Int {
+  let n = 10;
+  let doubled = through_ref(&n);
+  let cell = Shared(doubled);
+  let val = *cell;
+  let s = "moved";
+  let t = s;
+  {
+    let inner = "scoped";
+    inner;
+  };
+  val + n
+}

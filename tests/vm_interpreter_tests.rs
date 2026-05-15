@@ -328,7 +328,8 @@ fn test_jz_takes_jump_when_zero() {
 
 #[test]
 fn test_jz_skips_jump_when_nonzero() {
-    // pc 0: PushConst, pc 1: Jz (offset 2 to past Ret, not taken), pc 2: PushConst, pc 3: Ret
+    // pc 0: PushConst, pc 1: Jz (offset 2 to past Ret, not taken), 
+    // pc 2: PushConst, pc 3: Ret
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -647,7 +648,8 @@ fn test_mul_empty_right_register_errors() {
 #[test]
 fn test_call_simple() {
     // Callee adds r0 and r1.
-    // Main has reg_count=1 (just dest r0); args land at r1, r2 = caller_reg_count + 0, +1.
+    // Main has reg_count=1 (just dest r0); 
+    // args land at r1, r2 = caller_reg_count + 0, +1.
     let result = run_module_with_param_counts(vec![
         (
             vec![
@@ -764,3 +766,54 @@ fn test_recursion_simple() {
     ]);
     assert_eq!(result, Ok(Value::Int(0)));
 }
+
+#[test]
+fn test_alloc_and_free() {
+    let result = run(
+        vec![
+            OpCode::Alloc(r(0), 8),
+            OpCode::Ret(r(0)),
+        ],
+        vec![],
+    );
+
+    match result {
+        Ok(Value::Int(_)) => {},
+        _ => panic!("Expected Int pointer from Alloc"),
+    }
+}
+
+#[test]
+fn test_store_and_load() {
+    let result = run(
+        vec![
+            OpCode::Alloc(r(0), 8),       // r0 = heap pointer
+            OpCode::PushConst(r(1), 0),   // r1 = 42
+            OpCode::St(r(1), r(0), 0),    // store 42 at [r0+0]
+            OpCode::Ld(r(2), r(0), 0),    // r2 = load from [r0+0]
+            OpCode::Ret(r(2)),             // return r2
+        ],
+        vec![Value::Int(42)],
+    );
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_store_multiple_fields() {
+    let result = run(
+        vec![
+            OpCode::Alloc(r(0), 16),      // r0 = heap pointer (16 bytes for 2 Int fields)
+            OpCode::PushConst(r(1), 0),   // r1 = 10
+            OpCode::St(r(1), r(0), 0),    // store 10 at [r0+0]
+            OpCode::PushConst(r(2), 1),   // r2 = 20
+            OpCode::St(r(2), r(0), 8),    // store 20 at [r0+8]
+            OpCode::Ld(r(3), r(0), 0),    // r3 = load from [r0+0] = 10
+            OpCode::Ld(r(4), r(0), 8),    // r4 = load from [r0+8] = 20
+            OpCode::Add(r(5), r(3), r(4)),// r5 = 10 + 20 = 30
+            OpCode::Ret(r(5)),             // return r5
+        ],
+        vec![Value::Int(10), Value::Int(20)],
+    );
+    assert_eq!(result, Ok(Value::Int(30)));
+}
+

@@ -107,3 +107,120 @@ fn test_frame_dest_reg() {
     assert_eq!(frame.base_reg, 64);
     assert_eq!(frame.dest_reg, 5);
 }
+
+// Memory Operations
+
+#[test]
+fn test_alloc_opcode() {
+    let alloc_op = OpCode::Alloc(Register(0), 16);
+    match alloc_op {
+        OpCode::Alloc(dest, size) => {
+            assert_eq!(dest.to_usize(), 0);
+            assert_eq!(size, 16);
+        }
+        _ => panic!("Not an Alloc opcode"),
+    }
+}
+
+#[test]
+fn test_ld_opcode() {
+    let ld_op = OpCode::Ld(Register(0), Register(1), 8);
+    match ld_op {
+        OpCode::Ld(dest, base, offset) => {
+            assert_eq!(dest.to_usize(), 0);
+            assert_eq!(base.to_usize(), 1);
+            assert_eq!(offset, 8);
+        }
+        _ => panic!("Not an Ld opcode"),
+    }
+}
+
+#[test]
+fn test_st_opcode() {
+    let st_op = OpCode::St(Register(2), Register(1), 4);
+    match st_op {
+        OpCode::St(src, base, offset) => {
+            assert_eq!(src.to_usize(), 2);
+            assert_eq!(base.to_usize(), 1);
+            assert_eq!(offset, 4);
+        }
+        _ => panic!("Not an St opcode"),
+    }
+}
+
+#[test]
+fn test_free_opcode() {
+    let free_op = OpCode::Free(Register(3));
+    match free_op {
+        OpCode::Free(reg) => {
+            assert_eq!(reg.to_usize(), 3);
+        }
+        _ => panic!("Not a Free opcode"),
+    }
+}
+
+#[test]
+fn test_ldidx_opcode() {
+    let ldidx_op = OpCode::LdIdx(Register(0), Register(1), Register(2));
+    match ldidx_op {
+        OpCode::LdIdx(dest, base, idx) => {
+            assert_eq!(dest.to_usize(), 0);
+            assert_eq!(base.to_usize(), 1);
+            assert_eq!(idx.to_usize(), 2);
+        }
+        _ => panic!("Not an LdIdx opcode"),
+    }
+}
+
+#[test]
+fn test_stidx_opcode() {
+    let stidx_op = OpCode::StIdx(Register(3), Register(1), Register(2));
+    match stidx_op {
+        OpCode::StIdx(src, base, idx) => {
+            assert_eq!(src.to_usize(), 3);
+            assert_eq!(base.to_usize(), 1);
+            assert_eq!(idx.to_usize(), 2);
+        }
+        _ => panic!("Not an StIdx opcode"),
+    }
+}
+
+#[test]
+fn test_lea_opcode() {
+    let lea_op = OpCode::Lea(Register(0), Register(1), 12);
+    match lea_op {
+        OpCode::Lea(dest, base, offset) => {
+            assert_eq!(dest.to_usize(), 0);
+            assert_eq!(base.to_usize(), 1);
+            assert_eq!(offset, 12);
+        }
+        _ => panic!("Not an Lea opcode"),
+    }
+}
+
+#[test]
+fn test_memory_opcodes_in_chunk() {
+    let chunk = Chunk {
+        code: vec![
+            OpCode::PushConst(Register(0), 0),
+            OpCode::Alloc(Register(1), 16),
+            OpCode::PushConst(Register(2), 1),
+            OpCode::St(Register(2), Register(1), 0),
+            OpCode::Ld(Register(3), Register(1), 0),
+            OpCode::Ret(Register(3)),
+        ],
+        constants: vec![Value::Int(42), Value::Int(100)],
+        reg_count: 4,
+        param_count: 0,
+    };
+    assert_eq!(chunk.code.len(), 6);
+
+    match &chunk.code[1] {
+        OpCode::Alloc(_, size) => assert_eq!(*size, 16),
+        _ => panic!("Expected Alloc opcode"),
+    }
+    match &chunk.code[3] {
+        OpCode::St(_, _, offset) => assert_eq!(*offset, 0),
+        _ => panic!("Expected St opcode"),
+    }
+}

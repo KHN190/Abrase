@@ -1,0 +1,27 @@
+type Tree = Leaf | Node(Int, Tree, Tree)
+
+fn insert(t: Tree, x: Int) -> Tree {
+  match t {
+    Leaf => Node(x, Leaf, Leaf)
+    Node(v, l, r) => if x < v {
+      Node(v, insert(l, x), r)
+    } else {
+      Node(v, l, insert(r, x))
+    }
+    _ => t
+  }
+}
+
+fn sum(t: Tree) -> Int {
+  match t {
+    Node(v, l, r) => v + sum(l) + sum(r)
+    _ => 0
+  }
+}
+
+fn main() -> Int {
+  let t1 = insert(Leaf, 5);
+  let t2 = insert(t1, 3);
+  let t3 = insert(t2, 7);
+  sum(t3)
+}
