@@ -41,6 +41,11 @@ impl Checker {
                 self.register_module_item(&module_path, fn_decl.name.clone(), fn_type.clone());
                 self.insert_var(fn_decl.name.clone(), fn_type, false, ast::Span { line: 0, col: 0 });
 
+                if !fn_decl.generics.is_empty() {
+                    let names: Vec<String> = fn_decl.generics.iter().map(|g| g.name.clone()).collect();
+                    self.register_generic_params(fn_decl.name.clone(), names);
+                }
+
                 if fn_decl.is_pub {
                     self.mark_public(fn_decl.name.clone());
                 }

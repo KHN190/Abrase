@@ -292,6 +292,18 @@ impl Checker {
     pub fn check_pattern(&mut self, pattern: &Spanned<ast::Pattern>, value_ty: &Type, _pattern_span: Span) {
         match &pattern.node {
             ast::Pattern::Bind(name) => {
+                // The parser produces Pattern::Bind for any unparenthesised
+                // ident in pattern position. If the name matches a registered
+                // variant case (e.g. `Leaf` for `type Tree = Leaf | Node(...)`),
+                // treat it as a nullary variant pattern rather than a fresh
+                // binding — otherwise it would shadow the case name and cause
+                // spurious move/use-after-move errors.
+                if self.lookup_variant_constructor(name).is_some() {
+                    // Nullary variant pattern: no binding to install. Type
+                    // compatibility against the scrutinee is up to the
+                    // exhaustiveness pass.
+                    return;
+                }
                 self.insert_var(name.clone(), value_ty.clone(), false, pattern.span);
             }
             ast::Pattern::Wildcard => {
@@ -409,7 +421,39 @@ impl Checker {
                 return meta.ty.clone();
             }
         }
+        if let Some(ty) = self.lookup_variant_constructor(name) {
+            return ty;
+        }
         self.report_error(format!("Undefined variable: {}", name), usage_span)
+    }
+
+    fn lookup_variant_constructor(&self, case_name: &str) -> Option<Type> {
+        // Reverse-search variant_registry for the type that owns this case.
+        for (type_name, cases) in self.variant_registry.iter() {
+            if !cases.iter().any(|c| c == case_name) { continue; }
+            let body = self.type_registry.get(type_name)?;
+            let ast::TypeBody::Variant(variant_cases) = body else { continue; };
+            let case = variant_cases.iter().find(|c| match c {
+                ast::VariantCase::Unit(n)      => n == case_name,
+                ast::VariantCase::Tuple(n, _)  => n == case_name,
+                ast::VariantCase::Record(n, _) => n == case_name,
+            })?;
+            let owning_ty = Type::Named(type_name.clone());
+            return Some(match case {
+                ast::VariantCase::Unit(_) => owning_ty,
+                ast::VariantCase::Tuple(_, payload_tys) => Type::Function {
+                    params: payload_tys.iter().map(|t| self.convert_type(t)).collect(),
+                    effects: vec![],
+                    ret: Box::new(owning_ty),
+                },
+                ast::VariantCase::Record(_, fields) => Type::Function {
+                    params: fields.iter().map(|f| self.convert_type(&f.ty)).collect(),
+                    effects: vec![],
+                    ret: Box::new(owning_ty),
+                },
+            });
+        }
+        None
     }
 
     pub fn convert_type(&self, ast_ty: &ast::Type) -> Type {

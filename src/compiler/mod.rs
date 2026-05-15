@@ -89,6 +89,28 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
+        // Enforce typeck before codegen. Refuses to compile with type errors
+        let mut checker = crate::typeck::Checker::new();
+        checker.check_program(ast);
+        if !checker.errors.is_empty() {
+            self.errors.extend(checker.errors.iter().map(|te| Error::new(
+                ErrorCode::TypeError,
+                te.span,
+                te.message.clone(),
+            )));
+            return Err(self.errors.clone());
+        }
+
+        // Generic monomorphization
+        let owned = match mono::monomorphize(ast.to_vec()) {
+            Ok(o) => o,
+            Err(es) => {
+                self.errors.extend(es);
+                return Err(self.errors.clone());
+            }
+        };
+        let ast: &[ast::Decl] = &owned;
+
         // Pre-pass: lift handler arms to synthetic top-level FnDecls.
         let mut handler_lowering = handlers::HandleLowering::new();
         handler_lowering.lower(ast);

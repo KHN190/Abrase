@@ -395,7 +395,7 @@ impl Checker {
 
     pub fn check_stmt(&mut self, stmt: &Spanned<ast::Stmt>) {
         match &stmt.node {
-            ast::Stmt::Let { pattern, is_mut: _, ty, value } => {
+            ast::Stmt::Let { pattern, is_mut, ty, value } => {
                 let name = match &pattern.node {
                     ast::Pattern::Bind(n) => n.clone(),
                     _ => "<pattern>".into(),
@@ -413,7 +413,15 @@ impl Checker {
                     }
                     val_ty = expected_ty;
                 }
-                self.check_pattern(pattern, &val_ty, pattern.span);
+                // Register the binding directly so the let-stmt's `is_mut` flag
+                // reaches VarMeta. check_pattern's Bind arm always uses
+                // is_mut=false (it's also called from match/for/etc., none of
+                // which carry a mut flag in the surface syntax).
+                if let ast::Pattern::Bind(n) = &pattern.node {
+                    self.insert_var(n.clone(), val_ty.clone(), *is_mut, pattern.span);
+                } else {
+                    self.check_pattern(pattern, &val_ty, pattern.span);
+                }
                 self.context_stack.pop();
             }
             ast::Stmt::Expr(expr) => { self.infer_expr(expr); }
@@ -445,7 +453,7 @@ impl Checker {
             ast::TypeBody::Record(fields) => {
                 let mut all_valid = true;
                 for field in fields {
-                    if !self.is_type_valid(&field.ty, type_name, visited, span) {
+                    if !self.is_type_valid(&field.ty, type_name, false, visited, span) {
                         all_valid = false;
                     }
                 }
@@ -454,22 +462,31 @@ impl Checker {
             ast::TypeBody::Variant(cases) => {
                 let mut all_valid = true;
                 for case in cases {
-                    match case {
-                        ast::VariantCase::Unit(_) => {}
-                        ast::VariantCase::Tuple(_, types) => {
-                            for ty in types {
-                                if !self.is_type_valid(ty, type_name, visited, span) {
-                                    all_valid = false;
-                                }
-                            }
-                        }
+                    let payload_tys: Vec<&ast::Type> = match case {
+                        ast::VariantCase::Unit(_) => Vec::new(),
+                        ast::VariantCase::Tuple(_, tys) => tys.iter().collect(),
                         ast::VariantCase::Record(_, fields) => {
-                            for field in fields {
-                                if !self.is_type_valid(&field.ty, type_name, visited, span) {
-                                    all_valid = false;
-                                }
-                            }
+                            fields.iter().map(|f| &f.ty).collect()
                         }
+                    };
+                    for ty in payload_tys {
+                        if !self.is_type_valid(ty, type_name, true, visited, span) {
+                            all_valid = false;
+                        }
+                    }
+                }
+                if all_valid {
+                    let has_base = cases.iter().any(|c| !case_references_type(c, type_name));
+                    if !has_base {
+                        self.report_error(
+                            format!(
+                                "Type '{}' has no base case: every variant case carries a \
+                                 '{}'-typed payload, so a value can never be constructed",
+                                type_name, type_name
+                            ),
+                            span,
+                        );
+                        all_valid = false;
                     }
                 }
                 all_valid
@@ -484,12 +501,18 @@ impl Checker {
         &mut self,
         ty: &ast::Type,
         self_type: &str,
+        allow_self_ref: bool,
         visited: &mut std::collections::HashSet<String>,
         span: Span,
     ) -> bool {
         match ty {
             ast::Type::Named(name) => {
                 if name == self_type {
+                    if allow_self_ref {
+                        // OK: the parent variant tag heap-allocates this value,
+                        // so the reference is pointer-sized.
+                        return true;
+                    }
                     self.report_error(
                         format!("Type '{}' has recursive cycle: direct self-reference detected", self_type),
                         span,
@@ -516,8 +539,8 @@ impl Checker {
                 true
             }
             ast::Type::Array { elem, .. } => {
-                // Arrays have fixed size (compile-time length), so recursion is ok
-                self.is_type_valid(elem, self_type, visited, span)
+                // Arrays have fixed size, so recursion is ok
+                self.is_type_valid(elem, self_type, allow_self_ref, visited, span)
             }
             _ => true, // Primitive types and other constructs are valid
         }
@@ -537,5 +560,33 @@ impl Checker {
             }
         }
         !has_cycles
+    }
+}
+
+fn case_references_type(case: &ast::VariantCase, self_type: &str) -> bool {
+    match case {
+        ast::VariantCase::Unit(_) => false,
+        ast::VariantCase::Tuple(_, types) => {
+            types.iter().any(|t| type_mentions(t, self_type))
+        }
+        ast::VariantCase::Record(_, fields) => {
+            fields.iter().any(|f| type_mentions(&f.ty, self_type))
+        }
+    }
+}
+
+fn type_mentions(ty: &ast::Type, self_type: &str) -> bool {
+    match ty {
+        ast::Type::Named(n) => n == self_type,
+        ast::Type::Qualified(path) => path.last().map(|s| s.as_str()) == Some(self_type),
+        ast::Type::Generic { name, args } => {
+            name == self_type || args.iter().any(|a| type_mentions(a, self_type))
+        }
+        ast::Type::Tuple(elems) => elems.iter().any(|e| type_mentions(e, self_type)),
+        ast::Type::Array { elem, .. } => type_mentions(elem, self_type),
+        ast::Type::Reference { inner, .. } => type_mentions(inner, self_type),
+        ast::Type::Function { params, ret, .. } => {
+            params.iter().any(|p| type_mentions(p, self_type)) || type_mentions(ret, self_type)
+        }
     }
 }

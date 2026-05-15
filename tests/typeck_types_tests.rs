@@ -4,7 +4,6 @@ use ect::typeck::Checker;
 
 fn d_span() -> Span { Span { line: 0, col: 0 } }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
-// Break with value so the for/while/loop expression type equals the element type
 fn body_breaking(name: &str) -> ast::Block {
     ast::Block {
         stmts: vec![],
@@ -12,9 +11,6 @@ fn body_breaking(name: &str) -> ast::Block {
     }
 }
 
-// Type Equivalence Tests
-
-// Basic equivalence tests
 #[test]
 fn verify_exact_name_match_is_equivalent() {
     let checker = Checker::new();
@@ -29,7 +25,6 @@ fn verify_different_names_not_equivalent() {
     assert!(!checker.are_types_equivalent("Bool", "Int"));
 }
 
-// Record type equivalence tests
 #[test]
 fn verify_identical_record_definitions_equivalent() {
     let mut checker = Checker::new();
@@ -105,7 +100,6 @@ fn verify_record_different_field_counts_not_equivalent() {
     assert!(!checker.are_types_equivalent("Point1", "Point2"));
 }
 
-// Variant type equivalence tests
 #[test]
 fn verify_identical_unit_variant_definitions_equivalent() {
     let mut checker = Checker::new();
@@ -166,7 +160,6 @@ fn verify_unit_variant_different_counts_not_equivalent() {
     assert!(!checker.are_types_equivalent("Color1", "Color2"));
 }
 
-// Tuple variant equivalence tests
 #[test]
 fn verify_identical_tuple_variant_definitions_equivalent() {
     let mut checker = Checker::new();
@@ -222,7 +215,6 @@ fn verify_tuple_variant_different_arg_counts_not_equivalent() {
     assert!(!checker.are_types_equivalent("Result1", "Result2"));
 }
 
-// Record variant equivalence tests
 #[test]
 fn verify_identical_record_variant_definitions_equivalent() {
     let mut checker = Checker::new();
@@ -263,7 +255,6 @@ fn verify_record_variant_different_field_names_not_equivalent() {
     assert!(!checker.are_types_equivalent("Shape1", "Shape2"));
 }
 
-// Mixed variant types equivalence tests
 #[test]
 fn verify_unit_and_tuple_variants_not_equivalent() {
     let mut checker = Checker::new();
@@ -298,7 +289,6 @@ fn verify_record_and_variant_not_equivalent() {
     assert!(!checker.are_types_equivalent("Type1", "Type2"));
 }
 
-// Unregistered types
 #[test]
 fn verify_unregistered_type_not_equivalent() {
     let checker = Checker::new();
@@ -317,7 +307,6 @@ fn verify_registered_and_unregistered_not_equivalent() {
     assert!(!checker.are_types_equivalent("Point", "Unknown"));
 }
 
-// Complex nested types
 #[test]
 fn verify_nested_array_types_equivalent() {
     let mut checker = Checker::new();
@@ -1617,10 +1606,8 @@ fn verify_self_reference_through_variant() {
     let list_type = TypeBody::Variant(vec![cons_case, nil_case]);
 
     let is_valid = checker.check_recursive_type("List", &list_type, d_span());
-    assert!(!is_valid, "Direct variant self-reference should be rejected");
+    assert!(is_valid, "recursive variant with a Nil base case must be accepted");
 }
-
-// Indirection Through References
 
 #[test]
 fn verify_reference_indirection_allowed() {
@@ -1700,8 +1687,6 @@ fn verify_reference_in_variant_allowed() {
     assert!(is_valid, "Reference indirection in variant should be allowed");
 }
 
-// Finite Termination Checking
-
 #[test]
 fn verify_non_recursive_type_accepted() {
     let mut checker = Checker::new();
@@ -1739,10 +1724,8 @@ fn verify_recursive_with_base_case() {
     let list_type = TypeBody::Variant(vec![cons, nil]);
 
     let is_valid = checker.check_recursive_type("IntList", &list_type, d_span());
-    assert!(!is_valid, "Should still reject direct self-reference even with base case");
+    assert!(is_valid, "recursive variant with a Nil base case must be accepted");
 }
-
-// Mutual Recursion Detection
 
 #[test]
 fn verify_mutual_recursion_without_indirection_rejected() {
@@ -1802,8 +1785,6 @@ fn verify_mutual_recursion_with_indirection_allowed() {
     assert!(has_cycle == false || checker.errors.is_empty(), "Mutual recursion with references should be allowed");
 }
 
-// Integration Tests
-
 #[test]
 fn verify_complex_recursive_structure() {
     let mut checker = Checker::new();
@@ -1857,8 +1838,6 @@ fn verify_linked_list_pattern() {
     assert!(is_valid, "Standard linked list pattern should be valid");
 }
 
-// --- typeck_variance_tests ---
-
 #[test]
 fn verify_register_type_variance() {
     let mut checker = Checker::new();
@@ -1886,7 +1865,6 @@ fn verify_get_type_variance_builtin_fn() {
     assert_eq!(result.unwrap()[1], Variance::Covariant);
 }
 
-// Named subtype registration tests
 #[test]
 fn verify_register_named_subtype() {
     let mut checker = Checker::new();
@@ -1902,7 +1880,6 @@ fn verify_is_named_subtype_transitive() {
     assert!(checker.is_subtype(&Type::Named("Int".into()), &Type::Named("Any".into())));
 }
 
-// Covariant tests
 #[test]
 fn verify_list_string_subtype_of_list_any() {
     let mut checker = Checker::new();
@@ -1939,7 +1916,6 @@ fn verify_covariant_same_arg_trivially_subtype() {
     assert!(checker.is_subtype(&Type::Named("List<Int>".into()), &Type::Named("List<Int>".into())));
 }
 
-// Contravariant tests
 #[test]
 fn verify_fn_input_contravariant() {
     let mut checker = Checker::new();
@@ -2012,7 +1988,6 @@ fn verify_fn_wrong_direction_fails() {
     assert!(!checker.is_subtype(&fn_string_int, &fn_any_int));
 }
 
-// Invariant tests
 #[test]
 fn verify_cell_string_not_subtype_of_cell_any() {
     let mut checker = Checker::new();
@@ -2036,7 +2011,6 @@ fn verify_cell_exact_is_subtype_of_itself() {
     assert!(checker.is_subtype(&Type::Named("Cell<String>".into()), &Type::Named("Cell<String>".into())));
 }
 
-// Boundary and negative cases
 #[test]
 fn verify_different_outer_types_not_subtype() {
     let checker = Checker::new();
@@ -2065,7 +2039,6 @@ fn verify_anything_subtype_of_unknown() {
     assert!(checker.is_subtype(&Type::Int, &Type::Unknown));
 }
 
-// Integration with is_assignable
 #[test]
 fn verify_is_assignable_uses_covariance() {
     let mut checker = Checker::new();
@@ -2106,7 +2079,6 @@ fn verify_user_registered_type_variance() {
     assert!(checker.is_subtype(&Type::Named("Box<String>".into()), &Type::Named("Box<Any>".into())));
 }
 
-// Nested generics tests
 #[test]
 fn verify_nested_covariant_list_of_option() {
     let checker = Checker::new();
@@ -2127,7 +2099,6 @@ fn verify_nested_invariant_stops_propagation() {
     assert!(!checker.is_subtype(&list_cell_string, &list_cell_any));
 }
 
-// Tuple covariance
 #[test]
 fn verify_tuple_covariant_elements() {
     let mut checker = Checker::new();
@@ -2145,7 +2116,6 @@ fn verify_tuple_length_mismatch_not_subtype() {
     assert!(!checker.is_subtype(&tuple1, &tuple2));
 }
 
-// Array covariance
 #[test]
 fn verify_array_covariant() {
     let mut checker = Checker::new();
@@ -2154,8 +2124,6 @@ fn verify_array_covariant() {
     let array_any = Type::Named("Array<Any>".into());
     assert!(checker.is_subtype(&array_string, &array_any));
 }
-
-// Exhaustiveness Tests
 
 #[test]
 fn verify_register_variant_cases() {
@@ -2194,7 +2162,6 @@ fn verify_register_type_auto_populates_variant_registry() {
     assert_eq!(variant_cases.unwrap().len(), 2);
 }
 
-// Exhaustive match tests
 #[test]
 fn verify_all_cases_covered_no_error() {
     let mut checker = Checker::new();
@@ -2231,7 +2198,6 @@ fn verify_wildcard_with_some_cases_also_ok() {
     assert_eq!(checker.errors.len(), 0);
 }
 
-// Non-exhaustive match tests
 #[test]
 fn verify_missing_one_case_errors() {
     let mut checker = Checker::new();
@@ -2281,7 +2247,6 @@ fn verify_missing_some_case_option() {
     assert!(checker.errors[0].message.contains("Some"));
 }
 
-// Custom types
 #[test]
 fn verify_custom_three_case_enum_exhaustive() {
     let mut checker = Checker::new();
@@ -2340,7 +2305,6 @@ fn verify_tuple_variant_exhaustive() {
     assert!(result);
 }
 
-// Duplicate/unreachable
 #[test]
 fn verify_duplicate_cases_still_exhaustive() {
     let mut checker = Checker::new();
@@ -2354,14 +2318,12 @@ fn verify_duplicate_cases_still_exhaustive() {
     assert!(result);
 }
 
-// Or-patterns
 #[test]
 fn verify_or_pattern_covers_multiple_cases() {
     let mut checker = Checker::new();
     checker.register_variant_cases("Color".into(),
         vec!["Red".into(), "Green".into(), "Blue".into()]);
 
-    // Simulating or-pattern which would cover Red | Green
     let covered = vec!["Red".into(), "Green".into(), "Blue".into()];
     let result = checker.check_variant_exhaustiveness("Color", &covered, false, d_span());
 
@@ -2374,7 +2336,6 @@ fn verify_or_pattern_still_missing_case() {
     checker.register_variant_cases("Color".into(),
         vec!["Red".into(), "Green".into(), "Blue".into()]);
 
-    // Simulating or-pattern covering Red | Green but missing Blue
     let covered = vec!["Red".into(), "Green".into()];
     let result = checker.check_variant_exhaustiveness("Color", &covered, false, d_span());
 
@@ -2382,7 +2343,6 @@ fn verify_or_pattern_still_missing_case() {
     assert!(checker.errors[0].message.contains("Blue"));
 }
 
-// Unknown types
 #[test]
 fn verify_unknown_type_passes_exhaustiveness() {
     let mut checker = Checker::new();
@@ -2409,7 +2369,6 @@ fn verify_non_variant_type_passes_exhaustiveness() {
     assert_eq!(checker.errors.len(), 0);
 }
 
-// Single case
 #[test]
 fn verify_single_case_variant_exhaustive() {
     let mut checker = Checker::new();
@@ -2433,8 +2392,6 @@ fn verify_single_case_variant_missing_errors() {
     assert!(checker.errors[0].message.contains("Unit"));
 }
 
-// ── Gap tests ─────────────────────────────────────────────────────────────────
-
 #[test]
 fn verify_type_alias_resolves_in_variable_type() {
     // `type Num = Int` then a variable declared as `Num` should resolve to Int
@@ -2456,3 +2413,174 @@ fn verify_type_alias_resolves_in_variable_type() {
         "type alias 'Num = Int' must resolve to Int; got {:?}", resolved);
 }
 
+#[test]
+fn recursive_variant_with_unit_base_case_accepted() {
+    // type Tree = Leaf | Node(Int, Tree, Tree)  — Leaf is a Unit base case.
+    let mut checker = Checker::new();
+    let body = TypeBody::Variant(vec![
+        VariantCase::Unit("Leaf".into()),
+        VariantCase::Tuple(
+            "Node".into(),
+            vec![
+                AstType::Named("Int".into()),
+                AstType::Named("Tree".into()),
+                AstType::Named("Tree".into()),
+            ],
+        ),
+    ]);
+    let ok = checker.check_recursive_type("Tree", &body, d_span());
+    assert!(ok, "Tree with Leaf base case must typecheck; errors: {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+    assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn recursive_variant_with_tuple_base_case_accepted() {
+    // type T = Leaf(Int) | Node(T, T)  — Leaf is a base case (no T in payload).
+    let mut checker = Checker::new();
+    let body = TypeBody::Variant(vec![
+        VariantCase::Tuple("Leaf".into(), vec![AstType::Named("Int".into())]),
+        VariantCase::Tuple(
+            "Node".into(),
+            vec![AstType::Named("T".into()), AstType::Named("T".into())],
+        ),
+    ]);
+    let ok = checker.check_recursive_type("T", &body, d_span());
+    assert!(ok, "Leaf(Int) is a valid base case; errors: {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+}
+
+#[test]
+fn variant_with_no_base_case_rejected() {
+    // type Bad = One(Bad) — every case carries a Bad payload; no way to
+    // construct an initial value. Must be rejected.
+    let mut checker = Checker::new();
+    let body = TypeBody::Variant(vec![
+        VariantCase::Tuple("One".into(), vec![AstType::Named("Bad".into())]),
+    ]);
+    let ok = checker.check_recursive_type("Bad", &body, d_span());
+    assert!(!ok, "variant whose every case self-references must be rejected");
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("no base case")),
+        "expected a 'no base case' diagnostic; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn variant_with_all_self_referencing_cases_rejected() {
+    // type Bad2 = A(Bad2) | B(Int, Bad2)  — no case lacks a Bad2 payload.
+    let mut checker = Checker::new();
+    let body = TypeBody::Variant(vec![
+        VariantCase::Tuple("A".into(), vec![AstType::Named("Bad2".into())]),
+        VariantCase::Tuple(
+            "B".into(),
+            vec![AstType::Named("Int".into()), AstType::Named("Bad2".into())],
+        ),
+    ]);
+    let ok = checker.check_recursive_type("Bad2", &body, d_span());
+    assert!(!ok, "no base case across all cases ⇒ reject");
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("no base case")),
+        "expected 'no base case' diagnostic; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn pure_record_self_reference_still_rejected() {
+    let mut checker = Checker::new();
+    let body = TypeBody::Record(vec![
+        RecordField {
+            name: "next".into(),
+            ty: AstType::Named("BadRec".into()),
+            is_pub: false,
+        },
+    ]);
+    let ok = checker.check_recursive_type("BadRec", &body, d_span());
+    assert!(!ok, "record self-reference (inline, no pointer) must be rejected");
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("recursive cycle")),
+        "expected 'recursive cycle' diagnostic; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn variant_with_record_payload_self_reference_accepted() {
+    let mut checker = Checker::new();
+    let body = TypeBody::Variant(vec![
+        VariantCase::Unit("Leaf".into()),
+        VariantCase::Record(
+            "Branch".into(),
+            vec![
+                RecordField { name: "left".into(),  ty: AstType::Named("Tree2".into()), is_pub: false },
+                RecordField { name: "right".into(), ty: AstType::Named("Tree2".into()), is_pub: false },
+            ],
+        ),
+    ]);
+    let ok = checker.check_recursive_type("Tree2", &body, d_span());
+    assert!(ok, "variant case with record payload may reference the type; errors: {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+}
+
+#[test]
+fn nullary_variant_constructor_resolves_at_expression_position() {
+    let mut checker = Checker::new();
+    // Register `type Tree = Leaf | Node(Int, Tree, Tree)` end-to-end.
+    let body = TypeBody::Variant(vec![
+        VariantCase::Unit("Leaf".into()),
+        VariantCase::Tuple(
+            "Node".into(),
+            vec![
+                AstType::Named("Int".into()),
+                AstType::Named("Tree".into()),
+                AstType::Named("Tree".into()),
+            ],
+        ),
+    ]);
+    checker.register_type("Tree".into(), body);
+    checker.register_variant_cases("Tree".into(),
+        vec!["Leaf".into(), "Node".into()]);
+
+    let expr = sp(ast::Expr::Identifier("Leaf".into()));
+    let ty = checker.infer_expr(&expr);
+    // Bare unit constructor evaluates to the owning type.
+    assert_eq!(ty, ect::ty::Type::Named("Tree".into()),
+        "Leaf must resolve to Tree via the constructor fallback; got {:?}", ty);
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("Undefined variable")),
+        "no 'Undefined variable' error expected; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn tuple_variant_constructor_resolves_as_function() {
+    let mut checker = Checker::new();
+    let body = TypeBody::Variant(vec![
+        VariantCase::Unit("Leaf".into()),
+        VariantCase::Tuple(
+            "Node".into(),
+            vec![
+                AstType::Named("Int".into()),
+                AstType::Named("Tree".into()),
+                AstType::Named("Tree".into()),
+            ],
+        ),
+    ]);
+    checker.register_type("Tree".into(), body);
+    checker.register_variant_cases("Tree".into(),
+        vec!["Leaf".into(), "Node".into()]);
+
+    let expr = sp(ast::Expr::Identifier("Node".into()));
+    let ty = checker.infer_expr(&expr);
+    match ty {
+        ect::ty::Type::Function { params, ret, .. } => {
+            assert_eq!(params.len(), 3, "Node has three payload params");
+            assert_eq!(*ret, ect::ty::Type::Named("Tree".into()),
+                "Node's return type must be Tree");
+        }
+        other => panic!("expected Function for Node constructor; got {:?}", other),
+    }
+}

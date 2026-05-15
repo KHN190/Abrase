@@ -337,6 +337,11 @@ impl Checker {
                     }
                 }
 
+                let callee_generic_vars: Vec<String> = if let ast::Expr::Identifier(n) = &callee.node {
+                    self.get_generic_params(n).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 let callee_ty = self.infer_expr(callee);
                 let result = if let Type::Function { params, effects, ret } = callee_ty {
                     if args.len() != params.len() {
@@ -357,7 +362,9 @@ impl Checker {
                     let subst = self.build_substitution_map(&params, &arg_types);
                     for (i, (arg_ty, param_ty)) in arg_types.iter().zip(params.iter()).enumerate() {
                         // Skip strict type checking if parameter is a generic type variable
-                        let is_param_generic = matches!(param_ty, Type::Generic { .. });
+                        // (either Type::Generic, or Type::Named(n) where n is a generic param of the callee).
+                        let is_param_generic = matches!(param_ty, Type::Generic { .. })
+                            || matches!(param_ty, Type::Named(n) if callee_generic_vars.contains(n));
                         if !is_param_generic && arg_ty != param_ty && *arg_ty != Type::Unknown && *param_ty != Type::Unknown {
                             self.report_error(
                                 format!("Argument {} type mismatch: expected {:?}, got {:?}", i, param_ty, arg_ty),
@@ -381,7 +388,64 @@ impl Checker {
                     for effect in &effects {
                         self.add_required_effect(effect.clone());
                     }
-                    self.apply_substitution(&ret, &subst)
+                    // For `Type::Named(n)` parameters that are generic vars, also build
+                    // a name-keyed substitution so the return type can be specialised.
+                    let mut named_subst: std::collections::HashMap<String, Type> =
+                        std::collections::HashMap::new();
+                    fn collect_named(
+                        param: &Type, arg: &Type,
+                        gens: &[String],
+                        subst: &mut std::collections::HashMap<String, Type>,
+                    ) {
+                        match (param, arg) {
+                            (Type::Named(n), a) if gens.contains(n) => {
+                                subst.entry(n.clone()).or_insert_with(|| a.clone());
+                            }
+                            (Type::Generic { name: pn, args: pa },
+                             Type::Generic { name: an, args: aa })
+                                if pn == an && pa.len() == aa.len() => {
+                                for (p, a) in pa.iter().zip(aa.iter()) {
+                                    collect_named(p, a, gens, subst);
+                                }
+                            }
+                            (Type::Tuple(ps), Type::Tuple(as_)) if ps.len() == as_.len() => {
+                                for (p, a) in ps.iter().zip(as_.iter()) {
+                                    collect_named(p, a, gens, subst);
+                                }
+                            }
+                            (Type::Reference { inner: pi, .. },
+                             Type::Reference { inner: ai, .. }) => {
+                                collect_named(pi, ai, gens, subst);
+                            }
+                            _ => {}
+                        }
+                    }
+                    for (p, a) in params.iter().zip(arg_types.iter()) {
+                        collect_named(p, a, &callee_generic_vars, &mut named_subst);
+                    }
+                    fn subst_named(ty: &Type, subst: &std::collections::HashMap<String, Type>) -> Type {
+                        match ty {
+                            Type::Named(n) => subst.get(n).cloned().unwrap_or_else(|| ty.clone()),
+                            Type::Generic { name, args } => Type::Generic {
+                                name: name.clone(),
+                                args: args.iter().map(|a| subst_named(a, subst)).collect(),
+                            },
+                            Type::Tuple(ts) => Type::Tuple(
+                                ts.iter().map(|t| subst_named(t, subst)).collect()),
+                            Type::Reference { is_mut, inner } => Type::Reference {
+                                is_mut: *is_mut,
+                                inner: Box::new(subst_named(inner, subst)),
+                            },
+                            Type::Function { params, effects, ret } => Type::Function {
+                                params: params.iter().map(|p| subst_named(p, subst)).collect(),
+                                effects: effects.clone(),
+                                ret: Box::new(subst_named(ret, subst)),
+                            },
+                            _ => ty.clone(),
+                        }
+                    }
+                    let ret_after_generic_subst = self.apply_substitution(&ret, &subst);
+                    subst_named(&ret_after_generic_subst, &named_subst)
 
                 } else {
                     self.report_error("Callee must be function type".into(), callee.span)
