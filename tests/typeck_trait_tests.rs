@@ -1,6 +1,6 @@
-use ect::ast;
-use ect::ty::Type;
-use ect::typeck::Checker;
+use abrase::ast;
+use abrase::ty::Type;
+use abrase::typeck::Checker;
 
 fn mk() -> Checker { Checker::new() }
 fn span() -> ast::Span { ast::Span { line: 1, col: 1 } }

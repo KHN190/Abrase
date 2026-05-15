@@ -1,9 +1,9 @@
 // Code generation, optimization, phases
-use ect::ast::*;
-use ect::compiler::Compiler;
-use ect::lexer::Lexer;
-use ect::parser::Parser;
-use ect::vm::{Value, VirtualMachine};
+use abrase::ast::*;
+use abrase::compiler::Compiler;
+use abrase::lexer::Lexer;
+use abrase::parser::Parser;
+use abrase::vm::{Value, VirtualMachine};
 
 fn compile_and_run(ast: &[Decl]) -> Result<Value, String> {
     let mut compiler = Compiler::new();

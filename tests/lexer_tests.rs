@@ -1,5 +1,5 @@
-use ect::lexer::Lexer;
-use ect::lexer::Token;
+use abrase::lexer::Lexer;
+use abrase::lexer::Token;
 
 #[cfg(test)]
 mod tests {

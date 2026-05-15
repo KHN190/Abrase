@@ -1,6 +1,6 @@
-use ect::ast::{*, Pattern, Span, Spanned, Type as AstType, self};
-use ect::ty::Type;
-use ect::typeck::Checker;
+use abrase::ast::{*, Pattern, Span, Spanned, Type as AstType, self};
+use abrase::ty::Type;
+use abrase::typeck::Checker;
 
 fn d_span() -> Span { Span::new(0, 0) }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
@@ -779,16 +779,16 @@ fn verify_field_access() {
     let mut checker = Checker::new();
 
     // Register Point type with x and y fields
-    let point_type = ect::ast::TypeBody::Record(vec![
-        ect::ast::RecordField {
+    let point_type = abrase::ast::TypeBody::Record(vec![
+        abrase::ast::RecordField {
             is_pub: true,
             name: "x".into(),
-            ty: ect::ast::Type::Named("Int".into()),
+            ty: abrase::ast::Type::Named("Int".into()),
         },
-        ect::ast::RecordField {
+        abrase::ast::RecordField {
             is_pub: true,
             name: "y".into(),
-            ty: ect::ast::Type::Named("Int".into()),
+            ty: abrase::ast::Type::Named("Int".into()),
         },
     ]);
     checker.register_type("Point".into(), point_type);
@@ -1736,7 +1736,7 @@ fn verify_interpolation_field_access_path() {
     checker.register_trait("Show".into(), vec!["to_string".into()]);
 
     // Register User type with name field
-    use ect::ast::{TypeBody, RecordField, Type as AstType};
+    use abrase::ast::{TypeBody, RecordField, Type as AstType};
     let user_type = TypeBody::Record(vec![
         RecordField {
             name: "name".into(),
@@ -2703,7 +2703,7 @@ fn verify_question_on_result_unwraps_ok_type() {
 
 #[test]
 fn verify_question_on_result_adds_exn_effect() {
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
     let mut checker = Checker::new();
     checker.insert_var(
         "r".into(),

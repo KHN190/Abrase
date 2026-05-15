@@ -1,6 +1,6 @@
-use ect::ast::{BinaryOp, EffectItem, Expr, Literal, Span, Spanned, self};
-use ect::ty::Type;
-use ect::typeck::Checker;
+use abrase::ast::{BinaryOp, EffectItem, Expr, Literal, Span, Spanned, self};
+use abrase::ty::Type;
+use abrase::typeck::Checker;
 
 fn d_span() -> Span { Span::new(0, 0) }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
@@ -20,7 +20,7 @@ fn verify_effect_registration() {
 #[test]
 fn verify_effect_alias_registration() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effects = vec![Effect::Nondet, Effect::Alloc];
     checker.register_effect_alias("concurrent".into(), effects.clone());
@@ -33,7 +33,7 @@ fn verify_effect_alias_registration() {
 #[test]
 fn verify_push_and_pop_effect() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     checker.push_effect(Effect::Nondet);
     checker.push_effect(Effect::Alloc);
@@ -49,7 +49,7 @@ fn verify_push_and_pop_effect() {
 #[test]
 fn verify_effects_equal_total() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     assert!(checker.effects_equal(&Effect::Total, &Effect::Total));
     assert!(!checker.effects_equal(&Effect::Total, &Effect::Nondet));
@@ -58,7 +58,7 @@ fn verify_effects_equal_total() {
 #[test]
 fn verify_effects_equal_alloc() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     assert!(checker.effects_equal(&Effect::Alloc, &Effect::Alloc));
 }
@@ -66,7 +66,7 @@ fn verify_effects_equal_alloc() {
 #[test]
 fn verify_effects_equal_nondet() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     assert!(checker.effects_equal(&Effect::Nondet, &Effect::Nondet));
 }
@@ -74,7 +74,7 @@ fn verify_effects_equal_nondet() {
 #[test]
 fn verify_effects_equal_exn_same_type() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let exn1 = Effect::Exn(Box::new(Type::String));
     let exn2 = Effect::Exn(Box::new(Type::String));
@@ -85,7 +85,7 @@ fn verify_effects_equal_exn_same_type() {
 #[test]
 fn verify_effects_equal_exn_different_type() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let exn1 = Effect::Exn(Box::new(Type::String));
     let exn2 = Effect::Exn(Box::new(Type::Int));
@@ -98,13 +98,13 @@ fn verify_effects_compatible_empty() {
     let checker = Checker::new();
 
     assert!(checker.effects_compatible(&[], &[]));
-    assert!(checker.effects_compatible(&[], &vec![ect::ty::Effect::Nondet]));
+    assert!(checker.effects_compatible(&[], &vec![abrase::ty::Effect::Nondet]));
 }
 
 #[test]
 fn verify_effects_compatible_single_effect() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let expected = vec![Effect::Nondet];
     let actual = vec![Effect::Nondet];
@@ -115,7 +115,7 @@ fn verify_effects_compatible_single_effect() {
 #[test]
 fn verify_effects_compatible_subset() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let expected = vec![Effect::Nondet];
     let actual = vec![Effect::Nondet, Effect::Alloc];
@@ -126,7 +126,7 @@ fn verify_effects_compatible_subset() {
 #[test]
 fn verify_effects_compatible_missing_effect() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let expected = vec![Effect::Nondet, Effect::Alloc];
     let actual = vec![Effect::Nondet];
@@ -137,7 +137,7 @@ fn verify_effects_compatible_missing_effect() {
 #[test]
 fn verify_convert_effect_io() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effect_item = ast::EffectItem {
         name: vec!["io".into()],
@@ -164,7 +164,7 @@ fn verify_convert_effect_unknown_returns_none() {
 #[test]
 fn verify_convert_effect_exn_no_arg() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effect_item = ast::EffectItem {
         name: vec!["exn".into()],
@@ -184,7 +184,7 @@ fn verify_convert_effect_exn_no_arg() {
 #[test]
 fn verify_convert_effect_exn_with_arg() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effect_item = ast::EffectItem {
         name: vec!["exn".into()],
@@ -204,7 +204,7 @@ fn verify_convert_effect_exn_with_arg() {
 #[test]
 fn verify_convert_effect_nondet() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effect_item = ast::EffectItem {
         name: vec!["nondet".into()],
@@ -219,7 +219,7 @@ fn verify_convert_effect_nondet() {
 #[test]
 fn verify_function_type_with_effects() {
     let _checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let fn_type = Type::Function {
         params: vec![Type::Int],
@@ -239,7 +239,7 @@ fn verify_function_type_with_effects() {
 #[test]
 fn verify_function_type_multiple_effects() {
     let _checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let fn_type = Type::Function {
         params: vec![Type::Int],
@@ -258,7 +258,7 @@ fn verify_function_type_multiple_effects() {
 #[test]
 fn verify_effect_total() {
     let _checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     assert!(matches!(Effect::Total, Effect::Total));
 }
@@ -266,7 +266,7 @@ fn verify_effect_total() {
 #[test]
 fn verify_convert_effect_alloc() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effect_item = ast::EffectItem {
         name: vec!["alloc".into()],
@@ -281,7 +281,7 @@ fn verify_convert_effect_alloc() {
 #[test]
 fn verify_effect_compatibility_with_multiple_effects() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let expected = vec![Effect::Nondet, Effect::Alloc];
     let actual = vec![Effect::Nondet, Effect::Alloc, Effect::Nondet];
@@ -292,7 +292,7 @@ fn verify_effect_compatibility_with_multiple_effects() {
 #[test]
 fn verify_effect_compatibility_order_independent() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let expected = vec![Effect::Alloc, Effect::Nondet];
     let actual = vec![Effect::Nondet, Effect::Alloc];
@@ -305,7 +305,7 @@ fn verify_effect_compatibility_order_independent() {
 #[test]
 fn verify_set_fn_declared_effects() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effects = vec![Effect::Nondet, Effect::Alloc];
     checker.set_fn_declared_effects(effects.clone());
@@ -317,7 +317,7 @@ fn verify_set_fn_declared_effects() {
 #[test]
 fn verify_add_required_effect() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     checker.add_required_effect(Effect::Nondet);
     checker.add_required_effect(Effect::Alloc);
@@ -329,7 +329,7 @@ fn verify_add_required_effect() {
 #[test]
 fn verify_add_required_effect_no_duplicates() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     checker.add_required_effect(Effect::Nondet);
     checker.add_required_effect(Effect::Nondet);
@@ -341,7 +341,7 @@ fn verify_add_required_effect_no_duplicates() {
 #[test]
 fn verify_check_effect_compatibility_satisfied() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     checker.add_required_effect(Effect::Nondet);
     let provided = vec![Effect::Nondet, Effect::Alloc];
@@ -354,7 +354,7 @@ fn verify_check_effect_compatibility_satisfied() {
 #[test]
 fn verify_check_effect_compatibility_unsatisfied() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     checker.add_required_effect(Effect::Nondet);
     let provided = vec![Effect::Alloc];
@@ -367,7 +367,7 @@ fn verify_check_effect_compatibility_unsatisfied() {
 #[test]
 fn verify_unify_effects_no_duplicates() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effects1 = vec![Effect::Nondet, Effect::Alloc];
     let effects2 = vec![Effect::Nondet, Effect::Exn(Box::new(Type::Int))];
@@ -379,7 +379,7 @@ fn verify_unify_effects_no_duplicates() {
 #[test]
 fn verify_unify_effects_empty_left() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effects1 = vec![];
     let effects2 = vec![Effect::Nondet];
@@ -391,7 +391,7 @@ fn verify_unify_effects_empty_left() {
 #[test]
 fn verify_unify_effects_empty_right() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let effects1 = vec![Effect::Nondet];
     let effects2 = vec![];
@@ -403,7 +403,7 @@ fn verify_unify_effects_empty_right() {
 #[test]
 fn verify_effects_subsume_all_provided() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let required = vec![Effect::Nondet];
     let provided = vec![Effect::Nondet, Effect::Alloc];
@@ -414,7 +414,7 @@ fn verify_effects_subsume_all_provided() {
 #[test]
 fn verify_effects_subsume_missing() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let required = vec![Effect::Nondet, Effect::Alloc];
     let provided = vec![Effect::Nondet];
@@ -425,7 +425,7 @@ fn verify_effects_subsume_missing() {
 #[test]
 fn verify_effects_subsume_empty_required() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let required = vec![];
     let provided = vec![Effect::Nondet];
@@ -436,7 +436,7 @@ fn verify_effects_subsume_empty_required() {
 #[test]
 fn verify_infer_closure_effects_with_declared() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![Effect::Nondet];
     checker.set_fn_declared_effects(declared.clone());
@@ -450,7 +450,7 @@ fn verify_infer_closure_effects_with_declared() {
 #[test]
 fn verify_infer_closure_effects_without_declared() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let body_effects = vec![Effect::Alloc, Effect::Nondet];
     let inferred = checker.infer_closure_effects(&body_effects);
@@ -524,7 +524,7 @@ fn verify_effect_inference_in_closure_type() {
 #[test]
 fn verify_fn_declared_effects_cleared_after_closure() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let initial_effects = vec![Effect::Nondet];
     checker.set_fn_declared_effects(initial_effects);
@@ -546,7 +546,7 @@ fn verify_fn_declared_effects_cleared_after_closure() {
 #[test]
 fn verify_required_effects_accumulate() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     checker.add_required_effect(Effect::Nondet);
     checker.add_required_effect(Effect::Alloc);
@@ -559,7 +559,7 @@ fn verify_required_effects_accumulate() {
 #[test]
 fn verify_effect_compatibility_with_exn() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let required = vec![Effect::Exn(Box::new(Type::String))];
     let provided = vec![Effect::Exn(Box::new(Type::String)), Effect::Nondet];
@@ -570,7 +570,7 @@ fn verify_effect_compatibility_with_exn() {
 #[test]
 fn verify_effect_compatibility_exn_type_mismatch() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let required = vec![Effect::Exn(Box::new(Type::String))];
     let provided = vec![Effect::Exn(Box::new(Type::Int))];
@@ -607,7 +607,7 @@ fn verify_mark_effect_handled_no_duplicates() {
 #[test]
 fn verify_compute_unhandled_effects_all_handled() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     checker.mark_effect_handled("nondet".into());
     let all_effects = vec![Effect::Nondet];
@@ -619,7 +619,7 @@ fn verify_compute_unhandled_effects_all_handled() {
 #[test]
 fn verify_compute_unhandled_effects_partial_handled() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     checker.mark_effect_handled("nondet".into());
     let all_effects = vec![Effect::Nondet, Effect::Alloc];
@@ -633,7 +633,7 @@ fn verify_compute_unhandled_effects_partial_handled() {
 #[test]
 fn verify_compute_unhandled_effects_none_handled() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let all_effects = vec![Effect::Nondet, Effect::Alloc];
 
@@ -645,7 +645,7 @@ fn verify_compute_unhandled_effects_none_handled() {
 #[test]
 fn verify_compute_unhandled_effects_exn_handling() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     checker.mark_effect_handled("exn".into());
     let all_effects = vec![Effect::Exn(Box::new(Type::String))];
@@ -711,7 +711,7 @@ fn verify_clear_handle_context() {
 #[test]
 fn verify_effect_propagation_accumulates_in_required() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Add some required effects first
     checker.add_required_effect(Effect::Nondet);
@@ -753,7 +753,7 @@ fn verify_handle_expression_type_check() {
 #[test]
 fn verify_unhandled_effects_with_multiple_arms() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Mark multiple effects as handled
     checker.mark_effect_handled("nondet".into());
@@ -770,7 +770,7 @@ fn verify_unhandled_effects_with_multiple_arms() {
 #[test]
 fn verify_alloc_effect_matches_io_handler() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // io handler should handle Alloc effect
     checker.mark_effect_handled("io".into());
@@ -785,7 +785,7 @@ fn verify_alloc_effect_matches_io_handler() {
 #[test]
 fn verify_effect_subsumption_pure_for_pure_exn() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Pure function can be used where <pure, exn> is expected
     // Function declares: <pure>
@@ -800,7 +800,7 @@ fn verify_effect_subsumption_pure_for_pure_exn() {
 #[test]
 fn verify_effect_subsumption_different_exception_types() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Different exception types should not be subsumed
     let provided = vec![Effect::Exn(Box::new(Type::Int))];
@@ -812,7 +812,7 @@ fn verify_effect_subsumption_different_exception_types() {
 #[test]
 fn verify_effect_subsumption_empty_to_any() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Empty (no effects) can be used anywhere
     let declared = vec![]; // no effects
@@ -824,7 +824,7 @@ fn verify_effect_subsumption_empty_to_any() {
 #[test]
 fn verify_effect_subsumption_exact_match() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Exact match should subsume
     let declared = vec![Effect::Nondet, Effect::Alloc];
@@ -836,7 +836,7 @@ fn verify_effect_subsumption_exact_match() {
 #[test]
 fn verify_function_type_subsumption_incompatible_return() {
     let _checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Function type: () -> <pure> Int
     let provided_fn = Type::Function {
@@ -867,7 +867,7 @@ fn verify_function_type_subsumption_incompatible_return() {
 #[test]
 fn verify_effect_subsumption_with_nondet() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Function declares <nondet, alloc> but context expects <nondet>
     let declared = vec![Effect::Nondet, Effect::Alloc]; // <nondet, alloc>
@@ -879,7 +879,7 @@ fn verify_effect_subsumption_with_nondet() {
 #[test]
 fn verify_effect_subsumption_nondet_subsumed() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Nondet function can be used where nondet + alloc is expected
     let declared = vec![Effect::Nondet]; // <nondet>
@@ -891,7 +891,7 @@ fn verify_effect_subsumption_nondet_subsumed() {
 #[test]
 fn verify_effect_subsumption_function_produces_more() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Function produces MORE effects than context expects to handle
     let declared = vec![Effect::Nondet, Effect::Alloc, Effect::Exn(Box::new(Type::Int))];
@@ -904,7 +904,7 @@ fn verify_effect_subsumption_function_produces_more() {
 #[test]
 fn verify_closure_with_pure_effects_subsumes_with_exn() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Closure declared as <pure>
     let closure_effects = vec![Effect::Total];
@@ -920,7 +920,7 @@ fn verify_closure_with_pure_effects_subsumes_with_exn() {
 #[test]
 fn verify_effect_subsumption_order_independent() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Order shouldn't matter for subsumption
     let declared_a = vec![Effect::Nondet, Effect::Total];
@@ -936,7 +936,7 @@ fn verify_effect_subsumption_order_independent() {
 #[test]
 fn verify_closure_declared_pure_valid() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![Effect::Total]; // <pure>
     let inferred = vec![]; // body has no effects
@@ -947,7 +947,7 @@ fn verify_closure_declared_pure_valid() {
 #[test]
 fn verify_closure_declared_pure_with_io_call_invalid() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![Effect::Total]; // <pure>
     let inferred = vec![Effect::Alloc]; // body calls IO function
@@ -959,7 +959,7 @@ fn verify_closure_declared_pure_with_io_call_invalid() {
 #[test]
 fn verify_closure_no_declaration_accepts_any() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![]; // No effects declared
     let inferred = vec![Effect::Nondet, Effect::Alloc]; // Body has effects
@@ -970,7 +970,7 @@ fn verify_closure_no_declaration_accepts_any() {
 #[test]
 fn verify_inferred_effects_exceed_declared_single() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![Effect::Total]; // <pure>
     let inferred = vec![Effect::Alloc]; // has IO
@@ -982,7 +982,7 @@ fn verify_inferred_effects_exceed_declared_single() {
 #[test]
 fn verify_inferred_effects_subset_of_declared() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![Effect::Nondet, Effect::Alloc, Effect::Nondet];
     let inferred = vec![Effect::Nondet, Effect::Alloc];
@@ -994,7 +994,7 @@ fn verify_inferred_effects_subset_of_declared() {
 #[test]
 fn verify_all_effects_declared_true() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![Effect::Nondet, Effect::Alloc];
     let inferred = vec![Effect::Nondet];
@@ -1005,7 +1005,7 @@ fn verify_all_effects_declared_true() {
 #[test]
 fn verify_all_effects_declared_false() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![Effect::Nondet];
     let inferred = vec![Effect::Nondet, Effect::Alloc];
@@ -1016,7 +1016,7 @@ fn verify_all_effects_declared_false() {
 #[test]
 fn verify_all_effects_declared_exact_match() {
     let checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![Effect::Nondet, Effect::Alloc];
     let inferred = vec![Effect::Nondet, Effect::Alloc];
@@ -1027,7 +1027,7 @@ fn verify_all_effects_declared_exact_match() {
 #[test]
 fn verify_closure_with_pure_declaration_io_call_error() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Closure declared as |x| -> <pure> but calls IO
     let declared = vec![Effect::Total];
@@ -1043,7 +1043,7 @@ fn verify_closure_with_pure_declaration_io_call_error() {
 #[test]
 fn verify_closure_declared_effects_with_exn_type() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Closure declared with specific exception type
     let declared = vec![Effect::Exn(Box::new(Type::String))];
@@ -1055,7 +1055,7 @@ fn verify_closure_declared_effects_with_exn_type() {
 #[test]
 fn verify_closure_exn_type_mismatch_in_declaration() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     // Closure declares <exn<String>> but body throws <exn<Int>>
     let declared = vec![Effect::Exn(Box::new(Type::String))];
@@ -1067,7 +1067,7 @@ fn verify_closure_exn_type_mismatch_in_declaration() {
 #[test]
 fn verify_closure_over_declared_single_extra_effect() {
     let mut checker = Checker::new();
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
 
     let declared = vec![Effect::Nondet, Effect::Alloc];
     let inferred = vec![Effect::Nondet, Effect::Alloc, Effect::Exn(Box::new(Type::Int))];
@@ -1436,9 +1436,9 @@ fn verify_const_rejects_any_nonpure_in_chain() {
 
 #[test]
 fn verify_throw_adds_exn_to_required_effects() {
-    use ect::ty::Effect;
+    use abrase::ty::Effect;
     let mut checker = Checker::new();
-    let expr = sp(Expr::Throw(Box::new(sp(Expr::Literal(ect::ast::Literal::String("oops".into()))))));
+    let expr = sp(Expr::Throw(Box::new(sp(Expr::Literal(abrase::ast::Literal::String("oops".into()))))));
     checker.infer_expr(&expr);
     let required = checker.get_fn_required_effects();
     assert!(
@@ -1733,10 +1733,10 @@ fn verify_resume_can_be_called_twice_in_same_arm() {
 fn verify_borrow_barrier_catches_outer_borrow_across_effect_op() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
-    let op_ty = ect::ty::Type::Function {
-        params: vec![ect::ty::Type::Int],
+    let op_ty = abrase::ty::Type::Function {
+        params: vec![abrase::ty::Type::Int],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("logger::log".into(), op_ty);
 
@@ -1801,10 +1801,10 @@ fn verify_borrow_barrier_catches_outer_borrow_across_effect_op() {
 fn verify_borrow_barrier_allows_borrow_inside_arm_region() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
-    let op_ty = ect::ty::Type::Function {
-        params: vec![ect::ty::Type::Int],
+    let op_ty = abrase::ty::Type::Function {
+        params: vec![abrase::ty::Type::Int],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("logger::log".into(), op_ty);
 
@@ -1878,10 +1878,10 @@ fn verify_borrow_barrier_allows_borrow_inside_arm_region() {
 fn verify_effect_op_call_requires_user_effect() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
-    let op_ty = ect::ty::Type::Function {
-        params: vec![ect::ty::Type::Int],
+    let op_ty = abrase::ty::Type::Function {
+        params: vec![abrase::ty::Type::Int],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("logger::log".into(), op_ty);
 
@@ -1915,10 +1915,10 @@ fn verify_effect_op_call_requires_user_effect() {
 fn verify_effect_op_arg_type_mismatch_errors() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
-    let op_ty = ect::ty::Type::Function {
-        params: vec![ect::ty::Type::Int],
+    let op_ty = abrase::ty::Type::Function {
+        params: vec![abrase::ty::Type::Int],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("logger::log".into(), op_ty);
 
@@ -1952,10 +1952,10 @@ fn verify_effect_op_arg_type_mismatch_errors() {
 fn verify_effect_op_call_declared_no_leak() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
-    let op_ty = ect::ty::Type::Function {
-        params: vec![ect::ty::Type::Int],
+    let op_ty = abrase::ty::Type::Function {
+        params: vec![abrase::ty::Type::Int],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("logger::log".into(), op_ty);
 
@@ -1989,10 +1989,10 @@ fn verify_effect_op_call_declared_no_leak() {
 fn verify_handle_consumes_user_effect() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
-    let op_ty = ect::ty::Type::Function {
-        params: vec![ect::ty::Type::Int],
+    let op_ty = abrase::ty::Type::Function {
+        params: vec![abrase::ty::Type::Int],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("logger::log".into(), op_ty);
 
@@ -2069,10 +2069,10 @@ fn verify_nested_handle_inner_consumes_outer_propagates() {
     let mut checker = Checker::new();
     checker.register_effect("a".into(), vec!["op".into()]);
     checker.register_effect("b".into(), vec!["op".into()]);
-    let op_ty = ect::ty::Type::Function {
+    let op_ty = abrase::ty::Type::Function {
         params: vec![],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("a::op".into(), op_ty.clone());
     checker.register_effect_op("b::op".into(), op_ty);
@@ -2133,10 +2133,10 @@ fn verify_nested_handle_inner_consumes_outer_propagates() {
 #[test]
 fn verify_borrow_barrier_silent_for_pure_call() {
     let mut checker = Checker::new();
-    let fn_ty = ect::ty::Type::Function {
+    let fn_ty = abrase::ty::Type::Function {
         params: vec![],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Int),
+        ret: Box::new(abrase::ty::Type::Int),
     };
     checker.insert_var("pure_call".into(), fn_ty, false, d_span());
 
@@ -2190,10 +2190,10 @@ fn verify_borrow_barrier_silent_for_pure_call() {
 fn verify_borrow_barrier_catches_mut_borrow_across_effect_op() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
-    let op_ty = ect::ty::Type::Function {
-        params: vec![ect::ty::Type::Int],
+    let op_ty = abrase::ty::Type::Function {
+        params: vec![abrase::ty::Type::Int],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("logger::log".into(), op_ty);
 
@@ -2258,10 +2258,10 @@ fn verify_borrow_barrier_catches_mut_borrow_across_effect_op() {
 fn verify_handle_arm_type_mismatch_errors() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
-    let op_ty = ect::ty::Type::Function {
-        params: vec![ect::ty::Type::Int],
+    let op_ty = abrase::ty::Type::Function {
+        params: vec![abrase::ty::Type::Int],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("logger::log".into(), op_ty);
 
@@ -2312,10 +2312,10 @@ fn verify_effect_op_wrong_arg_count_errors() {
     // logger.log expects one Int arg; the call site passes none.
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
-    let op_ty = ect::ty::Type::Function {
-        params: vec![ect::ty::Type::Int],
+    let op_ty = abrase::ty::Type::Function {
+        params: vec![abrase::ty::Type::Int],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Unit),
+        ret: Box::new(abrase::ty::Type::Unit),
     };
     checker.register_effect_op("logger::log".into(), op_ty);
 
@@ -2352,15 +2352,15 @@ fn verify_unhandled_effect_op_in_handler_body_propagates() {
     let mut checker = Checker::new();
     checker.register_effect("a".into(), vec!["one".into()]);
     checker.register_effect("b".into(), vec!["two".into()]);
-    let a_one_ty = ect::ty::Type::Function {
+    let a_one_ty = abrase::ty::Type::Function {
         params: vec![],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Int),
+        ret: Box::new(abrase::ty::Type::Int),
     };
-    let b_two_ty = ect::ty::Type::Function {
+    let b_two_ty = abrase::ty::Type::Function {
         params: vec![],
         effects: vec![],
-        ret: Box::new(ect::ty::Type::Int),
+        ret: Box::new(abrase::ty::Type::Int),
     };
     checker.register_effect_op("a::one".into(), a_one_ty);
     checker.register_effect_op("b::two".into(), b_two_ty);

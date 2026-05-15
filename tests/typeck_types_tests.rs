@@ -1,6 +1,6 @@
-use ect::ty::{Type, Variance};
-use ect::ast::{self, Pattern, RecordField, Span, Spanned, Type as AstType, TypeBody, VariantCase};
-use ect::typeck::Checker;
+use abrase::ty::{Type, Variance};
+use abrase::ast::{self, Pattern, RecordField, Span, Spanned, Type as AstType, TypeBody, VariantCase};
+use abrase::typeck::Checker;
 
 fn d_span() -> Span { Span { line: 0, col: 0 } }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
@@ -745,9 +745,9 @@ fn verify_convert_simple_generic_type() {
     let checker = Checker::new();
 
     // Create ast::Type::Generic and convert it
-    let ast_generic = ect::ast::Type::Generic {
+    let ast_generic = abrase::ast::Type::Generic {
         name: "List".into(),
-        args: vec![ect::ast::Type::Named("Int".into())],
+        args: vec![abrase::ast::Type::Named("Int".into())],
     };
 
     let converted = checker.convert_type(&ast_generic);
@@ -762,11 +762,11 @@ fn verify_convert_simple_generic_type() {
 fn verify_convert_generic_with_multiple_args() {
     let checker = Checker::new();
 
-    let ast_generic = ect::ast::Type::Generic {
+    let ast_generic = abrase::ast::Type::Generic {
         name: "Tuple".into(),
         args: vec![
-            ect::ast::Type::Named("String".into()),
-            ect::ast::Type::Named("Int".into()),
+            abrase::ast::Type::Named("String".into()),
+            abrase::ast::Type::Named("Int".into()),
         ],
     };
 
@@ -782,11 +782,11 @@ fn verify_convert_generic_with_multiple_args() {
 fn verify_convert_nested_generic_type() {
     let checker = Checker::new();
 
-    let ast_generic = ect::ast::Type::Generic {
+    let ast_generic = abrase::ast::Type::Generic {
         name: "List".into(),
-        args: vec![ect::ast::Type::Generic {
+        args: vec![abrase::ast::Type::Generic {
             name: "Option".into(),
-            args: vec![ect::ast::Type::Named("String".into())],
+            args: vec![abrase::ast::Type::Named("String".into())],
         }],
     };
 
@@ -805,11 +805,11 @@ fn verify_convert_nested_generic_type() {
 fn verify_convert_generic_result_type() {
     let checker = Checker::new();
 
-    let ast_generic = ect::ast::Type::Generic {
+    let ast_generic = abrase::ast::Type::Generic {
         name: "Result".into(),
         args: vec![
-            ect::ast::Type::Named("String".into()),
-            ect::ast::Type::Named("Int".into()),
+            abrase::ast::Type::Named("String".into()),
+            abrase::ast::Type::Named("Int".into()),
         ],
     };
 
@@ -957,7 +957,7 @@ fn verify_generic_with_copy_args_is_copy() {
         args: vec![Type::Int, Type::Bool],
     };
 
-    assert_eq!(generic.ownership(), ect::ty::Ownership::Copy);
+    assert_eq!(generic.ownership(), abrase::ty::Ownership::Copy);
 }
 
 #[test]
@@ -967,7 +967,7 @@ fn verify_generic_with_move_arg_is_move() {
         args: vec![Type::String],
     };
 
-    assert_eq!(generic.ownership(), ect::ty::Ownership::Move);
+    assert_eq!(generic.ownership(), abrase::ty::Ownership::Move);
 }
 
 #[test]
@@ -977,7 +977,7 @@ fn verify_generic_with_mixed_args_is_move() {
         args: vec![Type::Int, Type::String],
     };
 
-    assert_eq!(generic.ownership(), ect::ty::Ownership::Move);
+    assert_eq!(generic.ownership(), abrase::ty::Ownership::Move);
 }
 
 #[test]
@@ -988,7 +988,7 @@ fn verify_generic_with_no_args_is_copy() {
     };
 
     // Empty args means all Copy (vacuous truth)
-    assert_eq!(generic.ownership(), ect::ty::Ownership::Copy);
+    assert_eq!(generic.ownership(), abrase::ty::Ownership::Copy);
 }
 
 // Integration: Generic Types in Function Signatures
@@ -1129,9 +1129,9 @@ fn verify_for_loop_list_int_binds_element_type() {
     };
     checker.insert_var("nums".into(), list_int_ty, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("n".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("nums".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("nums".into()))),
         body: body_breaking("n"),
     });
 
@@ -1150,9 +1150,9 @@ fn verify_for_loop_list_string_binds_element_type() {
     };
     checker.insert_var("strs".into(), list_string_ty, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("s".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("strs".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("strs".into()))),
         body: body_breaking("s"),
     });
 
@@ -1171,9 +1171,9 @@ fn verify_for_loop_vec_bool_binds_element_type() {
     };
     checker.insert_var("flags".into(), vec_bool_ty, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("f".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("flags".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("flags".into()))),
         body: body_breaking("f"),
     });
 
@@ -1192,9 +1192,9 @@ fn verify_for_loop_option_type_binds_element() {
     };
     checker.insert_var("maybe_num".into(), option_int_ty, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("n".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("maybe_num".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("maybe_num".into()))),
         body: body_breaking("n"),
     });
 
@@ -1213,9 +1213,9 @@ fn verify_for_loop_result_type_binds_ok_element() {
     };
     checker.insert_var("res".into(), result_ty, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("val".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("res".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("res".into()))),
         body: body_breaking("val"),
     });
 
@@ -1230,9 +1230,9 @@ fn verify_for_loop_string_binds_char() {
 
     checker.insert_var("text".into(), Type::String, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("c".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("text".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("text".into()))),
         body: body_breaking("c"),
     });
 
@@ -1251,9 +1251,9 @@ fn verify_for_loop_array_generic_binds_element() {
     };
     checker.insert_var("values".into(), array_float, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("v".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("values".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("values".into()))),
         body: body_breaking("v"),
     });
 
@@ -1268,9 +1268,9 @@ fn verify_for_loop_unknown_iterable_propagates_unknown() {
 
     checker.insert_var("unknown".into(), Type::Unknown, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("x".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("unknown".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("unknown".into()))),
         body: body_breaking("x"),
     });
 
@@ -1285,9 +1285,9 @@ fn verify_for_loop_non_iterable_type_binds_unknown() {
 
     checker.insert_var("num".into(), Type::Int, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("x".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("num".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("num".into()))),
         body: body_breaking("x"),
     });
 
@@ -1311,9 +1311,9 @@ fn verify_for_loop_nested_generic_list_option() {
     };
     checker.insert_var("maybe_nums".into(), nested_ty, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("maybe_n".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("maybe_nums".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("maybe_nums".into()))),
         body: body_breaking("maybe_n"),
     });
 
@@ -1340,9 +1340,9 @@ fn verify_for_loop_nested_list_of_lists_binds_inner_list() {
     };
     checker.insert_var("matrix".into(), nested_list, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("row".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("matrix".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("matrix".into()))),
         body: body_breaking("row"),
     });
 
@@ -1369,9 +1369,9 @@ fn verify_for_loop_option_list_binds_list() {
     };
     checker.insert_var("maybe_strs".into(), nested_ty, false, d_span());
 
-    let for_expr = sp(ect::ast::Expr::For {
+    let for_expr = sp(abrase::ast::Expr::For {
         pattern: sp(Pattern::Bind("maybe_list".into())),
-        iter: Box::new(sp(ect::ast::Expr::Identifier("maybe_strs".into()))),
+        iter: Box::new(sp(abrase::ast::Expr::Identifier("maybe_strs".into()))),
         body: body_breaking("maybe_list"),
     });
 
@@ -1390,16 +1390,16 @@ fn verify_for_loop_option_list_binds_list() {
 fn verify_field_access_on_generic_record_substitutes_type() {
     let mut checker = Checker::new();
 
-    let pair_type = ect::ast::TypeBody::Record(vec![
-        ect::ast::RecordField {
+    let pair_type = abrase::ast::TypeBody::Record(vec![
+        abrase::ast::RecordField {
             is_pub: true,
             name: "first".into(),
-            ty: ect::ast::Type::Named("T".into()),
+            ty: abrase::ast::Type::Named("T".into()),
         },
-        ect::ast::RecordField {
+        abrase::ast::RecordField {
             is_pub: true,
             name: "second".into(),
-            ty: ect::ast::Type::Named("T".into()),
+            ty: abrase::ast::Type::Named("T".into()),
         },
     ]);
     checker.register_type("Pair".into(), pair_type);
@@ -1410,8 +1410,8 @@ fn verify_field_access_on_generic_record_substitutes_type() {
     };
     checker.insert_var("pair".into(), pair_int_ty, false, d_span());
 
-    let field_expr = sp(ect::ast::Expr::FieldAccess {
-        base: Box::new(sp(ect::ast::Expr::Identifier("pair".into()))),
+    let field_expr = sp(abrase::ast::Expr::FieldAccess {
+        base: Box::new(sp(abrase::ast::Expr::Identifier("pair".into()))),
         field: "first".into(),
     });
 
@@ -1424,16 +1424,16 @@ fn verify_field_access_on_generic_record_substitutes_type() {
 fn verify_field_access_on_generic_container_concrete_field() {
     let mut checker = Checker::new();
 
-    let container_type = ect::ast::TypeBody::Record(vec![
-        ect::ast::RecordField {
+    let container_type = abrase::ast::TypeBody::Record(vec![
+        abrase::ast::RecordField {
             is_pub: true,
             name: "data".into(),
-            ty: ect::ast::Type::Named("T".into()),
+            ty: abrase::ast::Type::Named("T".into()),
         },
-        ect::ast::RecordField {
+        abrase::ast::RecordField {
             is_pub: true,
             name: "size".into(),
-            ty: ect::ast::Type::Named("Int".into()),
+            ty: abrase::ast::Type::Named("Int".into()),
         },
     ]);
     checker.register_type("Container".into(), container_type);
@@ -1445,24 +1445,24 @@ fn verify_field_access_on_generic_container_concrete_field() {
     checker.insert_var("container".into(), container_string_ty, false, d_span());
 
     // size field is concrete Int regardless of T
-    let size_expr = sp(ect::ast::Expr::FieldAccess {
-        base: Box::new(sp(ect::ast::Expr::Identifier("container".into()))),
+    let size_expr = sp(abrase::ast::Expr::FieldAccess {
+        base: Box::new(sp(abrase::ast::Expr::Identifier("container".into()))),
         field: "size".into(),
     });
     assert_eq!(checker.infer_expr(&size_expr), Type::Int);
 
     // data field is T → should substitute to String
     let mut checker2 = Checker::new();
-    let container_type2 = ect::ast::TypeBody::Record(vec![
-        ect::ast::RecordField {
+    let container_type2 = abrase::ast::TypeBody::Record(vec![
+        abrase::ast::RecordField {
             is_pub: true,
             name: "data".into(),
-            ty: ect::ast::Type::Named("T".into()),
+            ty: abrase::ast::Type::Named("T".into()),
         },
-        ect::ast::RecordField {
+        abrase::ast::RecordField {
             is_pub: true,
             name: "size".into(),
-            ty: ect::ast::Type::Named("Int".into()),
+            ty: abrase::ast::Type::Named("Int".into()),
         },
     ]);
     checker2.register_type("Container".into(), container_type2);
@@ -1471,8 +1471,8 @@ fn verify_field_access_on_generic_container_concrete_field() {
         Type::Generic { name: "Container".into(), args: vec![Type::String] },
         false, d_span(),
     );
-    let data_expr = sp(ect::ast::Expr::FieldAccess {
-        base: Box::new(sp(ect::ast::Expr::Identifier("c".into()))),
+    let data_expr = sp(abrase::ast::Expr::FieldAccess {
+        base: Box::new(sp(abrase::ast::Expr::Identifier("c".into()))),
         field: "data".into(),
     });
     assert_eq!(checker2.infer_expr(&data_expr), Type::String, "Container<String>.data should substitute to String");
@@ -2407,9 +2407,9 @@ fn verify_type_alias_resolves_in_variable_type() {
     // After the alias is registered, convert_type on Named("Num") should
     // yield Int (or at least not Unknown)
     let resolved = checker.convert_type(&ast::Type::Named("Num".into()));
-    assert_ne!(resolved, ect::ty::Type::Unknown,
+    assert_ne!(resolved, abrase::ty::Type::Unknown,
         "type alias 'Num = Int' must not resolve to Unknown; got {:?}", resolved);
-    assert_eq!(resolved, ect::ty::Type::Int,
+    assert_eq!(resolved, abrase::ty::Type::Int,
         "type alias 'Num = Int' must resolve to Int; got {:?}", resolved);
 }
 
@@ -2546,7 +2546,7 @@ fn nullary_variant_constructor_resolves_at_expression_position() {
     let expr = sp(ast::Expr::Identifier("Leaf".into()));
     let ty = checker.infer_expr(&expr);
     // Bare unit constructor evaluates to the owning type.
-    assert_eq!(ty, ect::ty::Type::Named("Tree".into()),
+    assert_eq!(ty, abrase::ty::Type::Named("Tree".into()),
         "Leaf must resolve to Tree via the constructor fallback; got {:?}", ty);
     assert!(
         !checker.errors.iter().any(|e| e.message.contains("Undefined variable")),
@@ -2576,9 +2576,9 @@ fn tuple_variant_constructor_resolves_as_function() {
     let expr = sp(ast::Expr::Identifier("Node".into()));
     let ty = checker.infer_expr(&expr);
     match ty {
-        ect::ty::Type::Function { params, ret, .. } => {
+        abrase::ty::Type::Function { params, ret, .. } => {
             assert_eq!(params.len(), 3, "Node has three payload params");
-            assert_eq!(*ret, ect::ty::Type::Named("Tree".into()),
+            assert_eq!(*ret, abrase::ty::Type::Named("Tree".into()),
                 "Node's return type must be Tree");
         }
         other => panic!("expected Function for Node constructor; got {:?}", other),

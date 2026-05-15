@@ -1,5 +1,5 @@
 // Value variants, clone/eq behaviour.
-use ect::vm::Value;
+use abrase::vm::Value;
 
 #[test]
 fn test_value_int_eq() {

@@ -1,6 +1,6 @@
-use ect::ast::*;
-use ect::compiler::Compiler;
-use ect::vm::{Value, VirtualMachine};
+use abrase::ast::*;
+use abrase::compiler::Compiler;
+use abrase::vm::{Value, VirtualMachine};
 
 fn compile_and_run(ast: &[Decl]) -> Result<Value, String> {
     let mut compiler = Compiler::new();
@@ -33,7 +33,7 @@ fn fn_main_returns_int(call: Expr) -> Decl {
 }
 
 fn compile_module_errors(ast: &[Decl]) -> Vec<String> {
-    let mut compiler = ect::compiler::Compiler::new();
+    let mut compiler = abrase::compiler::Compiler::new();
     match compiler.compile_module(ast) {
         Ok(_) => Vec::new(),
         Err(es) => es.into_iter().map(|e| e.message).collect(),

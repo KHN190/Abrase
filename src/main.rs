@@ -2,20 +2,20 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
-use ect::compiler::Compiler;
-use ect::lexer::Lexer;
-use ect::parser::Parser;
-use ect::typeck::Checker;
-use ect::vm::VirtualMachine;
+use abrase::compiler::Compiler;
+use abrase::lexer::Lexer;
+use abrase::parser::Parser;
+use abrase::typeck::Checker;
+use abrase::vm::VirtualMachine;
 
 const USAGE: &str = "\
-Effect compiler & VM
+Abrase compiler & Myriad VM
 
 usage:
-    ect run    <file.ect>    parse, compile, execute main()
-    ect check  <file.ect>    parse and type-check; no execution
-    ect parse  <file.ect>    dump AST and parser errors
-    ect disasm <file.ect>    parse, compile, dump bytecode
+    abrase run    <file.abe>    parse, compile, execute main()
+    abrase check  <file.abe>    parse and type-check; no execution
+    abrase parse  <file.abe>    dump AST and parser errors
+    abrase disasm <file.abe>    parse, compile, dump bytecode
 ";
 
 fn main() -> ExitCode {
@@ -47,7 +47,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn parse(source: &str) -> Result<Vec<ect::ast::Decl>, ExitCode> {
+fn parse(source: &str) -> Result<Vec<abrase::ast::Decl>, ExitCode> {
     let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
     let ast = parser.parse_program();
     if !parser.errors.is_empty() {
@@ -57,7 +57,7 @@ fn parse(source: &str) -> Result<Vec<ect::ast::Decl>, ExitCode> {
     Ok(ast)
 }
 
-fn frontend(source: &str) -> Result<Vec<ect::ast::Decl>, ExitCode> {
+fn frontend(source: &str) -> Result<Vec<abrase::ast::Decl>, ExitCode> {
     let ast = parse(source)?;
     let mut checker = Checker::new();
     checker.check_program(&ast);

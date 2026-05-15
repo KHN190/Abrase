@@ -1,6 +1,6 @@
-use ect::ast::*;
-use ect::lexer::Lexer;
-use ect::parser::{Parser, Precedence};
+use abrase::ast::*;
+use abrase::lexer::Lexer;
+use abrase::parser::{Parser, Precedence};
 
 fn ty(input: &str) -> Type {
     let mut p = Parser::new(Lexer::new(input));

@@ -1,5 +1,5 @@
-use ect::typeck::Checker;
-use ect::ty::Type;
+use abrase::typeck::Checker;
+use abrase::ty::Type;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -244,7 +244,7 @@ fn verify_same_module_private_item_accessible() {
 
 #[test]
 fn verify_check_program_registers_fn_in_module_registry() {
-    use ect::ast;
+    use abrase::ast;
     let mut c = mk();
     let decls = vec![ast::Decl::Fn(ast::FnDecl {
         name: "my_fn".into(),
@@ -265,7 +265,7 @@ fn verify_check_program_registers_fn_in_module_registry() {
 
 #[test]
 fn verify_check_program_registers_type_in_module_registry() {
-    use ect::ast;
+    use abrase::ast;
     let mut c = mk();
     let decls = vec![ast::Decl::Type {
         attrs: vec![],
@@ -282,7 +282,7 @@ fn verify_check_program_registers_type_in_module_registry() {
 
 #[test]
 fn verify_check_program_mod_registers_submodule_and_subsequent_decls() {
-    use ect::ast;
+    use abrase::ast;
     let mut c = mk();
     let decls = vec![
         ast::Decl::Mod("utils".into()),

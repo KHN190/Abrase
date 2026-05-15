@@ -1,5 +1,5 @@
-use ect::bytecode::{Chunk, OpCode, Register, Module};
-use ect::vm::{Value, VirtualMachine};
+use abrase::bytecode::{Chunk, OpCode, Register, Module};
+use abrase::vm::{Value, VirtualMachine};
 
 fn r(n: u8) -> Register { Register(n) }
 

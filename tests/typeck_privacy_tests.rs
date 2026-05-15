@@ -1,9 +1,9 @@
-use ect::ast::Span;
-use ect::ty::Type;
-use ect::typeck::Checker;
+use abrase::ast::Span;
+use abrase::ty::Type;
+use abrase::typeck::Checker;
 
-fn d_span() -> ect::ast::Span {
-    ect::ast::Span { line: 0, col: 0 }
+fn d_span() -> abrase::ast::Span {
+    abrase::ast::Span { line: 0, col: 0 }
 }
 
 // Public Item Access

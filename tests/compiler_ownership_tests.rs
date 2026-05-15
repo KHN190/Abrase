@@ -1,7 +1,7 @@
-use ect::compiler::Compiler;
-use ect::lexer::Lexer;
-use ect::parser::Parser;
-use ect::vm::{Value, VirtualMachine};
+use abrase::compiler::Compiler;
+use abrase::lexer::Lexer;
+use abrase::parser::Parser;
+use abrase::vm::{Value, VirtualMachine};
 
 fn run(source: &str) -> Result<Value, String> {
     let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());

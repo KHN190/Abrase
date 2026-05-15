@@ -1,5 +1,5 @@
-use ect::bytecode::{Chunk, OpCode, Register};
-use ect::vm::Value;
+use abrase::bytecode::{Chunk, OpCode, Register};
+use abrase::vm::Value;
 
 #[test]
 fn test_register_roundtrip() {
@@ -96,7 +96,7 @@ fn test_chunk_reg_count() {
 
 #[test]
 fn test_frame_dest_reg() {
-    let frame = ect::vm::frame::Frame {
+    let frame = abrase::vm::frame::Frame {
         func_id: 1,
         ip: 10,
         base_reg: 64,

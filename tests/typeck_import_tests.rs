@@ -1,9 +1,9 @@
-use ect::ast::*;
-use ect::ty::Type;
-use ect::typeck::Checker;
+use abrase::ast::*;
+use abrase::ty::Type;
+use abrase::typeck::Checker;
 
-fn d_span() -> ect::ast::Span {
-    ect::ast::Span { line: 0, col: 0 }
+fn d_span() -> abrase::ast::Span {
+    abrase::ast::Span { line: 0, col: 0 }
 }
 
 // Import Item Registration
@@ -861,7 +861,7 @@ fn verify_import_collision_from_different_module() {
     // Register an import from module1
     checker.register_import_items(
         vec!["module1".into()],
-        vec![ect::ast::ImportItem {
+        vec![abrase::ast::ImportItem {
             name: "foo".into(),
             alias: None,
         }],
@@ -880,7 +880,7 @@ fn verify_no_collision_same_module_reimport() {
     // Register an import from module1
     checker.register_import_items(
         vec!["module1".into()],
-        vec![ect::ast::ImportItem {
+        vec![abrase::ast::ImportItem {
             name: "foo".into(),
             alias: None,
         }],
@@ -1176,8 +1176,8 @@ fn verify_resolve_with_deeply_nested_module() {
 fn verify_import_collision_with_existing_var_reports_error() {
     // Importing a name that already exists as a local var should report an error
     let mut checker = Checker::new();
-    checker.insert_var("foo".into(), ect::ty::Type::Int, false, ect::ast::Span::new(0, 0));
-    checker.register_import_items(vec!["math".into()], vec![ect::ast::ImportItem {
+    checker.insert_var("foo".into(), abrase::ty::Type::Int, false, abrase::ast::Span::new(0, 0));
+    checker.register_import_items(vec!["math".into()], vec![abrase::ast::ImportItem {
         name: "foo".into(),
         alias: None,
     }]);
@@ -1190,13 +1190,13 @@ fn verify_import_collision_with_existing_var_reports_error() {
 fn verify_import_collision_between_two_imports_reports_error() {
     // Importing the same name from two different modules should report an error
     let mut checker = Checker::new();
-    checker.register_import_items(vec!["mod_a".into()], vec![ect::ast::ImportItem {
+    checker.register_import_items(vec!["mod_a".into()], vec![abrase::ast::ImportItem {
         name: "Bar".into(),
         alias: None,
     }]);
     checker.check_import_collision("Bar", vec!["mod_a".into()]);
     // second import of same name from different module
-    checker.register_import_items(vec!["mod_b".into()], vec![ect::ast::ImportItem {
+    checker.register_import_items(vec!["mod_b".into()], vec![abrase::ast::ImportItem {
         name: "Bar".into(),
         alias: None,
     }]);
