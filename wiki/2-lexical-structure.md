@@ -6,7 +6,7 @@ UTF-8 source files with keywords, identifiers (Unicode), comments, literals, and
 
 ```rust
 // keywords
-fn, let, const, if, match, for, while, loop, async, await, handle, throw
+fn, let, const, if, match, for, while, loop, region, handle, resume, throw
 
 // identifier rules
 TypeName, value_name, effect_name, _

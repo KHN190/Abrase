@@ -1,32 +1,41 @@
 # 9. Concurrency Model
 
-Structured concurrency with coroutines, no preemption, no locks needed for scoped data. Only `await` yields; scheduler is cooperative.
+Concurrency is provided by effect system.
 
-Coroutines allowed only in `scope` blocks. Each scope has a region; references cannot escape. If any coroutine throws an error, the scope cancels all other running coroutines and propagates the error. Optional explicit timeout or external cancellation token. 
-
-Sharing by:
-
-* `Shared<T>`: immutable, read-only, reference-counted, cross coroutines.
-* `Channel<T>`: send/receive messages between coroutines. 
+## Example
 
 ```rust
-fn fetch_all(urls: List<String>) -> <async, net, exn> List<Response> {
-  scope s {
-    let handles = urls.map(|url| s.spawn(async { fetch(url) }));
-    handles.map(|h| h.await)
-  }
+effect pause { fn wait(ms: Int) -> Unit }
+
+fn step() -> <pause> Int {
+  pause.wait(10);                    // suspension point — handler decides
+  41 + 1
 }
 
-scope s {
-  let data = load();               // in region s
-  s.spawn(async { process(&data) }); // borrow safe; scope exits → drop data
-}
-
-scope s with timeout(5.seconds) { ... }
-scope s with cancellable(token) { ... }
-
-let cfg = Shared.new(config);      // across tasks
-let ch = Channel.new();
+let v = handle step() {
+  return v       => v,               // finish
+  pause.wait ms  => {                // `resume` is bound by `handle` & region
+    sleep_ms(ms);
+    resume(())                       //  continuation of `step` (see §4)
+  },
+};
 ```
 
-Coroutines join at scope exit. No data races by construction.
+Any function whose effect set is handled by the scheduler is a coroutine.
+
+## Region
+
+`region` opens a lexical lifetime. Bindings created inside live in that region; drops run in reverse order at region exit. A reference `&T in r` is invalid the instant `r` ends.
+
+```rust
+region r {
+  let data = load();
+  let view = &data;                  // &T in r
+  process(view);
+}                                    // view invalidated, data dropped
+```
+
+## Sharing
+
+* `Shared<T>` — immutable refcounted shared data.
+* `Channel<T>` — typed message passing.

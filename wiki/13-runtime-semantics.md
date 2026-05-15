@@ -40,27 +40,13 @@ region r {
 } // view invalidated; data accessible again
 ```
 
-References cannot cross an `await`. The compiler enforces this; if it did not, the runtime would observe a dangling pointer.
-
-## Scopes and Concurrency
-
-`scope s { ... }` opens a coroutine group. Tasks spawned via `s.spawn(...)` run cooperatively. `scope` exits only after every spawned task has joined.
-
-If any task panics or throws an uncaught exception, the scope cancels the others, runs their drops, and re-raises the error from `scope`.
-
-Only `.await` and `.yield` are suspension points. Between two suspension points, a task runs to completion without preemption.
+`resume` can be called multiple times. References cross coroutines are made safe by the borrow barrier (§4). At every effect-op call site, the compiler enumerates the frame's live borrows and rejects any whose region lies outside the enclosing handler arm. Borrows internal to the suspended frame remain valid because the captured continuation lives in the arm's region and is re-entered there on every `resume`.
 
 ## Capabilities
 
-Globals and modules registered by the host (see §12) are available from `main` and propagate by ordinary argument passing. There is no ambient lookup at arbitrary call sites — a function can only call host code it explicitly received or imported.
+Globals and modules registered by the host (see §12) are available from `main` and propagate by ordinary argument passing.
 
 A capability becomes unreachable when its last reference is dropped; the host is notified through the corresponding device's close protocol (see device catalog).
-
-## Effects
-
-`<exn<E>>` returning functions surface failures as a value the caller must match against. An unhandled `throw` propagates outward through `scope` and `region` exits, running drops along the way, until it meets a `try` block or terminates the program.
-
-User-defined effects use `handle` to install a handler frame. Effect operations dispatch to the most recently installed handler for that effect. Handlers may `resume` to continue the suspended computation or return a value to short-circuit.
 
 ## Faults
 

@@ -10,18 +10,18 @@ runtime.register_global("read_file", read_file_impl);
 runtime.register_module("io", io_mod());
 
 // Ect-side
-let content = read_file("config.toml").await?;
+let content = read_file("config.toml")?;
 
 import io.{File, open_file};
-fn load() -> <async, exn<io.IoError>> File {
-  open_file("data.txt").await
+fn load() -> <io, exn<io.IoError>> File {
+  open_file("data.txt")
 }
 
 import gpu.{GpuDevice, create_device};
-fn use_gpu(d: &mut GpuDevice) -> <async> Unit { ... }
+fn use_gpu(d: &mut GpuDevice) -> <gpu> Unit { ... }
 
 @export
-fn handle_request(req: Request) -> <async, exn> Response { ... }
+fn handle_request(req: Request) -> <io, exn> Response { ... }
 ```
 
 User cannot shadow Rust globals. Capabilities must be provided by Rust host from startup only.

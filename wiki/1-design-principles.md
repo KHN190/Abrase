@@ -29,7 +29,6 @@ Compile time resolves:
 * regions, 
 * generics monomorphization, 
 * trait dispatch, 
-* async, 
 * handlers, 
 * pattern match, 
 * const evaluation.

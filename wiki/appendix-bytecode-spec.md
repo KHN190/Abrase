@@ -165,15 +165,17 @@ A module declares the device IDs it requires in its header (§6). The loader rej
 
 There are no `import` or `export` opcodes. Host-defined functions are device ports: write arguments to argument ports, write a command index to a trigger port, read the result port. The compiler hides this protocol behind language-level call syntax.
 
-### 4.9 Async — 3 opcodes (`0x29`–`0x2b`)
+### 4.9 Coroutine — 3 opcodes (`0x29`–`0x2b`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
 | `0x29` | `spawn r_a, fn_id` | reg + imm16 | spawn a coroutine running `fn_id`; handle in `r_a` |
-| `0x2a` | `await r_a` | 3-reg (`r_b`, `r_c` unused) | suspend until the coroutine handle in `r_a` completes |
+| `0x2a` | `join r_a` | 3-reg (`r_b`, `r_c` unused) | suspend until the coroutine handle in `r_a` completes |
 | `0x2b` | `yield` | imm16 only (unused) | voluntarily yield to the scheduler |
 
-The scheduler is cooperative. The only suspension points are `await` and `yield`. No preemption, no locks, no atomics.
+These are runtime primitives the host scheduler uses when implementing a suspending effect handler — the language itself has no `async`, `await`, `spawn`, or `scope`. The compiler emits these opcodes only when lowering a handler the host has registered as a suspending one.
+
+Scheduling is cooperative. Suspension happens only at these opcodes (and at `resume` re-entry from §4.10). No preemption, no locks, no atomics.
 
 ### 4.10 Effect Handlers — 2 opcodes (`0x2c`–`0x2d`)
 
@@ -182,7 +184,7 @@ The scheduler is cooperative. The only suspension points are `await` and `yield`
 | `0x2c` | `handle r_a, effect_id` | reg + imm16 | enter an effect handler frame for `effect_id`; dispatch table pointer in `r_a` |
 | `0x2d` | `resume r_a` | 3-reg (`r_b`, `r_c` unused) | resume a captured continuation in `r_a` |
 
-These are the lowering targets for the language's effect system. Exceptions are lowered to a single effect (`exn`); async is its own effect; user-defined effects use `handle` with a custom dispatch table built at compile time.
+These are the lowering targets for the language's effect system. Exceptions are lowered to a single effect (`exn`); user-defined effects use `handle` with a custom dispatch table built at compile time. A handler whose body uses §4.9 opcodes is a suspending handler — that is how the host implements scheduler-like behavior without the language naming it.
 
 ### 4.11 Opcode Summary
 

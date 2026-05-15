@@ -119,7 +119,7 @@
 ### 5 Functions
 
 ```bnf
-<fn-decl>         ::= <attribute>* 'pub'? 'async'? 'fn' <identifier> <generic-params>?
+<fn-decl>         ::= <attribute>* 'pub'? 'fn' <identifier> <generic-params>?
                       '(' <param-list>? ')'
                       ('->' <effect-set>? <type>)?
                       <where-clause>?
@@ -158,7 +158,7 @@
 <trait-item>      ::= <fn-decl>
                     | <fn-signature>
 
-<fn-signature>    ::= 'async'? 'fn' <identifier> <generic-params>?
+<fn-signature>    ::= 'fn' <identifier> <generic-params>?
                       '(' <param-list>? ')'
                       ('->' <effect-set>? <type>)?
                       <where-clause>?
@@ -185,7 +185,6 @@
                     | <for-expr>
                     | <while-expr>
                     | <loop-expr>
-                    | <scope-expr>
                     | <region-expr>
                     | <handle-expr>
                     | <block>
@@ -222,7 +221,6 @@ p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
 <postfix-expr>    ::= <primary-expr> <postfix-op>*
 
 <postfix-op>      ::= '.' <identifier>                      /* attribute */
-                    | '.' 'await'                           /* await */
                     | '(' <arg-list>? ')'                   /* function call */
                     | '[' <expr> ']'                        /* index */
                     | '?'                                   /* error propagation */
@@ -243,10 +241,9 @@ p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
                     | <break-expr>
                     | <continue-expr>
                     | <throw-expr>
-                    | <scope-expr>
+                    | <resume-expr>
                     | <region-expr>
                     | <handle-expr>
-                    | <coroutine-expr>
                     | <for-expr>
                     | <while-expr>
                     | <loop-expr>
@@ -266,7 +263,7 @@ p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
 <field-init>      ::= <identifier> ':' <expr>
                     | <identifier>
 
-<variant-expr>    ::= <qualified-name> '(' <expr-list>? ')'
+<variant-expr>    ::= <qualified-name> ('(' <expr-list>? ')')?
 
 <closure-expr>    ::= 'move'? '|' <closure-params>? '|'
                       ('->' <effect-set>? <type>)?
@@ -307,13 +304,9 @@ p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
 <throw-expr>      ::= 'throw' <expr>
 ```
 
-### 10 Scope
+### 10 Region & Handle
 
 ```bnf
-<scope-expr>      ::= 'scope' <identifier>? <scope-options>? <block>
-
-<scope-options>   ::= 'with' <expr>
-
 <region-expr>     ::= 'region' <identifier>? <block>
 
 <handle-expr>     ::= 'handle' <expr> '{' <handle-arm> (',' <handle-arm>)* ','? '}'
@@ -322,7 +315,7 @@ p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
                     | 'exn' <pattern> '=>' <match-body>
                     | <qualified-name> <pattern>? '=>' <match-body>
 
-<coroutine-expr>  ::= <identifier> '.' 'spawn' '(' <expr> ')'
+<resume-expr>     ::= 'resume' '(' <expr>? ')'
 ```
 
 ### 11 Pattern

@@ -8,7 +8,7 @@ mod example.notes
 import io.{read_file, write_file};
 import ui.{event};
 
-effect alias app = <async, io, ui, exn<AppError>>
+effect alias app = <io, ui, exn<AppError>>
 
 type AppError =
   | IoFailure(io.IoError)
@@ -26,14 +26,14 @@ type Note = {
 const NOTES_FILE: String = "notes.json";
 
 fn load_all() -> <app> List<Note> {
-  let raw = read_file(NOTES_FILE).await;
+  let raw = read_file(NOTES_FILE);
   let raw = handle_io_err(raw)?;
   parse_notes(raw)?
 }
 
 fn save_all(notes: &List<Note>) -> <app> Unit {
   let serialized = serialize(notes);
-  let r = write_file(NOTES_FILE, serialized).await;
+  let r = write_file(NOTES_FILE, serialized);
   handle_io_err(r)?;
   event.emit("notes-changed", notes)?
 }

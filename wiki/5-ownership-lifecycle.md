@@ -8,7 +8,7 @@ We have 3 modes:
 * `@move` (transfer ownership), 
 * `@share` (ref-counted immutable). 
 
-Primitives are `@copy`; collections default to `@move`. Borrows in `region` blocks only.
+Primitives are `@copy`; collections default to `@move`. Borrows in `region` blocks only — `fn` bodies and handler arm bodies (§4) are implicitly regions.
 
 ```rust
 let x = 42;         // Int, @copy
@@ -28,4 +28,4 @@ region r {
 }                      // view dropped, data accessible again
 ```
 
-Drop happens at last use. Reference rules: many `&T` XOR one `&mut T` XOR move, never across `await`. See appendix.
+Drop happens at last use. Reference rules: many `&T` XOR one `&mut T` XOR move. At an effect-op call site, no live borrow may originate from a region outside the enclosing handler arm — the borrow barrier (§4).
