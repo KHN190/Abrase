@@ -2,6 +2,7 @@ pub mod hir;
 pub mod lower;
 pub mod codegen;
 pub mod mono;
+pub mod impls;
 pub mod closures;
 pub mod effects;
 pub mod handlers;
@@ -30,6 +31,9 @@ pub struct Compiler {
     pub(super) effect_op_to_arm: HashMap<(String, String), String>,
     /// Handle expression span -> synthesised return-arm fn name.
     pub(super) return_arm_by_handle: HashMap<ast::Span, String>,
+    /// (receiver_type_name, method_name) -> synthesised mangled fn name produced
+    /// by the impl-lift pass. Used by codegen to rewrite `x.method(...)` calls.
+    pub method_dispatch: HashMap<(String, String), String>,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -53,6 +57,7 @@ impl Compiler {
             current_fn_fallible: false,
             effect_op_to_arm: HashMap::new(),
             return_arm_by_handle: HashMap::new(),
+            method_dispatch: HashMap::new(),
             errors: Vec::new(),
             source: String::new(),
         }
@@ -101,8 +106,20 @@ impl Compiler {
             return Err(self.errors.clone());
         }
 
-        // Generic monomorphization
-        let owned = match mono::monomorphize(ast.to_vec()) {
+        // Impl-lift pass: synthesise concrete top-level FnDecls for each
+        // `impl Trait for Type { ... }` method, and build the dispatch table
+        // used to rewrite `x.method(...)` calls.
+        let mut impl_lowering = impls::ImplLowering::new();
+        impl_lowering.lower(ast);
+        self.method_dispatch = impl_lowering.method_dispatch.clone();
+        let mut decls_with_impls: Vec<ast::Decl> = ast.to_vec();
+        for fd in impl_lowering.synthetic_fns {
+            decls_with_impls.push(ast::Decl::Fn(fd));
+        }
+
+        // Generic monomorphization (also rewrites `x.method()` calls so that
+        // method dispatch inside generic specialisations binds correctly).
+        let owned = match mono::monomorphize_with_methods(decls_with_impls, self.method_dispatch.clone()) {
             Ok(o) => o,
             Err(es) => {
                 self.errors.extend(es);

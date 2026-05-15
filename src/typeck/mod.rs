@@ -113,6 +113,12 @@ pub struct Checker {
     impl_registry: HashMap<(String, String), bool>,
     generic_params: HashMap<String, Vec<String>>,
     trait_bounds: HashMap<String, Vec<String>>,
+    // (trait_name) -> (method_name -> (param types incl. self, return type))
+    pub(crate) trait_method_sigs: HashMap<String, HashMap<String, (Vec<Type>, Type)>>,
+    // (trait_name, receiver_type_name, method_name) -> mangled fn name produced by impl-lift
+    pub(crate) impl_method_fn: HashMap<(String, String, String), String>,
+    // (receiver_type_name, method_name) -> list of trait names that define that method for that type
+    pub(crate) method_traits_by_type: HashMap<(String, String), Vec<String>>,
 
     // Region Escape Analysis & Advanced Borrow Checking
     region_stack: Vec<String>,
@@ -189,6 +195,9 @@ impl Checker {
             impl_registry: HashMap::new(),
             generic_params: HashMap::new(),
             trait_bounds: HashMap::new(),
+            trait_method_sigs: HashMap::new(),
+            impl_method_fn: HashMap::new(),
+            method_traits_by_type: HashMap::new(),
             region_stack: Vec::new(),
             reference_lifetimes: HashMap::new(),
             pattern_borrows: HashMap::new(),
@@ -257,10 +266,6 @@ impl Checker {
         }
     }
 
-    // Borrow barrier: at an effect-op suspension point, the calling frame must
-    // not hold any live borrow whose binder lives in a region outside the current
-    // innermost region. This is the static rule that lets resume be multi-shot
-    // without dangling references. Reports an error per offending borrow.
     pub fn check_borrow_barrier(&mut self, op_name: &str, span: Span) {
         let cur_depth = self.region_stack.len();
         let mut leaks: Vec<String> = Vec::new();

@@ -369,6 +369,138 @@ impl Checker {
                     }
                 }
 
+                // Method-call dispatch
+                if let ast::Expr::FieldAccess { base, field } = &callee.node {
+                    self.context_stack.push(format!("In method call '.{}'", field));
+                    let base_ty = self.infer_expr(base);
+                    self.context_stack.pop();
+                    let receiver_name = match &base_ty {
+                        Type::Int => Some("Int".to_string()),
+                        Type::Float => Some("Float".to_string()),
+                        Type::Bool => Some("Bool".to_string()),
+                        Type::Char => Some("Char".to_string()),
+                        Type::String => Some("String".to_string()),
+                        Type::Unit => Some("Unit".to_string()),
+                        Type::Named(n) => Some(n.clone()),
+                        Type::Reference { inner, .. } => match inner.as_ref() {
+                            Type::Int => Some("Int".to_string()),
+                            Type::Float => Some("Float".to_string()),
+                            Type::Bool => Some("Bool".to_string()),
+                            Type::Char => Some("Char".to_string()),
+                            Type::String => Some("String".to_string()),
+                            Type::Named(n) => Some(n.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+
+                    if let Some(rname) = receiver_name {
+                        let sub_self = |t: &Type| -> Type {
+                            match t {
+                                Type::Named(n) if n == "Self" => Type::Named(rname.clone()),
+                                Type::Reference { is_mut, inner } => {
+                                    let inner_new = if let Type::Named(n) = inner.as_ref() {
+                                        if n == "Self" { Type::Named(rname.clone()) }
+                                        else { (**inner).clone() }
+                                    } else { (**inner).clone() };
+                                    Type::Reference { is_mut: *is_mut, inner: Box::new(inner_new) }
+                                }
+                                other => other.clone(),
+                            }
+                        };
+
+                        // Bounded generic var: `x: T` where `T: Show` declares `field`.
+                        let bound_match = self.get_trait_bounds(&rname).and_then(|bounds| {
+                            bounds.iter().find_map(|trait_name| {
+                                self.get_trait_method_sig(trait_name, field)
+                                    .map(|sig| (trait_name.clone(), sig))
+                            })
+                        });
+                        if let Some((_trait_name, (sig_params, sig_ret))) = bound_match {
+                            let expected_args: Vec<Type> = sig_params.iter().skip(1).map(&sub_self).collect();
+                            if args.len() != expected_args.len() {
+                                self.report_error(
+                                    format!("Method '{}.{}' expects {} argument(s), got {}",
+                                        rname, field, expected_args.len(), args.len()),
+                                    expr.span,
+                                );
+                            }
+                            for (i, arg) in args.iter().enumerate() {
+                                let arg_ty = self.infer_expr(arg);
+                                if i < expected_args.len()
+                                    && arg_ty != expected_args[i]
+                                    && arg_ty != Type::Unknown
+                                    && expected_args[i] != Type::Unknown
+                                {
+                                    self.report_error(
+                                        format!("Argument {} type mismatch in method '{}.{}': expected {:?}, got {:?}",
+                                            i, rname, field, expected_args[i], arg_ty),
+                                        arg.span,
+                                    );
+                                }
+                            }
+                            self.context_stack.pop();
+                            return sub_self(&sig_ret);
+                        }
+
+                        // Concrete `impl Trait for <Type>` for the receiver's type.
+                        match self.resolve_method_on_type(&rname, field) {
+                            Ok(Some((trait_name, _mangled))) => {
+                                let (sig_params, sig_ret) = self
+                                    .get_trait_method_sig(&trait_name, field)
+                                    .unwrap_or((vec![], Type::Unknown));
+                                let expected_args: Vec<Type> = sig_params.iter().skip(1).map(&sub_self).collect();
+                                if args.len() != expected_args.len() {
+                                    self.report_error(
+                                        format!("Method '{}.{}' expects {} argument(s), got {}",
+                                            rname, field, expected_args.len(), args.len()),
+                                        expr.span,
+                                    );
+                                }
+                                for (i, arg) in args.iter().enumerate() {
+                                    let arg_ty = self.infer_expr(arg);
+                                    if i < expected_args.len()
+                                        && arg_ty != expected_args[i]
+                                        && arg_ty != Type::Unknown
+                                        && expected_args[i] != Type::Unknown
+                                    {
+                                        self.report_error(
+                                            format!("Argument {} type mismatch in method '{}.{}': expected {:?}, got {:?}",
+                                                i, rname, field, expected_args[i], arg_ty),
+                                            arg.span,
+                                        );
+                                    }
+                                }
+                                self.context_stack.pop();
+                                return sub_self(&sig_ret);
+                            }
+                            Ok(None) => {
+                                let is_record_with_field = matches!(
+                                    self.type_registry.get(&rname),
+                                    Some(ast::TypeBody::Record(fs)) if fs.iter().any(|f| &f.name == field)
+                                );
+                                if !is_record_with_field {
+                                    self.report_error(
+                                        format!("No method '{}' for type '{}'", field, rname),
+                                        expr.span,
+                                    );
+                                    self.context_stack.pop();
+                                    return Type::Unknown;
+                                }
+                            }
+                            Err(traits) => {
+                                self.report_error(
+                                    format!("Ambiguous method call '{}.{}': implemented by traits {:?}",
+                                        rname, field, traits),
+                                    expr.span,
+                                );
+                                self.context_stack.pop();
+                                return Type::Unknown;
+                            }
+                        }
+                    }
+                }
+
                 let callee_generic_vars: Vec<String> = if let ast::Expr::Identifier(n) = &callee.node {
                     self.get_generic_params(n).unwrap_or_default()
                 } else {

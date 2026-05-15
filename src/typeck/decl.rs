@@ -91,6 +91,34 @@ impl Checker {
                 self.register_module_item(&module_path, name.clone(), Type::Named(name.clone()));
                 self.register_trait(name.clone(), method_names);
 
+                // Record each method's signature
+                for item in items {
+                    let (mname, params_ast, ret_ast) = match item {
+                        ast::TraitItem::Required(sig) => (
+                            sig.name.clone(),
+                            sig.params.clone(),
+                            sig.return_type.clone(),
+                        ),
+                        ast::TraitItem::Default(decl) => (
+                            decl.name.clone(),
+                            decl.params.clone(),
+                            decl.return_type.clone(),
+                        ),
+                    };
+                    let params: Vec<Type> = params_ast.iter().map(|p| match p {
+                        ast::Param::Named { ty, .. } => self.convert_type(ty),
+                        ast::Param::SelfVal => Type::Named("Self".into()),
+                        ast::Param::SelfRef { is_mut } => Type::Reference {
+                            is_mut: *is_mut,
+                            inner: Box::new(Type::Named("Self".into())),
+                        },
+                    }).collect();
+                    let ret = ret_ast
+                        .map(|t| self.convert_type(&t))
+                        .unwrap_or(Type::Unit);
+                    self.register_trait_method_sig(name, &mname, params, ret);
+                }
+
                 if *is_pub {
                     self.mark_public(name.clone());
                 }
@@ -146,8 +174,21 @@ impl Checker {
                 self.push_module(name.clone());
             },
 
-            ast::Decl::Impl { .. } => {
-                // Impl blocks are checked in pass 2
+            ast::Decl::Impl { methods, for_type, trait_name, .. } => {
+                // Register impl methods early so call sites can resolve them
+                // regardless of declaration order. Conformance checks run in pass 2.
+                let type_name = match for_type {
+                    ast::Type::Named(n) => n.clone(),
+                    ast::Type::Qualified(parts) => parts.join("::"),
+                    _ => "UnknownType".into(),
+                };
+                if let Some(trait_path) = trait_name {
+                    let trait_str = trait_path.join("::");
+                    for method in methods {
+                        let mangled = Self::mangle_impl_method(&trait_str, &type_name, &method.name);
+                        self.register_impl_method(&trait_str, &type_name, &method.name, mangled);
+                    }
+                }
             },
         }
     }
@@ -314,13 +355,106 @@ impl Checker {
             ast::Span { line: 0, col: 0 },
         );
 
+        // Translate Self-style params to a regular `self: ReceiverType` binding so
+        // the existing fn checker can type-check the body without special cases.
         for method in methods {
-            self.check_fn_decl(method);
+            let translated_params: Vec<ast::Param> = method.params.iter().map(|p| match p {
+                ast::Param::SelfVal => ast::Param::Named {
+                    pattern: ast::Spanned {
+                        node: ast::Pattern::Bind("self".into()),
+                        span: ast::Span { line: 0, col: 0 },
+                    },
+                    ty: ast::Type::Named(type_name.clone()),
+                },
+                ast::Param::SelfRef { is_mut } => ast::Param::Named {
+                    pattern: ast::Spanned {
+                        node: ast::Pattern::Bind("self".into()),
+                        span: ast::Span { line: 0, col: 0 },
+                    },
+                    ty: ast::Type::Reference {
+                        is_mut: *is_mut,
+                        inner: Box::new(ast::Type::Named(type_name.clone())),
+                        region: None,
+                    },
+                },
+                ast::Param::Named { pattern, ty } => ast::Param::Named {
+                    pattern: pattern.clone(),
+                    ty: subst_self_in_ast_type(ty, &type_name),
+                },
+            }).collect();
+            let translated_ret = method.return_type.as_ref()
+                .map(|t| subst_self_in_ast_type(t, &type_name));
+            let mut translated = method.clone();
+            translated.params = translated_params;
+            translated.return_type = translated_ret;
+            self.check_fn_decl(&translated);
         }
 
         if let Some(trait_path) = trait_name {
             let trait_str = trait_path.join("::");
             self.register_impl(&type_name, &trait_str);
+
+            // Per-method registration + signature conformance check.
+            let trait_method_names: Vec<String> = self.get_trait(&trait_str).unwrap_or_default();
+            let provided: std::collections::HashSet<String> = methods.iter()
+                .map(|m| m.name.clone()).collect();
+            for required in &trait_method_names {
+                if !provided.contains(required) {
+                    self.report_error(
+                        format!("impl of trait '{}' for type '{}' is missing method '{}'",
+                            trait_str, type_name, required),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                }
+            }
+            for method in methods {
+                let mangled = Self::mangle_impl_method(&trait_str, &type_name, &method.name);
+                self.register_impl_method(&trait_str, &type_name, &method.name, mangled);
+
+                if let Some((expected_params, expected_ret)) =
+                    self.get_trait_method_sig(&trait_str, &method.name)
+                {
+                    let impl_params: Vec<Type> = method.params.iter().map(|p| match p {
+                        ast::Param::Named { ty, .. } => self.convert_type(ty),
+                        ast::Param::SelfVal => Type::Named(type_name.clone()),
+                        ast::Param::SelfRef { is_mut } => Type::Reference {
+                            is_mut: *is_mut,
+                            inner: Box::new(Type::Named(type_name.clone())),
+                        },
+                    }).collect();
+                    let impl_ret = method.return_type.as_ref()
+                        .map(|t| self.convert_type(t)).unwrap_or(Type::Unit);
+
+                    let sub_self = |t: &Type| -> Type {
+                        match t {
+                            Type::Named(n) if n == "Self" => Type::Named(type_name.clone()),
+                            Type::Reference { is_mut, inner } => {
+                                let inner = if let Type::Named(n) = inner.as_ref() {
+                                    if n == "Self" { Type::Named(type_name.clone()) }
+                                    else { (**inner).clone() }
+                                } else { (**inner).clone() };
+                                Type::Reference { is_mut: *is_mut, inner: Box::new(inner) }
+                            }
+                            other => other.clone(),
+                        }
+                    };
+                    let expected_params: Vec<Type> = expected_params.iter().map(&sub_self).collect();
+                    let expected_ret = sub_self(&expected_ret);
+
+                    let sig_ok = impl_params.len() == expected_params.len()
+                        && impl_params.iter().zip(expected_params.iter()).all(|(a, e)| a == e)
+                        && impl_ret == expected_ret;
+                    if !sig_ok {
+                        self.report_error(
+                            format!("impl method '{}' for '{}' does not match trait '{}' signature: \
+                                     expected ({:?}) -> {:?}, got ({:?}) -> {:?}",
+                                method.name, type_name, trait_str,
+                                expected_params, expected_ret, impl_params, impl_ret),
+                            ast::Span { line: 0, col: 0 },
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -504,5 +638,32 @@ impl Checker {
             },
             _ => field_ty.clone(),
         }
+    }
+}
+
+fn subst_self_in_ast_type(ty: &ast::Type, receiver: &str) -> ast::Type {
+    use ast::Type as T;
+    match ty {
+        T::Named(n) if n == "Self" => T::Named(receiver.into()),
+        T::Named(_) | T::Qualified(_) => ty.clone(),
+        T::Generic { name, args } => T::Generic {
+            name: name.clone(),
+            args: args.iter().map(|a| subst_self_in_ast_type(a, receiver)).collect(),
+        },
+        T::Array { elem, size } => T::Array {
+            elem: Box::new(subst_self_in_ast_type(elem, receiver)),
+            size: *size,
+        },
+        T::Tuple(ts) => T::Tuple(ts.iter().map(|t| subst_self_in_ast_type(t, receiver)).collect()),
+        T::Reference { is_mut, inner, region } => T::Reference {
+            is_mut: *is_mut,
+            inner: Box::new(subst_self_in_ast_type(inner, receiver)),
+            region: region.clone(),
+        },
+        T::Function { params, effects, ret } => T::Function {
+            params: params.iter().map(|p| subst_self_in_ast_type(p, receiver)).collect(),
+            effects: effects.clone(),
+            ret: Box::new(subst_self_in_ast_type(ret, receiver)),
+        },
     }
 }

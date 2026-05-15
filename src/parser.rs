@@ -405,7 +405,22 @@ impl<'a> Parser<'a> {
 
     fn parse_impl_decl(&mut self) -> Result<Decl, String> {
         self.next_token();
-        let for_type = self.parse_type()?;
+        let head_type = self.parse_type()?;
+
+        // `impl Trait for Type { ... }` vs `impl Type { ... }`.
+        let (trait_name, for_type) = if self.peek_token == Token::For {
+            self.next_token(); // consume 'for'
+            self.next_token(); // step onto the type
+            let target = self.parse_type()?;
+            let trait_name = match head_type {
+                Type::Named(n) => Some(vec![n]),
+                Type::Qualified(parts) => Some(parts),
+                _ => None,
+            };
+            (trait_name, target)
+        } else {
+            (None, head_type)
+        };
 
         if !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' in impl".into());
@@ -427,7 +442,7 @@ impl<'a> Parser<'a> {
         if self.current_token == Token::RBrace {
             self.next_token();
         }
-        Ok(Decl::Impl { generics: vec![], trait_name: None, for_type, where_clause: vec![], methods })
+        Ok(Decl::Impl { generics: vec![], trait_name, for_type, where_clause: vec![], methods })
     }
 
     fn parse_const_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
@@ -1043,6 +1058,8 @@ impl<'a> Parser<'a> {
                 }
                 Expr::Identifier(nm)
             }
+            // Inside impl method bodies, `self` is the receiver binding.
+            Token::SelfKW => Expr::Identifier("self".into()),
             Token::LBracket => return Some(self.parse_array_literal(span)),
             Token::LParen => return Some(self.parse_paren_expr(span)),
             Token::Int(v) => Expr::Literal(Literal::Int(*v)),

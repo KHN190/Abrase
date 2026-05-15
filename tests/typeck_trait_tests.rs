@@ -482,3 +482,172 @@ fn verify_check_all_bounds_named_type_uses_name() {
     c.register_impl("MyStruct", "Eq");
     assert!(c.check_all_trait_bounds("foo", &[("T".into(), Type::Named("MyStruct".into()))]));
 }
+
+// Feature 22: trait method call resolution.
+
+fn s2() -> ast::Span { ast::Span { line: 1, col: 1 } }
+fn sp_pat(p: ast::Pattern) -> ast::Spanned<ast::Pattern> { ast::Spanned { node: p, span: s2() } }
+fn sp_expr(e: ast::Expr) -> ast::Spanned<ast::Expr> { ast::Spanned { node: e, span: s2() } }
+
+fn show_trait_decl(return_ty: ast::Type) -> ast::Decl {
+    let sig = ast::FnSignature {
+        name: "show".into(),
+        generics: vec![],
+        params: vec![ast::Param::SelfVal],
+        effects: vec![],
+        return_type: Some(return_ty),
+        where_clause: vec![],
+    };
+    ast::Decl::Trait {
+        is_pub: false,
+        name: "Show".into(),
+        generics: vec![],
+        where_clause: vec![],
+        items: vec![ast::TraitItem::Required(sig)],
+    }
+}
+
+fn impl_show_for_int(method_ret: ast::Type, body: ast::Block) -> ast::Decl {
+    ast::Decl::Impl {
+        generics: vec![],
+        trait_name: Some(vec!["Show".into()]),
+        for_type: ast::Type::Named("Int".into()),
+        where_clause: vec![],
+        methods: vec![ast::FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            name: "show".into(),
+            generics: vec![],
+            params: vec![ast::Param::SelfVal],
+            effects: vec![],
+            return_type: Some(method_ret),
+            where_clause: vec![],
+            body,
+        }],
+    }
+}
+
+fn main_fn(ret_ty: ast::Type, ret: ast::Expr) -> ast::Decl {
+    ast::Decl::Fn(ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "main".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ret_ty),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(sp_expr(ret))) },
+    })
+}
+
+#[test]
+fn verify_method_call_resolves_via_impl() {
+    let mut c = mk();
+    let trait_decl = show_trait_decl(ast::Type::Named("Int".into()));
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp_expr(ast::Expr::Binary {
+            op: ast::BinaryOp::Mul,
+            left: Box::new(sp_expr(ast::Expr::Identifier("self".into()))),
+            right: Box::new(sp_expr(ast::Expr::Literal(ast::Literal::Int(2)))),
+        }))),
+    };
+    let impl_decl = impl_show_for_int(ast::Type::Named("Int".into()), body);
+    let main_call = ast::Expr::Call {
+        callee: Box::new(sp_expr(ast::Expr::FieldAccess {
+            base: Box::new(sp_expr(ast::Expr::Literal(ast::Literal::Int(5)))),
+            field: "show".into(),
+        })),
+        args: vec![],
+    };
+    let decls = vec![trait_decl, impl_decl, main_fn(ast::Type::Named("Int".into()), main_call)];
+    c.check_program(&decls);
+    assert!(c.errors.is_empty(),
+        "expected no errors, got: {:?}",
+        c.errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+}
+
+#[test]
+fn verify_method_call_without_impl_errors() {
+    let mut c = mk();
+    // Trait declared, but no impl provided.
+    let trait_decl = show_trait_decl(ast::Type::Named("Int".into()));
+    let main_call = ast::Expr::Call {
+        callee: Box::new(sp_expr(ast::Expr::FieldAccess {
+            base: Box::new(sp_expr(ast::Expr::Literal(ast::Literal::Int(5)))),
+            field: "show".into(),
+        })),
+        args: vec![],
+    };
+    let decls = vec![trait_decl, main_fn(ast::Type::Named("Int".into()), main_call)];
+    c.check_program(&decls);
+    assert!(c.errors.iter().any(|e| e.message.contains("No method 'show'")),
+        "expected 'No method' error, got: {:?}",
+        c.errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+}
+
+#[test]
+fn verify_bounded_generic_calls_trait_method() {
+    let mut c = mk();
+    let trait_decl = show_trait_decl(ast::Type::Named("Int".into()));
+    let impl_body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp_expr(ast::Expr::Identifier("self".into())))),
+    };
+    let impl_decl = impl_show_for_int(ast::Type::Named("Int".into()), impl_body);
+
+    // fn p<T>(x: T) -> Int where T: Show { x.show() }
+    let p = ast::Decl::Fn(ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "p".into(),
+        generics: vec![gp("T")],
+        params: vec![ast::Param::Named {
+            pattern: sp_pat(ast::Pattern::Bind("x".into())),
+            ty: ast::Type::Named("T".into()),
+        }],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![wb("T", &["Show"])],
+        body: ast::Block {
+            stmts: vec![],
+            ret: Some(Box::new(sp_expr(ast::Expr::Call {
+                callee: Box::new(sp_expr(ast::Expr::FieldAccess {
+                    base: Box::new(sp_expr(ast::Expr::Identifier("x".into()))),
+                    field: "show".into(),
+                })),
+                args: vec![],
+            }))),
+        },
+    });
+
+    // fn main() -> Int { p(5) }
+    let main_call = ast::Expr::Call {
+        callee: Box::new(sp_expr(ast::Expr::Identifier("p".into()))),
+        args: vec![sp_expr(ast::Expr::Literal(ast::Literal::Int(5)))],
+    };
+
+    let decls = vec![trait_decl, impl_decl, p, main_fn(ast::Type::Named("Int".into()), main_call)];
+    c.check_program(&decls);
+    assert!(c.errors.is_empty(),
+        "expected no errors, got: {:?}",
+        c.errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+}
+
+#[test]
+fn verify_impl_method_sig_mismatch_errors() {
+    let mut c = mk();
+    // Trait expects -> Int; impl provides -> Bool.
+    let trait_decl = show_trait_decl(ast::Type::Named("Int".into()));
+    let body = ast::Block {
+        stmts: vec![],
+        ret: Some(Box::new(sp_expr(ast::Expr::Literal(ast::Literal::Bool(true))))),
+    };
+    let impl_decl = impl_show_for_int(ast::Type::Named("Bool".into()), body);
+    let decls = vec![trait_decl, impl_decl];
+    c.check_program(&decls);
+    assert!(c.errors.iter().any(|e| e.message.contains("does not match trait")),
+        "expected signature mismatch error, got: {:?}",
+        c.errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+}

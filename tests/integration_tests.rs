@@ -168,3 +168,12 @@ fn generic_inference_specializes_per_call_site() {
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::Int(42));
 }
+
+#[test]
+fn trait_dispatch_static_compiles_and_runs() {
+    // `(5).show()` lowers to a direct call to the synthesised
+    // `Show__Int__show` fn — no vtables, no dynamic lookup.
+    let v = run_file("tests/scripts/trait_dispatch.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(10));
+}

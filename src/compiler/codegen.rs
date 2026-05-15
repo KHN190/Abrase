@@ -403,6 +403,39 @@ impl Compiler {
                             return Ok(dest);
                         }
                     }
+
+                    // Method-call dispatch: `base.method(args)` lowers to a
+                    // direct call to the synthesised `Trait__Type__method` fn,
+                    // with `base` passed as the first argument.
+                    if let Some(rname) = self.receiver_type_name(base) {
+                        let key = (rname, field.clone());
+                        if let Some(mangled) = self.method_dispatch.get(&key).cloned() {
+                            let func_id = *self.func_map.get(&mangled)
+                                .ok_or_else(|| format!(
+                                    "internal: method '{}' missing from fn table", mangled
+                                ))?;
+                            if func_id > u16::MAX as usize {
+                                return Err(format!("Function id {} exceeds u16 range", func_id));
+                            }
+                            let base_src = self.compile_expr(base)?;
+                            let mut arg_srcs = Vec::with_capacity(args.len() + 1);
+                            arg_srcs.push(base_src);
+                            for arg in args {
+                                arg_srcs.push(self.compile_expr(arg)?);
+                            }
+                            for (i, src) in arg_srcs.iter().enumerate() {
+                                if i > u8::MAX as usize {
+                                    return Err("Too many arguments (>255)".to_string());
+                                }
+                                let pos = self.code.len();
+                                self.emit(OpCode::Copy(Register(0), *src));
+                                self.pending_arg_patches.push((pos, i as u8));
+                            }
+                            let dest = self.alloc_register()?;
+                            self.emit(OpCode::Call(dest, func_id as u16));
+                            return Ok(dest);
+                        }
+                    }
                 }
                 if let ast::Expr::Identifier(name) = &callee.node {
                     if name == "Shared" && args.len() == 1 {
@@ -587,7 +620,7 @@ impl Compiler {
             }
 
             ast::Expr::Resume(arg) => {
-                // MVP: tail-position resume only. `resume(v)` lowers to a
+                // TODO: tail-position resume only. `resume(v)` lowers to a
                 // plain `ret v` from the surrounding (lifted) arm function.
                 // The arm fn's caller is the dispatch path that invoked it
                 // for this op; returning v makes the op-call evaluate to v.
@@ -604,7 +637,7 @@ impl Compiler {
             }
 
             ast::Expr::Handle { expr: body, arms: _ } => {
-                // MVP: ignore the arm bodies here — the pre-pass already
+                // TODO: ignore the arm bodies here — the pre-pass already
                 // lifted them to top-level fns. Compile the protected body,
                 // then call the return-arm with its result.
                 let body_reg = self.compile_expr(body)?;
@@ -723,8 +756,38 @@ impl Compiler {
             ast::Expr::Variant { ty, .. } => ty.last().and_then(|vname| {
                 self.layouts.variants.get(vname).map(|info| ast::Type::Named(info.type_name.clone()))
             }),
+            ast::Expr::Unary { op, right } => match op {
+                ast::UnaryOp::Ref | ast::UnaryOp::RefMut => {
+                    let inner = self.infer_expr_type(right)?;
+                    Some(ast::Type::Reference {
+                        is_mut: matches!(op, ast::UnaryOp::RefMut),
+                        inner: Box::new(inner),
+                        region: None,
+                    })
+                }
+                ast::UnaryOp::Deref => {
+                    let inner = self.infer_expr_type(right)?;
+                    if let ast::Type::Reference { inner, .. } = inner { Some(*inner) } else { None }
+                }
+                _ => self.infer_expr_type(right),
+            },
             _ => None,
         }
+    }
+
+    /// Pull a receiver type name out of a method-call base expression.
+    /// Handles literals, identifiers, and references (`&x`).
+    pub(super) fn receiver_type_name(&self, base: &ast::Spanned<ast::Expr>) -> Option<String> {
+        let ty = self.infer_expr_type(base)?;
+        receiver_name_of(&ty)
+    }
+}
+
+fn receiver_name_of(ty: &ast::Type) -> Option<String> {
+    match ty {
+        ast::Type::Named(n) => Some(n.clone()),
+        ast::Type::Reference { inner, .. } => receiver_name_of(inner),
+        _ => None,
     }
 }
 

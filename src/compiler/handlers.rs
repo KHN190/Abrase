@@ -1,4 +1,4 @@
-// Effect-handler lowering — MVP.
+// Effect-handler lowering — TODO.
 //
 // Walks all FnDecls before codegen. For each Expr::Handle, synthesises one
 // top-level FnDecl per arm (lifted to module scope) so codegen can `call` them
@@ -7,7 +7,7 @@
 //   * `effect_op_to_arm`  : (effect_name, op_name) -> arm fn id
 //   * `return_arm_by_handle` : span of the Handle expr -> return arm fn id
 //
-// Limitations of this MVP:
+// Limitations of this TODO:
 //   * Arm bodies must not capture outer-scope variables (no closure conversion).
 //   * `resume(v)` must be the tail (last) expression of the arm body.
 //     The codegen lowers `Expr::Resume(v)` to `Ret(v)`.

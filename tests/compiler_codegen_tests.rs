@@ -3601,3 +3601,29 @@ fn lifted_arms_appear_in_function_table() {
         module.functions.len()
     );
 }
+
+#[test]
+fn verify_impl_method_lifted_to_synthetic_fn() {
+    // The impl-lift pass should produce `Show__Int__show` as a real entry in
+    // the function table — that is the synthetic fn codegen will dispatch to.
+    let src = r#"
+        trait Show {
+            fn show(self) -> Int { 0 }
+        }
+        impl Show for Int {
+            fn show(self) -> Int { self + 1 }
+        }
+        fn main() -> Int { (4).show() }
+    "#;
+    let ast = parse_source(src);
+    let mut compiler = Compiler::new();
+    let module = compiler.compile_module(&ast).expect("compile ok");
+    let entry = compiler.method_dispatch.get(&("Int".to_string(), "show".to_string()));
+
+    assert_eq!(entry, Some(&"Show__Int__show".to_string()),
+        "method_dispatch should map (Int, show) to mangled name");
+
+    assert!(module.functions.len() >= 2,
+        "expected at least main + synthetic impl method; got {}",
+        module.functions.len());
+}

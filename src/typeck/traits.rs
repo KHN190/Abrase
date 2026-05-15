@@ -9,6 +9,72 @@ impl Checker {
         self.trait_registry.insert(trait_name, methods);
     }
 
+    pub fn register_trait_method_sig(
+        &mut self,
+        trait_name: &str,
+        method_name: &str,
+        params: Vec<Type>,
+        ret: Type,
+    ) {
+        self.trait_method_sigs
+            .entry(trait_name.to_string())
+            .or_insert_with(std::collections::HashMap::new)
+            .insert(method_name.to_string(), (params, ret));
+    }
+
+    pub fn get_trait_method_sig(&self, trait_name: &str, method_name: &str)
+        -> Option<(Vec<Type>, Type)>
+    {
+        self.trait_method_sigs.get(trait_name)
+            .and_then(|m| m.get(method_name).cloned())
+    }
+
+    pub fn register_impl_method(
+        &mut self,
+        trait_name: &str,
+        type_name: &str,
+        method_name: &str,
+        mangled: String,
+    ) {
+        self.impl_method_fn.insert(
+            (trait_name.to_string(), type_name.to_string(), method_name.to_string()),
+            mangled,
+        );
+        let key = (type_name.to_string(), method_name.to_string());
+        let entry = self.method_traits_by_type.entry(key).or_insert_with(Vec::new);
+        let trait_owned = trait_name.to_string();
+        if !entry.contains(&trait_owned) {
+            entry.push(trait_owned);
+        }
+    }
+
+    pub fn lookup_impl_method(&self, trait_name: &str, type_name: &str, method_name: &str)
+        -> Option<String>
+    {
+        self.impl_method_fn
+            .get(&(trait_name.to_string(), type_name.to_string(), method_name.to_string()))
+            .cloned()
+    }
+
+    // Find which trait defines `method_name` for `type_name`.
+    pub fn resolve_method_on_type(&self, type_name: &str, method_name: &str)
+        -> Result<Option<(String, String)>, Vec<String>>
+    {
+        match self.method_traits_by_type.get(&(type_name.to_string(), method_name.to_string())) {
+            None => Ok(None),
+            Some(traits) if traits.len() == 1 => {
+                let trait_name = &traits[0];
+                let mangled = self.lookup_impl_method(trait_name, type_name, method_name);
+                Ok(mangled.map(|m| (trait_name.clone(), m)))
+            }
+            Some(traits) => Err(traits.clone()),
+        }
+    }
+
+    pub fn mangle_impl_method(trait_name: &str, type_name: &str, method_name: &str) -> String {
+        format!("{}__{}__{}", trait_name, type_name, method_name)
+    }
+
     pub fn get_trait(&self, trait_name: &str) -> Option<Vec<String>> {
         self.trait_registry.get(trait_name).cloned()
     }

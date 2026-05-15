@@ -257,4 +257,159 @@ mod tests {
             errs,
         );
     }
+
+    // Feature 22: trait dispatch via static monomorphisation.
+
+    fn show_trait(return_ty: Type) -> Decl {
+        Decl::Trait {
+            is_pub: false,
+            name: "Show".into(),
+            generics: vec![],
+            where_clause: vec![],
+            items: vec![TraitItem::Required(FnSignature {
+                name: "show".into(),
+                generics: vec![],
+                params: vec![Param::SelfVal],
+                effects: vec![],
+                return_type: Some(return_ty),
+                where_clause: vec![],
+            })],
+        }
+    }
+
+    fn impl_show_for(target: &str, return_ty: Type, body: Block) -> Decl {
+        Decl::Impl {
+            generics: vec![],
+            trait_name: Some(vec!["Show".into()]),
+            for_type: Type::Named(target.into()),
+            where_clause: vec![],
+            methods: vec![FnDecl {
+                attrs: vec![],
+                is_pub: false,
+                name: "show".into(),
+                generics: vec![],
+                params: vec![Param::SelfVal],
+                effects: vec![],
+                return_type: Some(return_ty),
+                where_clause: vec![],
+                body,
+            }],
+        }
+    }
+
+    #[test]
+    fn feature_22_static_dispatch_to_int_impl() {
+        let trait_decl = show_trait(Type::Named("Int".into()));
+        let body = Block {
+            stmts: vec![],
+            ret: Some(Box::new(sp(Expr::Binary {
+                op: BinaryOp::Mul,
+                left: Box::new(sp(Expr::Identifier("self".into()))),
+                right: Box::new(sp(Expr::Literal(Literal::Int(2)))),
+            }))),
+        };
+        let impl_decl = impl_show_for("Int", Type::Named("Int".into()), body);
+        let main_fn = fn_main_returns_int(Expr::Call {
+            callee: Box::new(sp(Expr::FieldAccess {
+                base: Box::new(sp(Expr::Literal(Literal::Int(5)))),
+                field: "show".into(),
+            })),
+            args: vec![],
+        });
+        let ast = vec![trait_decl, impl_decl, main_fn];
+        assert_eq!(compile_and_run(&ast), Ok(Value::Int(10)));
+    }
+
+    #[test]
+    fn feature_22_trait_method_used_in_generic_body() {
+        let trait_decl = show_trait(Type::Named("Int".into()));
+        let body = Block {
+            stmts: vec![],
+            ret: Some(Box::new(sp(Expr::Binary {
+                op: BinaryOp::Add,
+                left: Box::new(sp(Expr::Identifier("self".into()))),
+                right: Box::new(sp(Expr::Literal(Literal::Int(1)))),
+            }))),
+        };
+        let impl_decl = impl_show_for("Int", Type::Named("Int".into()), body);
+        // fn p<T>(x: T) -> Int where T: Show { x.show() }
+        let p_fn = Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            name: "p".into(),
+            generics: vec![gp("T")],
+            params: vec![Param::Named {
+                pattern: sp(Pattern::Bind("x".into())),
+                ty: Type::Named("T".into()),
+            }],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".into())),
+            where_clause: vec![WhereBound {
+                ty: Type::Named("T".into()),
+                bounds: vec![vec!["Show".into()]],
+            }],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(sp(Expr::Call {
+                    callee: Box::new(sp(Expr::FieldAccess {
+                        base: Box::new(sp(Expr::Identifier("x".into()))),
+                        field: "show".into(),
+                    })),
+                    args: vec![],
+                }))),
+            },
+        });
+        let main_fn = fn_main_returns_int(Expr::Call {
+            callee: Box::new(sp(Expr::Identifier("p".into()))),
+            args: vec![sp(Expr::Literal(Literal::Int(41)))],
+        });
+        let ast = vec![trait_decl, impl_decl, p_fn, main_fn];
+        assert_eq!(compile_and_run(&ast), Ok(Value::Int(42)));
+    }
+
+    #[test]
+    fn feature_22_two_impl_types_dispatch_separately() {
+        // trait Show { fn show(self) -> Int }
+        // impl Show for Int  { fn show(self) -> Int { self * 10 } }
+        // impl Show for Bool { fn show(self) -> Int { if self { 1 } else { 0 } } }
+        // fn main() -> Int { (5).show() + (true).show() }   // 50 + 1 = 51
+        let trait_decl = show_trait(Type::Named("Int".into()));
+        let int_body = Block {
+            stmts: vec![],
+            ret: Some(Box::new(sp(Expr::Binary {
+                op: BinaryOp::Mul,
+                left: Box::new(sp(Expr::Identifier("self".into()))),
+                right: Box::new(sp(Expr::Literal(Literal::Int(10)))),
+            }))),
+        };
+        let bool_body = Block {
+            stmts: vec![],
+            ret: Some(Box::new(sp(Expr::If {
+                condition: Box::new(sp(Expr::Identifier("self".into()))),
+                consequence: Box::new(sp(Expr::Literal(Literal::Int(1)))),
+                alternative: Some(Box::new(sp(Expr::Literal(Literal::Int(0))))),
+            }))),
+        };
+        let impl_int = impl_show_for("Int", Type::Named("Int".into()), int_body);
+        let impl_bool = impl_show_for("Bool", Type::Named("Int".into()), bool_body);
+        let main_fn = fn_main_returns_int(Expr::Binary {
+            op: BinaryOp::Add,
+            left: Box::new(sp(Expr::Call {
+                callee: Box::new(sp(Expr::FieldAccess {
+                    base: Box::new(sp(Expr::Literal(Literal::Int(5)))),
+                    field: "show".into(),
+                })),
+                args: vec![],
+            })),
+            right: Box::new(sp(Expr::Call {
+                callee: Box::new(sp(Expr::FieldAccess {
+                    base: Box::new(sp(Expr::Literal(Literal::Bool(true)))),
+                    field: "show".into(),
+                })),
+                args: vec![],
+            })),
+        });
+        let ast = vec![trait_decl, impl_int, impl_bool, main_fn];
+        assert_eq!(compile_and_run(&ast), Ok(Value::Int(51)));
+    }
 }

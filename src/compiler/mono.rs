@@ -4,12 +4,22 @@ use crate::ast::*;
 use crate::error::{Error, ErrorCode};
 
 pub fn monomorphize(decls: Vec<Decl>) -> Result<Vec<Decl>, Vec<Error>> {
-    Mono::new(decls).run()
+    Mono::new(decls, HashMap::new()).run()
+}
+
+pub fn monomorphize_with_methods(
+    decls: Vec<Decl>,
+    method_dispatch: HashMap<(String, String), String>,
+) -> Result<Vec<Decl>, Vec<Error>> {
+    Mono::new(decls, method_dispatch).run()
 }
 
 struct Mono {
     generic_fns: HashMap<String, FnDecl>,
     fn_sigs: HashMap<String, (Vec<Type>, Type)>,
+    /// `(receiver_type_name, method_name) -> mangled fn name`. Empty for
+    /// plain `monomorphize` callers; populated when impl-lift has run.
+    method_dispatch: HashMap<(String, String), String>,
     out_passthrough: Vec<Decl>,
     out_concrete: Vec<FnDecl>,
     out_specials: Vec<FnDecl>,
@@ -19,7 +29,7 @@ struct Mono {
 }
 
 impl Mono {
-    fn new(decls: Vec<Decl>) -> Self {
+    fn new(decls: Vec<Decl>, method_dispatch: HashMap<(String, String), String>) -> Self {
         let mut generic_fns = HashMap::new();
         let mut fn_sigs = HashMap::new();
         let mut out_passthrough = Vec::new();
@@ -39,6 +49,7 @@ impl Mono {
         Self {
             generic_fns,
             fn_sigs,
+            method_dispatch,
             out_passthrough,
             out_concrete,
             out_specials: Vec::new(),
@@ -168,6 +179,9 @@ impl Mono {
         env: &mut HashMap<String, Type>,
         subst: &HashMap<String, Type>,
     ) -> Option<Type> {
+
+        self.try_rewrite_method_call(expr, env);
+
         let call_span = expr.span;
         match &mut expr.node {
             Expr::Literal(lit) => Some(lit_type(lit)),
@@ -371,6 +385,48 @@ impl Mono {
         }
         Some(out)
     }
+
+    /// If `expr` is a `base.method(args)` call whose receiver type is in the
+    /// method dispatch table, rewrite the AST in place to a direct
+    /// `mangled(base, args)` call.
+    fn try_rewrite_method_call(
+        &mut self,
+        expr: &mut Spanned<Expr>,
+        env: &HashMap<String, Type>,
+    ) {
+        let mangled_opt: Option<String> = if let Expr::Call { callee, .. } = &expr.node {
+            if let Expr::FieldAccess { base, field } = &callee.node {
+                let base_ty = peek_type(base, env, &self.fn_sigs);
+                base_ty.as_ref()
+                    .and_then(|t| receiver_name_of(t))
+                    .and_then(|n| self.method_dispatch.get(&(n, field.clone())).cloned())
+            } else { None }
+        } else { None };
+
+        let mangled = match mangled_opt { Some(m) => m, None => return };
+
+        let span = expr.span;
+        let old = std::mem::replace(&mut expr.node, Expr::Error);
+        if let Expr::Call { callee, args } = old {
+            let callee_span = callee.span;
+            if let Expr::FieldAccess { base, .. } = callee.node {
+                let mut new_args = Vec::with_capacity(args.len() + 1);
+                new_args.push(*base);
+                new_args.extend(args);
+                expr.node = Expr::Call {
+                    callee: Box::new(Spanned {
+                        node: Expr::Identifier(mangled),
+                        span: callee_span,
+                    }),
+                    args: new_args,
+                };
+            } else {
+                // Shouldn't happen given the guard above; restore.
+                expr.node = Expr::Error;
+                let _ = span;
+            }
+        }
+    }
 }
 
 fn fn_sig(fd: &FnDecl) -> (Vec<Type>, Type) {
@@ -453,6 +509,50 @@ fn mangle(base: &str, args: &[Type]) -> String {
         s.push_str(&mangle_type(arg));
     }
     s
+}
+
+/// Non-mutating peek at the type of `expr` for use during the method-call
+/// rewrite. Mirrors the subset of `rewrite_expr` we need but doesn't mutate
+/// env or AST.
+fn peek_type(
+    expr: &Spanned<Expr>,
+    env: &HashMap<String, Type>,
+    fn_sigs: &HashMap<String, (Vec<Type>, Type)>,
+) -> Option<Type> {
+    match &expr.node {
+        Expr::Literal(lit) => Some(lit_type(lit)),
+        Expr::Identifier(n) => env.get(n).cloned()
+            .or_else(|| fn_sigs.get(n).map(|(_, r)| r.clone())),
+        Expr::Unary { op, right } => {
+            let inner = peek_type(right, env, fn_sigs)?;
+            match op {
+                UnaryOp::Ref => Some(Type::Reference {
+                    is_mut: false,
+                    inner: Box::new(inner),
+                    region: None,
+                }),
+                UnaryOp::RefMut => Some(Type::Reference {
+                    is_mut: true,
+                    inner: Box::new(inner),
+                    region: None,
+                }),
+                UnaryOp::Deref => match inner {
+                    Type::Reference { inner, .. } => Some(*inner),
+                    _ => None,
+                },
+                _ => Some(inner),
+            }
+        }
+        _ => None,
+    }
+}
+
+fn receiver_name_of(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Named(n) => Some(n.clone()),
+        Type::Reference { inner, .. } => receiver_name_of(inner),
+        _ => None,
+    }
 }
 
 fn mangle_type(ty: &Type) -> String {
