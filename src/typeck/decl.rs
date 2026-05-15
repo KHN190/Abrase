@@ -108,14 +108,12 @@ impl Checker {
             },
 
             ast::Decl::Effect { name, is_pub, ops } => {
-                let op_names: Vec<String> = ops.iter().map(|o| o.name.clone()).collect();
+                // Register the effect name AND store per-op Function types in
+                // effect_ops_registry so call-site arg-count and type checking
+                // can resolve them.
                 let module_path = self.current_module.clone();
                 self.register_module_item(&module_path, name.clone(), Type::Named(name.clone()));
-                self.register_effect(name.clone(), op_names);
-
-                if *is_pub {
-                    self.mark_public(name.clone());
-                }
+                self.check_effect_decl(name, ops, *is_pub);
             },
 
             ast::Decl::EffectAlias { name, is_pub, effects } => {

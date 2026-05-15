@@ -57,7 +57,15 @@ impl Checker {
                     }
                     ast::UnaryOp::Deref => {
                         let r_ty = self.infer_expr(right);
-                        if let Type::Reference { inner, .. } = r_ty { *inner } else { self.report_error("Expected reference".into(), right.span) }
+                        match r_ty {
+                            Type::Reference { inner, .. } => *inner,
+                            // `Shared<T>` is a host-provided reference cell:
+                            // `*cell` reads the inner T.
+                            Type::Generic { name, args } if name == "Shared" => {
+                                args.into_iter().next().unwrap_or(Type::Unknown)
+                            }
+                            _ => self.report_error("Expected reference".into(), right.span),
+                        }
                     }
                 };
 
@@ -90,9 +98,6 @@ impl Checker {
                         | ast::BinaryOp::AddAssign | ast::BinaryOp::SubAssign
                         | ast::BinaryOp::MulAssign | ast::BinaryOp::DivAssign
                         | ast::BinaryOp::ModAssign => {
-                            // Reject assignment to a non-`mut` binding.
-                            // Only Identifier LHS is checked here; field/index
-                            // assignment goes through a different lvalue path.
                             if let ast::Expr::Identifier(name) = &left.node {
                                 let is_mut = self.scopes.iter().rev()
                                     .find_map(|s| s.vars.get(name).map(|m| m.is_mut));
@@ -131,13 +136,18 @@ impl Checker {
                 self.context_stack.push("In if condition".into());
                 let cond_ty = self.infer_expr(condition);
                 self.context_stack.pop();
-                
+
                 if cond_ty != Type::Bool && cond_ty != Type::Unknown {
                     self.report_error("Condition must be Bool".into(), condition.span);
                 }
-                
+
+                // Branches are mutually exclusive at runtime. Snapshot the
+                // scope (move flags etc.) before each branch.
+                let snapshot = self.scopes.clone();
                 let cons_ty = self.infer_expr(consequence);
+                let mut result = cons_ty.clone();
                 if let Some(alt) = alternative {
+                    self.scopes = snapshot;
                     let alt_ty = self.infer_expr(alt);
                     let compatible = cons_ty == alt_ty
                         || cons_ty == Type::Unknown || alt_ty == Type::Unknown
@@ -145,14 +155,18 @@ impl Checker {
                     if !compatible {
                         self.report_error("If branch types do not match".into(), alt.span);
                     }
-                    if cons_ty == Type::Never { return alt_ty; }
+                    if cons_ty == Type::Never { result = alt_ty; }
                 }
-                cons_ty
+                result
             }
             ast::Expr::Match { scrutinee, arms } => {
                 self.context_stack.push("In match expression".into());
                 let required_before = self.fn_required_effects.clone();
-                let scrutinee_ty = self.infer_expr(scrutinee);
+                let scrutinee_ty = if let ast::Expr::Identifier(name) = &scrutinee.node {
+                    self.get_var(name, true, scrutinee.span)
+                } else {
+                    self.infer_expr(scrutinee)
+                };
                 let exn_added: Vec<_> = self.fn_required_effects.iter()
                     .filter(|e| !required_before.iter().any(|b| self.effects_equal(b, e))
                         && matches!(e, crate::ty::Effect::Exn(_)))
@@ -184,7 +198,15 @@ impl Checker {
                 }
 
                 let mut arm_types = Vec::new();
+                // Arms are mutually exclusive — snapshot scope before each one
+                // and restore so a binding moved in arm A is not seen moved in
+                // arm B. Pattern bindings introduced by each arm live only for
+                // that arm's body.
+                let pre_arm_snapshot = self.scopes.clone();
                 for arm in arms {
+                    self.scopes = pre_arm_snapshot.clone();
+                    // Re-install bindings introduced by this arm's pattern.
+                    self.check_pattern(&arm.pattern, &scrutinee_ty, arm.pattern.span);
                     if let Some(guard) = &arm.guard {
                         let guard_ty = self.infer_expr(guard);
                         if guard_ty != Type::Bool && guard_ty != Type::Unknown {
@@ -194,6 +216,7 @@ impl Checker {
                     let body_ty = self.infer_expr(&arm.body);
                     arm_types.push(body_ty);
                 }
+                self.scopes = pre_arm_snapshot;
 
                 // All arms must have same type
                 if !arm_types.is_empty() {
@@ -313,6 +336,15 @@ impl Checker {
                                 Some(Type::Function { params, ret, .. }) => (params, *ret),
                                 _ => (vec![], Type::Unknown),
                             };
+                            if args.len() != params.len() {
+                                self.report_error(
+                                    format!(
+                                        "Effect op '{}' expects {} argument(s), got {}",
+                                        op_key, params.len(), args.len()
+                                    ),
+                                    expr.span,
+                                );
+                            }
                             for (i, arg) in args.iter().enumerate() {
                                 self.context_stack.push(format!("Argument {}", i + 1));
                                 let arg_ty = self.infer_expr(arg);
@@ -330,7 +362,7 @@ impl Checker {
                                 }
                             }
                             self.check_borrow_barrier(&op_key, expr.span);
-                            self.add_required_effect(crate::ty::Effect::Nondet);
+                            self.add_required_effect(crate::ty::Effect::UserEffect(eff_name.clone()));
                             self.context_stack.pop();
                             return ret;
                         }
@@ -422,6 +454,26 @@ impl Checker {
                     }
                     for (p, a) in params.iter().zip(arg_types.iter()) {
                         collect_named(p, a, &callee_generic_vars, &mut named_subst);
+                    }
+                    // Reject the call here (before the compiler runs) if any
+                    // declared type parameter of the callee can't be inferred
+                    if !callee_generic_vars.is_empty() {
+                        let callee_name = if let ast::Expr::Identifier(n) = &callee.node {
+                            n.clone()
+                        } else {
+                            "<call>".into()
+                        };
+                        for g in &callee_generic_vars {
+                            if !named_subst.contains_key(g)
+                                && !subst.contains_key(g)
+                            {
+                                self.report_error(
+                                    format!("Cannot infer type parameter '{}' for call to '{}'",
+                                        g, callee_name),
+                                    expr.span,
+                                );
+                            }
+                        }
                     }
                     fn subst_named(ty: &Type, subst: &std::collections::HashMap<String, Type>) -> Type {
                         match ty {
@@ -517,13 +569,19 @@ impl Checker {
                     }
                 }
                 self.context_stack.push(format!("In field access '{}'", field));
-                let base_ty = self.infer_expr(base);
+                // Field access borrows the base rather than consuming it, so
+                // expressions like `p.x + p.y` (where `p` is @move) don't trip
+                // the move checker on the second read.
+                let base_ty = if let ast::Expr::Identifier(name) = &base.node {
+                    self.get_var(name, true, base.span)
+                } else {
+                    self.infer_expr(base)
+                };
                 let field_type = self.resolve_field_access(&base_ty, field, base.span);
 
                 self.context_stack.pop();
                 field_type
             }
-            // Advanced Expressions (updated Effect Inference)
             ast::Expr::Closure { is_move: _, params, effects, return_type, body } => {
                 self.context_stack.push("In closure expression".into());
                 self.enter_scope();
@@ -718,7 +776,6 @@ impl Checker {
                         self.in_handler_arm = saved_in_arm;
                     }
 
-                    // Register handled effect based on kind
                     match &arm.kind {
                         ast::HandleArmKind::Return => {
                             // Return handler doesn't remove an effect
@@ -733,13 +790,10 @@ impl Checker {
                             self.mark_effect_handled("exn".into());
                         }
                         ast::HandleArmKind::Effect(effect_path) => {
-                            let effect_name = effect_path.join(".");
-                            self.mark_effect_handled(effect_name);
-                            if let Some(head) = effect_path.first() {
-                                if self.effect_registry.contains_key(head) {
-                                    self.mark_effect_handled("nondet".into());
-                                }
+                            if let Some(eff_name) = effect_path.first() {
+                                self.mark_effect_handled(eff_name.clone());
                             }
+                            self.mark_effect_handled(effect_path.join("."));
                         }
                     }
                 }

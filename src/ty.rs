@@ -13,6 +13,9 @@ pub enum Effect {
     Exn(Box<Type>),
     Alloc,
     Nondet,
+    /// User-declared effects, keyed by their declared name. Distinct names
+    /// remain distinct (no collapse into a single sink variant).
+    UserEffect(String),
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]

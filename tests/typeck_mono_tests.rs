@@ -40,12 +40,44 @@ fn compile_module_errors(ast: &[Decl]) -> Vec<String> {
     }
 }
 
-// fn id<T>(x: T) -> T { x }
-// fn main() -> Int { id(5) }
-#[test]
-fn generic_identity_function_int() {
-    let ast = vec![
-        Decl::Fn(FnDecl {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // fn id<T>(x: T) -> T { x }
+    // fn main() -> Int { id(5) }
+    #[test]
+    fn generic_identity_function_int() {
+        let ast = vec![
+            Decl::Fn(FnDecl {
+                attrs: vec![],
+                is_pub: false,
+                name: "id".into(),
+                generics: vec![gp("T")],
+                params: vec![Param::Named {
+                    pattern: sp(Pattern::Bind("x".into())),
+                    ty: Type::Named("T".into()),
+                }],
+                effects: vec![],
+                return_type: Some(Type::Named("T".into())),
+                where_clause: vec![],
+                body: Block {
+                    stmts: vec![],
+                    ret: Some(Box::new(sp(Expr::Identifier("x".into())))),
+                },
+            }),
+            fn_main_returns_int(Expr::Call {
+                callee: Box::new(sp(Expr::Identifier("id".into()))),
+                args: vec![sp(Expr::Literal(Literal::Int(5)))],
+            }),
+        ];
+        assert_eq!(compile_and_run(&ast), Ok(Value::Int(5)));
+    }
+
+    // Two specialisations of `id` coexist: id(5) and id(true), summed via Int branch.
+    #[test]
+    fn generic_specializes_for_different_types() {
+        let id_fn = Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
             name: "id".into(),
@@ -61,196 +93,168 @@ fn generic_identity_function_int() {
                 stmts: vec![],
                 ret: Some(Box::new(sp(Expr::Identifier("x".into())))),
             },
-        }),
-        fn_main_returns_int(Expr::Call {
-            callee: Box::new(sp(Expr::Identifier("id".into()))),
-            args: vec![sp(Expr::Literal(Literal::Int(5)))],
-        }),
-    ];
-    assert_eq!(compile_and_run(&ast), Ok(Value::Int(5)));
-}
+        });
+        // main: if id(true) { id(10) } else { 0 }  -> 10
+        let main_fn = fn_main_returns_int(Expr::If {
+            condition: Box::new(sp(Expr::Call {
+                callee: Box::new(sp(Expr::Identifier("id".into()))),
+                args: vec![sp(Expr::Literal(Literal::Bool(true)))],
+            })),
+            consequence: Box::new(sp(Expr::Call {
+                callee: Box::new(sp(Expr::Identifier("id".into()))),
+                args: vec![sp(Expr::Literal(Literal::Int(10)))],
+            })),
+            alternative: Some(Box::new(sp(Expr::Literal(Literal::Int(0))))),
+        });
+        let ast = vec![id_fn, main_fn];
+        assert_eq!(compile_and_run(&ast), Ok(Value::Int(10)));
+    }
 
-// Two specialisations of `id` coexist: id(5) and id(true), summed via Int branch.
-#[test]
-fn generic_specializes_for_different_types() {
-    let id_fn = Decl::Fn(FnDecl {
-        attrs: vec![],
-        is_pub: false,
-        name: "id".into(),
-        generics: vec![gp("T")],
-        params: vec![Param::Named {
-            pattern: sp(Pattern::Bind("x".into())),
-            ty: Type::Named("T".into()),
-        }],
-        effects: vec![],
-        return_type: Some(Type::Named("T".into())),
-        where_clause: vec![],
-        body: Block {
-            stmts: vec![],
-            ret: Some(Box::new(sp(Expr::Identifier("x".into())))),
-        },
-    });
-    // main: if id(true) { id(10) } else { 0 }  -> 10
-    let main_fn = fn_main_returns_int(Expr::If {
-        condition: Box::new(sp(Expr::Call {
-            callee: Box::new(sp(Expr::Identifier("id".into()))),
-            args: vec![sp(Expr::Literal(Literal::Bool(true)))],
-        })),
-        consequence: Box::new(sp(Expr::Call {
-            callee: Box::new(sp(Expr::Identifier("id".into()))),
-            args: vec![sp(Expr::Literal(Literal::Int(10)))],
-        })),
-        alternative: Some(Box::new(sp(Expr::Literal(Literal::Int(0))))),
-    });
-    let ast = vec![id_fn, main_fn];
-    assert_eq!(compile_and_run(&ast), Ok(Value::Int(10)));
-}
-
-// fn outer<T>(x: T) -> T { inner(x) }
-// fn inner<T>(x: T) -> T { x }
-// fn main() -> Int { outer(7) }
-#[test]
-fn generic_infers_through_transitive_calls() {
-    let inner_fn = Decl::Fn(FnDecl {
-        attrs: vec![],
-        is_pub: false,
-        name: "inner".into(),
-        generics: vec![gp("T")],
-        params: vec![Param::Named {
-            pattern: sp(Pattern::Bind("x".into())),
-            ty: Type::Named("T".into()),
-        }],
-        effects: vec![],
-        return_type: Some(Type::Named("T".into())),
-        where_clause: vec![],
-        body: Block {
-            stmts: vec![],
-            ret: Some(Box::new(sp(Expr::Identifier("x".into())))),
-        },
-    });
-    let outer_fn = Decl::Fn(FnDecl {
-        attrs: vec![],
-        is_pub: false,
-        name: "outer".into(),
-        generics: vec![gp("T")],
-        params: vec![Param::Named {
-            pattern: sp(Pattern::Bind("x".into())),
-            ty: Type::Named("T".into()),
-        }],
-        effects: vec![],
-        return_type: Some(Type::Named("T".into())),
-        where_clause: vec![],
-        body: Block {
-            stmts: vec![],
-            ret: Some(Box::new(sp(Expr::Call {
-                callee: Box::new(sp(Expr::Identifier("inner".into()))),
-                args: vec![sp(Expr::Identifier("x".into()))],
-            }))),
-        },
-    });
-    let main_fn = fn_main_returns_int(Expr::Call {
-        callee: Box::new(sp(Expr::Identifier("outer".into()))),
-        args: vec![sp(Expr::Literal(Literal::Int(7)))],
-    });
-    let ast = vec![inner_fn, outer_fn, main_fn];
-    assert_eq!(compile_and_run(&ast), Ok(Value::Int(7)));
-}
-
-// fn cnt<T>(x: T, n: Int) -> Int { if n <= 0 { 0 } else { 1 + cnt(x, n - 1) } }
-// fn main() -> Int { cnt(42, 3) }
-// Exercises recursion through a generic specialization (cnt__Int) — the
-// recursive call gets rewritten to the mangled name.
-#[test]
-fn generic_function_recurses_with_specialization() {
-    let cnt = Decl::Fn(FnDecl {
-        attrs: vec![],
-        is_pub: false,
-        name: "cnt".into(),
-        generics: vec![gp("T")],
-        params: vec![
-            Param::Named {
+    // fn outer<T>(x: T) -> T { inner(x) }
+    // fn inner<T>(x: T) -> T { x }
+    // fn main() -> Int { outer(7) }
+    #[test]
+    fn generic_infers_through_transitive_calls() {
+        let inner_fn = Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            name: "inner".into(),
+            generics: vec![gp("T")],
+            params: vec![Param::Named {
                 pattern: sp(Pattern::Bind("x".into())),
                 ty: Type::Named("T".into()),
+            }],
+            effects: vec![],
+            return_type: Some(Type::Named("T".into())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(sp(Expr::Identifier("x".into())))),
             },
-            Param::Named {
-                pattern: sp(Pattern::Bind("n".into())),
-                ty: Type::Named("Int".into()),
-            },
-        ],
-        effects: vec![],
-        return_type: Some(Type::Named("Int".into())),
-        where_clause: vec![],
-        body: Block {
-            stmts: vec![],
-            ret: Some(Box::new(sp(Expr::If {
-                condition: Box::new(sp(Expr::Binary {
-                    op: BinaryOp::Lte,
-                    left: Box::new(sp(Expr::Identifier("n".into()))),
-                    right: Box::new(sp(Expr::Literal(Literal::Int(0)))),
-                })),
-                consequence: Box::new(sp(Expr::Literal(Literal::Int(0)))),
-                alternative: Some(Box::new(sp(Expr::Binary {
-                    op: BinaryOp::Add,
-                    left: Box::new(sp(Expr::Literal(Literal::Int(1)))),
-                    right: Box::new(sp(Expr::Call {
-                        callee: Box::new(sp(Expr::Identifier("cnt".into()))),
-                        args: vec![
-                            sp(Expr::Identifier("x".into())),
-                            sp(Expr::Binary {
-                                op: BinaryOp::Sub,
-                                left: Box::new(sp(Expr::Identifier("n".into()))),
-                                right: Box::new(sp(Expr::Literal(Literal::Int(1)))),
-                            }),
-                        ],
-                    })),
+        });
+        let outer_fn = Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            name: "outer".into(),
+            generics: vec![gp("T")],
+            params: vec![Param::Named {
+                pattern: sp(Pattern::Bind("x".into())),
+                ty: Type::Named("T".into()),
+            }],
+            effects: vec![],
+            return_type: Some(Type::Named("T".into())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(sp(Expr::Call {
+                    callee: Box::new(sp(Expr::Identifier("inner".into()))),
+                    args: vec![sp(Expr::Identifier("x".into()))],
                 }))),
-            }))),
-        },
-    });
-    let main_fn = fn_main_returns_int(Expr::Call {
-        callee: Box::new(sp(Expr::Identifier("cnt".into()))),
-        args: vec![
-            sp(Expr::Literal(Literal::Int(42))),
-            sp(Expr::Literal(Literal::Int(3))),
-        ],
-    });
-    let ast = vec![cnt, main_fn];
-    assert_eq!(compile_and_run(&ast), Ok(Value::Int(3)));
-}
+            },
+        });
+        let main_fn = fn_main_returns_int(Expr::Call {
+            callee: Box::new(sp(Expr::Identifier("outer".into()))),
+            args: vec![sp(Expr::Literal(Literal::Int(7)))],
+        });
+        let ast = vec![inner_fn, outer_fn, main_fn];
+        assert_eq!(compile_and_run(&ast), Ok(Value::Int(7)));
+    }
 
-// fn make<T>(x: Int) -> Int { x }  -- T is unused, so id type-arg cannot be inferred
-// fn main() -> Int { make(5) }
-#[test]
-fn generic_type_inference_fails_when_unused() {
-    let make_fn = Decl::Fn(FnDecl {
-        attrs: vec![],
-        is_pub: false,
-        name: "make".into(),
-        generics: vec![gp("T")],
-        params: vec![Param::Named {
-            pattern: sp(Pattern::Bind("x".into())),
-            ty: Type::Named("Int".into()),
-        }],
-        effects: vec![],
-        return_type: Some(Type::Named("Int".into())),
-        where_clause: vec![],
-        body: Block {
-            stmts: vec![],
-            ret: Some(Box::new(sp(Expr::Identifier("x".into())))),
-        },
-    });
-    let main_fn = fn_main_returns_int(Expr::Call {
-        callee: Box::new(sp(Expr::Identifier("make".into()))),
-        args: vec![sp(Expr::Literal(Literal::Int(5)))],
-    });
-    let ast = vec![make_fn, main_fn];
-    let errs = compile_module_errors(&ast);
-    assert!(
-        errs.iter().any(|m| m.contains("Cannot infer type parameter")
-            && m.contains("'T'")
-            && m.contains("'make'")),
-        "expected inference-failure error mentioning T and make, got: {:?}",
-        errs,
-    );
-}
+    // fn cnt<T>(x: T, n: Int) -> Int { if n <= 0 { 0 } else { 1 + cnt(x, n - 1) } }
+    // fn main() -> Int { cnt(42, 3) }
+    // Exercises recursion through a generic specialization (cnt__Int) — the
+    // recursive call gets rewritten to the mangled name.
+    #[test]
+    fn generic_function_recurses_with_specialization() {
+        let cnt = Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            name: "cnt".into(),
+            generics: vec![gp("T")],
+            params: vec![
+                Param::Named {
+                    pattern: sp(Pattern::Bind("x".into())),
+                    ty: Type::Named("T".into()),
+                },
+                Param::Named {
+                    pattern: sp(Pattern::Bind("n".into())),
+                    ty: Type::Named("Int".into()),
+                },
+            ],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".into())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(sp(Expr::If {
+                    condition: Box::new(sp(Expr::Binary {
+                        op: BinaryOp::Lte,
+                        left: Box::new(sp(Expr::Identifier("n".into()))),
+                        right: Box::new(sp(Expr::Literal(Literal::Int(0)))),
+                    })),
+                    consequence: Box::new(sp(Expr::Literal(Literal::Int(0)))),
+                    alternative: Some(Box::new(sp(Expr::Binary {
+                        op: BinaryOp::Add,
+                        left: Box::new(sp(Expr::Literal(Literal::Int(1)))),
+                        right: Box::new(sp(Expr::Call {
+                            callee: Box::new(sp(Expr::Identifier("cnt".into()))),
+                            args: vec![
+                                sp(Expr::Identifier("x".into())),
+                                sp(Expr::Binary {
+                                    op: BinaryOp::Sub,
+                                    left: Box::new(sp(Expr::Identifier("n".into()))),
+                                    right: Box::new(sp(Expr::Literal(Literal::Int(1)))),
+                                }),
+                            ],
+                        })),
+                    }))),
+                }))),
+            },
+        });
+        let main_fn = fn_main_returns_int(Expr::Call {
+            callee: Box::new(sp(Expr::Identifier("cnt".into()))),
+            args: vec![
+                sp(Expr::Literal(Literal::Int(42))),
+                sp(Expr::Literal(Literal::Int(3))),
+            ],
+        });
+        let ast = vec![cnt, main_fn];
+        assert_eq!(compile_and_run(&ast), Ok(Value::Int(3)));
+    }
 
+    // fn make<T>(x: Int) -> Int { x }  -- T is unused, so id type-arg cannot be inferred
+    // fn main() -> Int { make(5) }
+    #[test]
+    fn generic_type_inference_fails_when_unused() {
+        let make_fn = Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            name: "make".into(),
+            generics: vec![gp("T")],
+            params: vec![Param::Named {
+                pattern: sp(Pattern::Bind("x".into())),
+                ty: Type::Named("Int".into()),
+            }],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".into())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(sp(Expr::Identifier("x".into())))),
+            },
+        });
+        let main_fn = fn_main_returns_int(Expr::Call {
+            callee: Box::new(sp(Expr::Identifier("make".into()))),
+            args: vec![sp(Expr::Literal(Literal::Int(5)))],
+        });
+        let ast = vec![make_fn, main_fn];
+        let errs = compile_module_errors(&ast);
+        assert!(
+            errs.iter().any(|m| m.contains("Cannot infer type parameter")
+                && m.contains("'T'")
+                && m.contains("'make'")),
+            "expected inference-failure error mentioning T and make, got: {:?}",
+            errs,
+        );
+    }
+}

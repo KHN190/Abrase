@@ -385,10 +385,20 @@ impl Checker {
                     }
                 }
             }
-            ast::Pattern::Variant { ty: _, args } => {
-                // Variant pattern: verify variant args (without ADT registry, skip validation)
-                for pat in args {
-                    self.check_pattern(pat, &Type::Unknown, pat.span);
+            ast::Pattern::Variant { ty, args } => {
+                // Look up the case's payload types from the variant registry
+                // and use them as the value type for each arg pattern. Without
+                // this, args were typed Unknown, which behaves as Move — so a
+                // bound `Int` field like `v` in `Node(v, l, r)` would be marked
+                // moved on first read.
+                let case_name = ty.last().cloned().unwrap_or_default();
+                let payload_tys: Vec<Type> = match self.lookup_variant_constructor(&case_name) {
+                    Some(Type::Function { params, .. }) => params,
+                    _ => Vec::new(),
+                };
+                for (i, pat) in args.iter().enumerate() {
+                    let arg_ty = payload_tys.get(i).cloned().unwrap_or(Type::Unknown);
+                    self.check_pattern(pat, &arg_ty, pat.span);
                 }
             }
             ast::Pattern::Ref(pat) => {
@@ -428,6 +438,20 @@ impl Checker {
     }
 
     fn lookup_variant_constructor(&self, case_name: &str) -> Option<Type> {
+        // Host-provided builtin: `Shared(v)` constructs `Shared<T>` from any
+        // value. The codegen recognises the call site directly (see
+        // src/compiler/codegen.rs), but the typeck needs an entry too so the
+        // identifier `Shared` resolves at expression position.
+        if case_name == "Shared" {
+            return Some(Type::Function {
+                params: vec![Type::Unknown],
+                effects: vec![],
+                ret: Box::new(Type::Generic {
+                    name: "Shared".into(),
+                    args: vec![Type::Unknown],
+                }),
+            });
+        }
         // Reverse-search variant_registry for the type that owns this case.
         for (type_name, cases) in self.variant_registry.iter() {
             if !cases.iter().any(|c| c == case_name) { continue; }

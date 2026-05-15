@@ -1,0 +1,7 @@
+fn id<T>(x: T) -> T { x }
+
+fn main() -> Int {
+  let flag = id(true);
+  let n = id(42);
+  if flag { n } else { 0 }
+}

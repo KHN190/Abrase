@@ -2065,7 +2065,6 @@ fn verify_handle_arm_types_unify_never_with_int() {
 }
 
 #[test]
-#[ignore = "two distinct user effects collapse to Effect::Nondet; needs per-name effect variant"]
 fn verify_nested_handle_inner_consumes_outer_propagates() {
     let mut checker = Checker::new();
     checker.register_effect("a".into(), vec!["op".into()]);
@@ -2309,7 +2308,6 @@ fn verify_handle_arm_type_mismatch_errors() {
 }
 
 #[test]
-#[ignore = "typeck does not yet check arg count for effect-op calls"]
 fn verify_effect_op_wrong_arg_count_errors() {
     // logger.log expects one Int arg; the call site passes none.
     let mut checker = Checker::new();
@@ -2342,7 +2340,7 @@ fn verify_effect_op_wrong_arg_count_errors() {
     checker.check_fn_decl(&fn_decl);
     assert!(
         checker.errors.iter().any(|e|
-            e.message.contains("Expected 1 arguments") || e.message.contains("Expected 1 argument")
+            e.message.contains("expects 1 argument")
         ),
         "expected arg-count mismatch for logger.log() with no args; got {:?}",
         checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
@@ -2350,7 +2348,6 @@ fn verify_effect_op_wrong_arg_count_errors() {
 }
 
 #[test]
-#[ignore = "typeck does not yet propagate unhandled effects out of a handle"]
 fn verify_unhandled_effect_op_in_handler_body_propagates() {
     let mut checker = Checker::new();
     checker.register_effect("a".into(), vec!["one".into()]);

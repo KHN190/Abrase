@@ -55,10 +55,6 @@ fn test_sum_loop() {
 }
 
 #[test]
-#[ignore = "typeck hole: match-arm `Leaf` parses as Pattern::Bind, registering \
-            Leaf as a regular @move binding; the second use in `Node(x, Leaf, Leaf)` \
-            then trips the move checker. Pattern parsing/typeck needs to prefer \
-            variant case names over bare bindings when a registered case matches."]
 fn test_bst() {
     let v = run_file("tests/scripts/bst.ect")
         .unwrap_or_else(|e| panic!("\n{}", e));
@@ -66,10 +62,6 @@ fn test_bst() {
 }
 
 #[test]
-#[ignore = "typeck hole: field access on a @move record marks the whole record \
-            as moved on the first `p.x`, so the next `p.x` errors. Field access \
-            should not consume; only the full-value move semantics applies on \
-            identifier read."]
 fn test_shapes() {
     // record decl + literal + field access + array + indexing + function call
     let v = run_file("tests/scripts/shapes.ect")
@@ -78,9 +70,6 @@ fn test_shapes() {
 }
 
 #[test]
-#[ignore = "typeck hole: built-in `Shared` is recognised by codegen as a host \
-            constructor but the typeck has no entry for it, so `Shared(doubled)` \
-            fails to resolve. Needs a host-builtins registration pass in typeck."]
 fn test_memory() {
     // &/* (ref+deref) + Shared (heap alloc/load) + Move (String) + scope-exit drop
     let v = run_file("tests/scripts/memory.ect")
@@ -119,10 +108,13 @@ fn neg_use_after_move_into_call_typeck_errors() {
 }
 
 #[test]
-fn neg_bare_variant_name_typeck_errors() {
+fn neg_undefined_ident_typeck_errors() {
+    // Replaces an earlier test that asserted `DivByZero` (a real variant case)
+    // was undefined; with the get_var constructor fallback that is no longer
+    // an error. Use a truly undefined name instead.
     let errs = typeck_file("tests/scripts/bad_bare_variant.ect");
-    assert!(errs.iter().any(|m| m.contains("Undefined variable") && m.contains("DivByZero")),
-        "expected 'Undefined variable: DivByZero', got: {:?}", errs);
+    assert!(errs.iter().any(|m| m.contains("Undefined variable") && m.contains("NoSuchName")),
+        "expected 'Undefined variable: NoSuchName', got: {:?}", errs);
 }
 
 #[test]
@@ -165,4 +157,14 @@ fn neg_borrow_across_effect_typeck_errors() {
     let errs = typeck_file("tests/scripts/bad_borrow_across_effect.ect");
     assert!(errs.iter().any(|m| m.contains("live across effect operation")),
         "expected borrow-barrier error, got: {:?}", errs);
+}
+
+#[test]
+fn generic_inference_specializes_per_call_site() {
+    // `id<T>` is monomorphized into two specializations driven by argument
+    // types: `id__Bool` for id(true), `id__Int` for id(42). The final value
+    // takes the if-true branch (flag = true), returning the inferred Int.
+    let v = run_file("tests/scripts/generic_inference.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(42));
 }

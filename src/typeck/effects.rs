@@ -45,6 +45,7 @@ impl Checker {
             (crate::ty::Effect::Alloc, crate::ty::Effect::Alloc) => true,
             (crate::ty::Effect::Nondet, crate::ty::Effect::Nondet) => true,
             (crate::ty::Effect::Exn(t1), crate::ty::Effect::Exn(t2)) => t1 == t2,
+            (crate::ty::Effect::UserEffect(n1), crate::ty::Effect::UserEffect(n2)) => n1 == n2,
             _ => false,
         }
     }
@@ -67,7 +68,7 @@ impl Checker {
                     return effs.pop();
                 }
                 if self.effect_registry.contains_key(&raw) {
-                    return Some(crate::ty::Effect::Nondet);
+                    return Some(crate::ty::Effect::UserEffect(raw));
                 }
                 None
             }
@@ -158,6 +159,7 @@ impl Checker {
                 crate::ty::Effect::Alloc => self.handled_effects.contains(&"io".into()) || self.handled_effects.contains(&"alloc".into()),
                 crate::ty::Effect::Nondet => self.handled_effects.contains(&"nondet".into()),
                 crate::ty::Effect::Exn(_) => self.handled_effects.contains(&"exn".into()),
+                crate::ty::Effect::UserEffect(name) => self.handled_effects.contains(name),
             };
             if !handled {
                 self.unhandled_effects.push(effect.clone());
