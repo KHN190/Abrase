@@ -282,7 +282,7 @@ p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
 ```bnf
 <if-expr>         ::= 'if' <expr> <block> ('else' (<if-expr> | <block>))?
 
-<match-expr>      ::= 'match' <expr> '{' <match-arm> (',' <match-arm>)* ','? '}'
+<match-expr>      ::= 'match' <expr> '{' (<match-arm> ','?)* '}'
 
 <match-arm>       ::= <pattern> ('if' <expr>)? '=>' <match-body>
 
