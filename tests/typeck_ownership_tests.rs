@@ -731,8 +731,6 @@ fn verify_share_type_mut_borrow_blocks_immut() {
     assert!(result.is_err());
 }
 
-// Integration Tests
-
 #[test]
 fn verify_multiple_variables_independent_borrows() {
     let mut checker = Checker::new();
@@ -767,7 +765,6 @@ fn verify_borrow_scope_management() {
     // Exit scope
     checker.exit_scope();
 
-    // Variable should still be accessible in original scope
     let retrieved = checker.get_var("s", false, d_span());
     assert_eq!(retrieved, Type::Named("String".into()));
 }
@@ -794,13 +791,9 @@ fn verify_release_borrow_updates_counts() {
     let move_ty = Type::Named("String".into());
     checker.insert_var("s".into(), move_ty, false, d_span());
 
-    // Take borrow
     let _ = checker.try_immut_borrow("s", d_span());
-
-    // Release borrow
     checker.release_borrow("s");
 
-    // Should be able to take new borrow after release
     let result = checker.try_immut_borrow("s", d_span());
     assert!(result.is_ok());
 }
@@ -813,25 +806,18 @@ fn verify_cannot_mutably_borrow_immutable_variable() {
     // is_mut = false
     checker.insert_var("s".into(), move_ty, false, d_span());
 
-    // Should fail to mutable borrow immutable variable
     let result = checker.try_mut_borrow("s", d_span());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("immutable variable"));
 }
 
-// --- typeck_move_semantics_tests ---
-
 #[test]
 fn verify_move_type_can_be_immutably_borrowed() {
     let mut checker = Checker::new();
 
-    // Register a Move-semantics type
     checker.register_ownership("MyType".into(), Ownership::Move);
-
-    // Insert a variable of Move-semantics type
     checker.insert_var("x".into(), Type::Named("MyType".into()), true, d_span());
 
-    // Move types CAN be immutably borrowed — only using by value moves them
     let result = checker.try_immut_borrow("x", d_span());
     assert!(result.is_ok());
 }
@@ -840,17 +826,12 @@ fn verify_move_type_can_be_immutably_borrowed() {
 fn verify_move_type_mutable_borrow_marks_moved() {
     let mut checker = Checker::new();
 
-    // Register a Move-semantics type
     checker.register_ownership("MyType".into(), Ownership::Move);
-
-    // Insert a mutable variable of Move-semantics type
     checker.insert_var("x".into(), Type::Named("MyType".into()), true, d_span());
 
-    // Mutable borrow of Move type marks the variable as moved
     let result = checker.try_mut_borrow("x", d_span());
     assert!(result.is_ok());
 
-    // After mutable borrow, the variable is marked moved — further use by value should error
     let moved = checker.resolve_var_in_scopes("x");
     assert!(moved.is_some());
 }
@@ -859,13 +840,9 @@ fn verify_move_type_mutable_borrow_marks_moved() {
 fn verify_copy_type_can_be_borrowed() {
     let mut checker = Checker::new();
 
-    // Register a Copy-semantics type
     checker.register_ownership("Int".into(), Ownership::Copy);
-
-    // Insert a variable of Copy-semantics type
     checker.insert_var("x".into(), Type::Int, true, d_span());
 
-    // Try to immutably borrow - should succeed
     let result = checker.try_immut_borrow("x", d_span());
     assert!(result.is_ok());
 }
@@ -874,13 +851,9 @@ fn verify_copy_type_can_be_borrowed() {
 fn verify_share_type_can_be_borrowed() {
     let mut checker = Checker::new();
 
-    // Register a Share-semantics type
     checker.register_ownership("MyShared".into(), Ownership::Share);
-
-    // Insert a variable of Share-semantics type
     checker.insert_var("s".into(), Type::Named("MyShared".into()), true, d_span());
 
-    // Try to immutably borrow - should succeed
     let result = checker.try_immut_borrow("s", d_span());
     assert!(result.is_ok());
 }
@@ -889,10 +862,8 @@ fn verify_share_type_can_be_borrowed() {
 fn verify_copy_primitive_can_be_borrowed() {
     let mut checker = Checker::new();
 
-    // Insert a primitive Int variable
     checker.insert_var("n".into(), Type::Int, true, d_span());
 
-    // Int is Copy by default, should borrow successfully
     let result = checker.try_immut_borrow("n", d_span());
     assert!(result.is_ok());
 }
@@ -901,13 +872,9 @@ fn verify_copy_primitive_can_be_borrowed() {
 fn verify_cannot_mutably_borrow_without_mut_keyword() {
     let mut checker = Checker::new();
 
-    // Register a Move-semantics type
     checker.register_ownership("MyType".into(), Ownership::Move);
-
-    // Insert immutable variable
     checker.insert_var("x".into(), Type::Named("MyType".into()), false, d_span());
 
-    // Try to mutably borrow - should fail because variable is immutable
     let result = checker.try_mut_borrow("x", d_span());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("immutable"));
@@ -917,13 +884,9 @@ fn verify_cannot_mutably_borrow_without_mut_keyword() {
 fn verify_move_type_allows_multiple_immut_borrows() {
     let mut checker = Checker::new();
 
-    // Register a Move-semantics type
     checker.register_ownership("MyType".into(), Ownership::Move);
-
-    // Insert a mutable variable
     checker.insert_var("x".into(), Type::Named("MyType".into()), true, d_span());
 
-    // Multiple immutable borrows are allowed (move only happens on by-value use)
     let result1 = checker.try_immut_borrow("x", d_span());
     assert!(result1.is_ok());
 
@@ -945,8 +908,6 @@ fn verify_infer_type_ownership_defaults() {
     // Unknown types default to Move
     assert_eq!(checker.infer_type_ownership("UnknownType"), Ownership::Move);
 }
-
-// --- typeck_scope_tests (typeck_ownership_tests) ---
 
 // Region Escape & Borrow Checking Tests
 
@@ -1121,5 +1082,74 @@ fn verify_region_stack_multiple_levels() {
 
     checker.pop_region();
     assert!(checker.get_current_region().is_none());
+}
+
+#[test]
+fn assign_to_immutable_binding_reports_error() {
+    // `let x = 0; x = 1` must be rejected: the binding has no `mut`.
+    let mut checker = Checker::new();
+    checker.insert_var("x".into(), Type::Int, /* is_mut */ false, d_span());
+    let expr = sp(ast::Expr::Binary {
+        op: ast::BinaryOp::Assign,
+        left:  Box::new(sp(ast::Expr::Identifier("x".into()))),
+        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+    });
+    let _ = checker.infer_expr(&expr);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("immutable binding 'x'")),
+        "expected mut-check error, got: {:?}",
+        checker.errors,
+    );
+}
+
+#[test]
+fn assign_to_mutable_binding_is_ok() {
+    // `let mut x = 0; x = 1` must type-check cleanly.
+    let mut checker = Checker::new();
+    checker.insert_var("x".into(), Type::Int, /* is_mut */ true, d_span());
+    let expr = sp(ast::Expr::Binary {
+        op: ast::BinaryOp::Assign,
+        left:  Box::new(sp(ast::Expr::Identifier("x".into()))),
+        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+    });
+    let _ = checker.infer_expr(&expr);
+    assert!(
+        checker.errors.is_empty(),
+        "expected no errors for mut binding, got: {:?}",
+        checker.errors,
+    );
+}
+
+#[test]
+fn compound_assign_to_immutable_binding_reports_error() {
+    let mut checker = Checker::new();
+    checker.insert_var("x".into(), Type::Int, false, d_span());
+    let expr = sp(ast::Expr::Binary {
+        op: ast::BinaryOp::AddAssign,
+        left:  Box::new(sp(ast::Expr::Identifier("x".into()))),
+        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+    });
+    let _ = checker.infer_expr(&expr);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("immutable binding 'x'")),
+        "expected mut-check error for AddAssign, got: {:?}",
+        checker.errors,
+    );
+}
+
+#[test]
+fn assign_to_unknown_var_does_not_emit_mut_error() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Binary {
+        op: ast::BinaryOp::Assign,
+        left:  Box::new(sp(ast::Expr::Identifier("never_declared".into()))),
+        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+    });
+    let _ = checker.infer_expr(&expr);
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("immutable binding")),
+        "mut-check fired on unresolved var; errors: {:?}",
+        checker.errors,
+    );
 }
 

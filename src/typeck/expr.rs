@@ -90,6 +90,23 @@ impl Checker {
                         | ast::BinaryOp::AddAssign | ast::BinaryOp::SubAssign
                         | ast::BinaryOp::MulAssign | ast::BinaryOp::DivAssign
                         | ast::BinaryOp::ModAssign => {
+                            // Reject assignment to a non-`mut` binding.
+                            // Only Identifier LHS is checked here; field/index
+                            // assignment goes through a different lvalue path.
+                            if let ast::Expr::Identifier(name) = &left.node {
+                                let is_mut = self.scopes.iter().rev()
+                                    .find_map(|s| s.vars.get(name).map(|m| m.is_mut));
+                                if let Some(false) = is_mut {
+                                    self.report_error(
+                                        format!(
+                                            "Cannot assign to immutable binding '{}'; \
+                                             use `let mut {}` to allow mutation",
+                                            name, name
+                                        ),
+                                        left.span,
+                                    );
+                                }
+                            }
                             Type::Unit
                         }
                     }
