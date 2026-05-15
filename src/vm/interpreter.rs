@@ -2,9 +2,15 @@ use super::{VirtualMachine, Value};
 use crate::bytecode::{Chunk, OpCode, Register, Module};
 use crate::vm::frame::Frame;
 
+// Max 2.5~3 MB
+const MAX_REGISTERS: usize = 1 << 16;
+
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
         self.pc = 0;
+        if chunk.reg_count > self.registers.len() {
+            self.registers.resize(chunk.reg_count, None);
+        }
         while self.pc < chunk.code.len() {
             let opcode = &chunk.code[self.pc];
             self.pc += 1;
@@ -122,6 +128,10 @@ impl VirtualMachine {
         self.base_reg = 0;
         self.current_func = module.entry;
         self.frames.clear();
+        let entry_regs = module.functions[module.entry].reg_count;
+        if entry_regs > self.registers.len() {
+            self.registers.resize(entry_regs, None);
+        }
 
         loop {
             let current_chunk = &module.functions[self.current_func];
@@ -245,9 +255,15 @@ impl VirtualMachine {
                     let dest_abs = self.base_reg + dest.to_usize();
                     let new_base = self.base_reg + current_chunk.reg_count;
                     let callee_reg_count = module.functions[*func_id].reg_count;
-
-                    if new_base + callee_reg_count > 256 {
-                        return Err(format!("Register overflow: {} + {} exceeds 256", new_base, callee_reg_count));
+                    let needed = new_base + callee_reg_count;
+                    if needed > MAX_REGISTERS {
+                        return Err(format!(
+                            "Stack overflow: register window {} exceeds limit {}",
+                            needed, MAX_REGISTERS
+                        ));
+                    }
+                    if needed > self.registers.len() {
+                        self.registers.resize(needed, None);
                     }
 
                     self.frames.push(Frame {

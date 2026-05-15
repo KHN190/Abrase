@@ -10,7 +10,7 @@ pub use value::Value;
 use frame::Frame;
 
 pub struct VirtualMachine {
-    pub(crate) registers: [Option<Value>; 256],
+    pub(crate) registers: Vec<Option<Value>>,
     pub(crate) frames: Vec<Frame>,
     pub(crate) pc: usize,
     pub(crate) base_reg: usize,
@@ -20,7 +20,7 @@ pub struct VirtualMachine {
 impl VirtualMachine {
     pub fn new() -> Self {
         Self {
-            registers: std::array::from_fn(|_| None),
+            registers: Vec::new(),
             frames: Vec::new(),
             pc: 0,
             base_reg: 0,

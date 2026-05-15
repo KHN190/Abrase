@@ -103,9 +103,8 @@ impl<'a> Parser<'a> {
         while self.current_token != Token::Eof {
             match self.parse_decl() {
                 Ok(decl) => decls.push(decl),
-                Err(_) => self.synchronize(), 
+                Err(_) => self.synchronize(),
             }
-            self.next_token();
         }
         decls
     }
@@ -813,8 +812,8 @@ impl<'a> Parser<'a> {
             return Err("Expected '{' after if condition".into());
         }
         let consequence = Box::new(Spanned { node: Expr::Block(self.parse_block()?), span: self.current_span });
-        let alternative = if self.peek_token == Token::Else {
-            self.next_token(); // consume '}'
+        // parse_block leaves current_token PAST the consequence's '}'.
+        let alternative = if self.current_token == Token::Else {
             self.next_token(); // move to 'if' or '{'
             if self.current_token == Token::If {
                 Some(Box::new(Spanned { node: self.parse_if_expr()?, span: self.current_span }))
@@ -847,15 +846,26 @@ impl<'a> Parser<'a> {
             }
             self.next_token();
             let body = self.parse_expr(Precedence::Lowest);
+            let body_is_block_terminated = is_block_terminated(&body.node);
             arms.push(MatchArm { pattern, guard, body });
-            if self.peek_token == Token::Comma {
+            // Atom-style bodies leave current at the body's last token (peek is the
+            // separator). Block-style bodies already consumed their own '}', so current
+            // is at the separator/next-pattern/'}'.
+            if body_is_block_terminated {
+                if self.current_token == Token::Comma || self.current_token == Token::Semicolon {
+                    self.next_token();
+                }
+            } else if self.peek_token == Token::Comma || self.peek_token == Token::Semicolon {
                 self.next_token();
                 self.next_token();
-            } else { break; }
+            } else {
+                self.next_token();
+            }
         }
-        if !self.expect_peek(Token::RBrace) {
+        if self.current_token != Token::RBrace {
             return Err("Expected '}' in match expr".into());
         }
+        self.next_token(); // consume '}'
         Ok(Expr::Match { scrutinee, arms })
     }
 
@@ -1132,6 +1142,8 @@ impl<'a> Parser<'a> {
             Token::NotEq => BinaryOp::Neq,
             Token::Lt => BinaryOp::Lt,
             Token::Gt => BinaryOp::Gt,
+            Token::Lte => BinaryOp::Lte,
+            Token::Gte => BinaryOp::Gte,
             Token::Assign => BinaryOp::Assign,
             Token::LParen => return self.parse_call_expr(left),
             Token::Dot => {
@@ -1186,7 +1198,7 @@ impl<'a> Parser<'a> {
     pub fn parse_block(&mut self) -> Result<Block, String> {
         let mut stmts = Vec::new();
         self.next_token(); // consume '{'
-        
+
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
             match self.parse_stmt() {
                 Ok(stmt) => stmts.push(stmt),
@@ -1198,7 +1210,12 @@ impl<'a> Parser<'a> {
                 self.next_token();
             }
         }
-        
+
+        // Consume the closing '}'
+        if self.current_token == Token::RBrace {
+            self.next_token();
+        }
+
         let mut ret = None;
         if let Some(spanned_stmt) = stmts.last() {
             if let Stmt::Expr(expr) = &spanned_stmt.node {
@@ -1216,4 +1233,21 @@ impl<'a> Parser<'a> {
             Err(_) => Expr::Error,
         }
     }
+}
+
+// Block-terminated expressions consume their own closing '}' via parse_block,
+// so the parser position after them is already past the brace.
+fn is_block_terminated(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Block(_)
+            | Expr::If { .. }
+            | Expr::Match { .. }
+            | Expr::While { .. }
+            | Expr::For { .. }
+            | Expr::Loop { .. }
+            | Expr::Scope { .. }
+            | Expr::Region { .. }
+            | Expr::Handle { .. }
+    )
 }
