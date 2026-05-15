@@ -1,9 +1,3 @@
-// Codegen entry point.
-//
-// `compile_expr` is a thin dispatcher that routes each AST variant to a
-// purpose-built compile_* method living in a sibling submodule. The
-// statement and block lowerings are short enough to live alongside it.
-
 pub mod scaffold;
 pub mod inference;
 pub mod data;
