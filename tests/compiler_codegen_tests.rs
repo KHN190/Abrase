@@ -2041,7 +2041,7 @@ fn verify_compile_match_variant_pattern_unsupported() {
     })];
 
     let result = compile_and_run(&ast);
-    assert!(result.is_err(), "Variant patterns should not be supported in Phase 2");
+    assert!(result.is_err(), "Variant patterns is not supported yet");
 }
 
 #[test]
@@ -2104,7 +2104,7 @@ fn verify_compile_match_or_pattern_unsupported() {
     })];
 
     let result = compile_and_run(&ast);
-    assert!(result.is_err(), "Or patterns should not be supported in Phase 2");
+    assert!(result.is_err(), "Or patterns should is not supported");
 }
 
 // Functions

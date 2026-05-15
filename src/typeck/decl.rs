@@ -212,10 +212,13 @@ impl Checker {
         if let Some(return_ty) = &fn_decl.return_type {
             let expected_return = self.convert_type(return_ty);
             if !self.types_compatible(&expected_return, &body_type) {
+                let span = fn_decl.body.ret.as_ref().map(|r| r.span)
+                    .or_else(|| fn_decl.body.stmts.last().map(|s| s.span))
+                    .unwrap_or(ast::Span { line: 1, col: 1 });
                 self.report_error(
                     format!("Return type mismatch in '{}': expected {}, got {}",
                         fn_decl.name, format!("{:?}", expected_return), format!("{:?}", body_type)),
-                    ast::Span { line: 0, col: 0 },
+                    span,
                 );
             }
         }

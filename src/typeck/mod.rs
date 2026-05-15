@@ -29,6 +29,23 @@ impl TypeError {
         }
         output
     }
+
+    pub fn pretty_print(&self, source: &str) -> String {
+        let mut result = if self.span.line > 0 {
+            format!("TypeError at line {}, col {}: {}\n", self.span.line, self.span.col, self.message)
+        } else {
+            format!("TypeError: {}\n", self.message)
+        };
+        let lines: Vec<&str> = source.lines().collect();
+        if self.span.line > 0 && self.span.line <= lines.len() {
+            let line = lines[self.span.line - 1];
+            result.push_str(&format!("  {} | {}\n", self.span.line, line));
+            result.push_str("    | ");
+            for _ in 0..self.span.col.saturating_sub(1) { result.push(' '); }
+            result.push_str("^\n");
+        }
+        result
+    }
 }
 
 #[derive(Clone)]
@@ -214,6 +231,10 @@ impl Checker {
             output.push_str(&format!("\n{}: {}", i + 1, error.display()));
         }
         output
+    }
+
+    pub fn pretty_print_errors(&self, source: &str) -> String {
+        self.errors.iter().map(|e| e.pretty_print(source)).collect::<Vec<_>>().join("\n")
     }
     pub fn insert_var(&mut self, name: String, ty: Type, is_mut: bool, defined_at: Span) {
         if let Some(scope) = self.scopes.last_mut() {

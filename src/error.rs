@@ -48,7 +48,11 @@ impl Error {
     }
 
     pub fn pretty_print(&self, source: &str) -> String {
-        let mut result = format!("{} at line {}, col {}: {}\n", self.code, self.span.line, self.span.col, self.message);
+        let mut result = if self.span.line > 0 {
+            format!("{} at line {}, col {}: {}\n", self.code, self.span.line, self.span.col, self.message)
+        } else {
+            format!("{}: {}\n", self.code, self.message)
+        };
 
         let lines: Vec<&str> = source.lines().collect();
         if self.span.line > 0 && self.span.line <= lines.len() {

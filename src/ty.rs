@@ -62,7 +62,8 @@ impl Type {
                     Ownership::Move
                 }
             }
-            Type::Function { .. } | Type::Named(_) | Type::Unknown => Ownership::Move,
+            Type::Function { .. } => Ownership::Copy,
+            Type::Named(_) | Type::Unknown => Ownership::Move,
         }
     }
 }
