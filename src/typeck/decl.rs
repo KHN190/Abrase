@@ -83,6 +83,18 @@ impl Checker {
             },
 
             ast::Decl::Trait { name, is_pub, items, .. } => {
+                // Reject shadowing of the four built-in `@derive` trait names
+                // (wiki §11). These are reserved for the language's auto-derive
+                // machinery and may not be redefined.
+                if is_reserved_trait_name(name) {
+                    self.report_error(
+                        format!("Cannot redefine built-in trait '{}'; \
+                                 it is reserved by `@derive` and cannot be shadowed",
+                                name),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                    return;
+                }
                 let method_names: Vec<String> = items.iter().filter_map(|i| match i {
                     ast::TraitItem::Required(sig) => Some(sig.name.clone()),
                     ast::TraitItem::Default(decl) => Some(decl.name.clone()),
@@ -639,6 +651,15 @@ impl Checker {
             _ => field_ty.clone(),
         }
     }
+}
+
+/// Built-in trait names reserved by `@derive` (wiki §11). User code may
+/// `impl` these for its own types, but may not declare a new `trait` with
+/// any of these names.
+pub(crate) const RESERVED_TRAIT_NAMES: &[&str] = &["Show", "Eq", "Ord", "Clone"];
+
+pub(crate) fn is_reserved_trait_name(name: &str) -> bool {
+    RESERVED_TRAIT_NAMES.iter().any(|n| *n == name)
 }
 
 fn subst_self_in_ast_type(ty: &ast::Type, receiver: &str) -> ast::Type {

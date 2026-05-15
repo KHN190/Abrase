@@ -1,13 +1,13 @@
-trait Show {
-  fn show(self) -> Int { 0 }
+trait Doubler {
+  fn double(self) -> Int { 0 }
 }
 
-impl Show for Int {
-  fn show(self) -> Int {
+impl Doubler for Int {
+  fn double(self) -> Int {
     self * 2
   }
 }
 
 fn main() -> Int {
-  (5).show()
+  (5).double()
 }

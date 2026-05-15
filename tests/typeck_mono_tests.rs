@@ -259,15 +259,18 @@ mod tests {
     }
 
     // Feature 22: trait dispatch via static monomorphisation.
+    //
+    // Uses a `Doubler` trait so the tests do not collide with the four
+    // reserved trait names (`Show`/`Eq`/`Ord`/`Clone`).
 
-    fn show_trait(return_ty: Type) -> Decl {
+    fn doubler_trait(return_ty: Type) -> Decl {
         Decl::Trait {
             is_pub: false,
-            name: "Show".into(),
+            name: "Doubler".into(),
             generics: vec![],
             where_clause: vec![],
             items: vec![TraitItem::Required(FnSignature {
-                name: "show".into(),
+                name: "double".into(),
                 generics: vec![],
                 params: vec![Param::SelfVal],
                 effects: vec![],
@@ -277,16 +280,16 @@ mod tests {
         }
     }
 
-    fn impl_show_for(target: &str, return_ty: Type, body: Block) -> Decl {
+    fn impl_doubler_for(target: &str, return_ty: Type, body: Block) -> Decl {
         Decl::Impl {
             generics: vec![],
-            trait_name: Some(vec!["Show".into()]),
+            trait_name: Some(vec!["Doubler".into()]),
             for_type: Type::Named(target.into()),
             where_clause: vec![],
             methods: vec![FnDecl {
                 attrs: vec![],
                 is_pub: false,
-                name: "show".into(),
+                name: "double".into(),
                 generics: vec![],
                 params: vec![Param::SelfVal],
                 effects: vec![],
@@ -299,7 +302,7 @@ mod tests {
 
     #[test]
     fn feature_22_static_dispatch_to_int_impl() {
-        let trait_decl = show_trait(Type::Named("Int".into()));
+        let trait_decl = doubler_trait(Type::Named("Int".into()));
         let body = Block {
             stmts: vec![],
             ret: Some(Box::new(sp(Expr::Binary {
@@ -308,11 +311,11 @@ mod tests {
                 right: Box::new(sp(Expr::Literal(Literal::Int(2)))),
             }))),
         };
-        let impl_decl = impl_show_for("Int", Type::Named("Int".into()), body);
+        let impl_decl = impl_doubler_for("Int", Type::Named("Int".into()), body);
         let main_fn = fn_main_returns_int(Expr::Call {
             callee: Box::new(sp(Expr::FieldAccess {
                 base: Box::new(sp(Expr::Literal(Literal::Int(5)))),
-                field: "show".into(),
+                field: "double".into(),
             })),
             args: vec![],
         });
@@ -322,7 +325,7 @@ mod tests {
 
     #[test]
     fn feature_22_trait_method_used_in_generic_body() {
-        let trait_decl = show_trait(Type::Named("Int".into()));
+        let trait_decl = doubler_trait(Type::Named("Int".into()));
         let body = Block {
             stmts: vec![],
             ret: Some(Box::new(sp(Expr::Binary {
@@ -331,8 +334,8 @@ mod tests {
                 right: Box::new(sp(Expr::Literal(Literal::Int(1)))),
             }))),
         };
-        let impl_decl = impl_show_for("Int", Type::Named("Int".into()), body);
-        // fn p<T>(x: T) -> Int where T: Show { x.show() }
+        let impl_decl = impl_doubler_for("Int", Type::Named("Int".into()), body);
+        // fn p<T>(x: T) -> Int where T: Doubler { x.double() }
         let p_fn = Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
@@ -346,14 +349,14 @@ mod tests {
             return_type: Some(Type::Named("Int".into())),
             where_clause: vec![WhereBound {
                 ty: Type::Named("T".into()),
-                bounds: vec![vec!["Show".into()]],
+                bounds: vec![vec!["Doubler".into()]],
             }],
             body: Block {
                 stmts: vec![],
                 ret: Some(Box::new(sp(Expr::Call {
                     callee: Box::new(sp(Expr::FieldAccess {
                         base: Box::new(sp(Expr::Identifier("x".into()))),
-                        field: "show".into(),
+                        field: "double".into(),
                     })),
                     args: vec![],
                 }))),
@@ -369,11 +372,11 @@ mod tests {
 
     #[test]
     fn feature_22_two_impl_types_dispatch_separately() {
-        // trait Show { fn show(self) -> Int }
-        // impl Show for Int  { fn show(self) -> Int { self * 10 } }
-        // impl Show for Bool { fn show(self) -> Int { if self { 1 } else { 0 } } }
-        // fn main() -> Int { (5).show() + (true).show() }   // 50 + 1 = 51
-        let trait_decl = show_trait(Type::Named("Int".into()));
+        // trait Doubler { fn double(self) -> Int }
+        // impl Doubler for Int  { fn double(self) -> Int { self * 10 } }
+        // impl Doubler for Bool { fn double(self) -> Int { if self { 1 } else { 0 } } }
+        // fn main() -> Int { (5).double() + (true).double() }   // 50 + 1 = 51
+        let trait_decl = doubler_trait(Type::Named("Int".into()));
         let int_body = Block {
             stmts: vec![],
             ret: Some(Box::new(sp(Expr::Binary {
@@ -390,21 +393,21 @@ mod tests {
                 alternative: Some(Box::new(sp(Expr::Literal(Literal::Int(0))))),
             }))),
         };
-        let impl_int = impl_show_for("Int", Type::Named("Int".into()), int_body);
-        let impl_bool = impl_show_for("Bool", Type::Named("Int".into()), bool_body);
+        let impl_int = impl_doubler_for("Int", Type::Named("Int".into()), int_body);
+        let impl_bool = impl_doubler_for("Bool", Type::Named("Int".into()), bool_body);
         let main_fn = fn_main_returns_int(Expr::Binary {
             op: BinaryOp::Add,
             left: Box::new(sp(Expr::Call {
                 callee: Box::new(sp(Expr::FieldAccess {
                     base: Box::new(sp(Expr::Literal(Literal::Int(5)))),
-                    field: "show".into(),
+                    field: "double".into(),
                 })),
                 args: vec![],
             })),
             right: Box::new(sp(Expr::Call {
                 callee: Box::new(sp(Expr::FieldAccess {
                     base: Box::new(sp(Expr::Literal(Literal::Bool(true)))),
-                    field: "show".into(),
+                    field: "double".into(),
                 })),
                 args: vec![],
             })),

@@ -161,9 +161,6 @@ fn neg_borrow_across_effect_typeck_errors() {
 
 #[test]
 fn generic_inference_specializes_per_call_site() {
-    // `id<T>` is monomorphized into two specializations driven by argument
-    // types: `id__Bool` for id(true), `id__Int` for id(42). The final value
-    // takes the if-true branch (flag = true), returning the inferred Int.
     let v = run_file("tests/scripts/generic_inference.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::Int(42));
@@ -171,8 +168,6 @@ fn generic_inference_specializes_per_call_site() {
 
 #[test]
 fn trait_dispatch_static_compiles_and_runs() {
-    // `(5).show()` lowers to a direct call to the synthesised
-    // `Show__Int__show` fn — no vtables, no dynamic lookup.
     let v = run_file("tests/scripts/trait_dispatch.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::Int(10));

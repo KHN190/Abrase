@@ -3604,24 +3604,25 @@ fn lifted_arms_appear_in_function_table() {
 
 #[test]
 fn verify_impl_method_lifted_to_synthetic_fn() {
-    // The impl-lift pass should produce `Show__Int__show` as a real entry in
-    // the function table — that is the synthetic fn codegen will dispatch to.
+    // The impl-lift pass should produce `Doubler__Int__double` as a real
+    // entry in the function table — that is the synthetic fn codegen will
+    // dispatch to. (Uses `Doubler` rather than a reserved built-in name.)
     let src = r#"
-        trait Show {
-            fn show(self) -> Int { 0 }
+        trait Doubler {
+            fn double(self) -> Int { 0 }
         }
-        impl Show for Int {
-            fn show(self) -> Int { self + 1 }
+        impl Doubler for Int {
+            fn double(self) -> Int { self + 1 }
         }
-        fn main() -> Int { (4).show() }
+        fn main() -> Int { (4).double() }
     "#;
     let ast = parse_source(src);
     let mut compiler = Compiler::new();
     let module = compiler.compile_module(&ast).expect("compile ok");
-    let entry = compiler.method_dispatch.get(&("Int".to_string(), "show".to_string()));
+    let entry = compiler.method_dispatch.get(&("Int".to_string(), "double".to_string()));
 
-    assert_eq!(entry, Some(&"Show__Int__show".to_string()),
-        "method_dispatch should map (Int, show) to mangled name");
+    assert_eq!(entry, Some(&"Doubler__Int__double".to_string()),
+        "method_dispatch should map (Int, double) to mangled name");
 
     assert!(module.functions.len() >= 2,
         "expected at least main + synthetic impl method; got {}",
