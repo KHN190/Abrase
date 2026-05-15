@@ -2186,3 +2186,238 @@ fn verify_borrow_barrier_silent_for_pure_call() {
         checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn verify_borrow_barrier_catches_mut_borrow_across_effect_op() {
+    let mut checker = Checker::new();
+    checker.register_effect("logger".into(), vec!["log".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![ect::ty::Type::Int],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("logger::log".into(), op_ty);
+
+    let body = sp(ast::Expr::Region {
+        label: Some("inner".into()),
+        body: ast::Block {
+            stmts: vec![
+                sp(ast::Stmt::Expr(sp(ast::Expr::Call {
+                    callee: Box::new(sp(ast::Expr::FieldAccess {
+                        base: Box::new(sp(ast::Expr::Identifier("logger".into()))),
+                        field: "log".into(),
+                    })),
+                    args: vec![sp(ast::Expr::Literal(ast::Literal::Int(0)))],
+                }))),
+            ],
+            ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0))))),
+        },
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "leaky_mut".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![ast::EffectItem { name: vec!["logger".into()], arg: None }],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block {
+            stmts: vec![
+                sp(ast::Stmt::Let {
+                    pattern: sp(ast::Pattern::Bind("v".into())),
+                    is_mut: true,
+                    ty: Some(ast::Type::Named("Int".into())),
+                    value: sp(ast::Expr::Literal(ast::Literal::Int(100))),
+                }),
+                sp(ast::Stmt::Let {
+                    pattern: sp(ast::Pattern::Bind("r".into())),
+                    is_mut: false,
+                    ty: Some(ast::Type::Reference {
+                        is_mut: true,
+                        inner: Box::new(ast::Type::Named("Int".into())),
+                        region: None,
+                    }),
+                    value: sp(ast::Expr::Unary {
+                        op: ast::UnaryOp::RefMut,
+                        right: Box::new(sp(ast::Expr::Identifier("v".into()))),
+                    }),
+                }),
+            ],
+            ret: Some(Box::new(body)),
+        },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("live across effect operation")),
+        "borrow barrier must fire for &mut held across an effect op; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_handle_arm_type_mismatch_errors() {
+    let mut checker = Checker::new();
+    checker.register_effect("logger".into(), vec!["log".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![ect::ty::Type::Int],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("logger::log".into(), op_ty);
+
+    let inner = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::FieldAccess {
+            base: Box::new(sp(ast::Expr::Identifier("logger".into()))),
+            field: "log".into(),
+        })),
+        args: vec![sp(ast::Expr::Literal(ast::Literal::Int(0)))],
+    });
+
+    let body = sp(ast::Expr::Handle {
+        expr: Box::new(inner),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Effect(vec!["logger".into(), "log".into()]),
+                pattern: Some(sp(ast::Pattern::Bind("msg".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::String("oops".into()))),
+            },
+        ],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "mixed_arms".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(body)) },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("Handle arm types do not match")),
+        "expected arm-type-mismatch error; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+#[ignore = "typeck does not yet check arg count for effect-op calls"]
+fn verify_effect_op_wrong_arg_count_errors() {
+    // logger.log expects one Int arg; the call site passes none.
+    let mut checker = Checker::new();
+    checker.register_effect("logger".into(), vec!["log".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![ect::ty::Type::Int],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("logger::log".into(), op_ty);
+
+    let call = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::FieldAccess {
+            base: Box::new(sp(ast::Expr::Identifier("logger".into()))),
+            field: "log".into(),
+        })),
+        args: vec![],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "bad_arity".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![ast::EffectItem { name: vec!["logger".into()], arg: None }],
+        return_type: Some(ast::Type::Named("Unit".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(call)) },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        checker.errors.iter().any(|e|
+            e.message.contains("Expected 1 arguments") || e.message.contains("Expected 1 argument")
+        ),
+        "expected arg-count mismatch for logger.log() with no args; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+#[ignore = "typeck does not yet propagate unhandled effects out of a handle"]
+fn verify_unhandled_effect_op_in_handler_body_propagates() {
+    let mut checker = Checker::new();
+    checker.register_effect("a".into(), vec!["one".into()]);
+    checker.register_effect("b".into(), vec!["two".into()]);
+    let a_one_ty = ect::ty::Type::Function {
+        params: vec![],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Int),
+    };
+    let b_two_ty = ect::ty::Type::Function {
+        params: vec![],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Int),
+    };
+    checker.register_effect_op("a::one".into(), a_one_ty);
+    checker.register_effect_op("b::two".into(), b_two_ty);
+
+    // Body inside `handle` performs both <a> and <b> ops.
+    let inner = sp(ast::Expr::Binary {
+        op: ast::BinaryOp::Add,
+        left: Box::new(sp(ast::Expr::Call {
+            callee: Box::new(sp(ast::Expr::FieldAccess {
+                base: Box::new(sp(ast::Expr::Identifier("a".into()))),
+                field: "one".into(),
+            })),
+            args: vec![],
+        })),
+        right: Box::new(sp(ast::Expr::Call {
+            callee: Box::new(sp(ast::Expr::FieldAccess {
+                base: Box::new(sp(ast::Expr::Identifier("b".into()))),
+                field: "two".into(),
+            })),
+            args: vec![],
+        })),
+    });
+    let handle = sp(ast::Expr::Handle {
+        expr: Box::new(inner),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Identifier("v".into())),
+            },
+            // Only handles a.one; b.two is intentionally NOT handled.
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Effect(vec!["a".into(), "one".into()]),
+                pattern: None,
+                body: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+            },
+        ],
+    });
+    // Caller declares only <a>, leaving <b> as an undeclared leak.
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "partial_handler".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![ast::EffectItem { name: vec!["a".into()], arg: None }],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(handle)) },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("does not declare")),
+        "expected leak diagnostic for unhandled <b> escaping the handle; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
