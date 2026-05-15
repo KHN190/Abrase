@@ -74,6 +74,22 @@ impl Checker {
         patterns.contains(&"_".to_string())
     }
 
+    // Whether the match arms cover both Ok and Err variants (treat as exn-handler).
+    pub fn arms_cover_ok_err(arms: &[ast::MatchArm]) -> bool {
+        let mut has_ok = false;
+        let mut has_err = false;
+        for arm in arms {
+            if let ast::Pattern::Variant { ty, .. } = &arm.pattern.node {
+                match ty.last().map(String::as_str) {
+                    Some("Ok") => has_ok = true,
+                    Some("Err") => has_err = true,
+                    _ => {}
+                }
+            }
+        }
+        has_ok && has_err
+    }
+
     // Collect variant case names from match arms
 
     pub fn collect_arm_patterns(arms: &[ast::MatchArm]) -> (Vec<String>, bool) {
@@ -385,7 +401,6 @@ impl Checker {
                     let msg = format!("Use of moved value '{}'. It was moved at line {}.", name, move_line);
                     return self.report_error(msg, usage_span);
                 }
-                // Functions can be called multiple times, don't mark them as moved
                 if !matches!(&meta.ty, Type::Function { .. }) &&
                    meta.ty.ownership() == Ownership::Move && !is_ref {
                     meta.is_moved = true;
@@ -443,7 +458,6 @@ impl Checker {
                     ret: Box::new(self.convert_type(ret)),
                 }
             },
-            ast::Type::DynTrait(name) => Type::Named(format!("dyn {}", name)),
         }
     }
 }

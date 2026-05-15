@@ -249,7 +249,6 @@ fn verify_check_program_registers_fn_in_module_registry() {
     let decls = vec![ast::Decl::Fn(ast::FnDecl {
         name: "my_fn".into(),
         is_pub: true,
-        is_async: false,
         attrs: vec![],
         params: vec![],
         return_type: None,
@@ -290,7 +289,6 @@ fn verify_check_program_mod_registers_submodule_and_subsequent_decls() {
         ast::Decl::Fn(ast::FnDecl {
             name: "helper".into(),
             is_pub: true,
-            is_async: false,
             attrs: vec![],
             params: vec![],
             return_type: None,

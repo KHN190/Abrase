@@ -62,7 +62,6 @@ pub enum Type {
     Tuple(Vec<Type>),                                    // (), (Int, Bool), (Int,)
     Reference { is_mut: bool, inner: Box<Type>, region: Option<String> }, // &T, &mut T in r
     Function { params: Vec<Type>, effects: Vec<EffectItem>, ret: Box<Type> },
-    DynTrait(String),                                    // dyn Show
 }
 
 
@@ -173,7 +172,6 @@ pub enum Expr {
     Throw    (Box<Spanned<Expr>>),
 
     Question (Box<Spanned<Expr>>),
-    Await    (Box<Spanned<Expr>>),
     Tuple    (Vec<Spanned<Expr>>),
     Array    (Vec<Spanned<Expr>>),
 
@@ -190,9 +188,9 @@ pub enum Expr {
     },
 
     Range    { start: Option<Box<Spanned<Expr>>>, end: Option<Box<Spanned<Expr>>>, inclusive: bool },
-    Scope    { label: Option<String>, options: Option<Box<Spanned<Expr>>>, body: Block },
     Region   { label: Option<String>, body: Block },
     Handle   { expr: Box<Spanned<Expr>>, arms: Vec<HandleArm> },
+    Resume   (Option<Box<Spanned<Expr>>>),
     Error,
 }
 
@@ -233,7 +231,6 @@ pub enum TypeBody {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FnSignature {
-    pub is_async: bool,
     pub name: String,
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
@@ -246,7 +243,6 @@ pub struct FnSignature {
 pub struct FnDecl {
     pub attrs: Vec<Attribute>,
     pub is_pub: bool,
-    pub is_async: bool,
     pub name: String,
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,

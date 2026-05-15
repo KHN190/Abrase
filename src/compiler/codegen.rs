@@ -514,6 +514,19 @@ impl Compiler {
             }
 
             ast::Expr::FieldAccess { base, field } => {
+                if let ast::Expr::Identifier(base_name) = &base.node {
+                    if let Some(info) = self.layouts.variants.get(field).cloned() {
+                        if info.type_name == *base_name {
+                            let dest = self.alloc_register()?;
+                            self.emit(OpCode::Alloc(dest, 1));
+                            let tag_reg = self.alloc_register()?;
+                            let idx = self.add_constant(Value::Int(info.tag as i64))?;
+                            self.emit(OpCode::PushConst(tag_reg, idx));
+                            self.emit(OpCode::St(tag_reg, dest, 0));
+                            return Ok(dest);
+                        }
+                    }
+                }
                 let base_reg = self.compile_expr(base)?;
                 let type_name = self.infer_expr_type(base).and_then(|t| match t {
                     ast::Type::Named(n) => Some(n),
@@ -544,6 +557,19 @@ impl Compiler {
                 let dest = self.alloc_register()?;
                 self.emit(OpCode::LdIdx(dest, base_reg, idx_reg));
                 Ok(dest)
+            }
+
+            ast::Expr::Resume(arg) => {
+                let reg = if let Some(e) = arg {
+                    self.compile_expr(e)?
+                } else {
+                    let r = self.alloc_register()?;
+                    let idx = self.add_constant(Value::Unit)?;
+                    self.emit(OpCode::PushConst(r, idx));
+                    r
+                };
+                self.emit(OpCode::Resume(reg));
+                Ok(reg)
             }
 
             _ => Err(format!("Unsupported expression: {:?}", expr.node)),

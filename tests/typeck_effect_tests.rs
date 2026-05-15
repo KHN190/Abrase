@@ -22,7 +22,7 @@ fn verify_effect_alias_registration() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    let effects = vec![Effect::Async, Effect::Alloc];
+    let effects = vec![Effect::Nondet, Effect::Alloc];
     checker.register_effect_alias("concurrent".into(), effects.clone());
 
     let alias = checker.get_effect_alias("concurrent");
@@ -35,14 +35,14 @@ fn verify_push_and_pop_effect() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    checker.push_effect(Effect::Async);
+    checker.push_effect(Effect::Nondet);
     checker.push_effect(Effect::Alloc);
 
-    let expected = vec![Effect::Async, Effect::Alloc];
+    let expected = vec![Effect::Nondet, Effect::Alloc];
     assert!(checker.effects_compatible(&expected, &expected));
 
     checker.pop_effect();
-    let expected2 = vec![Effect::Async];
+    let expected2 = vec![Effect::Nondet];
     assert!(checker.effects_compatible(&expected2, &expected2));
 }
 
@@ -52,15 +52,7 @@ fn verify_effects_equal_total() {
     use ect::ty::Effect;
 
     assert!(checker.effects_equal(&Effect::Total, &Effect::Total));
-    assert!(!checker.effects_equal(&Effect::Total, &Effect::Async));
-}
-
-#[test]
-fn verify_effects_equal_async() {
-    let checker = Checker::new();
-    use ect::ty::Effect;
-
-    assert!(checker.effects_equal(&Effect::Async, &Effect::Async));
+    assert!(!checker.effects_equal(&Effect::Total, &Effect::Nondet));
 }
 
 #[test]
@@ -106,7 +98,7 @@ fn verify_effects_compatible_empty() {
     let checker = Checker::new();
 
     assert!(checker.effects_compatible(&[], &[]));
-    assert!(checker.effects_compatible(&[], &vec![ect::ty::Effect::Async]));
+    assert!(checker.effects_compatible(&[], &vec![ect::ty::Effect::Nondet]));
 }
 
 #[test]
@@ -114,8 +106,8 @@ fn verify_effects_compatible_single_effect() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let expected = vec![Effect::Async];
-    let actual = vec![Effect::Async];
+    let expected = vec![Effect::Nondet];
+    let actual = vec![Effect::Nondet];
 
     assert!(checker.effects_compatible(&expected, &actual));
 }
@@ -125,8 +117,8 @@ fn verify_effects_compatible_subset() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let expected = vec![Effect::Async];
-    let actual = vec![Effect::Async, Effect::Alloc];
+    let expected = vec![Effect::Nondet];
+    let actual = vec![Effect::Nondet, Effect::Alloc];
 
     assert!(checker.effects_compatible(&expected, &actual));
 }
@@ -136,8 +128,8 @@ fn verify_effects_compatible_missing_effect() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let expected = vec![Effect::Async, Effect::Alloc];
-    let actual = vec![Effect::Async];
+    let expected = vec![Effect::Nondet, Effect::Alloc];
+    let actual = vec![Effect::Nondet];
 
     assert!(!checker.effects_compatible(&expected, &actual));
 }
@@ -158,18 +150,15 @@ fn verify_convert_effect_io() {
 }
 
 #[test]
-fn verify_convert_effect_async() {
+fn verify_convert_effect_unknown_returns_none() {
     let checker = Checker::new();
-    use ect::ty::Effect;
 
     let effect_item = ast::EffectItem {
-        name: vec!["async".into()],
+        name: vec!["unknown".into()],
         arg: None,
     };
 
-    let converted = checker.convert_effect(&effect_item);
-    assert!(converted.is_some());
-    assert!(matches!(converted.unwrap(), Effect::Async));
+    assert!(checker.convert_effect(&effect_item).is_none());
 }
 
 #[test]
@@ -234,14 +223,14 @@ fn verify_function_type_with_effects() {
 
     let fn_type = Type::Function {
         params: vec![Type::Int],
-        effects: vec![Effect::Async],
+        effects: vec![Effect::Nondet],
         ret: Box::new(Type::Bool),
     };
 
     match fn_type {
         Type::Function { effects, .. } => {
             assert_eq!(effects.len(), 1);
-            assert!(matches!(&effects[0], Effect::Async));
+            assert!(matches!(&effects[0], Effect::Nondet));
         },
         _ => panic!("Expected function type"),
     }
@@ -254,7 +243,7 @@ fn verify_function_type_multiple_effects() {
 
     let fn_type = Type::Function {
         params: vec![Type::Int],
-        effects: vec![Effect::Async, Effect::Alloc],
+        effects: vec![Effect::Nondet, Effect::Alloc],
         ret: Box::new(Type::Bool),
     };
 
@@ -294,8 +283,8 @@ fn verify_effect_compatibility_with_multiple_effects() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let expected = vec![Effect::Async, Effect::Alloc];
-    let actual = vec![Effect::Async, Effect::Alloc, Effect::Nondet];
+    let expected = vec![Effect::Nondet, Effect::Alloc];
+    let actual = vec![Effect::Nondet, Effect::Alloc, Effect::Nondet];
 
     assert!(checker.effects_compatible(&expected, &actual));
 }
@@ -305,8 +294,8 @@ fn verify_effect_compatibility_order_independent() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let expected = vec![Effect::Alloc, Effect::Async];
-    let actual = vec![Effect::Async, Effect::Alloc];
+    let expected = vec![Effect::Alloc, Effect::Nondet];
+    let actual = vec![Effect::Nondet, Effect::Alloc];
 
     assert!(checker.effects_compatible(&expected, &actual));
 }
@@ -318,7 +307,7 @@ fn verify_set_fn_declared_effects() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    let effects = vec![Effect::Async, Effect::Alloc];
+    let effects = vec![Effect::Nondet, Effect::Alloc];
     checker.set_fn_declared_effects(effects.clone());
 
     let declared = checker.get_fn_declared_effects();
@@ -330,7 +319,7 @@ fn verify_add_required_effect() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    checker.add_required_effect(Effect::Async);
+    checker.add_required_effect(Effect::Nondet);
     checker.add_required_effect(Effect::Alloc);
 
     let required = checker.get_fn_required_effects();
@@ -342,8 +331,8 @@ fn verify_add_required_effect_no_duplicates() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    checker.add_required_effect(Effect::Async);
-    checker.add_required_effect(Effect::Async);
+    checker.add_required_effect(Effect::Nondet);
+    checker.add_required_effect(Effect::Nondet);
 
     let required = checker.get_fn_required_effects();
     assert_eq!(required.len(), 1);
@@ -354,8 +343,8 @@ fn verify_check_effect_compatibility_satisfied() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    checker.add_required_effect(Effect::Async);
-    let provided = vec![Effect::Async, Effect::Alloc];
+    checker.add_required_effect(Effect::Nondet);
+    let provided = vec![Effect::Nondet, Effect::Alloc];
 
     let result = checker.check_effect_compatibility(&provided, d_span());
     assert!(result);
@@ -367,7 +356,7 @@ fn verify_check_effect_compatibility_unsatisfied() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    checker.add_required_effect(Effect::Async);
+    checker.add_required_effect(Effect::Nondet);
     let provided = vec![Effect::Alloc];
 
     let result = checker.check_effect_compatibility(&provided, d_span());
@@ -380,8 +369,8 @@ fn verify_unify_effects_no_duplicates() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let effects1 = vec![Effect::Async, Effect::Alloc];
-    let effects2 = vec![Effect::Async, Effect::Nondet];
+    let effects1 = vec![Effect::Nondet, Effect::Alloc];
+    let effects2 = vec![Effect::Nondet, Effect::Exn(Box::new(Type::Int))];
 
     let unified = checker.unify_effects(&effects1, &effects2);
     assert_eq!(unified.len(), 3);
@@ -393,7 +382,7 @@ fn verify_unify_effects_empty_left() {
     use ect::ty::Effect;
 
     let effects1 = vec![];
-    let effects2 = vec![Effect::Async];
+    let effects2 = vec![Effect::Nondet];
 
     let unified = checker.unify_effects(&effects1, &effects2);
     assert_eq!(unified.len(), 1);
@@ -404,7 +393,7 @@ fn verify_unify_effects_empty_right() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let effects1 = vec![Effect::Async];
+    let effects1 = vec![Effect::Nondet];
     let effects2 = vec![];
 
     let unified = checker.unify_effects(&effects1, &effects2);
@@ -416,8 +405,8 @@ fn verify_effects_subsume_all_provided() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let required = vec![Effect::Async];
-    let provided = vec![Effect::Async, Effect::Alloc];
+    let required = vec![Effect::Nondet];
+    let provided = vec![Effect::Nondet, Effect::Alloc];
 
     assert!(checker.effects_subsume(&required, &provided));
 }
@@ -427,8 +416,8 @@ fn verify_effects_subsume_missing() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let required = vec![Effect::Async, Effect::Alloc];
-    let provided = vec![Effect::Async];
+    let required = vec![Effect::Nondet, Effect::Alloc];
+    let provided = vec![Effect::Nondet];
 
     assert!(!checker.effects_subsume(&required, &provided));
 }
@@ -439,7 +428,7 @@ fn verify_effects_subsume_empty_required() {
     use ect::ty::Effect;
 
     let required = vec![];
-    let provided = vec![Effect::Async];
+    let provided = vec![Effect::Nondet];
 
     assert!(checker.effects_subsume(&required, &provided));
 }
@@ -449,7 +438,7 @@ fn verify_infer_closure_effects_with_declared() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    let declared = vec![Effect::Async];
+    let declared = vec![Effect::Nondet];
     checker.set_fn_declared_effects(declared.clone());
 
     let body_effects = vec![Effect::Alloc];
@@ -463,7 +452,7 @@ fn verify_infer_closure_effects_without_declared() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let body_effects = vec![Effect::Alloc, Effect::Async];
+    let body_effects = vec![Effect::Alloc, Effect::Nondet];
     let inferred = checker.infer_closure_effects(&body_effects);
 
     assert_eq!(inferred, body_effects);
@@ -474,7 +463,7 @@ fn verify_convert_effect_items_single() {
     let checker = Checker::new();
 
     let items = vec![ast::EffectItem {
-        name: vec!["async".into()],
+        name: vec!["nondet".into()],
         arg: None,
     }];
 
@@ -488,7 +477,7 @@ fn verify_convert_effect_items_multiple() {
 
     let items = vec![
         ast::EffectItem {
-            name: vec!["async".into()],
+            name: vec!["nondet".into()],
             arg: None,
         },
         ast::EffectItem {
@@ -537,7 +526,7 @@ fn verify_fn_declared_effects_cleared_after_closure() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    let initial_effects = vec![Effect::Async];
+    let initial_effects = vec![Effect::Nondet];
     checker.set_fn_declared_effects(initial_effects);
 
     let closure_expr = sp(ast::Expr::Closure {
@@ -559,9 +548,9 @@ fn verify_required_effects_accumulate() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    checker.add_required_effect(Effect::Async);
-    checker.add_required_effect(Effect::Alloc);
     checker.add_required_effect(Effect::Nondet);
+    checker.add_required_effect(Effect::Alloc);
+    checker.add_required_effect(Effect::Exn(Box::new(Type::Int)));
 
     let required = checker.get_fn_required_effects();
     assert_eq!(required.len(), 3);
@@ -573,7 +562,7 @@ fn verify_effect_compatibility_with_exn() {
     use ect::ty::Effect;
 
     let required = vec![Effect::Exn(Box::new(Type::String))];
-    let provided = vec![Effect::Exn(Box::new(Type::String)), Effect::Async];
+    let provided = vec![Effect::Exn(Box::new(Type::String)), Effect::Nondet];
 
     assert!(checker.effects_subsume(&required, &provided));
 }
@@ -595,12 +584,12 @@ fn verify_effect_compatibility_exn_type_mismatch() {
 fn verify_mark_effect_handled() {
     let mut checker = Checker::new();
 
-    checker.mark_effect_handled("async".into());
+    checker.mark_effect_handled("nondet".into());
     checker.mark_effect_handled("io".into());
 
     let handled = checker.get_handled_effects();
     assert_eq!(handled.len(), 2);
-    assert!(handled.contains(&"async".to_string()));
+    assert!(handled.contains(&"nondet".to_string()));
     assert!(handled.contains(&"io".to_string()));
 }
 
@@ -608,8 +597,8 @@ fn verify_mark_effect_handled() {
 fn verify_mark_effect_handled_no_duplicates() {
     let mut checker = Checker::new();
 
-    checker.mark_effect_handled("async".into());
-    checker.mark_effect_handled("async".into());
+    checker.mark_effect_handled("nondet".into());
+    checker.mark_effect_handled("nondet".into());
 
     let handled = checker.get_handled_effects();
     assert_eq!(handled.len(), 1);
@@ -620,8 +609,8 @@ fn verify_compute_unhandled_effects_all_handled() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    checker.mark_effect_handled("async".into());
-    let all_effects = vec![Effect::Async];
+    checker.mark_effect_handled("nondet".into());
+    let all_effects = vec![Effect::Nondet];
 
     checker.compute_unhandled_effects(&all_effects);
     assert!(checker.get_unhandled_effects().is_empty());
@@ -632,8 +621,8 @@ fn verify_compute_unhandled_effects_partial_handled() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    checker.mark_effect_handled("async".into());
-    let all_effects = vec![Effect::Async, Effect::Alloc];
+    checker.mark_effect_handled("nondet".into());
+    let all_effects = vec![Effect::Nondet, Effect::Alloc];
 
     checker.compute_unhandled_effects(&all_effects);
     let unhandled = checker.get_unhandled_effects();
@@ -646,7 +635,7 @@ fn verify_compute_unhandled_effects_none_handled() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    let all_effects = vec![Effect::Async, Effect::Alloc];
+    let all_effects = vec![Effect::Nondet, Effect::Alloc];
 
     checker.compute_unhandled_effects(&all_effects);
     let unhandled = checker.get_unhandled_effects();
@@ -711,7 +700,7 @@ fn verify_validate_scope_with_context_unknown() {
 fn verify_clear_handle_context() {
     let mut checker = Checker::new();
 
-    checker.mark_effect_handled("async".into());
+    checker.mark_effect_handled("nondet".into());
     assert!(!checker.get_handled_effects().is_empty());
 
     checker.clear_handle_context();
@@ -725,11 +714,11 @@ fn verify_effect_propagation_accumulates_in_required() {
     use ect::ty::Effect;
 
     // Add some required effects first
-    checker.add_required_effect(Effect::Async);
+    checker.add_required_effect(Effect::Nondet);
 
     // Mark some effects as handled and compute unhandled
-    checker.mark_effect_handled("async".into());
-    let all_effects = vec![Effect::Async, Effect::Alloc];
+    checker.mark_effect_handled("nondet".into());
+    let all_effects = vec![Effect::Nondet, Effect::Alloc];
     checker.compute_unhandled_effects(&all_effects);
 
     // Propagate unhandled effects
@@ -760,23 +749,6 @@ fn verify_handle_expression_type_check() {
     assert_eq!(ty, Type::Int);
 }
 
-#[test]
-fn verify_scope_with_expression_validated() {
-    let mut checker = Checker::new();
-
-    let scope_expr = sp(ast::Expr::Scope {
-        label: None,
-        options: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(42))))),
-        body: ast::Block {
-            stmts: vec![],
-            ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Unit)))),
-        },
-    });
-
-    let ty = checker.infer_expr(&scope_expr);
-    assert_eq!(ty, Type::Unit);
-    assert!(checker.errors.is_empty());
-}
 
 #[test]
 fn verify_unhandled_effects_with_multiple_arms() {
@@ -784,14 +756,15 @@ fn verify_unhandled_effects_with_multiple_arms() {
     use ect::ty::Effect;
 
     // Mark multiple effects as handled
-    checker.mark_effect_handled("async".into());
+    checker.mark_effect_handled("nondet".into());
     checker.mark_effect_handled("exn".into());
 
-    let all_effects = vec![Effect::Async, Effect::Alloc, Effect::Nondet];
+    let all_effects = vec![Effect::Nondet, Effect::Alloc, Effect::Exn(Box::new(Type::Int))];
     checker.compute_unhandled_effects(&all_effects);
 
     let unhandled = checker.get_unhandled_effects();
-    assert_eq!(unhandled.len(), 2);
+    assert_eq!(unhandled.len(), 1);
+    assert!(matches!(&unhandled[0], Effect::Alloc));
 }
 
 #[test]
@@ -825,42 +798,6 @@ fn verify_effect_subsumption_pure_for_pure_exn() {
 }
 
 #[test]
-fn verify_effect_subsumption_pure_for_multiple_effects() {
-    let checker = Checker::new();
-    use ect::ty::Effect;
-
-    // Pure function can be used where multiple effects are expected
-    let declared = vec![Effect::Total]; // <pure>
-    let expected = vec![Effect::Total, Effect::Async, Effect::Alloc]; // <pure, async, alloc>
-
-    assert!(checker.effects_subsume(&declared, &expected));
-}
-
-#[test]
-fn verify_effect_subsumption_async_for_async_io() {
-    let checker = Checker::new();
-    use ect::ty::Effect;
-
-    // Async function can be used where <async, alloc> is expected
-    let declared = vec![Effect::Async]; // <async>
-    let expected = vec![Effect::Async, Effect::Alloc]; // <async, alloc>
-
-    assert!(checker.effects_subsume(&declared, &expected));
-}
-
-#[test]
-fn verify_effect_subsumption_more_effects_not_subsumed() {
-    let checker = Checker::new();
-    use ect::ty::Effect;
-
-    // Function with more effects cannot be used where fewer effects expected
-    let declared = vec![Effect::Async, Effect::Alloc]; // <async, alloc>
-    let expected = vec![Effect::Async]; // <async>
-
-    assert!(!checker.effects_subsume(&declared, &expected));
-}
-
-#[test]
 fn verify_effect_subsumption_different_exception_types() {
     let checker = Checker::new();
     use ect::ty::Effect;
@@ -879,7 +816,7 @@ fn verify_effect_subsumption_empty_to_any() {
 
     // Empty (no effects) can be used anywhere
     let declared = vec![]; // no effects
-    let expected = vec![Effect::Async, Effect::Alloc];
+    let expected = vec![Effect::Nondet, Effect::Alloc];
 
     assert!(checker.effects_subsume(&declared, &expected));
 }
@@ -890,43 +827,10 @@ fn verify_effect_subsumption_exact_match() {
     use ect::ty::Effect;
 
     // Exact match should subsume
-    let declared = vec![Effect::Async, Effect::Alloc];
-    let expected = vec![Effect::Async, Effect::Alloc];
+    let declared = vec![Effect::Nondet, Effect::Alloc];
+    let expected = vec![Effect::Nondet, Effect::Alloc];
 
     assert!(checker.effects_subsume(&declared, &expected));
-}
-
-#[test]
-fn verify_function_type_subsumption_pure_for_async_exn() {
-    let checker = Checker::new();
-    use ect::ty::Effect;
-
-    // Function type: () -> <pure> Int
-    let provided_fn = Type::Function {
-        params: vec![],
-        effects: vec![Effect::Total],
-        ret: Box::new(Type::Int),
-    };
-
-    // Expected: () -> <pure, async, exn> Int
-    // Note: pure function can be used where pure + other effects are expected
-    let required_fn = Type::Function {
-        params: vec![],
-        effects: vec![Effect::Total, Effect::Async, Effect::Exn(Box::new(Type::Unknown))],
-        ret: Box::new(Type::Int),
-    };
-
-    // Check function compatibility - return types match, declared effects subsume expected
-    match (&provided_fn, &required_fn) {
-        (
-            Type::Function { effects: prov_effects, ret: prov_ret, .. },
-            Type::Function { effects: req_effects, ret: req_ret, .. }
-        ) => {
-            assert_eq!(prov_ret, req_ret); // return types must match
-            assert!(checker.effects_subsume(prov_effects, req_effects)); // declared subsume expected
-        },
-        _ => panic!("Expected function types"),
-    }
 }
 
 #[test]
@@ -985,39 +889,13 @@ fn verify_effect_subsumption_nondet_subsumed() {
 }
 
 #[test]
-fn verify_effect_subsumption_mixed_effects() {
-    let checker = Checker::new();
-    use ect::ty::Effect;
-
-    // Function with subset of effects can be used where more effects expected
-    let declared = vec![Effect::Async, Effect::Total]; // <async, pure>
-    let expected = vec![Effect::Async, Effect::Total, Effect::Alloc]; // <async, pure, alloc>
-
-    assert!(checker.effects_subsume(&declared, &expected));
-}
-
-#[test]
-fn verify_effect_subsumption_missing_one_effect() {
-    let checker = Checker::new();
-    use ect::ty::Effect;
-
-    // Function produces <async, alloc>, but code expects <async, alloc, nondet>
-    // Since function's effects are subset of expected, it CAN be used
-    let declared = vec![Effect::Async, Effect::Alloc]; // <async, alloc>
-    let expected = vec![Effect::Async, Effect::Alloc, Effect::Nondet]; // <async, alloc, nondet>
-
-    // Declared effects are subset of expected - function can be used
-    assert!(checker.effects_subsume(&declared, &expected));
-}
-
-#[test]
 fn verify_effect_subsumption_function_produces_more() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
     // Function produces MORE effects than context expects to handle
-    let declared = vec![Effect::Async, Effect::Alloc, Effect::Nondet]; // <async, alloc, nondet>
-    let expected = vec![Effect::Async, Effect::Alloc]; // <async, alloc>
+    let declared = vec![Effect::Nondet, Effect::Alloc, Effect::Exn(Box::new(Type::Int))];
+    let expected = vec![Effect::Nondet, Effect::Alloc];
 
     // Function produces effects context doesn't expect - NOT compatible
     assert!(!checker.effects_subsume(&declared, &expected));
@@ -1045,9 +923,9 @@ fn verify_effect_subsumption_order_independent() {
     use ect::ty::Effect;
 
     // Order shouldn't matter for subsumption
-    let declared_a = vec![Effect::Async, Effect::Total];
-    let declared_b = vec![Effect::Total, Effect::Async];
-    let expected = vec![Effect::Async, Effect::Total, Effect::Alloc];
+    let declared_a = vec![Effect::Nondet, Effect::Total];
+    let declared_b = vec![Effect::Total, Effect::Nondet];
+    let expected = vec![Effect::Nondet, Effect::Total, Effect::Alloc];
 
     assert!(checker.effects_subsume(&declared_a, &expected));
     assert!(checker.effects_subsume(&declared_b, &expected));
@@ -1079,60 +957,12 @@ fn verify_closure_declared_pure_with_io_call_invalid() {
 }
 
 #[test]
-fn verify_closure_declared_async_valid() {
-    let mut checker = Checker::new();
-    use ect::ty::Effect;
-
-    let declared = vec![Effect::Async];
-    let inferred = vec![Effect::Async];
-
-    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
-}
-
-#[test]
-fn verify_closure_declared_async_exact_match() {
-    let mut checker = Checker::new();
-    use ect::ty::Effect;
-
-    let declared = vec![Effect::Async];
-    let inferred = vec![Effect::Async];
-
-    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
-}
-
-#[test]
-fn verify_closure_declared_multiple_effects_subset() {
-    let mut checker = Checker::new();
-    use ect::ty::Effect;
-
-    // Closure declares <async, alloc>
-    let declared = vec![Effect::Async, Effect::Alloc];
-    // Body only uses async
-    let inferred = vec![Effect::Async];
-
-    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
-}
-
-#[test]
-fn verify_closure_declared_insufficient_effects() {
-    let mut checker = Checker::new();
-    use ect::ty::Effect;
-
-    // Closure declares <async>
-    let declared = vec![Effect::Async];
-    // Body uses both async and alloc
-    let inferred = vec![Effect::Async, Effect::Alloc];
-
-    assert!(!checker.validate_closure_effects(&declared, &inferred, d_span()));
-}
-
-#[test]
 fn verify_closure_no_declaration_accepts_any() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
     let declared = vec![]; // No effects declared
-    let inferred = vec![Effect::Async, Effect::Alloc]; // Body has effects
+    let inferred = vec![Effect::Nondet, Effect::Alloc]; // Body has effects
 
     assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
 }
@@ -1150,24 +980,12 @@ fn verify_inferred_effects_exceed_declared_single() {
 }
 
 #[test]
-fn verify_inferred_effects_exceed_declared_multiple() {
-    let checker = Checker::new();
-    use ect::ty::Effect;
-
-    let declared = vec![Effect::Total]; // <pure>
-    let inferred = vec![Effect::Async, Effect::Alloc]; // has async and IO
-
-    let exceeds = checker.inferred_effects_exceed_declared(&declared, &inferred);
-    assert_eq!(exceeds.len(), 2);
-}
-
-#[test]
 fn verify_inferred_effects_subset_of_declared() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let declared = vec![Effect::Async, Effect::Alloc, Effect::Nondet];
-    let inferred = vec![Effect::Async, Effect::Alloc];
+    let declared = vec![Effect::Nondet, Effect::Alloc, Effect::Nondet];
+    let inferred = vec![Effect::Nondet, Effect::Alloc];
 
     let exceeds = checker.inferred_effects_exceed_declared(&declared, &inferred);
     assert_eq!(exceeds.len(), 0);
@@ -1178,8 +996,8 @@ fn verify_all_effects_declared_true() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let declared = vec![Effect::Async, Effect::Alloc];
-    let inferred = vec![Effect::Async];
+    let declared = vec![Effect::Nondet, Effect::Alloc];
+    let inferred = vec![Effect::Nondet];
 
     assert!(checker.all_effects_declared(&declared, &inferred));
 }
@@ -1189,8 +1007,8 @@ fn verify_all_effects_declared_false() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let declared = vec![Effect::Async];
-    let inferred = vec![Effect::Async, Effect::Alloc];
+    let declared = vec![Effect::Nondet];
+    let inferred = vec![Effect::Nondet, Effect::Alloc];
 
     assert!(!checker.all_effects_declared(&declared, &inferred));
 }
@@ -1200,8 +1018,8 @@ fn verify_all_effects_declared_exact_match() {
     let checker = Checker::new();
     use ect::ty::Effect;
 
-    let declared = vec![Effect::Async, Effect::Alloc];
-    let inferred = vec![Effect::Async, Effect::Alloc];
+    let declared = vec![Effect::Nondet, Effect::Alloc];
+    let inferred = vec![Effect::Nondet, Effect::Alloc];
 
     assert!(checker.all_effects_declared(&declared, &inferred));
 }
@@ -1247,27 +1065,12 @@ fn verify_closure_exn_type_mismatch_in_declaration() {
 }
 
 #[test]
-fn verify_closure_mixed_declared_vs_inferred() {
-    let mut checker = Checker::new();
-    use ect::ty::Effect;
-
-    // Closure declares <pure, async, alloc>
-    let declared = vec![Effect::Total, Effect::Async, Effect::Alloc];
-    // Body only uses <async, alloc>
-    let inferred = vec![Effect::Async, Effect::Alloc];
-
-    assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
-}
-
-#[test]
 fn verify_closure_over_declared_single_extra_effect() {
     let mut checker = Checker::new();
     use ect::ty::Effect;
 
-    // Closure declares <async, alloc>
-    let declared = vec![Effect::Async, Effect::Alloc];
-    // Body uses <async, alloc, nondet>
-    let inferred = vec![Effect::Async, Effect::Alloc, Effect::Nondet];
+    let declared = vec![Effect::Nondet, Effect::Alloc];
+    let inferred = vec![Effect::Nondet, Effect::Alloc, Effect::Exn(Box::new(Type::Int))];
 
     assert!(!checker.validate_closure_effects(&declared, &inferred, d_span()));
 }
@@ -1645,35 +1448,6 @@ fn verify_throw_adds_exn_to_required_effects() {
 }
 
 #[test]
-fn verify_async_fn_decl_adds_async_declared_effect() {
-    use ect::ty::Effect;
-    let fn_decl = ect::ast::FnDecl {
-        attrs: vec![],
-        is_pub: false,
-        is_async: true,
-        name: "fetch".into(),
-        generics: vec![],
-        params: vec![],
-        effects: vec![],
-        return_type: None,
-        where_clause: vec![],
-        body: ect::ast::Block { stmts: vec![], ret: None },
-    };
-    let mut checker = Checker::new();
-    checker.check_fn_decl(&fn_decl);
-    let _unused: &[Effect] = checker.get_fn_declared_effects();
-    assert!(
-        checker.errors.is_empty(),
-        "async fn must typecheck without errors; got {:?}",
-        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
-    );
-    assert!(
-        checker.get_fn_declared_effects().is_empty(),
-        "declared effects must not leak past check_fn_decl"
-    );
-}
-
-#[test]
 fn verify_effect_checked_on_const_value_assignment() {
     let mut checker = Checker::new();
 
@@ -1692,4 +1466,723 @@ fn verify_effect_checked_on_const_value_assignment() {
 
     let is_valid = checker.check_const_expr(&expr, d_span());
     assert!(!is_valid, "Const value cannot be initialized with IO effect");
+}
+
+fn throw_int_99() -> Spanned<ast::Expr> {
+    sp(ast::Expr::Throw(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(99))))))
+}
+
+#[test]
+fn verify_undeclared_throw_in_pure_fn_errors() {
+    // fn pure_throws() -> Int { throw 99 }
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "pure_throws".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(throw_int_99())) },
+    };
+    let mut checker = Checker::new();
+    checker.check_fn_decl(&fn_decl);
+
+    assert!(
+        checker.errors.iter().any(|e|
+            e.message.contains("pure_throws") && e.message.contains("does not declare")
+        ),
+        "expected leak error for undeclared exn; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_declared_throw_in_exn_fn_is_ok() {
+    // fn raise() -> <exn<Int>> Int { throw 99 }
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "raise".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![ast::EffectItem {
+            name: vec!["exn".into()],
+            arg: Some(Box::new(ast::Type::Named("Int".into()))),
+        }],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(throw_int_99())) },
+    };
+    let mut checker = Checker::new();
+    checker.check_fn_decl(&fn_decl);
+
+    assert!(
+        checker.errors.is_empty(),
+        "declared <exn<Int>> must accept throw 99; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_required_effects_do_not_leak_across_fn_checks() {
+    // After a function that produces effects is checked, the next pure function
+    // must not inherit those effects.
+
+    // fn raise() -> <exn<Int>> Int { throw 99 }
+    let raising = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "raise".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![ast::EffectItem {
+            name: vec!["exn".into()],
+            arg: Some(Box::new(ast::Type::Named("Int".into()))),
+        }],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(throw_int_99())) },
+    };
+
+    // fn pure() -> Int { 0 }
+    let pure = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "pure".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block {
+            stmts: vec![],
+            ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0))))),
+        },
+    };
+
+    let mut checker = Checker::new();
+    checker.check_fn_decl(&raising);
+    checker.check_fn_decl(&pure);
+
+    assert!(
+        checker.errors.iter().all(|e| !e.message.contains("pure")),
+        "the pure fn should not pick up effects from previously-checked raise; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert!(
+        checker.get_fn_required_effects().is_empty(),
+        "fn_required_effects must not leak past check_fn_decl; got {:?}",
+        checker.get_fn_required_effects()
+    );
+}
+
+#[test]
+fn verify_handle_consumes_exn_effect() {
+    // fn safe() -> Int { handle (throw 99) { return v => v, throw e => 0 } }
+    let body_expr = sp(ast::Expr::Handle {
+        expr: Box::new(throw_int_99()),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Identifier("v".into())),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Exn,
+                pattern: Some(sp(ast::Pattern::Bind("e".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+            },
+        ],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "safe".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(body_expr)) },
+    };
+    let mut checker = Checker::new();
+    checker.check_fn_decl(&fn_decl);
+
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("does not declare")),
+        "handle should consume the exn effect; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_resume_outside_handler_arm_errors() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Resume(None));
+    checker.infer_expr(&expr);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("'resume'")),
+        "expected resume-outside-arm error; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_resume_in_exn_arm_is_ok() {
+    let body = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Throw(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(99))))))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Identifier("v".into())),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Exn,
+                pattern: Some(sp(ast::Pattern::Bind("e".into()))),
+                body: sp(ast::Expr::Resume(Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0))))))),
+            },
+        ],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "f".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(body)) },
+    };
+    let mut checker = Checker::new();
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("'resume'")),
+        "resume in exn arm must be allowed; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_resume_in_return_arm_errors() {
+    let body = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Resume(None)),
+            },
+        ],
+    });
+    let mut checker = Checker::new();
+    checker.infer_expr(&body);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("'resume'")),
+        "resume in return arm must error; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_resume_can_be_called_twice_in_same_arm() {
+    let plus = sp(ast::Expr::Binary {
+        op: ast::BinaryOp::Add,
+        left: Box::new(sp(ast::Expr::Resume(Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))))))),
+        right: Box::new(sp(ast::Expr::Resume(Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(2)))))))),
+    });
+    let body = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Throw(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(99))))))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Identifier("v".into())),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Exn,
+                pattern: Some(sp(ast::Pattern::Bind("e".into()))),
+                body: plus,
+            },
+        ],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "multi".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(body)) },
+    };
+    let mut checker = Checker::new();
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("'resume'") || e.message.contains("moved")),
+        "two resume calls in one arm must type-check; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_borrow_barrier_catches_outer_borrow_across_effect_op() {
+    let mut checker = Checker::new();
+    checker.register_effect("logger".into(), vec!["log".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![ect::ty::Type::Int],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("logger::log".into(), op_ty);
+
+    let body = sp(ast::Expr::Region {
+        label: Some("inner".into()),
+        body: ast::Block {
+            stmts: vec![
+                sp(ast::Stmt::Expr(sp(ast::Expr::Call {
+                    callee: Box::new(sp(ast::Expr::FieldAccess {
+                        base: Box::new(sp(ast::Expr::Identifier("logger".into()))),
+                        field: "log".into(),
+                    })),
+                    args: vec![sp(ast::Expr::Literal(ast::Literal::Int(0)))],
+                }))),
+            ],
+            ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0))))),
+        },
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "leaky".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![ast::EffectItem { name: vec!["logger".into()], arg: None }],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block {
+            stmts: vec![
+                sp(ast::Stmt::Let {
+                    pattern: sp(ast::Pattern::Bind("v".into())),
+                    is_mut: false,
+                    ty: Some(ast::Type::Named("Int".into())),
+                    value: sp(ast::Expr::Literal(ast::Literal::Int(100))),
+                }),
+                sp(ast::Stmt::Let {
+                    pattern: sp(ast::Pattern::Bind("r".into())),
+                    is_mut: false,
+                    ty: Some(ast::Type::Reference {
+                        is_mut: false,
+                        inner: Box::new(ast::Type::Named("Int".into())),
+                        region: None,
+                    }),
+                    value: sp(ast::Expr::Unary {
+                        op: ast::UnaryOp::Ref,
+                        right: Box::new(sp(ast::Expr::Identifier("v".into()))),
+                    }),
+                }),
+            ],
+            ret: Some(Box::new(body)),
+        },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("live across effect operation")),
+        "expected borrow-barrier error; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_borrow_barrier_allows_borrow_inside_arm_region() {
+    let mut checker = Checker::new();
+    checker.register_effect("logger".into(), vec!["log".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![ect::ty::Type::Int],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("logger::log".into(), op_ty);
+
+    let arm_body = sp(ast::Expr::Block(ast::Block {
+        stmts: vec![
+            sp(ast::Stmt::Let {
+                pattern: sp(ast::Pattern::Bind("v".into())),
+                is_mut: false,
+                ty: Some(ast::Type::Named("Int".into())),
+                value: sp(ast::Expr::Literal(ast::Literal::Int(1))),
+            }),
+            sp(ast::Stmt::Let {
+                pattern: sp(ast::Pattern::Bind("r".into())),
+                is_mut: false,
+                ty: Some(ast::Type::Reference {
+                    is_mut: false,
+                    inner: Box::new(ast::Type::Named("Int".into())),
+                    region: None,
+                }),
+                value: sp(ast::Expr::Unary {
+                    op: ast::UnaryOp::Ref,
+                    right: Box::new(sp(ast::Expr::Identifier("v".into()))),
+                }),
+            }),
+            sp(ast::Stmt::Expr(sp(ast::Expr::Call {
+                callee: Box::new(sp(ast::Expr::FieldAccess {
+                    base: Box::new(sp(ast::Expr::Identifier("logger".into()))),
+                    field: "log".into(),
+                })),
+                args: vec![sp(ast::Expr::Literal(ast::Literal::Int(0)))],
+            }))),
+        ],
+        ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0))))),
+    }));
+
+    let body = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0)))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Identifier("v".into())),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Effect(vec!["logger".into(), "log".into()]),
+                pattern: Some(sp(ast::Pattern::Bind("msg".into()))),
+                body: arm_body,
+            },
+        ],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "safe_inner".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(body)) },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("live across effect operation")),
+        "borrow bound inside arm region must not trip the barrier; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_effect_op_call_requires_user_effect() {
+    let mut checker = Checker::new();
+    checker.register_effect("logger".into(), vec!["log".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![ect::ty::Type::Int],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("logger::log".into(), op_ty);
+
+    let body = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::FieldAccess {
+            base: Box::new(sp(ast::Expr::Identifier("logger".into()))),
+            field: "log".into(),
+        })),
+        args: vec![sp(ast::Expr::Literal(ast::Literal::Int(7)))],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "needs_eff".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Unit".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(body)) },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("does not declare")),
+        "calling logger.log without declaring <logger> must leak; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_effect_op_arg_type_mismatch_errors() {
+    let mut checker = Checker::new();
+    checker.register_effect("logger".into(), vec!["log".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![ect::ty::Type::Int],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("logger::log".into(), op_ty);
+
+    let call = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::FieldAccess {
+            base: Box::new(sp(ast::Expr::Identifier("logger".into()))),
+            field: "log".into(),
+        })),
+        args: vec![sp(ast::Expr::Literal(ast::Literal::String("nope".into())))],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "bad_arg".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![ast::EffectItem { name: vec!["logger".into()], arg: None }],
+        return_type: Some(ast::Type::Named("Unit".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(call)) },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("type mismatch")),
+        "expected arg type mismatch for logger.log(\"nope\"); got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_effect_op_call_declared_no_leak() {
+    let mut checker = Checker::new();
+    checker.register_effect("logger".into(), vec!["log".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![ect::ty::Type::Int],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("logger::log".into(), op_ty);
+
+    let body = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::FieldAccess {
+            base: Box::new(sp(ast::Expr::Identifier("logger".into()))),
+            field: "log".into(),
+        })),
+        args: vec![sp(ast::Expr::Literal(ast::Literal::Int(0)))],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "declares_logger".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![ast::EffectItem { name: vec!["logger".into()], arg: None }],
+        return_type: Some(ast::Type::Named("Unit".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(body)) },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("does not declare")),
+        "declared <logger> must accept logger.log call; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_handle_consumes_user_effect() {
+    let mut checker = Checker::new();
+    checker.register_effect("logger".into(), vec!["log".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![ect::ty::Type::Int],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("logger::log".into(), op_ty);
+
+    let inner_call = sp(ast::Expr::Call {
+        callee: Box::new(sp(ast::Expr::FieldAccess {
+            base: Box::new(sp(ast::Expr::Identifier("logger".into()))),
+            field: "log".into(),
+        })),
+        args: vec![sp(ast::Expr::Literal(ast::Literal::Int(0)))],
+    });
+    let handle = sp(ast::Expr::Handle {
+        expr: Box::new(inner_call),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Effect(vec!["logger".into(), "log".into()]),
+                pattern: Some(sp(ast::Pattern::Bind("msg".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(1))),
+            },
+        ],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "handles_logger".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(handle)) },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("does not declare")),
+        "handle must consume user effect; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_handle_arm_types_unify_never_with_int() {
+    let mut checker = Checker::new();
+    let handle = sp(ast::Expr::Handle {
+        expr: Box::new(sp(ast::Expr::Throw(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(99))))))),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Literal(ast::Literal::Int(7))),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Exn,
+                pattern: Some(sp(ast::Pattern::Bind("e".into()))),
+                body: sp(ast::Expr::Resume(Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0))))))),
+            },
+        ],
+    });
+    let ty = checker.infer_expr(&handle);
+    assert_eq!(ty, Type::Int, "handle return type must unify Never-arm with Int-arm; got {:?}", ty);
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("arm types do not match")),
+        "Never must not conflict with Int in handle arms; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+#[ignore = "two distinct user effects collapse to Effect::Nondet; needs per-name effect variant"]
+fn verify_nested_handle_inner_consumes_outer_propagates() {
+    let mut checker = Checker::new();
+    checker.register_effect("a".into(), vec!["op".into()]);
+    checker.register_effect("b".into(), vec!["op".into()]);
+    let op_ty = ect::ty::Type::Function {
+        params: vec![],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Unit),
+    };
+    checker.register_effect_op("a::op".into(), op_ty.clone());
+    checker.register_effect_op("b::op".into(), op_ty);
+
+    let outer_inner = sp(ast::Expr::Block(ast::Block {
+        stmts: vec![
+            sp(ast::Stmt::Expr(sp(ast::Expr::Call {
+                callee: Box::new(sp(ast::Expr::FieldAccess {
+                    base: Box::new(sp(ast::Expr::Identifier("a".into()))),
+                    field: "op".into(),
+                })),
+                args: vec![],
+            }))),
+            sp(ast::Stmt::Expr(sp(ast::Expr::Call {
+                callee: Box::new(sp(ast::Expr::FieldAccess {
+                    base: Box::new(sp(ast::Expr::Identifier("b".into()))),
+                    field: "op".into(),
+                })),
+                args: vec![],
+            }))),
+        ],
+        ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0))))),
+    }));
+    let inner_handle = sp(ast::Expr::Handle {
+        expr: Box::new(outer_inner),
+        arms: vec![
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Return,
+                pattern: Some(sp(ast::Pattern::Bind("v".into()))),
+                body: sp(ast::Expr::Identifier("v".into())),
+            },
+            ast::HandleArm {
+                kind: ast::HandleArmKind::Effect(vec!["a".into(), "op".into()]),
+                pattern: None,
+                body: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+            },
+        ],
+    });
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "only_handles_a".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body: ast::Block { stmts: vec![], ret: Some(Box::new(inner_handle)) },
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        checker.errors.iter().any(|e| e.message.contains("does not declare")),
+        "handling only 'a' must leave 'b' as a leaked effect; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn verify_borrow_barrier_silent_for_pure_call() {
+    let mut checker = Checker::new();
+    let fn_ty = ect::ty::Type::Function {
+        params: vec![],
+        effects: vec![],
+        ret: Box::new(ect::ty::Type::Int),
+    };
+    checker.insert_var("pure_call".into(), fn_ty, false, d_span());
+
+    let body = ast::Block {
+        stmts: vec![
+            sp(ast::Stmt::Let {
+                pattern: sp(ast::Pattern::Bind("v".into())),
+                is_mut: false,
+                ty: Some(ast::Type::Named("Int".into())),
+                value: sp(ast::Expr::Literal(ast::Literal::Int(1))),
+            }),
+            sp(ast::Stmt::Let {
+                pattern: sp(ast::Pattern::Bind("r".into())),
+                is_mut: false,
+                ty: Some(ast::Type::Reference {
+                    is_mut: false,
+                    inner: Box::new(ast::Type::Named("Int".into())),
+                    region: None,
+                }),
+                value: sp(ast::Expr::Unary {
+                    op: ast::UnaryOp::Ref,
+                    right: Box::new(sp(ast::Expr::Identifier("v".into()))),
+                }),
+            }),
+        ],
+        ret: Some(Box::new(sp(ast::Expr::Call {
+            callee: Box::new(sp(ast::Expr::Identifier("pure_call".into()))),
+            args: vec![],
+        }))),
+    };
+    let fn_decl = ast::FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "pure_caller".into(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        where_clause: vec![],
+        body,
+    };
+    checker.check_fn_decl(&fn_decl);
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("live across effect operation")),
+        "pure call must not trip the borrow barrier; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
 }

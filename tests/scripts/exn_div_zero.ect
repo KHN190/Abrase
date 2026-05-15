@@ -1,11 +1,13 @@
-fn div(a: Int, b: Int) -> <exn> Int {
-  if b == 0 { throw 99 } else { a / b }
+type DivError = DivByZero
+
+fn div(a: Int, b: Int) -> <exn<DivError>> Int {
+  if b == 0 { throw DivError.DivByZero } else { a / b }
 }
 
 fn main() -> Int {
   match div(10, 0) {
     Ok(_) => 0
-    Err(code) => code
+    Err(_) => 1
     _ => -1
   }
 }

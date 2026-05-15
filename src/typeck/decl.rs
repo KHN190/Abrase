@@ -188,23 +188,10 @@ impl Checker {
         );
 
         let saved_declared = std::mem::take(&mut self.fn_declared_effects);
-        if fn_decl.is_async {
-            self.fn_declared_effects.push(crate::ty::Effect::Async);
-        }
-        for item in &fn_decl.effects {
-            if let Some(name) = item.name.first() {
-                match name.as_str() {
-                    "exn" => {
-                        let err_ty = item.arg.as_ref()
-                            .map(|t| self.convert_type(t))
-                            .unwrap_or(crate::ty::Type::Unknown);
-                        self.fn_declared_effects.push(crate::ty::Effect::Exn(Box::new(err_ty)));
-                    }
-                    "async" => self.fn_declared_effects.push(crate::ty::Effect::Async),
-                    _ => {}
-                }
-            }
-        }
+        let saved_required = std::mem::take(&mut self.fn_required_effects);
+        let saved_handled = std::mem::take(&mut self.handled_effects);
+        let converted = self.convert_effect_items(&fn_decl.effects);
+        self.fn_declared_effects.extend(converted);
 
         self.scopes.push(Scope { vars: HashMap::new() });
 
@@ -236,8 +223,30 @@ impl Checker {
                 );
             }
         }
+
+        // Effect declaration check: every required effect produced by the body
+        // must be either declared in the signature or handled inside the body.
+        let required = self.fn_required_effects.clone();
+        self.compute_unhandled_effects(&required);
+        let leaked: Vec<_> = self.unhandled_effects.clone();
+        for effect in &leaked {
+            let declared = self.fn_declared_effects.iter().any(|d| self.effects_equal(d, effect));
+            if !declared {
+                let span = fn_decl.body.ret.as_ref().map(|r| r.span)
+                    .or_else(|| fn_decl.body.stmts.first().map(|s| s.span))
+                    .unwrap_or(ast::Span { line: 1, col: 1 });
+                self.report_error(
+                    format!("Function '{}' uses effect {:?} but does not declare it in its signature",
+                        fn_decl.name, effect),
+                    span,
+                );
+            }
+        }
+
         self.scopes.pop();
         self.fn_declared_effects = saved_declared;
+        self.fn_required_effects = saved_required;
+        self.handled_effects = saved_handled;
     }
 
     // Per-declaration check

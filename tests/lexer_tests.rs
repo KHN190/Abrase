@@ -7,12 +7,12 @@ mod tests {
 
     #[test]
     fn test_lexer_keywords_and_identifiers() {
-        let input = "fn let const mut pub async await true false _ident Self";
+        let input = "fn let const mut pub region handle resume true false _ident Self";
         let mut lexer = Lexer::new(input);
-        
+
         let expected = vec![
-            Token::Fn, Token::Let, Token::Const, Token::Mut, Token::Pub, 
-            Token::Async, Token::Await, Token::True, Token::False, 
+            Token::Fn, Token::Let, Token::Const, Token::Mut, Token::Pub,
+            Token::Region, Token::Handle, Token::Resume, Token::True, Token::False,
             Token::Ident("_ident".into()), Token::SelfUpper, Token::Eof
         ];
         for t in expected {

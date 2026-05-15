@@ -15,7 +15,6 @@ fn fn_decl(name: &str, generics: Vec<ast::GenericParam>, where_clause: Vec<ast::
     ast::FnDecl {
         name: name.into(),
         is_pub: false,
-        is_async: false,
         attrs: vec![],
         params: vec![],
         return_type: None,

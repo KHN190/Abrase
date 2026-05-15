@@ -3,7 +3,6 @@ pub mod frame;
 pub mod memory;
 pub mod interpreter;
 pub mod loader;
-pub mod scheduler;
 
 pub use value::Value;
 
@@ -17,6 +16,16 @@ pub struct VirtualMachine {
     pub(crate) base_reg: usize,
     pub(crate) current_func: usize,
     pub(crate) heap: Heap,
+    // Stack of installed handler frames (parallel to value frames).
+    // Each entry holds the function id of the handler so a `Resume` can
+    // unwind back to it. Empty when no handler is active.
+    pub(crate) handlers: Vec<HandlerFrame>,
+}
+
+pub struct HandlerFrame {
+    pub handler_fn: usize,
+    pub saved_pc: usize,
+    pub saved_base: usize,
 }
 
 impl VirtualMachine {
@@ -28,6 +37,7 @@ impl VirtualMachine {
             base_reg: 0,
             current_func: 0,
             heap: Heap::new(),
+            handlers: Vec::new(),
         }
     }
 }

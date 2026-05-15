@@ -60,10 +60,6 @@ pub enum OpCode {
     Dei(Register, Register),
     Deo(Register, Register),
 
-    Spawn(Register, u16),
-    Await(Register),
-    Yield,
-
     Handle(Register, u16),
     Resume(Register),
 }

@@ -108,8 +108,6 @@ fn test_frame_dest_reg() {
     assert_eq!(frame.dest_reg, 5);
 }
 
-// Memory Operations
-
 #[test]
 fn test_alloc_opcode() {
     let alloc_op = OpCode::Alloc(Register(0), 16);
@@ -222,5 +220,26 @@ fn test_memory_opcodes_in_chunk() {
     match &chunk.code[3] {
         OpCode::St(_, _, offset) => assert_eq!(*offset, 0),
         _ => panic!("Expected St opcode"),
+    }
+}
+
+#[test]
+fn test_handle_opcode() {
+    let h = OpCode::Handle(Register(0), 5);
+    match h {
+        OpCode::Handle(dest, fn_id) => {
+            assert_eq!(dest.to_usize(), 0);
+            assert_eq!(fn_id, 5);
+        }
+        _ => panic!("Not a Handle opcode"),
+    }
+}
+
+#[test]
+fn test_resume_opcode() {
+    let r = OpCode::Resume(Register(1));
+    match r {
+        OpCode::Resume(reg) => assert_eq!(reg.to_usize(), 1),
+        _ => panic!("Not a Resume opcode"),
     }
 }

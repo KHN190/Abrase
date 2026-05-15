@@ -5,8 +5,8 @@ pub use crate::ast::StringPart;
 pub enum Token {
     // Keywords
     Fn, Let, Const, If, Else, Match, For, While, Loop, Break, Continue,
-    Return, Type, Trait, Impl, Import, Mod, Pub, Scope, Region, Handle,
-    Throw, True, False, Where, Async, Await, In, As, SelfKW, SelfUpper, Mut, Thread,
+    Return, Type, Trait, Impl, Import, Mod, Pub, Region, Handle, Resume,
+    Throw, True, False, Where, In, As, SelfKW, SelfUpper, Mut, Thread,
     Effect, Underscore,
 
     // Identifiers and Literals
@@ -103,15 +103,13 @@ impl<'a> Lexer<'a> {
             "import" => Token::Import,
             "mod" => Token::Mod,
             "pub" => Token::Pub,
-            "scope" => Token::Scope,
             "region" => Token::Region,
             "handle" => Token::Handle,
+            "resume" => Token::Resume,
             "throw" => Token::Throw,
             "true" => Token::True,
             "false" => Token::False,
             "where" => Token::Where,
-            "async" => Token::Async,
-            "await" => Token::Await,
             "in" => Token::In,
             "as" => Token::As,
             "self" => Token::SelfKW,

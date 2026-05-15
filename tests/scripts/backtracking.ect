@@ -1,0 +1,18 @@
+effect choose { fn pick() -> Bool }
+
+fn search() -> <choose> Int {
+  let a = if choose.pick() { 1 } else { 2 };
+  let b = if choose.pick() { 10 } else { 20 };
+  a + b
+}
+
+fn count_match() -> Int {
+  handle search() {
+    return v     => if v == 11 { 1 } else { 0 },
+    choose.pick  => resume(true) + resume(false)
+  }
+}
+
+fn main() -> Int {
+  count_match()
+}

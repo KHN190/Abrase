@@ -42,7 +42,6 @@ fn typeck_file(path: &str) -> Vec<String> {
 
 #[test]
 fn test_fibonacci() {
-    // recursion + if/else + arithmetic + function call
     let v = run_file("tests/scripts/fibonacci.ect")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::Int(55));
@@ -50,7 +49,6 @@ fn test_fibonacci() {
 
 #[test]
 fn test_sum_loop() {
-    // while + mut + assignment + comparison
     let v = run_file("tests/scripts/sum_loop.ect")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::Int(55));
@@ -58,8 +56,6 @@ fn test_sum_loop() {
 
 #[test]
 fn test_bst() {
-    // variant decl + payload + match patterns with binding + wildcard
-    // + recursion + conditional construction
     let v = run_file("tests/scripts/bst.ect")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::Int(15));
@@ -94,7 +90,7 @@ fn test_exn_err_path() {
     // `throw` short-circuits up to the caller, who matches the Err branch
     let v = run_file("tests/scripts/exn_div_zero.ect")
         .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(99));
+    assert_eq!(v, Value::Int(1));
 }
 
 #[test]
@@ -112,6 +108,13 @@ fn neg_use_after_move_into_call_typeck_errors() {
 }
 
 #[test]
+fn neg_bare_variant_name_typeck_errors() {
+    let errs = typeck_file("tests/scripts/bad_bare_variant.ect");
+    assert!(errs.iter().any(|m| m.contains("Undefined variable") && m.contains("DivByZero")),
+        "expected 'Undefined variable: DivByZero', got: {:?}", errs);
+}
+
+#[test]
 fn neg_unknown_record_field_typeck_errors() {
     let errs = typeck_file("tests/scripts/bad_unknown_field.ect");
     assert!(!errs.is_empty(),
@@ -123,4 +126,25 @@ fn neg_array_index_wrong_type_typeck_errors() {
     let errs = typeck_file("tests/scripts/bad_array_index_type.ect");
     assert!(!errs.is_empty(),
         "expected error for non-Int array index, got no errors");
+}
+
+#[test]
+fn generator_typechecks() {
+    let errs = typeck_file("tests/scripts/generator.ect");
+    assert!(errs.is_empty(),
+        "expected no typeck errors for generator pattern, got: {:?}", errs);
+}
+
+#[test]
+fn backtracking_typechecks() {
+    let errs = typeck_file("tests/scripts/backtracking.ect");
+    assert!(errs.is_empty(),
+        "expected no typeck errors for backtracking pattern, got: {:?}", errs);
+}
+
+#[test]
+fn neg_borrow_across_effect_typeck_errors() {
+    let errs = typeck_file("tests/scripts/bad_borrow_across_effect.ect");
+    assert!(errs.iter().any(|m| m.contains("live across effect operation")),
+        "expected borrow-barrier error, got: {:?}", errs);
 }

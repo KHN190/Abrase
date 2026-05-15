@@ -26,7 +26,6 @@ fn parse_literal_int(n: i64) -> Vec<Decl> {
     vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -47,7 +46,6 @@ fn parse_binary_int(left: i64, op: BinaryOp, right: i64) -> Vec<Decl> {
     vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -78,7 +76,6 @@ fn parse_arithmetic_expr() -> Vec<Decl> {
     vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -119,7 +116,6 @@ fn parse_let_expr() -> Vec<Decl> {
     vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -190,7 +186,6 @@ fn verify_compile_literal_bool() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -215,7 +210,6 @@ fn verify_compile_literal_string() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -240,7 +234,6 @@ fn verify_compile_literal_float() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -265,7 +258,6 @@ fn verify_compile_literal_unit() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -290,7 +282,6 @@ fn verify_compile_literal_bool_false() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -368,7 +359,6 @@ fn verify_compile_multiple_variables() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -511,7 +501,6 @@ fn verify_compile_if_true_branch() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -549,7 +538,6 @@ fn verify_compile_if_false_branch() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -587,7 +575,6 @@ fn verify_compile_if_with_comparison() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -636,7 +623,6 @@ fn verify_compile_if_without_else_true() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -671,7 +657,6 @@ fn verify_compile_if_without_else_false() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -707,7 +692,6 @@ fn verify_compile_while_loop_simple() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -757,7 +741,6 @@ fn verify_compile_while_with_comparison() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -818,7 +801,6 @@ fn verify_compile_while_loop_with_mutation() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -914,7 +896,6 @@ fn verify_compile_if_without_else_returns_unit() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -950,7 +931,6 @@ fn verify_compile_while_never_executes() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -986,7 +966,6 @@ fn verify_compile_undefined_variable_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1012,7 +991,6 @@ fn verify_compile_non_bind_pattern_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1063,7 +1041,6 @@ fn verify_compile_assignment_literal_int() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1121,7 +1098,6 @@ fn verify_compile_assignment_multiple() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1196,7 +1172,6 @@ fn verify_compile_assignment_bool() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1314,7 +1289,6 @@ fn verify_compile_unsupported_literal_char_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1340,7 +1314,6 @@ fn verify_compile_unsupported_literal_string_interp_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1368,7 +1341,6 @@ fn verify_compile_assignment_to_literal_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1404,7 +1376,6 @@ fn verify_compile_unsupported_binary_op_and_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1440,7 +1411,6 @@ fn verify_compile_unsupported_binary_op_or_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1476,7 +1446,6 @@ fn verify_compile_unsupported_binary_op_add_assign_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1512,7 +1481,6 @@ fn verify_compile_match_literal_int_with_wildcard() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1566,7 +1534,6 @@ fn verify_compile_match_wildcard_only() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1609,7 +1576,6 @@ fn verify_compile_match_bind_pattern() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1662,7 +1628,6 @@ fn verify_compile_match_bool_patterns() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1717,7 +1682,6 @@ fn verify_compile_match_non_exhaustive_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1762,7 +1726,6 @@ fn verify_compile_match_multiple_literals_with_wildcard() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1838,7 +1801,6 @@ fn verify_compile_match_nested_in_if() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1913,7 +1875,6 @@ fn verify_compile_if_non_bool_condition_truthy() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1951,7 +1912,6 @@ fn verify_compile_if_zero_condition_falsy() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -1989,7 +1949,6 @@ fn verify_compile_match_variant_pattern_unsupported() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2049,7 +2008,6 @@ fn verify_compile_match_or_pattern_unsupported() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2115,7 +2073,6 @@ fn verify_compile_simple_function_call() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "add".to_string(),
             generics: vec![],
             params: vec![
@@ -2158,7 +2115,6 @@ fn verify_compile_simple_function_call() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2199,7 +2155,6 @@ fn verify_compile_return_explicit() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2227,7 +2182,6 @@ fn verify_compile_undefined_function_call_errors() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2260,7 +2214,6 @@ fn verify_compile_recursive_function() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "countdown".to_string(),
             generics: vec![],
             params: vec![Param::Named {
@@ -2326,7 +2279,6 @@ fn verify_compile_recursive_function() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2381,7 +2333,6 @@ fn verify_compile_record_simple_construction() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2426,7 +2377,6 @@ fn verify_compile_record_field_access() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2463,7 +2413,6 @@ fn verify_compile_variant_unit_construction() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2500,7 +2449,6 @@ fn verify_compile_variant_tuple_construction() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2537,7 +2485,6 @@ fn verify_compile_variant_pattern_match_unit() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2562,7 +2509,6 @@ fn verify_compile_array_literal_construction() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2586,7 +2532,6 @@ fn verify_compile_array_repeat_construction() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2610,7 +2555,6 @@ fn verify_compile_array_indexing_constant() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2649,7 +2593,6 @@ fn verify_compile_nested_record_in_array() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2699,7 +2642,6 @@ fn verify_compile_record_with_multiple_fields() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2742,7 +2684,6 @@ fn verify_compile_variant_with_multiple_fields() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2767,7 +2708,6 @@ fn verify_compile_exn_simple_ok_result() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2792,7 +2732,6 @@ fn verify_compile_exn_function_returns_result() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "maybe_fail".to_string(),
             generics: vec![],
             params: vec![Param::Named {
@@ -2816,7 +2755,6 @@ fn verify_compile_exn_function_returns_result() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2841,7 +2779,6 @@ fn verify_compile_exn_match_ok_pattern() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2865,7 +2802,6 @@ fn verify_compile_exn_match_err_pattern() {
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "main".to_string(),
         generics: vec![],
         params: vec![],
@@ -2890,7 +2826,6 @@ fn verify_compile_exn_throw_integer_code() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "throws".to_string(),
             generics: vec![],
             params: vec![],
@@ -2908,7 +2843,6 @@ fn verify_compile_exn_throw_integer_code() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -2934,7 +2868,6 @@ fn verify_compile_exn_conditional_throw() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "safe_div".to_string(),
             generics: vec![],
             params: vec![
@@ -3000,7 +2933,6 @@ fn verify_compile_exn_conditional_throw() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -3026,7 +2958,6 @@ fn verify_compile_exn_multiple_exception_types() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "check".to_string(),
             generics: vec![],
             params: vec![Param::Named {
@@ -3050,7 +2981,6 @@ fn verify_compile_exn_multiple_exception_types() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -3076,7 +3006,6 @@ fn verify_compile_exn_handler_catches_error() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "risky".to_string(),
             generics: vec![],
             params: vec![],
@@ -3094,7 +3023,6 @@ fn verify_compile_exn_handler_catches_error() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -3120,7 +3048,6 @@ fn verify_compile_exn_missing_ok_err_pattern_in_match() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "maybe_fail".to_string(),
             generics: vec![],
             params: vec![],
@@ -3138,7 +3065,6 @@ fn verify_compile_exn_missing_ok_err_pattern_in_match() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -3164,7 +3090,6 @@ fn verify_compile_exn_throw_with_custom_error() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "bad_op".to_string(),
             generics: vec![],
             params: vec![Param::Named {
@@ -3211,7 +3136,6 @@ fn verify_compile_exn_throw_with_custom_error() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -3237,7 +3161,6 @@ fn verify_compile_exn_propagate_up_stack() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "level3".to_string(),
             generics: vec![],
             params: vec![],
@@ -3255,7 +3178,6 @@ fn verify_compile_exn_propagate_up_stack() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "level2".to_string(),
             generics: vec![],
             params: vec![],
@@ -3273,7 +3195,6 @@ fn verify_compile_exn_propagate_up_stack() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "level1".to_string(),
             generics: vec![],
             params: vec![],
@@ -3291,7 +3212,6 @@ fn verify_compile_exn_propagate_up_stack() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -3317,7 +3237,6 @@ fn verify_compile_exn_ok_and_err_both_handled() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "compute".to_string(),
             generics: vec![],
             params: vec![Param::Named {
@@ -3341,7 +3260,6 @@ fn verify_compile_exn_ok_and_err_both_handled() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -3381,7 +3299,6 @@ fn verify_compile_array_of_records_type() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -3431,7 +3348,6 @@ fn verify_compile_variant_record_variant() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -3468,7 +3384,6 @@ fn verify_compile_array_of_variants_type() {
         Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],

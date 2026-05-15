@@ -120,6 +120,7 @@ impl<'a> Parser<'a> {
             Token::Let | Token::Return | Token::If | Token::Match
             | Token::While | Token::For | Token::Loop | Token::Break
             | Token::Continue | Token::Throw | Token::LBrace
+            | Token::Region | Token::Handle | Token::Resume
             | Token::Ident(_) | Token::Int(_) | Token::Float(_)
             | Token::String(_) | Token::True | Token::False
             | Token::Bang | Token::Minus | Token::Ampersand | Token::Asterisk | Token::LParen
@@ -132,7 +133,7 @@ impl<'a> Parser<'a> {
             true
         } else {
             let msg = format!("Expected {:?}, got {:?}", token, self.peek_token);
-            self.report_error(msg, self.peek_span); // Log error instead of crashing
+            self.report_error(msg, self.peek_span);
             false
         }
     }
@@ -145,7 +146,7 @@ impl<'a> Parser<'a> {
                     decls.push(decl);
                     // Check for stray tokens after declaration
                     if self.current_token != Token::Eof &&
-                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Import | Token::Effect | Token::Mod | Token::Pub | Token::Async) {
+                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Import | Token::Effect | Token::Mod | Token::Pub) {
                         self.report_error(format!("Unexpected token after declaration: {:?}", self.current_token), self.current_span);
                         self.synchronize();
                     }
@@ -156,29 +157,83 @@ impl<'a> Parser<'a> {
         decls
     }
 
+    fn parse_attributes(&mut self) -> Result<Vec<Attribute>, String> {
+        let mut attrs = Vec::new();
+        while self.current_token == Token::At {
+            self.next_token(); // past '@'
+            let name = if let Token::Ident(n) = &self.current_token { n.clone() } else {
+                return Err("Expected attribute name after '@'".into());
+            };
+            let mut args = Vec::new();
+            if self.peek_token == Token::LParen {
+                self.next_token(); // '('
+                if self.peek_token != Token::RParen {
+                    self.next_token(); // first arg
+                    loop {
+                        // Arg forms: <ident>, <literal>, or <ident> '=' <literal>.
+                        let arg = match self.current_token.clone() {
+                            Token::Ident(n) => {
+                                if self.peek_token == Token::Assign {
+                                    self.next_token(); // '='
+                                    self.next_token(); // literal
+                                    let lit = self.token_to_literal()?;
+                                    AttrArg::Named(n, lit)
+                                } else {
+                                    AttrArg::Ident(n)
+                                }
+                            }
+                            _ => AttrArg::Lit(self.token_to_literal()?),
+                        };
+                        args.push(arg);
+                        if self.peek_token == Token::Comma {
+                            self.next_token();
+                            self.next_token();
+                        } else { break; }
+                    }
+                }
+                if !self.expect_peek(Token::RParen) {
+                    return Err("Expected ')' in attribute".into());
+                }
+            }
+            attrs.push(Attribute { name, args });
+            self.next_token(); // past last token of this attribute
+        }
+        Ok(attrs)
+    }
+
+    fn token_to_literal(&self) -> Result<Literal, String> {
+        match &self.current_token {
+            Token::Int(v) => Ok(Literal::Int(*v)),
+            Token::Float(v) => Ok(Literal::Float(*v)),
+            Token::String(s) => Ok(Literal::String(s.clone())),
+            Token::True => Ok(Literal::Bool(true)),
+            Token::False => Ok(Literal::Bool(false)),
+            other => Err(format!("Expected literal, got {:?}", other)),
+        }
+    }
+
     pub fn parse_decl(&mut self) -> Result<Decl, String> {
+        // Optional leading attributes: '@name' or '@name(args...)'
+        let attrs = if self.current_token == Token::At {
+            self.parse_attributes()?
+        } else { vec![] };
+
         let mut is_pub = false;
-        let mut is_async = false;
 
         if self.current_token == Token::Pub {
             is_pub = true;
             self.next_token();
         }
 
-        if self.current_token == Token::Async {
-            is_async = true;
-            self.next_token();
-        }
-
         match self.current_token {
-            Token::Fn => self.parse_fn_decl(is_pub, is_async),
+            Token::Fn => self.parse_fn_decl_with_attrs(is_pub, attrs),
             Token::Type => {
                 self.next_token();
                 if self.current_token == Token::Ident("alias".into()) {
                     self.next_token();
                     self.parse_type_alias_decl(is_pub)
                 } else {
-                    self.parse_type_decl(is_pub)
+                    self.parse_type_decl_with_attrs(is_pub, attrs)
                 }
             }
             Token::Trait => self.parse_trait_decl(is_pub),
@@ -196,15 +251,34 @@ impl<'a> Parser<'a> {
             }
             Token::Mod => {
                 self.next_token();
-                if let Token::Ident(name) = &self.current_token {
-                    Ok(Decl::Mod(name.clone()))
-                } else { Err("Expected module name".into()) }
+                let mut path = Vec::new();
+                if let Token::Ident(p) = &self.current_token {
+                    path.push(p.clone());
+                } else {
+                    return Err("Expected module name".into());
+                }
+                while self.peek_token == Token::Dot {
+                    self.next_token(); // '.'
+                    self.next_token(); // ident
+                    if let Token::Ident(p) = &self.current_token {
+                        path.push(p.clone());
+                    } else {
+                        return Err("Expected ident in module path".into());
+                    }
+                }
+                // Advance past the last ident
+                self.next_token();
+                Ok(Decl::Mod(path.join(".")))
             }
             _ => Err(format!("Unexpected declaration token: {:?}", self.current_token)),
         }
     }
 
-    fn parse_type_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+    fn parse_type_decl_with_attrs(
+        &mut self,
+        is_pub: bool,
+        attrs: Vec<Attribute>,
+    ) -> Result<Decl, String> {
         // current is at the type name (parse_decl already advanced past 'type')
         let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected type name".into()); };
         let generics = if self.peek_token == Token::Lt {
@@ -299,7 +373,7 @@ impl<'a> Parser<'a> {
             return Err("Expected type body".into());
         };
 
-        Ok(Decl::Type { attrs: vec![], is_pub, ownership: None, name, generics, body })
+        Ok(Decl::Type { attrs, is_pub, ownership: None, name, generics, body })
     }
 
     fn parse_trait_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
@@ -314,7 +388,7 @@ impl<'a> Parser<'a> {
         self.next_token();
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
             if self.current_token == Token::Fn {
-                let fn_decl = self.parse_fn_decl(false, false)?;
+                let fn_decl = self.parse_fn_decl(false)?;
                 if let Decl::Fn(f) = fn_decl {
                     items.push(TraitItem::Default(f));
                 }
@@ -322,6 +396,9 @@ impl<'a> Parser<'a> {
             if self.current_token != Token::RBrace {
                 self.next_token();
             }
+        }
+        if self.current_token == Token::RBrace {
+            self.next_token();
         }
         Ok(Decl::Trait { is_pub, name, generics: vec![], where_clause: vec![], items })
     }
@@ -338,7 +415,7 @@ impl<'a> Parser<'a> {
         self.next_token();
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
             if self.current_token == Token::Fn {
-                let fn_decl = self.parse_fn_decl(false, false)?;
+                let fn_decl = self.parse_fn_decl(false)?;
                 if let Decl::Fn(f) = fn_decl {
                     methods.push(f);
                 }
@@ -347,12 +424,32 @@ impl<'a> Parser<'a> {
                 self.next_token();
             }
         }
+        if self.current_token == Token::RBrace {
+            self.next_token();
+        }
         Ok(Decl::Impl { generics: vec![], trait_name: None, for_type, where_clause: vec![], methods })
     }
 
     fn parse_const_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        // current = 'const'; may be followed by 'fn' for const-fn
         self.next_token();
+        let is_fn = self.current_token == Token::Fn;
+        if is_fn {
+            self.next_token();
+        }
         let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected const name".into()); };
+
+        // Optional generic params: const fn name<T> ...
+        let generics = if self.peek_token == Token::Lt {
+            self.next_token();
+            self.parse_generic_params()?
+        } else { vec![] };
+
+        // Optional fn-style param list: const fn name(...)
+        let params = if self.peek_token == Token::LParen {
+            self.next_token();
+            self.parse_params()?
+        } else { vec![] };
 
         if !self.expect_peek(Token::Colon) {
             return Err("Expected ':' in const".into());
@@ -366,11 +463,17 @@ impl<'a> Parser<'a> {
         self.next_token();
         let value = self.parse_expr(Precedence::Lowest);
 
-        if self.peek_token == Token::Semicolon {
+        let was_block = is_block_terminated(&value.node);
+        if !was_block {
+            if self.peek_token == Token::Semicolon {
+                self.next_token();
+            }
+            self.next_token();
+        } else if self.current_token == Token::Semicolon {
             self.next_token();
         }
 
-        Ok(Decl::Const { is_pub, is_fn: false, name, generics: vec![], params: vec![], ty, value })
+        Ok(Decl::Const { is_pub, is_fn, name, generics, params, ty, value })
     }
 
     fn parse_type_alias_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
@@ -385,6 +488,10 @@ impl<'a> Parser<'a> {
         }
         self.next_token();
         let ty = self.parse_type()?;
+        if self.peek_token == Token::Semicolon {
+            self.next_token();
+        }
+        self.next_token();
         Ok(Decl::TypeAlias { is_pub, name, generics, ty })
     }
 
@@ -400,6 +507,10 @@ impl<'a> Parser<'a> {
         } else {
             return Err("Expected effect set in effect alias".into());
         };
+        if self.peek_token == Token::Semicolon {
+            self.next_token();
+        }
+        self.next_token();
         Ok(Decl::EffectAlias { is_pub, name, effects })
     }
 
@@ -419,6 +530,10 @@ impl<'a> Parser<'a> {
             if self.current_token != Token::RBrace {
                 self.next_token();
             }
+        }
+        // Consume the closing '}'
+        if self.current_token == Token::RBrace {
+            self.next_token();
         }
         Ok(Decl::Effect { is_pub, name, ops })
     }
@@ -462,7 +577,6 @@ impl<'a> Parser<'a> {
             Some(self.parse_type()?)
         } else { None };
         Ok(FnSignature {
-            is_async: false,
             name,
             generics: vec![],
             params,
@@ -477,19 +591,35 @@ impl<'a> Parser<'a> {
         let mut path = Vec::new();
         if let Token::Ident(p) = &self.current_token {
             path.push(p.clone());
+        } else {
+            return Err("Expected module path".into());
         }
+        // Path segments are '.<ident>'. Stop before '.{' (the import-list head).
         while self.peek_token == Token::Dot {
-            self.next_token();
-            self.next_token();
+            self.next_token(); // current = '.'
+            if self.peek_token == Token::LBrace {
+                // '.{' — leave current on '.', the items branch consumes it.
+                break;
+            }
+            self.next_token(); // ident
             if let Token::Ident(p) = &self.current_token {
                 path.push(p.clone());
+            } else {
+                return Err("Expected ident in import path".into());
             }
         }
 
         let mut items = Vec::new();
-        if self.peek_token == Token::LBrace {
-            self.next_token();
-            self.next_token();
+        let has_list = (self.current_token == Token::Dot && self.peek_token == Token::LBrace)
+            || self.peek_token == Token::LBrace;
+        if has_list {
+            // Advance to '{', then to first item or '}'.
+            if self.current_token == Token::Dot {
+                self.next_token(); // current = '{'
+            } else {
+                self.next_token(); // current = '{'
+            }
+            self.next_token(); // first ident or '}'
             while self.current_token != Token::RBrace && self.current_token != Token::Eof {
                 if let Token::Ident(n) = &self.current_token {
                     let name = n.clone();
@@ -510,14 +640,24 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // current is now the last token of the decl (last ident or '}').
         if self.peek_token == Token::Semicolon {
             self.next_token();
         }
+        self.next_token();
 
         Ok(Decl::Import { path, items })
     }
 
-    pub fn parse_fn_decl(&mut self, is_pub: bool, is_async: bool) -> Result<Decl, String> {
+    pub fn parse_fn_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        self.parse_fn_decl_with_attrs(is_pub, vec![])
+    }
+
+    pub fn parse_fn_decl_with_attrs(
+        &mut self,
+        is_pub: bool,
+        attrs: Vec<Attribute>,
+    ) -> Result<Decl, String> {
         if let Token::Ident(_) = self.peek_token {
             self.next_token();
         } else {
@@ -529,6 +669,12 @@ impl<'a> Parser<'a> {
         } else {
             return Err("Expected ident".into());
         };
+
+        // Optional generic params: fn foo<T, U>(...)
+        let generics = if self.peek_token == Token::Lt {
+            self.next_token();
+            self.parse_generic_params()?
+        } else { vec![] };
 
         if !self.expect_peek(Token::LParen) {
             return Err("Expected '('".into());
@@ -548,23 +694,68 @@ impl<'a> Parser<'a> {
             return_type = Some(self.parse_type()?);
         }
 
+        let where_clause = if self.peek_token == Token::Where {
+            self.next_token();
+            self.parse_where_clause()?
+        } else { vec![] };
+
         if !self.expect_peek(Token::LBrace) {
             return Err("Expected '{'".into());
         }
         let body = self.parse_block()?;
 
         Ok(Decl::Fn(FnDecl {
-            attrs: vec![],
+            attrs,
             is_pub,
-            is_async,
             name,
-            generics: vec![],
+            generics,
             params,
             effects,
             return_type,
-            where_clause: vec![],
+            where_clause,
             body,
         }))
+    }
+
+    fn parse_where_clause(&mut self) -> Result<Vec<WhereBound>, String> {
+        // current = 'where'
+        let mut bounds = Vec::new();
+        loop {
+            self.next_token();
+            let ty = self.parse_type()?;
+            if !self.expect_peek(Token::Colon) {
+                return Err("Expected ':' in where bound".into());
+            }
+            self.next_token();
+            let mut trait_paths = Vec::new();
+            loop {
+                let mut path = Vec::new();
+                if let Token::Ident(n) = &self.current_token {
+                    path.push(n.clone());
+                } else {
+                    return Err("Expected trait name in where bound".into());
+                }
+                while self.peek_token == Token::Dot {
+                    self.next_token();
+                    self.next_token();
+                    if let Token::Ident(n) = &self.current_token {
+                        path.push(n.clone());
+                    } else {
+                        return Err("Expected ident in qualified trait name".into());
+                    }
+                }
+                trait_paths.push(path);
+                if self.peek_token == Token::Plus {
+                    self.next_token();
+                    self.next_token();
+                } else { break; }
+            }
+            bounds.push(WhereBound { ty, bounds: trait_paths });
+            if self.peek_token == Token::Comma {
+                self.next_token();
+            } else { break; }
+        }
+        Ok(bounds)
     }
 
     pub fn parse_params(&mut self) -> Result<Vec<Param>, String> {
@@ -625,14 +816,6 @@ impl<'a> Parser<'a> {
     pub fn parse_type(&mut self) -> Result<Type, String> {
         match self.current_token.clone() {
             Token::Ident(name) => {
-                // dyn Trait
-                if name == "dyn" {
-                    self.next_token();
-                    return match self.current_token.clone() {
-                        Token::Ident(t) => Ok(Type::DynTrait(t)),
-                        _ => Err("Expected trait name after 'dyn'".into()),
-                    };
-                }
                 // qualified path: a.b.c
                 if self.peek_token == Token::Dot {
                     let mut path = vec![name];
@@ -861,6 +1044,7 @@ impl<'a> Parser<'a> {
                 Expr::Identifier(nm)
             }
             Token::LBracket => return Some(self.parse_array_literal(span)),
+            Token::LParen => return Some(self.parse_paren_expr(span)),
             Token::Int(v) => Expr::Literal(Literal::Int(*v)),
             Token::Float(v) => Expr::Literal(Literal::Float(*v)),
             Token::String(v) => Expr::Literal(Literal::String(v.clone())),
@@ -885,9 +1069,9 @@ impl<'a> Parser<'a> {
             Token::While => { let r = self.parse_while_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Loop => { let r = self.parse_loop_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Pipe => { let r = self.parse_closure_expr(); return self.prefix_to_expr_or_err(r, span); }
-            Token::Scope => { let r = self.parse_scope_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Region => { let r = self.parse_region_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Handle => { let r = self.parse_handle_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::Resume => { let r = self.parse_resume_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Break => {
                 self.next_token();
                 let val = if self.current_token != Token::Semicolon && self.current_token != Token::RBrace && self.current_token != Token::Eof {
@@ -944,22 +1128,44 @@ impl<'a> Parser<'a> {
 
     fn parse_array_literal(&mut self, span: Span) -> Spanned<Expr> {
         self.next_token(); // past '['
-        let mut items = Vec::new();
-        while self.current_token != Token::RBracket && self.current_token != Token::Eof {
-            items.push(self.parse_expr(Precedence::Lowest));
-            if self.peek_token == Token::Comma {
-                self.next_token();
-                self.next_token();
-            } else {
-                self.next_token();
+        // Empty array
+        if self.current_token == Token::RBracket {
+            return Spanned { node: Expr::Array(vec![]), span };
+        }
+        let first = self.parse_expr(Precedence::Lowest);
+        // Repeat form: [expr; count]
+        if self.peek_token == Token::Semicolon {
+            self.next_token(); // to ';'
+            self.next_token(); // to count expr
+            let count = self.parse_expr(Precedence::Lowest);
+            if !self.expect_peek(Token::RBracket) {
+                self.report_error("Expected ']' in array repeat".into(), self.current_span);
             }
+            return Spanned {
+                node: Expr::ArrayRepeat {
+                    elem: Box::new(first),
+                    count: Box::new(count),
+                },
+                span,
+            };
+        }
+        // List form: [e0, e1, ...]
+        let mut items = vec![first];
+        while self.peek_token == Token::Comma {
+            self.next_token(); // ','
+            if self.peek_token == Token::RBracket { break; } // trailing comma
+            self.next_token();
+            items.push(self.parse_expr(Precedence::Lowest));
+        }
+        if !self.expect_peek(Token::RBracket) {
+            self.report_error("Expected ']' in array literal".into(), self.current_span);
         }
         Spanned { node: Expr::Array(items), span }
     }
 
     fn parse_if_expr(&mut self) -> Result<Expr, String> {
         // current = 'if'
-        self.next_token(); // move to condition
+        self.next_token();
         let prev = self.no_record_literal;
         self.no_record_literal = true;
         let condition = Box::new(self.parse_expr(Precedence::Lowest));
@@ -968,7 +1174,6 @@ impl<'a> Parser<'a> {
             return Err("Expected '{' after if condition".into());
         }
         let consequence = Box::new(Spanned { node: Expr::Block(self.parse_block()?), span: self.current_span });
-        // parse_block leaves current_token PAST the consequence's '}'.
         let alternative = if self.current_token == Token::Else {
             self.next_token(); // move to 'if' or '{'
             if self.current_token == Token::If {
@@ -980,7 +1185,6 @@ impl<'a> Parser<'a> {
             }
         } else { None };
 
-        // Check for duplicate else or stray keywords after if consequence
         if alternative.is_some() && self.current_token == Token::Else {
             self.report_error("Unexpected else after terminal else".into(), self.current_span);
         } else if self.current_token != Token::RBrace &&
@@ -1021,9 +1225,7 @@ impl<'a> Parser<'a> {
             let body = self.parse_expr(Precedence::Lowest);
             let body_is_block_terminated = is_block_terminated(&body.node);
             arms.push(MatchArm { pattern, guard, body });
-            // Atom-style bodies leave current at the body's last token (peek is the
-            // separator). Block-style bodies already consumed their own '}', so current
-            // is at the separator/next-pattern/'}'.
+
             if body_is_block_terminated {
                 if self.current_token == Token::Comma || self.current_token == Token::Semicolon {
                     self.next_token();
@@ -1062,7 +1264,7 @@ impl<'a> Parser<'a> {
 
     fn parse_while_expr(&mut self) -> Result<Expr, String> {
         // current = 'while'
-        self.next_token(); // move to condition
+        self.next_token();
         let prev = self.no_record_literal;
         self.no_record_literal = true;
         let condition = Box::new(self.parse_expr(Precedence::Lowest));
@@ -1118,20 +1320,56 @@ impl<'a> Parser<'a> {
         Ok(Expr::Closure { is_move: false, params, effects: vec![], return_type, body })
     }
 
-    fn parse_scope_expr(&mut self) -> Result<Expr, String> {
-        // current = 'scope'
-        let label = if self.peek_token == Token::Ident("_".into()) || matches!(self.peek_token, Token::Ident(_)) {
+    fn parse_paren_expr(&mut self, span: Span) -> Spanned<Expr> {
+        // current = '('
+        if self.peek_token == Token::RParen {
+            // ()  → Unit literal
             self.next_token();
-            match self.current_token.clone() {
-                Token::Ident(n) => Some(n),
-                _ => None,
-            }
-        } else { None };
-        if !self.expect_peek(Token::LBrace) {
-            return Err("Expected '{' in scope".into());
+            return Spanned { node: Expr::Literal(Literal::Unit), span };
         }
-        let body = self.parse_block()?;
-        Ok(Expr::Scope { label, options: None, body })
+        self.next_token();
+        let first = self.parse_expr(Precedence::Lowest);
+        if self.peek_token == Token::Comma {
+            // (e1, e2, ...)
+            let mut elems = vec![first];
+            while self.peek_token == Token::Comma {
+                self.next_token();
+                if self.peek_token == Token::RParen { break; }
+                self.next_token();
+                elems.push(self.parse_expr(Precedence::Lowest));
+            }
+            if !self.expect_peek(Token::RParen) {
+                self.report_error("Expected ')' in tuple expression".into(), self.current_span);
+                return Spanned { node: Expr::Error, span };
+            }
+            return Spanned { node: Expr::Tuple(elems), span };
+        }
+        if !self.expect_peek(Token::RParen) {
+            self.report_error("Expected ')' in parenthesized expression".into(), self.current_span);
+            return Spanned { node: Expr::Error, span };
+        }
+        Spanned { node: first.node, span: first.span }
+    }
+
+    fn parse_resume_expr(&mut self) -> Result<Expr, String> {
+        // current = 'resume'
+        if !self.expect_peek(Token::LParen) {
+            return Err("Expected '(' in resume".into());
+        }
+        self.next_token();
+        let arg = if self.current_token == Token::RParen {
+            None
+        } else {
+            let e = self.parse_expr(Precedence::Lowest);
+            if !self.expect_peek(Token::RParen) {
+                return Err("Expected ')' in resume".into());
+            }
+            Some(Box::new(e))
+        };
+        if arg.is_none() {
+            // current is already RParen; nothing else to do
+        }
+        Ok(Expr::Resume(arg))
     }
 
     fn parse_region_expr(&mut self) -> Result<Expr, String> {
@@ -1185,15 +1423,38 @@ impl<'a> Parser<'a> {
             }
             self.next_token();
             let body = self.parse_expr(Precedence::Lowest);
+            let body_is_block = is_block_terminated(&body.node);
             arms.push(HandleArm { kind, pattern, body });
-            if self.peek_token == Token::Comma {
+
+            let sep_now_at_current = body_is_block
+                && (self.current_token == Token::Comma
+                    || self.current_token == Token::Semicolon);
+            let sep_at_peek = !body_is_block
+                && (self.peek_token == Token::Comma
+                    || self.peek_token == Token::Semicolon);
+            if sep_now_at_current {
+                self.next_token();
+            } else if sep_at_peek {
                 self.next_token();
                 self.next_token();
-            } else { break; }
+            } else if body_is_block && self.current_token != Token::RBrace {
+                continue;
+            } else if !body_is_block && self.peek_token != Token::RBrace {
+                self.report_error(
+                    format!("Expected ',' or '}}' in handle arms, got {:?}", self.peek_token),
+                    self.peek_span,
+                );
+                self.next_token();
+            } else {
+                break;
+            }
         }
         if !self.expect_peek(Token::RBrace) {
             return Err("Expected '}' in handle".into());
         }
+        // Block-terminated exprs must leave current PAST their own '}' so the
+        // enclosing parse_block does not consume it as its own closing brace.
+        self.next_token();
         Ok(Expr::Handle { expr, arms })
     }
 
@@ -1315,6 +1576,34 @@ impl<'a> Parser<'a> {
 
     pub fn parse_infix(&mut self, left: Spanned<Expr>) -> Spanned<Expr> {
         let span = left.span;
+        // desugar 'a += b' / 'a -= b' to 
+        // 'a = a + b' / 'a = a - b'. 
+        if matches!(self.current_token, Token::PlusAssign | Token::MinusAssign) {
+            let inner_op = if self.current_token == Token::PlusAssign {
+                BinaryOp::Add
+            } else {
+                BinaryOp::Sub
+            };
+            let precedence = self.current_token.precedence();
+            self.next_token();
+            let right = self.parse_expr(precedence);
+            let sum = Spanned {
+                node: Expr::Binary {
+                    op: inner_op,
+                    left: Box::new(left.clone()),
+                    right: Box::new(right),
+                },
+                span,
+            };
+            return Spanned {
+                node: Expr::Binary {
+                    op: BinaryOp::Assign,
+                    left: Box::new(left),
+                    right: Box::new(sum),
+                },
+                span,
+            };
+        }
         let node = match self.current_token {
             Token::Plus => BinaryOp::Add,
             Token::Minus => BinaryOp::Sub,
@@ -1339,9 +1628,7 @@ impl<'a> Parser<'a> {
             }
             Token::Dot => {
                 self.next_token();
-                if self.current_token == Token::Await {
-                    return Spanned { node: Expr::Await(Box::new(left)), span: self.current_span };
-                } else if let Token::Ident(field) = &self.current_token {
+                if let Token::Ident(field) = &self.current_token {
                     return Spanned { node: Expr::FieldAccess { base: Box::new(left), field: field.clone() }, span: self.current_span };
                 } else {
                     self.report_error("Expected field name after dot".into(), self.current_span);
@@ -1464,8 +1751,6 @@ impl<'a> Parser<'a> {
     }
 }
 
-// Block-terminated expressions consume their own closing '}' via parse_block,
-// so the parser position after them is already past the brace.
 fn is_block_terminated(expr: &Expr) -> bool {
     matches!(
         expr,
@@ -1475,7 +1760,6 @@ fn is_block_terminated(expr: &Expr) -> bool {
             | Expr::While { .. }
             | Expr::For { .. }
             | Expr::Loop { .. }
-            | Expr::Scope { .. }
             | Expr::Region { .. }
             | Expr::Handle { .. }
     )

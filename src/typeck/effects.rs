@@ -9,6 +9,10 @@ impl Checker {
         self.effect_registry.insert(name, operations);
     }
 
+    pub fn register_effect_op(&mut self, key: String, ty: Type) {
+        self.effect_ops_registry.insert(key, ty);
+    }
+
     pub fn get_effect(&self, name: &str) -> Option<Vec<String>> {
         self.effect_registry.get(name).cloned()
     }
@@ -38,7 +42,6 @@ impl Checker {
     pub fn effects_equal(&self, e1: &crate::ty::Effect, e2: &crate::ty::Effect) -> bool {
         match (e1, e2) {
             (crate::ty::Effect::Total, crate::ty::Effect::Total) => true,
-            (crate::ty::Effect::Async, crate::ty::Effect::Async) => true,
             (crate::ty::Effect::Alloc, crate::ty::Effect::Alloc) => true,
             (crate::ty::Effect::Nondet, crate::ty::Effect::Nondet) => true,
             (crate::ty::Effect::Exn(t1), crate::ty::Effect::Exn(t2)) => t1 == t2,
@@ -47,10 +50,10 @@ impl Checker {
     }
 
     pub fn convert_effect(&self, eff: &ast::EffectItem) -> Option<crate::ty::Effect> {
-        let name = eff.name.join(".").to_lowercase();
+        let raw = eff.name.join(".");
+        let name = raw.to_lowercase();
         match name.as_str() {
             "io" | "alloc" => Some(crate::ty::Effect::Alloc),
-            "async" => Some(crate::ty::Effect::Async),
             "exn" => {
                 if let Some(arg) = &eff.arg {
                     Some(crate::ty::Effect::Exn(Box::new(self.convert_type(arg))))
@@ -59,7 +62,15 @@ impl Checker {
                 }
             },
             "nondet" => Some(crate::ty::Effect::Nondet),
-            _ => self.get_effect_alias(&name).and_then(|mut effs| effs.pop()),
+            _ => {
+                if let Some(mut effs) = self.get_effect_alias(&name) {
+                    return effs.pop();
+                }
+                if self.effect_registry.contains_key(&raw) {
+                    return Some(crate::ty::Effect::Nondet);
+                }
+                None
+            }
         }
     }
 
@@ -144,7 +155,6 @@ impl Checker {
         for effect in all_effects {
             let handled = match effect {
                 crate::ty::Effect::Total => self.handled_effects.contains(&"total".into()),
-                crate::ty::Effect::Async => self.handled_effects.contains(&"async".into()),
                 crate::ty::Effect::Alloc => self.handled_effects.contains(&"io".into()) || self.handled_effects.contains(&"alloc".into()),
                 crate::ty::Effect::Nondet => self.handled_effects.contains(&"nondet".into()),
                 crate::ty::Effect::Exn(_) => self.handled_effects.contains(&"exn".into()),
@@ -351,8 +361,8 @@ impl Checker {
                 self.check_const_expr(&body.node, body.span)
             }
 
-            // Default: allow if we can't prove it's impure
-            _ => true,
+            // Default: reject if we can't prove it's pure
+            _ => false,
         }
     }
 

@@ -262,26 +262,26 @@ fn test_expr_closure() {
 }
 
 #[test]
-fn test_expr_scope() {
-    let input = "scope s { 1 }";
+fn test_expr_resume_no_arg() {
+    let input = "resume()";
     let mut parser = Parser::new(Lexer::new(input));
     let expr = parser.parse_expr(Precedence::Lowest);
-    if let Expr::Scope { label, .. } = expr.node {
-        assert_eq!(label, Some("s".into()));
+    if let Expr::Resume(arg) = expr.node {
+        assert!(arg.is_none());
     } else {
-        panic!("Expected Scope expression");
+        panic!("Expected Resume expression, got {:?}", expr.node);
     }
 }
 
 #[test]
-fn test_expr_scope_without_label() {
-    let input = "scope { 1 }";
+fn test_expr_resume_with_arg() {
+    let input = "resume(42)";
     let mut parser = Parser::new(Lexer::new(input));
     let expr = parser.parse_expr(Precedence::Lowest);
-    if let Expr::Scope { label, .. } = expr.node {
-        assert_eq!(label, None);
+    if let Expr::Resume(Some(_)) = expr.node {
+        // ok
     } else {
-        panic!("Expected Scope expression");
+        panic!("Expected Resume expression with arg, got {:?}", expr.node);
     }
 }
 
@@ -469,6 +469,62 @@ fn test_decl_effect() {
 }
 
 #[test]
+fn test_program_effect_with_op_no_stray_token() {
+    // Regression: parse_effect_decl used to leave current_token on the
+    // closing '}', causing parse_program to report a stray RBrace.
+    let input = "effect Gen { fn yield(v: Int) -> Unit }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected parser errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 1);
+    if let Decl::Effect { name, ops, .. } = &decls[0] {
+        assert_eq!(name, "Gen");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].name, "yield");
+    } else {
+        panic!("Expected Effect declaration, got {:?}", decls[0]);
+    }
+}
+
+#[test]
+fn test_program_effect_followed_by_fn() {
+    // Two declarations in sequence — the parser must advance past the effect's
+    // '}' so the following 'fn' is recognised as the next top-level decl.
+    let input = "effect Logger { fn log(msg: Int) -> Unit } fn main() -> Int { 0 }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected parser errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::Effect { .. }));
+    assert!(matches!(decls[1], Decl::Fn(_)));
+}
+
+#[test]
+fn test_program_empty_effect_followed_by_fn() {
+    // Same path for the empty-ops case.
+    let input = "effect Marker { } fn main() -> Int { 1 }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected parser errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 2);
+}
+
+#[test]
+fn test_program_effect_multiple_ops() {
+    let input = "effect IO { fn read() -> Int fn write(n: Int) -> Unit }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected parser errors: {:?}", p.errors);
+    if let Decl::Effect { ops, .. } = &decls[0] {
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0].name, "read");
+        assert_eq!(ops[1].name, "write");
+    } else {
+        panic!("Expected Effect declaration");
+    }
+}
+
+#[test]
 fn test_type_with_generics() {
     let input = "type Box<T> = { value: T }";
     let mut p = Parser::new(Lexer::new(input));
@@ -591,13 +647,12 @@ fn test_operator_precedence() {
 
 #[test]
 fn test_fn_declaration() {
-    let input = "pub async fn fetch(id: Int) -> String { id }";
+    let input = "pub fn fetch(id: Int) -> String { id }";
     let mut parser = Parser::new(Lexer::new(input));
     let decl = parser.parse_decl().unwrap();
 
     if let Decl::Fn(fn_decl) = decl {
         assert_eq!(fn_decl.name, "fetch");
-        assert!(fn_decl.is_async);
         assert!(fn_decl.is_pub);
         assert_eq!(fn_decl.params.len(), 1);
         if let Param::Named { pattern, ty } = &fn_decl.params[0] {
@@ -861,17 +916,11 @@ fn test_error_let_missing_assign() {
     assert!(!errs.is_empty(), "expected error for missing '=' in let");
 }
 
-// --- The following tests currently FAIL — they expose the silent-acceptance
-// class of bugs. They are the exact shape of regressions that hid the if/else
-// contract break for so long. Keep them red until the parser's stmt-boundary
-// handling is tightened (e.g., require ';', '\n', '}', or a known stmt-start
-// token after each parse_stmt instead of blindly advancing). ---
-
 #[test]
 fn test_error_duplicate_else_after_if() {
     let errs = parse_errs("fn f() -> Int { if x { 1 } else { 2 } else { 3 } }");
     assert!(!errs.is_empty(),
-        "expected error for duplicate else; currently silently accepted");
+        "expected error for duplicate else");
 }
 
 #[test]
@@ -885,7 +934,7 @@ fn test_error_stray_keyword_after_if_consequence() {
 fn test_error_unclosed_fn_body() {
     let errs = parse_errs("fn f() -> Int { 1");
     assert!(!errs.is_empty(),
-        "expected error for unclosed fn body, got none");
+        "expected error for unclosed fn body");
 }
 
 #[test]
@@ -916,4 +965,438 @@ fn test_error_extra_token_after_complete_decl() {
     let errs = parse_errs("fn f() -> Int { 1 }  banana  fn g() -> Int { 2 }");
     assert!(!errs.is_empty(),
         "expected error for stray top-level token");
+}
+
+fn parse_program_no_errors(input: &str) -> Vec<Decl> {
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected parser errors: {:?}", p.errors);
+    decls
+}
+
+#[test]
+fn test_program_mod_then_fn() {
+    let decls = parse_program_no_errors("mod foo fn main() -> Int { 0 }");
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::Mod(ref s) if s == "foo"));
+    assert!(matches!(decls[1], Decl::Fn(_)));
+}
+
+#[test]
+fn test_program_mod_dotted_path() {
+    let decls = parse_program_no_errors("mod a.b.c fn main() -> Int { 0 }");
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::Mod(ref s) if s == "a.b.c"));
+}
+
+#[test]
+fn test_program_trait_then_fn() {
+    let decls = parse_program_no_errors("trait Foo { } fn main() -> Int { 0 }");
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::Trait { .. }));
+    assert!(matches!(decls[1], Decl::Fn(_)));
+}
+
+#[test]
+fn test_program_impl_then_fn() {
+    let decls = parse_program_no_errors("impl Foo { } fn main() -> Int { 0 }");
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::Impl { .. }));
+    assert!(matches!(decls[1], Decl::Fn(_)));
+}
+
+#[test]
+fn test_program_type_alias_then_fn() {
+    let decls = parse_program_no_errors("type alias Pair = (Int, Int) fn main() -> Int { 0 }");
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::TypeAlias { .. }));
+    assert!(matches!(decls[1], Decl::Fn(_)));
+}
+
+#[test]
+fn test_program_type_alias_with_semicolon_then_fn() {
+    let decls = parse_program_no_errors("type alias Pair = (Int, Int); fn main() -> Int { 0 }");
+    assert_eq!(decls.len(), 2);
+}
+
+#[test]
+fn test_program_effect_alias_then_fn() {
+    let decls = parse_program_no_errors("effect alias E = <exn> fn main() -> Int { 0 }");
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::EffectAlias { .. }));
+    assert!(matches!(decls[1], Decl::Fn(_)));
+}
+
+#[test]
+fn test_program_const_then_fn() {
+    let decls = parse_program_no_errors("const X: Int = 42 fn main() -> Int { X }");
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::Const { .. }));
+}
+
+#[test]
+fn test_program_const_with_semicolon_then_fn() {
+    let decls = parse_program_no_errors("const X: Int = 42; fn main() -> Int { X }");
+    assert_eq!(decls.len(), 2);
+}
+
+#[test]
+fn test_program_const_block_value_then_fn() {
+    let decls = parse_program_no_errors(
+        "const X: Int = if true { 1 } else { 0 } fn main() -> Int { X }",
+    );
+    assert_eq!(decls.len(), 2);
+}
+
+#[test]
+fn test_program_import_then_fn() {
+    let decls = parse_program_no_errors("import std.io { Read, Write }; fn main() -> Int { 0 }");
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::Import { .. }));
+}
+
+#[test]
+fn test_program_import_dot_brace_syntax() {
+    // BNF canonical: `.{ ... }` for the import list.
+    let decls = parse_program_no_errors("import io.{File, Read}; fn main() -> Int { 0 }");
+    assert_eq!(decls.len(), 2);
+    if let Decl::Import { path, items } = &decls[0] {
+        assert_eq!(path, &vec!["io".to_string()]);
+        assert_eq!(items.len(), 2);
+    } else { panic!("expected Import"); }
+}
+
+#[test]
+fn test_handle_missing_comma_between_atom_arms_reports_error() {
+    let errs = parse_errs(
+        "fn main() -> Int { handle f() { return v => v exn e => 0 } }",
+    );
+    assert!(errs.iter().any(|m| m.contains("Expected ',' or '}'")),
+        "expected comma-required error, got: {:?}", errs);
+}
+
+#[test]
+fn test_plus_assign_desugars_to_assign_of_add() {
+    // a += 1  --->  a = a + 1
+    let input = "a += 1";
+    let mut p = Parser::new(Lexer::new(input));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Binary { op: BinaryOp::Assign, left, right } = expr.node {
+        assert!(matches!(left.node, Expr::Identifier(ref n) if n == "a"));
+        if let Expr::Binary { op: BinaryOp::Add, .. } = right.node {
+            // ok
+        } else { panic!("expected Add on RHS, got {:?}", right.node); }
+    } else { panic!("expected Assign at top, got {:?}", expr.node); }
+}
+
+#[test]
+fn test_minus_assign_desugars_to_assign_of_sub() {
+    let input = "a -= 1";
+    let mut p = Parser::new(Lexer::new(input));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Binary { op: BinaryOp::Assign, right, .. } = expr.node {
+        assert!(matches!(right.node, Expr::Binary { op: BinaryOp::Sub, .. }));
+    } else { panic!("expected Assign with Sub RHS"); }
+}
+
+#[test]
+fn test_fn_decl_with_generics() {
+    let mut p = Parser::new(Lexer::new("fn id<T>(x: T) -> T { x }"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Fn(f) = decl {
+        assert_eq!(f.generics.len(), 1);
+        assert_eq!(f.generics[0].name, "T");
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_fn_decl_with_where_clause() {
+    let mut p = Parser::new(Lexer::new("fn cmp<T>(a: T, b: T) -> Bool where T: Ord { true }"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Fn(f) = decl {
+        assert_eq!(f.generics.len(), 1);
+        assert_eq!(f.where_clause.len(), 1);
+        assert_eq!(f.where_clause[0].bounds[0], vec!["Ord".to_string()]);
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_const_fn_with_params() {
+    let mut p = Parser::new(Lexer::new("const fn add(x: Int, y: Int): Int = x + y;"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Const { is_fn, params, name, .. } = decl {
+        assert!(is_fn);
+        assert_eq!(name, "add");
+        assert_eq!(params.len(), 2);
+    } else { panic!("expected Const"); }
+}
+
+#[test]
+fn test_decl_with_attribute() {
+    let mut p = Parser::new(Lexer::new("@export fn handler(req: Int) -> Int { req }"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Fn(f) = decl {
+        assert_eq!(f.attrs.len(), 1);
+        assert_eq!(f.attrs[0].name, "export");
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_decl_with_attribute_args() {
+    let mut p = Parser::new(Lexer::new("@derive(Eq, Show) type Foo = { x: Int }"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Type { attrs, .. } = decl {
+        assert_eq!(attrs.len(), 1);
+        assert_eq!(attrs[0].name, "derive");
+        assert_eq!(attrs[0].args.len(), 2);
+    } else { panic!("expected Type"); }
+}
+
+#[test]
+fn test_array_repeat_literal() {
+    let mut p = Parser::new(Lexer::new("[0; 4]"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::ArrayRepeat { elem, count } = expr.node {
+        assert!(matches!(elem.node, Expr::Literal(Literal::Int(0))));
+        assert!(matches!(count.node, Expr::Literal(Literal::Int(4))));
+    } else { panic!("expected ArrayRepeat, got {:?}", expr.node); }
+}
+
+#[test]
+fn test_array_list_literal_still_works() {
+    let mut p = Parser::new(Lexer::new("[1, 2, 3]"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Array(items) = expr.node {
+        assert_eq!(items.len(), 3);
+    } else { panic!("expected Array, got {:?}", expr.node); }
+}
+
+#[test]
+fn test_resume_expr_no_arg_in_function() {
+    let input = "fn f() -> Int { resume() }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 1);
+    if let Decl::Fn(fn_decl) = &decls[0] {
+        // Check that the body contains a resume expression
+        let expr = fn_decl.body.ret.as_ref().expect("expected return expr");
+        assert!(matches!(expr.node, Expr::Resume(None)));
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_resume_expr_with_arg_in_function() {
+    let input = "fn f() -> Int { resume(5) }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 1);
+    if let Decl::Fn(fn_decl) = &decls[0] {
+        let expr = fn_decl.body.ret.as_ref().expect("expected return expr");
+        if let Expr::Resume(Some(arg)) = &expr.node {
+            assert!(matches!(arg.node, Expr::Literal(Literal::Int(5))));
+        } else { panic!("expected Resume with Some arg"); }
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_resume_with_complex_arg() {
+    let input = "fn f() -> Int { resume(x + 1) }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
+    if let Decl::Fn(fn_decl) = &decls[0] {
+        let expr = fn_decl.body.ret.as_ref().expect("expected return expr");
+        if let Expr::Resume(Some(arg)) = &expr.node {
+            assert!(matches!(arg.node, Expr::Binary { op: BinaryOp::Add, .. }));
+        } else { panic!("expected Resume with binary expr arg"); }
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_effect_decl_no_stray_rbrace_token() {
+    let input = "effect E { fn op() -> Unit } fn main() -> Int { 0 }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::Effect { .. }));
+    assert!(matches!(decls[1], Decl::Fn(_)));
+}
+
+#[test]
+fn test_effect_empty_no_stray_rbrace() {
+    let input = "effect Empty { } fn main() -> Int { 0 }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 2);
+}
+
+#[test]
+fn test_resume_paren_required() {
+    // resume must have parentheses
+    let errs = parse_errs("fn f() -> Int { resume }");
+    assert!(!errs.is_empty(),
+        "resume without parens should fail");
+}
+
+#[test]
+fn test_resume_closing_paren_required() {
+    let errs = parse_errs("fn f() -> Int { resume(1 }");
+    assert!(!errs.is_empty(),
+        "resume with missing closing paren should fail");
+}
+
+#[test]
+fn test_paren_unit_literal() {
+    let mut p = Parser::new(Lexer::new("()"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    assert_eq!(expr.node, Expr::Literal(Literal::Unit));
+}
+
+#[test]
+fn test_paren_single_expr_strips_parens() {
+    // (1 + 2) should not become Tuple — it is a parenthesised expression and
+    // parse_paren_expr unwraps it to the inner Expr::Binary.
+    let mut p = Parser::new(Lexer::new("(1 + 2)"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    assert!(matches!(expr.node, Expr::Binary { op: BinaryOp::Add, .. }),
+        "expected Binary Add, got {:?}", expr.node);
+}
+
+#[test]
+fn test_paren_two_element_tuple() {
+    let mut p = Parser::new(Lexer::new("(1, 2)"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Tuple(elems) = expr.node {
+        assert_eq!(elems.len(), 2);
+    } else { panic!("expected Tuple, got {:?}", expr.node); }
+}
+
+#[test]
+fn test_paren_three_element_tuple() {
+    let mut p = Parser::new(Lexer::new("(1, 2, 3)"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Tuple(elems) = expr.node {
+        assert_eq!(elems.len(), 3);
+    } else { panic!("expected Tuple, got {:?}", expr.node); }
+}
+
+#[test]
+fn test_paren_tuple_trailing_comma() {
+    let mut p = Parser::new(Lexer::new("(1, 2,)"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Tuple(elems) = expr.node {
+        assert_eq!(elems.len(), 2);
+    } else { panic!("expected Tuple, got {:?}", expr.node); }
+}
+
+#[test]
+fn test_decl_with_multiple_attributes() {
+    // The `while self.current_token == Token::At` loop must accumulate.
+    let mut p = Parser::new(Lexer::new("@inline @export fn foo() -> Int { 0 }"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Fn(f) = decl {
+        assert_eq!(f.attrs.len(), 2);
+        assert_eq!(f.attrs[0].name, "inline");
+        assert_eq!(f.attrs[1].name, "export");
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_decl_attribute_with_named_arg() {
+    // `@cfg(key = "val")` exercises the AttrArg::Named branch.
+    let mut p = Parser::new(Lexer::new(r#"@cfg(target = "x86") fn foo() -> Int { 0 }"#));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Fn(f) = decl {
+        assert_eq!(f.attrs.len(), 1);
+        match &f.attrs[0].args[0] {
+            AttrArg::Named(k, Literal::String(v)) => {
+                assert_eq!(k, "target");
+                assert_eq!(v, "x86");
+            }
+            other => panic!("expected Named, got {:?}", other),
+        }
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_decl_attribute_with_literal_arg() {
+    // Bare-literal AttrArg path: `@version(1)`.
+    let mut p = Parser::new(Lexer::new("@version(1) fn foo() -> Int { 0 }"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Fn(f) = decl {
+        assert!(matches!(f.attrs[0].args[0], AttrArg::Lit(Literal::Int(1))));
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_where_clause_with_plus_bounds() {
+    // `T: A + B` — single bound entry with two trait paths.
+    let mut p = Parser::new(Lexer::new("fn f<T>(x: T) -> T where T: Ord + Show { x }"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Fn(f) = decl {
+        assert_eq!(f.where_clause.len(), 1);
+        assert_eq!(f.where_clause[0].bounds.len(), 2);
+        assert_eq!(f.where_clause[0].bounds[0], vec!["Ord".to_string()]);
+        assert_eq!(f.where_clause[0].bounds[1], vec!["Show".to_string()]);
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_where_clause_multiple_comma_separated_bounds() {
+    // `where T: Ord, U: Show` — two distinct WhereBound entries.
+    let mut p = Parser::new(Lexer::new(
+        "fn f<T, U>(x: T, y: U) -> T where T: Ord, U: Show { x }"
+    ));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Fn(f) = decl {
+        assert_eq!(f.where_clause.len(), 2);
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_fn_decl_multiple_generic_params() {
+    let mut p = Parser::new(Lexer::new("fn pair<T, U>(x: T, y: U) -> T { x }"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Fn(f) = decl {
+        assert_eq!(f.generics.len(), 2);
+        assert_eq!(f.generics[0].name, "T");
+        assert_eq!(f.generics[1].name, "U");
+    } else { panic!("expected Fn"); }
+}
+
+#[test]
+fn test_const_fn_with_generics() {
+    // const fn with both generics and params — exercises both optional branches
+    // in parse_const_decl.
+    let mut p = Parser::new(Lexer::new("const fn id<T>(x: T): T = x;"));
+    let decl = p.parse_decl().unwrap();
+    if let Decl::Const { is_fn, generics, params, .. } = decl {
+        assert!(is_fn);
+        assert_eq!(generics.len(), 1);
+        assert_eq!(params.len(), 1);
+    } else { panic!("expected Const"); }
+}
+
+#[test]
+fn test_program_effect_alias_with_semicolon_then_fn() {
+    // Symmetric to test_program_type_alias_with_semicolon_then_fn.
+    let decls = parse_program_no_errors(
+        "effect alias E = <exn>; fn main() -> Int { 0 }"
+    );
+    assert_eq!(decls.len(), 2);
+    assert!(matches!(decls[0], Decl::EffectAlias { .. }));
+    assert!(matches!(decls[1], Decl::Fn(_)));
+}
+
+#[test]
+fn test_array_list_trailing_comma() {
+    let mut p = Parser::new(Lexer::new("[1, 2, 3,]"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Array(items) = expr.node {
+        assert_eq!(items.len(), 3);
+    } else { panic!("expected Array"); }
 }

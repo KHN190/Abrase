@@ -1,8 +1,8 @@
-fn div(a: Int, b: Int) -> <exn> Int {
+fn div(a: Int, b: Int) -> <exn<Int>> Int {
   if b == 0 { throw 99 } else { a / b }
 }
 
-fn pipeline(a: Int, b: Int) -> <exn> Int {
+fn pipeline(a: Int, b: Int) -> <exn<Int>> Int {
   let v = div(a, b)?;
   v + 1
 }

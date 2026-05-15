@@ -1,0 +1,17 @@
+effect gen { fn yield(v: Int) -> Unit }
+
+fn produce() -> <gen> Unit {
+  gen.yield(10);
+  gen.yield(20)
+}
+
+fn sum_yields() -> Int {
+  handle produce() {
+    return done   => 0,
+    gen.yield v   => v + resume(())
+  }
+}
+
+fn main() -> Int {
+  sum_yields()
+}

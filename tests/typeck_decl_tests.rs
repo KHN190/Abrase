@@ -19,7 +19,6 @@ fn verify_check_program_registers_function() {
     let fn_decl = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "add".into(),
         generics: vec![],
         params: vec![
@@ -64,7 +63,6 @@ fn verify_check_program_marks_public_function() {
     let fn_decl = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: true,
-        is_async: false,
         name: "public_fn".into(),
         generics: vec![],
         params: vec![],
@@ -89,7 +87,6 @@ fn verify_check_program_private_function_not_public() {
     let fn_decl = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "private_fn".into(),
         generics: vec![],
         params: vec![],
@@ -370,7 +367,6 @@ fn verify_check_program_two_pass_execution() {
     let fn1 = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "fn1".into(),
         generics: vec![],
         params: vec![],
@@ -383,7 +379,6 @@ fn verify_check_program_two_pass_execution() {
     let fn2 = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "fn2".into(),
         generics: vec![],
         params: vec![],
@@ -435,7 +430,6 @@ fn verify_check_program_type_then_function() {
     let fn_decl = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "process".into(),
         generics: vec![],
         params: vec![
@@ -496,7 +490,6 @@ fn verify_check_program_mixed_visibility() {
     let public_fn = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: true,
-        is_async: false,
         name: "public".into(),
         generics: vec![],
         params: vec![],
@@ -509,7 +502,6 @@ fn verify_check_program_mixed_visibility() {
     let private_fn = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "private".into(),
         generics: vec![],
         params: vec![],
@@ -610,7 +602,6 @@ fn verify_check_impl_decl_type_checks_methods() {
     let method = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "process".into(),
         generics: vec![],
         params: vec![],
@@ -636,7 +627,6 @@ fn verify_check_impl_decl_validates_trait_exists() {
     let method = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "show".into(),
         generics: vec![],
         params: vec![],
@@ -660,7 +650,6 @@ fn verify_check_impl_decl_multiple_methods() {
     let method1 = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "method1".into(),
         generics: vec![],
         params: vec![],
@@ -673,7 +662,6 @@ fn verify_check_impl_decl_multiple_methods() {
     let method2 = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "method2".into(),
         generics: vec![],
         params: vec![],
@@ -782,7 +770,6 @@ fn verify_check_effect_decl_registers_operations() {
     let mut checker = Checker::new();
 
     let read_op = ect::ast::FnSignature {
-        is_async: false,
         name: "read".into(),
         generics: vec![],
         params: vec![],
@@ -792,7 +779,6 @@ fn verify_check_effect_decl_registers_operations() {
     };
 
     let write_op = ect::ast::FnSignature {
-        is_async: false,
         name: "write".into(),
         generics: vec![],
         params: vec![
@@ -957,7 +943,6 @@ fn verify_check_fn_decl_detects_return_type_mismatch() {
     let fn_decl = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "bad_fn".into(),
         generics: vec![],
         params: vec![],
@@ -991,7 +976,6 @@ fn verify_check_fn_decl_allows_correct_return_type() {
     let fn_decl = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "good_fn".into(),
         generics: vec![],
         params: vec![],
@@ -1066,7 +1050,6 @@ fn verify_return_expr_type_checked_against_fn_return_type() {
     let fn_decl = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "bad".into(),
         generics: vec![],
         params: vec![],
@@ -1094,26 +1077,24 @@ fn verify_return_expr_type_checked_against_fn_return_type() {
 
 #[test]
 fn verify_effect_alias_decl_registers_alias() {
-    // effect alias io_async = <io, async>
-    // check_program must call register_effect_alias so get_effect_alias returns the effects
     use ect::ty::Effect;
     let mut checker = Checker::new();
     checker.check_program(&[
         ect::ast::Decl::EffectAlias {
             is_pub: false,
-            name: "io_async".into(),
+            name: "io_nondet".into(),
             effects: vec![
-                ect::ast::EffectItem { name: vec!["io".into()],    arg: None },
-                ect::ast::EffectItem { name: vec!["async".into()], arg: None },
+                ect::ast::EffectItem { name: vec!["io".into()],     arg: None },
+                ect::ast::EffectItem { name: vec!["nondet".into()], arg: None },
             ],
         },
     ]);
-    let alias = checker.get_effect_alias("io_async");
-    assert!(alias.is_some(), "effect alias 'io_async' must be registered; got None");
+    let alias = checker.get_effect_alias("io_nondet");
+    assert!(alias.is_some(), "effect alias 'io_nondet' must be registered; got None");
     let effects = alias.unwrap();
     assert!(!effects.is_empty(), "effect alias must store at least one resolved effect");
-    assert!(effects.iter().any(|e| matches!(e, Effect::Async)),
-        "effect alias must include Async; got {:?}", effects);
+    assert!(effects.iter().any(|e| matches!(e, Effect::Nondet)),
+        "effect alias must include Nondet; got {:?}", effects);
 }
 
 #[test]
@@ -1123,7 +1104,6 @@ fn verify_self_param_does_not_error_in_impl_method() {
     let method = ect::ast::FnDecl {
         attrs: vec![],
         is_pub: false,
-        is_async: false,
         name: "get_x".into(),
         generics: vec![],
         params: vec![ect::ast::Param::SelfRef { is_mut: false }],

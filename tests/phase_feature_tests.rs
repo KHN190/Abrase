@@ -25,7 +25,6 @@ mod phase_1_foundation {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -45,7 +44,6 @@ mod phase_1_foundation {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -68,7 +66,6 @@ mod phase_1_foundation {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -88,7 +85,6 @@ mod phase_1_foundation {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -112,7 +108,6 @@ mod phase_1_foundation {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -136,7 +131,6 @@ mod phase_1_foundation {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -160,7 +154,6 @@ mod phase_1_foundation {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -184,7 +177,6 @@ mod phase_1_foundation {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -213,7 +205,6 @@ mod phase_2_control_flow {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -237,7 +228,6 @@ mod phase_2_control_flow {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -261,7 +251,6 @@ mod phase_2_control_flow {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -285,7 +274,6 @@ mod phase_2_control_flow {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -309,7 +297,6 @@ mod phase_2_control_flow {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -333,7 +320,6 @@ mod phase_2_control_flow {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -357,7 +343,6 @@ mod phase_2_control_flow {
         let ast = vec![Decl::Fn(FnDecl {
             attrs: vec![],
             is_pub: false,
-            is_async: false,
             name: "main".to_string(),
             generics: vec![],
             params: vec![],
@@ -387,7 +372,6 @@ mod phase_3_functions {
             Decl::Fn(FnDecl {
                 attrs: vec![],
                 is_pub: false,
-                is_async: false,
                 name: "add".to_string(),
                 generics: vec![],
                 params: vec![
@@ -415,7 +399,6 @@ mod phase_3_functions {
             Decl::Fn(FnDecl {
                 attrs: vec![],
                 is_pub: false,
-                is_async: false,
                 name: "main".to_string(),
                 generics: vec![],
                 params: vec![],
@@ -443,7 +426,6 @@ mod phase_3_functions {
             Decl::Fn(FnDecl {
                 attrs: vec![],
                 is_pub: false,
-                is_async: false,
                 name: "fact".to_string(),
                 generics: vec![],
                 params: vec![Param::Named {
@@ -480,7 +462,6 @@ mod phase_3_functions {
             Decl::Fn(FnDecl {
                 attrs: vec![],
                 is_pub: false,
-                is_async: false,
                 name: "main".to_string(),
                 generics: vec![],
                 params: vec![],

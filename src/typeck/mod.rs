@@ -58,6 +58,8 @@ struct VarMeta {
     moved_at: Option<Span>,
     immut_borrow_count: usize,
     mut_borrow_active: bool,
+    // Depth of region_stack at the time this var was bound (0 = no enclosing region).
+    bound_at_region_depth: usize,
 }
 
 #[derive(Clone)]
@@ -116,6 +118,8 @@ pub struct Checker {
     region_stack: Vec<String>,
     reference_lifetimes: HashMap<String, String>,
     pattern_borrows: HashMap<String, Vec<String>>,
+    // true while type-checking the body of a non-return handler arm
+    in_handler_arm: bool,
 
     // Pattern Matching Analysis (Exhaustiveness & Unreachability)
     covered_patterns: Vec<String>,
@@ -188,6 +192,7 @@ impl Checker {
             region_stack: Vec::new(),
             reference_lifetimes: HashMap::new(),
             pattern_borrows: HashMap::new(),
+            in_handler_arm: false,
             covered_patterns: Vec::new(),
             unreachable_patterns: Vec::new(),
             current_module: vec!["root".into()],
@@ -237,6 +242,7 @@ impl Checker {
         self.errors.iter().map(|e| e.pretty_print(source)).collect::<Vec<_>>().join("\n")
     }
     pub fn insert_var(&mut self, name: String, ty: Type, is_mut: bool, defined_at: Span) {
+        let depth = self.region_stack.len();
         if let Some(scope) = self.scopes.last_mut() {
             scope.vars.insert(name, VarMeta {
                 ty,
@@ -246,7 +252,34 @@ impl Checker {
                 moved_at: None,
                 immut_borrow_count: 0,
                 mut_borrow_active: false,
+                bound_at_region_depth: depth,
             });
+        }
+    }
+
+    // Borrow barrier: at an effect-op suspension point, the calling frame must
+    // not hold any live borrow whose binder lives in a region outside the current
+    // innermost region. This is the static rule that lets resume be multi-shot
+    // without dangling references. Reports an error per offending borrow.
+    pub fn check_borrow_barrier(&mut self, op_name: &str, span: Span) {
+        let cur_depth = self.region_stack.len();
+        let mut leaks: Vec<String> = Vec::new();
+        for scope in &self.scopes {
+            for (name, meta) in &scope.vars {
+                if meta.is_moved { continue; }
+                let is_ref = matches!(meta.ty, Type::Reference { .. });
+                if is_ref && meta.bound_at_region_depth < cur_depth {
+                    leaks.push(name.clone());
+                }
+            }
+        }
+        for name in leaks {
+            self.report_error(
+                format!("Borrow '{}' is live across effect operation '{}'; \
+                         move it into the current region or drop it before the call",
+                    name, op_name),
+                span,
+            );
         }
     }
 

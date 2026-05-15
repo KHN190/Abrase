@@ -10,7 +10,6 @@ pub enum Ownership {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Effect {
     Total,
-    Async,
     Exn(Box<Type>),
     Alloc,
     Nondet,

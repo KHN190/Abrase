@@ -71,6 +71,8 @@ impl Checker {
 
                 let result = if l_ty == Type::Unknown || r_ty == Type::Unknown {
                     Type::Unknown
+                } else if l_ty == Type::Never || r_ty == Type::Never {
+                    Type::Never
                 } else if l_ty != r_ty {
                     self.report_error(format!("Type mismatch: expected {:?}, found {:?}", l_ty, r_ty), right.span)
                 } else {
@@ -132,11 +134,29 @@ impl Checker {
             }
             ast::Expr::Match { scrutinee, arms } => {
                 self.context_stack.push("In match expression".into());
+                let required_before = self.fn_required_effects.clone();
                 let scrutinee_ty = self.infer_expr(scrutinee);
+                let exn_added: Vec<_> = self.fn_required_effects.iter()
+                    .filter(|e| !required_before.iter().any(|b| self.effects_equal(b, e))
+                        && matches!(e, crate::ty::Effect::Exn(_)))
+                    .cloned()
+                    .collect();
 
                 // Pattern type checking and exhaustiveness analysis
                 for arm in arms {
                     self.check_pattern(&arm.pattern, &scrutinee_ty, arm.pattern.span);
+                }
+
+                // If scrutinee produced an exn effect and arms cover Ok+Err, treat as handled
+                if !exn_added.is_empty() && Self::arms_cover_ok_err(arms) {
+                    self.fn_required_effects.retain(|e| !matches!(e, crate::ty::Effect::Exn(_)));
+                    for e in required_before.iter() {
+                        if matches!(e, crate::ty::Effect::Exn(_))
+                            && !self.fn_required_effects.iter().any(|x| std::mem::discriminant(x) == std::mem::discriminant(e) && x == e)
+                        {
+                            self.fn_required_effects.push(e.clone());
+                        }
+                    }
                 }
 
                 // Check variant exhaustiveness for Named types
@@ -267,6 +287,39 @@ impl Checker {
             ast::Expr::Call { callee, args } => {
                 self.context_stack.push(format!("In function call"));
 
+                if let ast::Expr::FieldAccess { base, field } = &callee.node {
+                    if let ast::Expr::Identifier(eff_name) = &base.node {
+                        if self.effect_registry.contains_key(eff_name) {
+                            let op_key = format!("{}::{}", eff_name, field);
+                            let op_ty = self.effect_ops_registry.get(&op_key).cloned();
+                            let (params, ret): (Vec<Type>, Type) = match op_ty {
+                                Some(Type::Function { params, ret, .. }) => (params, *ret),
+                                _ => (vec![], Type::Unknown),
+                            };
+                            for (i, arg) in args.iter().enumerate() {
+                                self.context_stack.push(format!("Argument {}", i + 1));
+                                let arg_ty = self.infer_expr(arg);
+                                self.context_stack.pop();
+                                if i < params.len()
+                                    && arg_ty != params[i]
+                                    && arg_ty != Type::Unknown
+                                    && params[i] != Type::Unknown
+                                {
+                                    self.report_error(
+                                        format!("Argument {} type mismatch: expected {:?}, got {:?}",
+                                            i, params[i], arg_ty),
+                                        arg.span,
+                                    );
+                                }
+                            }
+                            self.check_borrow_barrier(&op_key, expr.span);
+                            self.add_required_effect(crate::ty::Effect::Nondet);
+                            self.context_stack.pop();
+                            return ret;
+                        }
+                    }
+                }
+
                 let callee_ty = self.infer_expr(callee);
                 let result = if let Type::Function { params, effects, ret } = callee_ty {
                     if args.len() != params.len() {
@@ -294,6 +347,18 @@ impl Checker {
                                 args[i].span
                             );
                         }
+                    }
+
+                    // Borrow barrier: if this call produces an effect, it is a
+                    // potential suspension point. Reject if any borrow from an
+                    // outer region is live in the calling frame.
+                    if !effects.is_empty() {
+                        let op_name = match &callee.node {
+                            ast::Expr::Identifier(n) => n.clone(),
+                            ast::Expr::FieldAccess { field, .. } => field.clone(),
+                            _ => "<call>".into(),
+                        };
+                        self.check_borrow_barrier(&op_name, expr.span);
                     }
 
                     for effect in &effects {
@@ -363,6 +428,13 @@ impl Checker {
                 result
             }
             ast::Expr::FieldAccess { base, field } => {
+                if let ast::Expr::Identifier(base_name) = &base.node {
+                    if let Some(cases) = self.variant_registry.get(base_name) {
+                        if cases.iter().any(|c| c == field) {
+                            return Type::Named(base_name.clone());
+                        }
+                    }
+                }
                 self.context_stack.push(format!("In field access '{}'", field));
                 let base_ty = self.infer_expr(base);
                 let field_type = self.resolve_field_access(&base_ty, field, base.span);
@@ -495,43 +567,16 @@ impl Checker {
                     }
                 }
             }
-            ast::Expr::Await(inner) => {
-                let inner_ty = self.infer_expr(inner);
-                match &inner_ty {
-                    Type::Generic { name, args } if name == "Future" => {
-                        let output_ty = args.first().cloned().unwrap_or(Type::Unknown);
-                        self.add_required_effect(crate::ty::Effect::Async);
-                        output_ty
-                    }
-                    Type::Unknown => Type::Unknown,
-                    _ => {
-                        self.report_error(
-                            format!("'.await' requires Future<T>, got {:?}", inner_ty),
-                            inner.span,
-                        );
-                        Type::Unknown
-                    }
+            ast::Expr::Resume(arg) => {
+                // resume(...) must occur inside a non-return handler arm body.
+                if !self.in_handler_arm {
+                    self.report_error(
+                        "'resume' is only valid inside a handler arm body".into(),
+                        expr.span,
+                    );
                 }
-            }
-            ast::Expr::Scope { label, options, body } => {
-                self.context_stack.push(format!("In scope{}",
-                    label.as_ref().map(|l| format!(" '{}'", l)).unwrap_or_default()));
-
-                // Validate scope with context expression
-                if let Some(opts) = options {
-                    let opts_ty = self.infer_expr(opts);
-                    if !self.validate_scope_with_context(&opts_ty) {
-                        self.report_error("Scope 'with' expression must provide valid context".into(), opts.span);
-                    }
-                }
-
-                // Push new scope effect context
-                self.effect_stack.push(self.active_effects.clone());
-                let body_ty = self.infer_block(body);
-                self.effect_stack.pop();
-
-                self.context_stack.pop();
-                body_ty
+                if let Some(a) = arg { let _ = self.infer_expr(a); }
+                Type::Never
             }
             ast::Expr::Region { label, body } => {
                 self.context_stack.push(format!("In region{}",
@@ -556,29 +601,40 @@ impl Checker {
             }
             ast::Expr::Handle { expr: handler_expr, arms } => {
                 self.context_stack.push("In handle expression".into());
-                self.handled_effects.clear();
+                let saved_handled = std::mem::take(&mut self.handled_effects);
 
+                let required_before = self.fn_required_effects.clone();
                 let _expr_ty = self.infer_expr(handler_expr);
+                let required_from_inner: Vec<_> = self.fn_required_effects.iter()
+                    .filter(|e| !required_before.iter().any(|b| self.effects_equal(b, e)))
+                    .cloned()
+                    .collect();
 
                 let mut arm_types = Vec::new();
-                for arm in arms {
-                    // Type-check the arm body
+                for (arm_idx, arm) in arms.iter().enumerate() {
+                    // Validate arm pattern if present (introduces binder visible to body)
+                    if let Some(pat) = &arm.pattern {
+                        if let ast::Pattern::Bind(name) = &pat.node {
+                            self.insert_var(name.clone(), Type::Unknown, false, pat.span);
+                        }
+                    }
+
+                    // Non-return arm bodies are implicit regions and the body is a
+                    // handler context where `resume` is valid.
+                    let is_non_return = !matches!(arm.kind, ast::HandleArmKind::Return);
+                    let saved_in_arm = self.in_handler_arm;
+                    if is_non_return {
+                        self.in_handler_arm = true;
+                        let region_name = format!("handle_arm_{}", arm_idx);
+                        self.push_region(region_name);
+                    }
+
                     let arm_ty = self.infer_expr(&arm.body);
                     arm_types.push(arm_ty);
 
-                    // Validate arm pattern if present
-                    if let Some(pat) = &arm.pattern {
-                        match &pat.node {
-                            ast::Pattern::Bind(name) => {
-                                // For parameterized exceptions, bind with correct type
-                                let var_ty = match &arm.kind {
-                                    ast::HandleArmKind::Exn => Type::Unknown,
-                                    _ => Type::Unknown,
-                                };
-                                self.insert_var(name.clone(), var_ty, false, pat.span);
-                            }
-                            _ => {}
-                        }
+                    if is_non_return {
+                        self.pop_region();
+                        self.in_handler_arm = saved_in_arm;
                     }
 
                     // Register handled effect based on kind
@@ -587,10 +643,9 @@ impl Checker {
                             // Return handler doesn't remove an effect
                         }
                         ast::HandleArmKind::Exn => {
-                            // Exception handler - mark exn as handled
-                            if !self.active_effects.contains(&"exn".to_string()) {
+                            if !required_from_inner.iter().any(|e| matches!(e, crate::ty::Effect::Exn(_))) {
                                 self.report_error(
-                                    "Handling exn but no exn effect is active".into(),
+                                    "Handling exn but inner expression produces no exn effect".into(),
                                     expr.span
                                 );
                             }
@@ -598,35 +653,40 @@ impl Checker {
                         }
                         ast::HandleArmKind::Effect(effect_path) => {
                             let effect_name = effect_path.join(".");
-                            if !self.active_effects.contains(&effect_name) {
-                                self.report_error(
-                                    format!("Handling effect {} but it is not active", effect_name),
-                                    expr.span
-                                );
-                            }
                             self.mark_effect_handled(effect_name);
+                            if let Some(head) = effect_path.first() {
+                                if self.effect_registry.contains_key(head) {
+                                    self.mark_effect_handled("nondet".into());
+                                }
+                            }
                         }
                     }
                 }
 
-                // Compute unhandled effects and propagate them
-                let required_effects = self.fn_required_effects.clone();
-                self.compute_unhandled_effects(&required_effects);
-                self.propagate_effects_to_parent();
+                // Remove handled effects from fn_required_effects
+                let required = self.fn_required_effects.clone();
+                self.compute_unhandled_effects(&required);
+                self.fn_required_effects = self.unhandled_effects.clone();
 
-                // All arms must have same type
-                if !arm_types.is_empty() {
-                    let first = arm_types[0].clone();
-                    for ty in arm_types.iter().skip(1) {
-                        if *ty != first && first != Type::Unknown && *ty != Type::Unknown {
-                            self.report_error("Handle arm types do not match".into(), expr.span);
-                        }
+                let result_ty = arm_types.iter()
+                    .find(|t| **t != Type::Never && **t != Type::Unknown)
+                    .cloned()
+                    .or_else(|| arm_types.first().cloned())
+                    .unwrap_or(Type::Unknown);
+                for ty in &arm_types {
+                    if *ty != result_ty
+                        && *ty != Type::Never
+                        && *ty != Type::Unknown
+                        && result_ty != Type::Unknown
+                    {
+                        self.report_error("Handle arm types do not match".into(), expr.span);
                     }
                 }
 
                 self.context_stack.pop();
-                self.clear_handle_context();
-                if arm_types.is_empty() { Type::Unknown } else { arm_types[0].clone() }
+                self.handled_effects = saved_handled;
+                self.unhandled_effects.clear();
+                result_ty
             }
         }
     }

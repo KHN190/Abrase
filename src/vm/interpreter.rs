@@ -166,11 +166,30 @@ impl VirtualMachine {
             OpCode::Dei(_, _) | OpCode::Deo(_, _) => {
                 Err("device I/O not yet implemented".to_string())
             }
-            OpCode::Spawn(_, _) | OpCode::Await(_) | OpCode::Yield => {
-                Err("async not yet implemented".to_string())
+            OpCode::Handle(dest, fn_id) => {
+                // Install a handler frame pointing at the given function. The
+                // dispatch wiring (which effect operation goes to which arm) is
+                // handled by codegen via direct calls; this opcode just records
+                // that a handler is currently active so `Resume` can find it.
+                let _ = dest;
+                self.handlers.push(super::HandlerFrame {
+                    handler_fn: *fn_id as usize,
+                    saved_pc: self.pc,
+                    saved_base: self.base_reg,
+                });
+                Ok(())
             }
-            OpCode::Handle(_, _) | OpCode::Resume(_) => {
-                Err("effect handlers not yet implemented".to_string())
+            OpCode::Resume(reg) => {
+                // Single-shot for now: pop the most-recent handler and return
+                // its value as the handler-frame's result. The continuation
+                // value lives in `reg` (the operation's return value).
+                let frame = self.handlers.pop()
+                    .ok_or("Resume outside an active handler frame")?;
+                let val = self.read(*reg)?;
+                self.pc = frame.saved_pc;
+                self.base_reg = frame.saved_base;
+                self.registers[self.base_reg] = Some(val);
+                Ok(())
             }
         }
     }
