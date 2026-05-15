@@ -31,8 +31,9 @@ fn compile_and_run_file(path: &str) -> Result<Value, String> {
 
 #[test]
 fn test_fibonacci_10() {
-    let result = compile_and_run_file("tests/scripts/fibonacci.ect");
-    assert_eq!(result, Ok(Value::Int(55)), "fib(10) should be 55");
+    let v = compile_and_run_file("tests/scripts/fibonacci.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(55));
 }
 
 #[test]
@@ -51,20 +52,23 @@ fn main() -> Int {
 }
 "#;
 
-    let mut parser = Parser::new(Lexer::new(source));
+    let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
     let ast = parser.parse_program();
-    let mut compiler = Compiler::new();
-    let module = compiler.compile_module(&ast).expect("Compiler failed");
+    let mut compiler = Compiler::new().with_source(source.to_string());
+    let module = compiler.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
     let mut vm = VirtualMachine::new();
-    let result = vm.run_module(&module).expect("VM failed");
+    let result = vm.run_module(&module)
+        .unwrap_or_else(|e| panic!("\nVM error: {}", e));
 
-    assert_eq!(result, Value::Int(5), "fib(5) should be 5");
+    assert_eq!(result, Value::Int(5));
 }
 
 #[test]
 fn test_factorial_5() {
-    let result = compile_and_run_file("tests/scripts/factorial.ect");
-    assert_eq!(result, Ok(Value::Int(120)), "factorial(5) should be 120");
+    let v = compile_and_run_file("tests/scripts/factorial.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(120));
 }
 
 #[test]
@@ -83,26 +87,30 @@ fn main() -> Int {
 }
 "#;
 
-    let mut parser = Parser::new(Lexer::new(source));
+    let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
     let ast = parser.parse_program();
-    let mut compiler = Compiler::new();
-    let module = compiler.compile_module(&ast).expect("Compiler failed");
+    let mut compiler = Compiler::new().with_source(source.to_string());
+    let module = compiler.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
     let mut vm = VirtualMachine::new();
-    let result = vm.run_module(&module).expect("VM failed");
+    let result = vm.run_module(&module)
+        .unwrap_or_else(|e| panic!("\nVM error: {}", e));
 
-    assert_eq!(result, Value::Int(1), "factorial(0) should be 1");
+    assert_eq!(result, Value::Int(1));
 }
 
 #[test]
 fn test_sum_loop() {
-    let result = compile_and_run_file("tests/scripts/sum_loop.ect");
-    assert_eq!(result, Ok(Value::Int(55)), "sum_to(10) should be 55 (1+2+...+10)");
+    let v = compile_and_run_file("tests/scripts/sum_loop.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(55));
 }
 
 #[test]
 fn test_power() {
-    let result = compile_and_run_file("tests/scripts/power.ect");
-    assert_eq!(result, Ok(Value::Int(1024)), "power(2, 10) should be 1024");
+    let v = compile_and_run_file("tests/scripts/power.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(1024));
 }
 
 #[test]
@@ -121,14 +129,16 @@ fn main() -> Int {
 }
 "#;
 
-    let mut parser = Parser::new(Lexer::new(source));
+    let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
     let ast = parser.parse_program();
-    let mut compiler = Compiler::new();
-    let module = compiler.compile_module(&ast).expect("Compiler failed");
+    let mut compiler = Compiler::new().with_source(source.to_string());
+    let module = compiler.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
     let mut vm = VirtualMachine::new();
-    let result = vm.run_module(&module).expect("VM failed");
+    let result = vm.run_module(&module)
+        .unwrap_or_else(|e| panic!("\nVM error: {}", e));
 
-    assert_eq!(result, Value::Int(243), "power(3, 5) should be 243");
+    assert_eq!(result, Value::Int(243));
 }
 
 #[test]
@@ -155,14 +165,16 @@ fn main() -> Int {
 }
 "#;
 
-    let mut parser = Parser::new(Lexer::new(source));
+    let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
     let ast = parser.parse_program();
-    let mut compiler = Compiler::new();
-    let module = compiler.compile_module(&ast).expect("Compiler failed");
+    let mut compiler = Compiler::new().with_source(source.to_string());
+    let module = compiler.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
     let mut vm = VirtualMachine::new();
-    let result = vm.run_module(&module).expect("VM failed");
+    let result = vm.run_module(&module)
+        .unwrap_or_else(|e| panic!("\nVM error: {}", e));
 
-    assert_eq!(result, Value::Int(2), "classify(5) should be 2");
+    assert_eq!(result, Value::Int(2));
 }
 
 #[test]
@@ -189,14 +201,16 @@ fn main() -> Int {
 }
 "#;
 
-    let mut parser = Parser::new(Lexer::new(source));
+    let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
     let ast = parser.parse_program();
-    let mut compiler = Compiler::new();
-    let module = compiler.compile_module(&ast).expect("Compiler failed");
+    let mut compiler = Compiler::new().with_source(source.to_string());
+    let module = compiler.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
     let mut vm = VirtualMachine::new();
-    let result = vm.run_module(&module).expect("VM failed");
+    let result = vm.run_module(&module)
+        .unwrap_or_else(|e| panic!("\nVM error: {}", e));
 
-    assert_eq!(result, Value::Int(1), "is_even(6) should be 1 (true)");
+    assert_eq!(result, Value::Int(1));
 }
 
 #[test]
@@ -224,12 +238,14 @@ fn main() -> Int {
 }
 "#;
 
-    let mut parser = Parser::new(Lexer::new(source));
+    let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
     let ast = parser.parse_program();
-    let mut compiler = Compiler::new();
-    let module = compiler.compile_module(&ast).expect("Compiler failed");
+    let mut compiler = Compiler::new().with_source(source.to_string());
+    let module = compiler.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
     let mut vm = VirtualMachine::new();
-    let result = vm.run_module(&module).expect("VM failed");
+    let result = vm.run_module(&module)
+        .unwrap_or_else(|e| panic!("\nVM error: {}", e));
 
-    assert_eq!(result, Value::Int(3), "quadrant(2, 1) should be 3");
+    assert_eq!(result, Value::Int(3));
 }
