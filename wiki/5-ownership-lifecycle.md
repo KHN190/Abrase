@@ -26,7 +26,7 @@
 
 ## Move Semantics
 
-```
+```rust
 let s = "hello";         // s: String, @move
 let t = s;               // ownership transferred to t
 // println(s);           // ERROR: s was moved
@@ -40,7 +40,7 @@ Move occurs on:
 
 ## Copy Semantics
 
-```
+```rust
 let x = 42;              // x: Int, @copy
 let y = x;               // copy, x still usable
 ```
@@ -51,7 +51,7 @@ let y = x;               // copy, x still usable
 
 `Shared<T>` for read-only sharing across tasks or scopes:
 
-```
+```rust
 let cfg = Shared.new(load_config());   // Shared<Config>
 let cfg2 = cfg.clone();                // ref count +1
 ```
@@ -65,7 +65,7 @@ let cfg2 = cfg.clone();                // ref count +1
 
 References must be used within `region` blocks. Regions are lexical scopes.
 
-```
+```rust
 region r {
   let view = &cfg;                   // &Config in r
   process(view);
@@ -82,7 +82,7 @@ region r {
 
 Values are dropped immediately after last use in ownership chain.
 
-```
+```rust
 trait Drop {
   fn drop(self) -> <io> Unit
 }
@@ -91,10 +91,39 @@ trait Drop {
 - No exceptions allowed in drop
 - Drop order: local variables in reverse declaration order; fields in declaration order
 
-## Compile-time Guarantees
 
-- No use-after-free
-- No double-free
-- No dangling reference
-- No data races (because &mut is exclusive)
-- No null pointers (only Option<T>)
+## Examples
+
+```rust
+// Wrong
+fn main() -> String {
+  let s = "hello";
+  let t = s; // s is moved
+  let u = s; // Error: use after move
+  u
+}
+
+// Option 1: Use references (borrow) - preferred
+fn main() -> String {
+  let s = "hello";
+  let t = &s;     // borrow s (don't move)
+  let u = &s;     // borrow s again
+  s               // move s at the end when returning
+}
+
+// Option 2: Clone the value
+fn main() -> String {
+  let s = "hello";
+  let t = s.clone();  // clone s
+  let u = s;          // now s is moved to u
+  u
+}
+
+// Option 3: Only move at the very end
+fn main() -> String {
+  let s = "hello";
+  // use s multiple times without assigning elsewhere
+  // then move it at the end
+  s
+}
+```
