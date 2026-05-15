@@ -665,15 +665,6 @@ fn test_fn_decl_with_effects() {
     }
 }
 
-// --- Regression tests for parse_block / parse_if_expr / parse_match_expr contract ---
-//
-// These exercise the bug introduced when parse_block started consuming its own '}'
-// without updating parse_if_expr (which still checked peek_token == Else) or
-// parse_match_expr (whose arm loop over-advanced when bodies were block-terminated).
-// The end-to-end symptom was that recursive base cases like `if n <= 1 { n } else
-// { fib(n-1) + fib(n-2) }` lost their else-branch, causing infinite recursion at
-// runtime and a multi-GB blow-up of the VM register Vec.
-
 fn fn_body_expr(input: &str) -> Expr {
     let mut p = Parser::new(Lexer::new(input));
     let decls = p.parse_program();
@@ -682,7 +673,7 @@ fn fn_body_expr(input: &str) -> Expr {
         Decl::Fn(f) => Some(f),
         _ => None,
     }).expect("expected a function declaration");
-    // Body is a Block whose `ret` carries the trailing expression.
+
     fn_decl.body.ret.map(|b| b.node).or_else(|| {
         fn_decl.body.stmts.last().and_then(|s| match &s.node {
             Stmt::Expr(e) => Some(e.node.clone()),
@@ -693,8 +684,6 @@ fn fn_body_expr(input: &str) -> Expr {
 
 #[test]
 fn test_if_else_inside_fn_body_keeps_alternative() {
-    // Was previously dropped because parse_block consumed '}' but parse_if_expr
-    // still checked peek_token == Else.
     let input = "fn f(n: Int) -> Int { if n <= 1 { n } else { n - 1 } }";
     let body = fn_body_expr(input);
     let Expr::If { alternative, .. } = body else {
@@ -705,8 +694,7 @@ fn test_if_else_inside_fn_body_keeps_alternative() {
 
 #[test]
 fn test_recursive_fn_with_else_preserves_base_case() {
-    // The fibonacci shape: bug here was the recursive call leaking out of the else
-    // branch into a sibling statement, so the base case became unreachable.
+    // Test no recursive call leaking out of the else
     let input = "
         fn fib(n: Int) -> Int {
             if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
@@ -724,7 +712,7 @@ fn test_recursive_fn_with_else_preserves_base_case() {
         panic!("expected consequence to have a tail expression");
     };
     assert!(matches!(cons_ret.node, Expr::Identifier(_)));
-    // Alternative must exist and contain the recursive add.
+
     let alt = alternative.expect("else branch missing — base case would be lost");
     let Expr::Block(alt_block) = &alt.node else {
         panic!("expected Block alternative");
@@ -735,7 +723,6 @@ fn test_recursive_fn_with_else_preserves_base_case() {
 
 #[test]
 fn test_nested_if_else_chain_inside_fn_body() {
-    // classify-shape from the integration test.
     let input = "
         fn classify(n: Int) -> Int {
             if n < 0 {
@@ -746,7 +733,6 @@ fn test_nested_if_else_chain_inside_fn_body() {
         }
     ";
     let body = fn_body_expr(input);
-    // Walk the chain: each level must have an alternative that is itself an If.
     let mut current = body;
     for depth in 0..3 {
         let Expr::If { alternative, .. } = current else {
@@ -764,9 +750,6 @@ fn test_nested_if_else_chain_inside_fn_body() {
 
 #[test]
 fn test_match_newline_separated_arms() {
-    // Newline-separated arms (no commas). f88d60f's unconditional next_token() at
-    // the end of the arm loop broke this — and the bigger symptom was nested match
-    // arms (covered in the next test).
     let input = "
         fn pick(x: Int) -> Int {
             match x {
@@ -785,8 +768,6 @@ fn test_match_newline_separated_arms() {
 
 #[test]
 fn test_nested_match_block_body_arm() {
-    // The arm `1 => match y { ... }` ends with the inner match consuming its '}'.
-    // The old arm loop then over-advanced past the next outer arm's pattern token.
     let input = "
         fn quadrant(x: Int, y: Int) -> Int {
             match x {
@@ -804,15 +785,12 @@ fn test_nested_match_block_body_arm() {
         panic!("expected outer Match");
     };
     assert_eq!(arms.len(), 3, "outer match should keep all three arms");
-    // Second arm's body is itself a Match.
     assert!(matches!(arms[1].body.node, Expr::Match { .. }),
         "expected nested Match as arm body, got {:?}", arms[1].body.node);
 }
 
 #[test]
 fn test_match_block_body_with_following_arm_no_comma() {
-    // Block bodies followed by a no-comma next arm — mirrors the mutual-recursion
-    // shape that depends on the arm loop being kind about block-style positions.
     let input = "
         fn pick(x: Int) -> Int {
             match x {
@@ -831,9 +809,6 @@ fn test_match_block_body_with_following_arm_no_comma() {
 
 #[test]
 fn test_multiple_fn_decls_with_if_else_each() {
-    // Mutual-recursion shape: each fn has its own if/else. Was vulnerable because
-    // the lost else-branch corrupted the post-fn position and could swallow the
-    // next fn declaration.
     let input = "
         fn is_even(n: Int) -> Int {
             if n == 0 { 1 } else { is_odd(n - 1) }
@@ -854,4 +829,91 @@ fn test_multiple_fn_decls_with_if_else_each() {
         _ => None,
     }).collect();
     assert_eq!(fn_names, vec!["is_even".to_string(), "is_odd".to_string(), "main".to_string()]);
+}
+
+fn parse_errs(input: &str) -> Vec<String> {
+    let mut p = Parser::new(Lexer::new(input));
+    let _ = p.parse_program();
+    p.errors.into_iter().map(|e| e.message).collect()
+}
+
+#[test]
+fn test_error_orphan_else_at_block_start() {
+    let errs = parse_errs("fn f() -> Int { else { 1 } }");
+    assert!(!errs.is_empty(), "expected error for orphan else, got none");
+}
+
+#[test]
+fn test_error_missing_arrow_in_match_arm() {
+    let errs = parse_errs("fn f() -> Int { match x { 1 1 } }");
+    assert!(!errs.is_empty(), "expected error for missing '=>'");
+}
+
+#[test]
+fn test_error_unclosed_match_brace() {
+    let errs = parse_errs("fn f() -> Int { match x { 1 => 1 ");
+    assert!(!errs.is_empty(), "expected error for unclosed match");
+}
+
+#[test]
+fn test_error_let_missing_assign() {
+    let errs = parse_errs("fn f() -> Int { let x 5; x }");
+    assert!(!errs.is_empty(), "expected error for missing '=' in let");
+}
+
+// --- The following tests currently FAIL — they expose the silent-acceptance
+// class of bugs. They are the exact shape of regressions that hid the if/else
+// contract break for so long. Keep them red until the parser's stmt-boundary
+// handling is tightened (e.g., require ';', '\n', '}', or a known stmt-start
+// token after each parse_stmt instead of blindly advancing). ---
+
+#[test]
+fn test_error_duplicate_else_after_if() {
+    let errs = parse_errs("fn f() -> Int { if x { 1 } else { 2 } else { 3 } }");
+    assert!(!errs.is_empty(),
+        "expected error for duplicate else; currently silently accepted");
+}
+
+#[test]
+fn test_error_stray_keyword_after_if_consequence() {
+    let errs = parse_errs("fn f() -> Int { if x { 1 } banana { 2 } }");
+    assert!(!errs.is_empty(),
+        "expected error for stray ident between if and following block");
+}
+
+#[test]
+fn test_error_unclosed_fn_body() {
+    let errs = parse_errs("fn f() -> Int { 1");
+    assert!(!errs.is_empty(),
+        "expected error for unclosed fn body, got none");
+}
+
+#[test]
+fn test_error_two_exprs_no_separator() {
+    let errs = parse_errs("fn f() -> Int { 1 2 }");
+    assert!(!errs.is_empty(),
+        "expected error for two stmts without separator");
+}
+
+#[test]
+fn test_error_extra_else_in_chain() {
+    let errs = parse_errs(
+        "fn f() -> Int { if a { 1 } else if b { 2 } else { 3 } else { 4 } }"
+    );
+    assert!(!errs.is_empty(),
+        "expected error for extra else after terminal else");
+}
+
+#[test]
+fn test_error_match_garbage_between_arms() {
+    let errs = parse_errs("fn f() -> Int { match x { 1 => 1 banana 2 => 2 } }");
+    assert!(!errs.is_empty(),
+        "expected error for garbage between match arms");
+}
+
+#[test]
+fn test_error_extra_token_after_complete_decl() {
+    let errs = parse_errs("fn f() -> Int { 1 }  banana  fn g() -> Int { 2 }");
+    assert!(!errs.is_empty(),
+        "expected error for stray top-level token");
 }

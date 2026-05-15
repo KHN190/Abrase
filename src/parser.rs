@@ -102,7 +102,15 @@ impl<'a> Parser<'a> {
         let mut decls = Vec::new();
         while self.current_token != Token::Eof {
             match self.parse_decl() {
-                Ok(decl) => decls.push(decl),
+                Ok(decl) => {
+                    decls.push(decl);
+                    // Check for stray tokens after declaration
+                    if self.current_token != Token::Eof &&
+                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Import | Token::Effect | Token::Mod | Token::Pub | Token::Async) {
+                        self.report_error(format!("Unexpected token after declaration: {:?}", self.current_token), self.current_span);
+                        self.synchronize();
+                    }
+                }
                 Err(_) => self.synchronize(),
             }
         }
@@ -823,6 +831,20 @@ impl<'a> Parser<'a> {
                 return Err("Expected 'if' or '{' after 'else'".into());
             }
         } else { None };
+
+        // Check for duplicate else or stray keywords after if consequence
+        if alternative.is_some() && self.current_token == Token::Else {
+            self.report_error("Unexpected else after terminal else".into(), self.current_span);
+        } else if self.current_token != Token::RBrace &&
+                  self.current_token != Token::Eof &&
+                  self.current_token != Token::Semicolon &&
+                  self.current_token != Token::Comma &&
+                  self.current_token != Token::FatArrow &&
+                  !matches!(self.current_token, Token::Else | Token::In) &&
+                  matches!(self.current_token, Token::Ident(_)) {
+            self.report_error("Unexpected token after if expression".into(), self.current_span);
+        }
+
         Ok(Expr::If { condition, consequence, alternative })
     }
 
@@ -1207,8 +1229,24 @@ impl<'a> Parser<'a> {
                 }
             }
             if self.current_token != Token::RBrace && self.current_token != Token::Eof {
+                // Check if the next token looks like it's starting a new statement without proper separator
+                if self.peek_token != Token::Semicolon &&
+                   self.peek_token != Token::RBrace &&
+                   self.peek_token != Token::Eof &&
+                   !matches!(self.peek_token, Token::Else | Token::In | Token::Comma | Token::FatArrow) {
+                    // Check if current is a value-producing token and peek is also a statement start
+                    if matches!(self.current_token, Token::Int(_) | Token::Float(_) | Token::String(_) | Token::RParen | Token::RBracket) &&
+                       matches!(self.peek_token, Token::Int(_) | Token::Float(_) | Token::String(_) | Token::Ident(_) | Token::True | Token::False) {
+                        self.report_error("Expected separator (';') between statements".into(), self.peek_span);
+                    }
+                }
                 self.next_token();
             }
+        }
+
+        // Check for unclosed block
+        if self.current_token == Token::Eof {
+            self.report_error("Expected '}' in block".into(), self.current_span);
         }
 
         // Consume the closing '}'
