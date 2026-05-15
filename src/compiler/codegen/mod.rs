@@ -41,7 +41,7 @@ impl Compiler {
             ast::Expr::While { condition, body } => self.compile_while(condition, body),
             ast::Expr::Block(block)            => self.compile_block(block),
             ast::Expr::Match { scrutinee, arms } => self.compile_match(scrutinee, arms),
-            ast::Expr::Call { callee, args }   => self.compile_call(callee, args),
+            ast::Expr::Call { callee, args }   => self.compile_call(callee, args, expr.span),
             ast::Expr::Return(opt_expr)        => self.compile_return(opt_expr.as_deref()),
             ast::Expr::Throw(inner)            => self.compile_throw(inner),
             ast::Expr::Question(inner)         => self.compile_question(inner),
@@ -51,7 +51,7 @@ impl Compiler {
             ast::Expr::Array(items)            => self.compile_array(items),
             ast::Expr::Index { base, index }   => self.compile_index(base, index),
             ast::Expr::Resume(arg)             => self.compile_resume(arg.as_deref()),
-            ast::Expr::Handle { expr: body, arms: _ } => self.compile_handle(body, expr.span),
+            ast::Expr::Handle { expr: body, arms } => self.compile_handle(body, expr.span, arms),
             ast::Expr::Closure { .. }          => self.compile_closure(expr.span),
             _ => Err(format!("Unsupported expression: {:?}", expr.node)),
         }

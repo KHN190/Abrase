@@ -1,27 +1,9 @@
 // Impl-lift pass.
-//
-// Synthesises a concrete top-level `FnDecl` from every method in every
-// `Decl::Impl Trait for Type { ... }` block. The synthesised name uses the
-// `Trait__Type__method` mangling so codegen can resolve it like any other
-// free function.
-//
-// The pass also returns a dispatch table:
-//   (receiver_type_name, method_name) -> mangled fn name
-// keyed *without* the trait name, since the typeck has already verified that
-// a given `(type, method)` pair belongs to exactly one trait.
-//
-// Runs after typeck and before mono so that mono's body-walker can rewrite
-// `x.method()` call sites in the bodies of generic specialisations using the
-// same table.
-
 use std::collections::HashMap;
-
 use crate::ast::*;
 
 pub struct ImplLowering {
-    /// Synthetic top-level fn decls produced from the impl bodies.
     pub synthetic_fns: Vec<FnDecl>,
-    /// (receiver_type_name, method_name) -> mangled fn name.
     pub method_dispatch: HashMap<(String, String), String>,
 }
 
@@ -61,8 +43,6 @@ impl ImplLowering {
 }
 
 fn lift_method(method: &FnDecl, receiver_type: &str, mangled: &str) -> FnDecl {
-    // Convert `self`-style params to a normal first param named `self` whose
-    // type substitutes `Self` with the impl's receiver type.
     let params: Vec<Param> = method.params.iter().map(|p| match p {
         Param::Named { pattern, ty } => Param::Named {
             pattern: pattern.clone(),

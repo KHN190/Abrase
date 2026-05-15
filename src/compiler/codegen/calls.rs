@@ -1,7 +1,4 @@
-// `Expr::Call` dispatcher. The dispatcher runs five intent-named heuristics
-// in sequence; whichever recognises the call shape emits the right opcode
-// and returns. The fallback path is a plain by-id call.
-
+// `Expr::Call` dispatcher. 
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
@@ -12,17 +9,16 @@ impl Compiler {
         &mut self,
         callee: &ast::Spanned<ast::Expr>,
         args: &[ast::Spanned<ast::Expr>],
+        call_span: ast::Span,
     ) -> Result<Register, String> {
         if let Some(r) = self.try_compile_env_load(callee, args)? { return Ok(r); }
         if let Some(r) = self.try_compile_closure_call(callee, args)? { return Ok(r); }
-        if let Some(r) = self.try_compile_effect_op_call(callee, args)? { return Ok(r); }
+        if let Some(r) = self.try_compile_effect_op_call(callee, args, call_span)? { return Ok(r); }
         if let Some(r) = self.try_compile_method_call(callee, args)? { return Ok(r); }
         if let Some(r) = self.try_compile_host_or_ctor(callee, args)? { return Ok(r); }
         self.compile_plain_call(callee, args)
     }
 
-    /// Synthetic env load inside a lifted closure body, emitted by the
-    /// closure pre-pass: `__env_load(__env, idx)` -> `ld dst, env, idx`.
     fn try_compile_env_load(
         &mut self,
         callee: &ast::Spanned<ast::Expr>,
@@ -43,8 +39,6 @@ impl Compiler {
         Ok(Some(dest))
     }
 
-    /// Direct call to a lifted closure fn when the callee is a bare local
-    /// binding produced by a closure literal in the same fn body.
     fn try_compile_closure_call(
         &mut self,
         callee: &ast::Spanned<ast::Expr>,
@@ -79,40 +73,74 @@ impl Compiler {
         Ok(Some(dest))
     }
 
-    /// Effect-op call: reroute `Foo.op(args)` to the lifted arm fn.
+    // Effect-op call: `Foo.op(args)`
+    //   1. Per-call-site map (`op_call_to_arm`)
+    //   2. Global `(effect, op) -> arm` map — last-write-wins 
     fn try_compile_effect_op_call(
         &mut self,
         callee: &ast::Spanned<ast::Expr>,
         args: &[ast::Spanned<ast::Expr>],
+        call_span: ast::Span,
     ) -> Result<Option<Register>, String> {
         let ast::Expr::FieldAccess { base, field } = &callee.node else { return Ok(None) };
         let ast::Expr::Identifier(eff_name) = &base.node else { return Ok(None) };
-        let key = (eff_name.clone(), field.clone());
-        let Some(arm_name) = self.effect_op_to_arm.get(&key).cloned() else { return Ok(None) };
+        let arm_name = if let Some(name) = self.op_call_to_arm.get(&call_span).cloned() {
+            name
+        } else if let Some(name) = self.effect_op_to_arm.get(&(eff_name.clone(), field.clone())).cloned() {
+            name
+        } else {
+            return Ok(None);
+        };
 
         let func_id = *self.func_map.get(&arm_name)
             .ok_or_else(|| format!(
                 "internal: arm '{}' missing from fn table", arm_name
             ))?;
+
+        let env_reg = self.find_arm_env(&arm_name);
         let mut arg_srcs = Vec::with_capacity(args.len());
         for arg in args {
             arg_srcs.push(self.compile_expr(arg)?);
         }
+
+        let env_to_pass = match env_reg {
+            Some(r) => r,
+            None => {
+                let r = self.alloc_register()?;
+                self.emit(OpCode::Alloc(r, 1));
+                r
+            }
+        };
+
+        // Call convention: (env, op_args...).
+        let pos = self.code.len();
+        self.emit(OpCode::Copy(Register(0), env_to_pass));
+        self.pending_arg_patches.push((pos, 0));
         for (i, src) in arg_srcs.iter().enumerate() {
-            if i > u8::MAX as usize {
+            let slot = i + 1;
+            if slot > u8::MAX as usize {
                 return Err("Too many arguments (>255)".to_string());
             }
             let pos = self.code.len();
             self.emit(OpCode::Copy(Register(0), *src));
-            self.pending_arg_patches.push((pos, i as u8));
+            self.pending_arg_patches.push((pos, slot as u8));
         }
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id as u16));
         Ok(Some(dest))
     }
 
-    /// Method-call dispatch: `base.method(args)` lowers to a direct call to
-    /// the synthesised `Trait__Type__method` fn, with `base` as the first arg.
+    fn find_arm_env(&self, arm_name: &str) -> Option<Register> {
+        for envs in self.arm_env_stack.iter().rev() {
+            if let Some(r) = envs.get(arm_name) {
+                return Some(*r);
+            }
+        }
+        None
+    }
+
+    // Method-call dispatch: `base.method(args)` lowers to a direct call to
+    // the synthesised `Trait__Type__method` fn, with `base` as the first arg.
     fn try_compile_method_call(
         &mut self,
         callee: &ast::Spanned<ast::Expr>,
@@ -149,7 +177,7 @@ impl Compiler {
         Ok(Some(dest))
     }
 
-    /// Host built-in `Shared(x)` or a variant constructor call `Foo(a,b)`.
+    // Host built-in `Shared(x)` or a variant constructor call `Foo(a,b)`.
     fn try_compile_host_or_ctor(
         &mut self,
         callee: &ast::Spanned<ast::Expr>,
@@ -180,7 +208,7 @@ impl Compiler {
         Ok(Some(dest))
     }
 
-    /// Fallback: a plain by-id call to a top-level fn.
+    // Fallback: a plain by-id call to a top-level fn.
     fn compile_plain_call(
         &mut self,
         callee: &ast::Spanned<ast::Expr>,

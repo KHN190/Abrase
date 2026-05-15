@@ -305,7 +305,7 @@ fn param_names(params: &[ClosureParam]) -> HashSet<String> {
 /// Walk an expr collecting identifiers that are NOT bound by `bound`. Visit
 /// order is left-to-right so the resulting Vec is deterministic; `seen`
 /// dedups across the walk.
-fn collect_free_vars(
+pub(in crate::compiler) fn collect_free_vars(
     expr: &Spanned<Expr>,
     bound: &HashSet<String>,
     seen: &mut HashSet<String>,
@@ -402,7 +402,7 @@ fn collect_free_vars(
 
 /// Rewrite occurrences of captured names in `expr` to a load from the env
 /// handle. Treats `params` as locals that shadow captures.
-fn rewrite_captures(
+pub(in crate::compiler) fn rewrite_captures(
     expr: &Spanned<Expr>,
     layout: &HashMap<String, usize>,
     params: &HashSet<String>,
@@ -467,6 +467,48 @@ fn rewrite_node(
         },
         Expr::Tuple(elems) => Expr::Tuple(elems.iter().map(|e| rewrite_captures(e, layout, params)).collect()),
         Expr::Array(elems) => Expr::Array(elems.iter().map(|e| rewrite_captures(e, layout, params)).collect()),
+        Expr::ArrayRepeat { elem, count } => Expr::ArrayRepeat {
+            elem: Box::new(rewrite_captures(elem, layout, params)),
+            count: Box::new(rewrite_captures(count, layout, params)),
+        },
+        Expr::Match { scrutinee, arms } => Expr::Match {
+            scrutinee: Box::new(rewrite_captures(scrutinee, layout, params)),
+            arms: arms.iter().map(|a| MatchArm {
+                pattern: a.pattern.clone(),
+                guard: a.guard.as_ref().map(|g| rewrite_captures(g, layout, params)),
+                body: rewrite_captures(&a.body, layout, params),
+            }).collect(),
+        },
+        Expr::While { condition, body } => Expr::While {
+            condition: Box::new(rewrite_captures(condition, layout, params)),
+            body: rewrite_block(body, layout, params),
+        },
+        Expr::For { pattern, iter, body } => Expr::For {
+            pattern: pattern.clone(),
+            iter: Box::new(rewrite_captures(iter, layout, params)),
+            body: rewrite_block(body, layout, params),
+        },
+        Expr::Loop { body } => Expr::Loop {
+            body: rewrite_block(body, layout, params),
+        },
+        Expr::Region { label, body } => Expr::Region {
+            label: label.clone(),
+            body: rewrite_block(body, layout, params),
+        },
+        Expr::Handle { expr, arms } => Expr::Handle {
+            expr: Box::new(rewrite_captures(expr, layout, params)),
+            arms: arms.iter().map(|a| HandleArm {
+                kind: a.kind.clone(),
+                pattern: a.pattern.clone(),
+                body: rewrite_captures(&a.body, layout, params),
+            }).collect(),
+        },
+        Expr::Resume(opt) => Expr::Resume(
+            opt.as_ref().map(|e| Box::new(rewrite_captures(e, layout, params)))
+        ),
+        Expr::Break(opt) => Expr::Break(
+            opt.as_ref().map(|e| Box::new(rewrite_captures(e, layout, params)))
+        ),
         _ => node.clone(),
     }
 }

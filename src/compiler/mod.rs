@@ -27,10 +27,24 @@ pub struct Compiler {
     pub(super) pending_arg_patches: Vec<(usize, u8)>,
     pub(super) current_fn_fallible: bool,
     /// Effect-handler lowering tables built by the pre-pass.
-    /// (effect_name, op_name) -> synthesised arm fn name.
+    /// (effect_name, op_name) -> synthesised arm fn name. Acts as a global
+    /// last-write-wins fallback for cross-fn op-call sites.
     pub(super) effect_op_to_arm: HashMap<(String, String), String>,
+    /// Per-call-site dispatch table. Spans of `e.op(args)` call expressions
+    /// are mapped to the arm fn of the innermost lexically enclosing handle.
+    /// Codegen consults this *before* the global fallback so nested handlers
+    /// for the same effect dispatch correctly.
+    pub(super) op_call_to_arm: HashMap<ast::Span, String>,
     /// Handle expression span -> synthesised return-arm fn name.
     pub(super) return_arm_by_handle: HashMap<ast::Span, String>,
+    /// Captures per synthesised arm fn (return arms and op arms alike), as
+    /// computed by the pre-pass. Codegen at the `handle` expression site reads
+    /// this to pack one env heap object per arm.
+    pub(super) arm_captures: HashMap<String, Vec<closures::CaptureInfo>>,
+    /// Compile-time stack tracking `(arm fn name) -> env register` for each
+    /// active `handle` expression being compiled. Op-call sites look up the
+    /// env register by walking this stack top-down.
+    pub(super) arm_env_stack: Vec<HashMap<String, Register>>,
     /// (receiver_type_name, method_name) -> synthesised mangled fn name produced
     /// by the impl-lift pass. Used by codegen to rewrite `x.method(...)` calls.
     pub method_dispatch: HashMap<(String, String), String>,
@@ -63,7 +77,10 @@ impl Compiler {
             pending_arg_patches: Vec::new(),
             current_fn_fallible: false,
             effect_op_to_arm: HashMap::new(),
+            op_call_to_arm: HashMap::new(),
             return_arm_by_handle: HashMap::new(),
+            arm_captures: HashMap::new(),
+            arm_env_stack: Vec::new(),
             method_dispatch: HashMap::new(),
             closure_by_span: HashMap::new(),
             closure_by_var: HashMap::new(),
@@ -153,7 +170,9 @@ impl Compiler {
         let mut handler_lowering = handlers::HandleLowering::new();
         handler_lowering.lower(ast);
         self.effect_op_to_arm = handler_lowering.effect_op_to_arm;
+        self.op_call_to_arm = handler_lowering.op_call_to_arm;
         self.return_arm_by_handle = handler_lowering.return_arm_by_handle;
+        self.arm_captures = handler_lowering.arm_captures;
 
         let mut fn_decls = Vec::new();
 

@@ -1,17 +1,4 @@
 // Codegen for effect-related forms: `throw`, `?`, `resume`, and `handle`.
-//
-// The current `resume`/`handle` lowering is the simplified MVP path:
-//
-//   * `resume(v)` lowers to a plain `Ret(v)`, so it only works when it
-//     appears in tail position of the arm body.
-//   * `handle BODY { arms }` compiles BODY directly, then calls the
-//     synthesised return-arm fn with the result. No `OpCode::Handle` frame
-//     is installed, so multi-shot resumes and nested-handler dispatch are
-//     not yet supported.
-//
-// Removing these limitations is the next compiler-side task (heap-cell
-// continuations + per-handle dispatch tables).
-
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
@@ -78,23 +65,87 @@ impl Compiler {
         &mut self,
         body: &ast::Spanned<ast::Expr>,
         handle_span: ast::Span,
+        arms: &[ast::HandleArm],
     ) -> Result<Register, String> {
-        // The pre-pass already lifted arm bodies to top-level fns. Compile
-        // the protected body, then call the return-arm with its result.
+
+        let arm_names = self.collect_handle_arm_names(handle_span, arms);
+        let envs = self.pack_arm_envs(&arm_names)?;
+        self.arm_env_stack.push(envs);
+
         let body_reg = self.compile_expr(body)?;
+        let arm_envs = self.arm_env_stack.pop().expect("arm_env_stack mismatch");
+
         let ret_arm_name = self.return_arm_by_handle.get(&handle_span).cloned()
             .ok_or_else(|| format!(
                 "internal: no return arm registered for handle at {:?}", handle_span
             ))?;
         let func_id = *self.func_map.get(&ret_arm_name)
             .ok_or_else(|| format!("internal: return arm '{}' not in fn table", ret_arm_name))?;
+        let env_reg = arm_envs.get(&ret_arm_name).copied()
+            .ok_or_else(|| format!("internal: no env packed for return arm '{}'", ret_arm_name))?;
 
+        // Call convention: (env, body_result).
+        let pos = self.code.len();
+        self.emit(OpCode::Copy(Register(0), env_reg));
+        self.pending_arg_patches.push((pos, 0));
         let pos = self.code.len();
         self.emit(OpCode::Copy(Register(0), body_reg));
-        self.pending_arg_patches.push((pos, 0));
+        self.pending_arg_patches.push((pos, 1));
 
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id as u16));
         Ok(dest)
+    }
+
+    // Gather the arm fn names belonging to a particular `handle` expression:
+    // the return arm (from `return_arm_by_handle`) plus one entry per op arm.
+    fn collect_handle_arm_names(
+        &self,
+        handle_span: ast::Span,
+        arms: &[ast::HandleArm],
+    ) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(name) = self.return_arm_by_handle.get(&handle_span) {
+            out.push(name.clone());
+        }
+        for arm in arms {
+            if let ast::HandleArmKind::Effect(path) = &arm.kind {
+                if path.len() >= 2 {
+                    let eff = path[..path.len()-1].join(".");
+                    let op = path.last().unwrap().clone();
+                    if let Some(name) = self.effect_op_to_arm.get(&(eff, op)) {
+                        out.push(name.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    // Allocate one env heap object per arm fn and store its captures from
+    // the current scope. Returns `arm fn name -> env register`.
+    fn pack_arm_envs(
+        &mut self,
+        arm_names: &[String],
+    ) -> Result<std::collections::HashMap<String, Register>, String> {
+        let mut envs = std::collections::HashMap::new();
+        for name in arm_names {
+            let captures = self.arm_captures.get(name).cloned().unwrap_or_default();
+            let env_reg = self.alloc_register()?;
+            let n = captures.len();
+            // alloc at least one slot; the env handle is then just an Int
+            // pointer the arm fn treats as opaque.
+            self.emit(OpCode::Alloc(env_reg, n.max(1) as u16));
+            for (i, cap) in captures.iter().enumerate() {
+                let src = *self.var_to_reg.get(&cap.name)
+                    .ok_or_else(|| format!(
+                        "internal: handler arm '{}' captures '{}', not in scope at handle site",
+                        name, cap.name
+                    ))?;
+                self.emit(OpCode::St(src, env_reg, i as u16));
+            }
+            envs.insert(name.clone(), env_reg);
+        }
+        Ok(envs)
     }
 }
