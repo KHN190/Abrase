@@ -1085,7 +1085,7 @@ impl<'a> Parser<'a> {
             Token::For => { let r = self.parse_for_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::While => { let r = self.parse_while_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Loop => { let r = self.parse_loop_expr(); return self.prefix_to_expr_or_err(r, span); }
-            Token::Pipe => { let r = self.parse_closure_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::Pipe | Token::Move => { let r = self.parse_closure_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Region => { let r = self.parse_region_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Handle => { let r = self.parse_handle_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Resume => { let r = self.parse_resume_expr(); return self.prefix_to_expr_or_err(r, span); }
@@ -1303,6 +1303,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_closure_expr(&mut self) -> Result<Expr, String> {
+        // current token is '|' for `|x| ...`, or 'move' for `move |x| ...`.
+        let is_move = if self.current_token == Token::Move {
+            self.next_token(); // past 'move' → '|'
+            if self.current_token != Token::Pipe {
+                return Err("Expected '|' after 'move' in closure".into());
+            }
+            true
+        } else {
+            false
+        };
         self.next_token(); // past '|'
         let mut params = Vec::new();
         while self.current_token != Token::Pipe {
@@ -1334,7 +1344,7 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_expr(Precedence::Lowest)
         });
-        Ok(Expr::Closure { is_move: false, params, effects: vec![], return_type, body })
+        Ok(Expr::Closure { is_move, params, effects: vec![], return_type, body })
     }
 
     fn parse_paren_expr(&mut self, span: Span) -> Spanned<Expr> {

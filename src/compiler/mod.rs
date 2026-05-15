@@ -34,6 +34,13 @@ pub struct Compiler {
     /// (receiver_type_name, method_name) -> synthesised mangled fn name produced
     /// by the impl-lift pass. Used by codegen to rewrite `x.method(...)` calls.
     pub method_dispatch: HashMap<(String, String), String>,
+    /// Closure expression spans -> the synthesised lifted fn name and capture
+    /// layout. Built by the closures pre-pass.
+    pub(super) closure_by_span: HashMap<ast::Span, closures::ClosureInfo>,
+    /// Per-fn-body: when `let f = |...| ...;` runs, we remember that `f`'s
+    /// register holds the env handle for a specific closure so call sites
+    /// `f(args)` can emit a direct call to the lifted fn.
+    pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -58,6 +65,8 @@ impl Compiler {
             effect_op_to_arm: HashMap::new(),
             return_arm_by_handle: HashMap::new(),
             method_dispatch: HashMap::new(),
+            closure_by_span: HashMap::new(),
+            closure_by_var: HashMap::new(),
             errors: Vec::new(),
             source: String::new(),
         }
@@ -127,6 +136,18 @@ impl Compiler {
             }
         };
         let ast: &[ast::Decl] = &owned;
+
+        // Pre-pass: lift closure expressions to synthetic top-level FnDecls
+        // with an env-handle first parameter. Each Expr::Closure span is
+        // recorded so codegen can pack the env and direct-call the lifted fn.
+        let mut closure_lowering = closures::ClosureLowering::new();
+        closure_lowering.lower(ast);
+        self.closure_by_span = closure_lowering.by_span;
+        let mut decls_with_closures: Vec<ast::Decl> = ast.to_vec();
+        for fd in closure_lowering.synthetic_fns {
+            decls_with_closures.push(ast::Decl::Fn(fd));
+        }
+        let ast: &[ast::Decl] = &decls_with_closures;
 
         // Pre-pass: lift handler arms to synthetic top-level FnDecls.
         let mut handler_lowering = handlers::HandleLowering::new();

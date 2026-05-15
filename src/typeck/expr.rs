@@ -725,17 +725,11 @@ impl Checker {
                 self.fn_declared_effects = declared_effects.clone();
 
                 for param in params {
-                    if let Some(param_ty) = &param.ty {
-                        let converted_ty = self.convert_type(param_ty);
-                        self.insert_var(
-                            match &param.pattern.node {
-                                ast::Pattern::Bind(n) => n.clone(),
-                                _ => "<param>".into(),
-                            },
-                            converted_ty,
-                            false,
-                            param.pattern.span
-                        );
+                    let converted_ty = param.ty.as_ref()
+                        .map(|t| self.convert_type(t))
+                        .unwrap_or(Type::Unknown);
+                    if let ast::Pattern::Bind(n) = &param.pattern.node {
+                        self.insert_var(n.clone(), converted_ty, false, param.pattern.span);
                     }
                 }
                 let body_ty = self.infer_expr(body);
@@ -766,9 +760,14 @@ impl Checker {
 
                 self.exit_scope();
 
-                // Return function type with inferred effects
+                // Return function type with inferred effects. Param types
+                // come from the closure params; missing annotations become
+                // Unknown so call-site arg-count checks still pass.
+                let param_tys: Vec<Type> = params.iter()
+                    .map(|p| p.ty.as_ref().map(|t| self.convert_type(t)).unwrap_or(Type::Unknown))
+                    .collect();
                 let result = Type::Function {
-                    params: vec![],
+                    params: param_tys,
                     effects: inferred_effects,
                     ret: Box::new(body_ty),
                 };

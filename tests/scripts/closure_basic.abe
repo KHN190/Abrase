@@ -1,0 +1,5 @@
+fn main() -> Int {
+  let x = 5;
+  let f = |y| x + y;
+  f(3)
+}

@@ -1,0 +1,151 @@
+// Leaf-ish expressions: literal, identifier, record literal, variant
+// constructor, array literal, indexing, and field access.
+
+use crate::ast;
+use crate::bytecode::{OpCode, Register};
+use crate::compiler::Compiler;
+use crate::vm::Value;
+
+impl Compiler {
+    pub(in crate::compiler) fn compile_literal(
+        &mut self,
+        lit: &ast::Literal,
+    ) -> Result<Register, String> {
+        let reg = self.alloc_register()?;
+        let val = match lit {
+            ast::Literal::Int(n)    => Value::Int(*n),
+            ast::Literal::Float(f)  => Value::Float(*f),
+            ast::Literal::Bool(b)   => Value::Bool(*b),
+            ast::Literal::String(s) => Value::String(s.clone()),
+            ast::Literal::Unit      => Value::Unit,
+            _ => return Err("Unsupported literal".to_string()),
+        };
+        let idx = self.add_constant(val)?;
+        self.emit(OpCode::PushConst(reg, idx));
+        Ok(reg)
+    }
+
+    pub(in crate::compiler) fn compile_identifier(
+        &mut self,
+        name: &str,
+    ) -> Result<Register, String> {
+        if let Some(reg) = self.var_to_reg.get(name).copied() {
+            return Ok(reg);
+        }
+        if let Some(info) = self.layouts.variants.get(name).cloned() {
+            let dest = self.alloc_register()?;
+            self.emit(OpCode::Alloc(dest, 1));
+            let tag_reg = self.alloc_register()?;
+            let idx = self.add_constant(Value::Int(info.tag as i64))?;
+            self.emit(OpCode::PushConst(tag_reg, idx));
+            self.emit(OpCode::St(tag_reg, dest, 0));
+            return Ok(dest);
+        }
+        Err(format!("Undefined variable: {}", name))
+    }
+
+    pub(in crate::compiler) fn compile_record(
+        &mut self,
+        ty: &[String],
+        fields: &[ast::FieldInit],
+    ) -> Result<Register, String> {
+        let type_name = ty.last().cloned()
+            .ok_or_else(|| "Record literal missing type name".to_string())?;
+        let field_order = self.layouts.records.get(&type_name).cloned()
+            .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Alloc(dest, field_order.fields.len() as u16));
+        for (i, fname) in field_order.fields.iter().enumerate() {
+            let init = fields.iter().find(|f| &f.name == fname)
+                .ok_or_else(|| format!("Missing field '{}' in {}", fname, type_name))?;
+            let src = if let Some(v) = &init.value {
+                self.compile_expr(v)?
+            } else {
+                self.var_to_reg.get(&init.name).copied()
+                    .ok_or_else(|| format!("Undefined variable: {}", init.name))?
+            };
+            self.emit(OpCode::St(src, dest, i as u16));
+        }
+        Ok(dest)
+    }
+
+    pub(in crate::compiler) fn compile_variant_expr(
+        &mut self,
+        ty: &[String],
+        args: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Register, String> {
+        let vname = ty.last().cloned()
+            .ok_or_else(|| "Variant constructor missing name".to_string())?;
+        let info = self.layouts.variants.get(&vname).cloned()
+            .ok_or_else(|| format!("Unknown variant: {}", vname))?;
+        let dest = self.alloc_register()?;
+        let payload = args.len();
+        self.emit(OpCode::Alloc(dest, (payload + 1) as u16));
+        let tag_reg = self.alloc_register()?;
+        let ti = self.add_constant(Value::Int(info.tag as i64))?;
+        self.emit(OpCode::PushConst(tag_reg, ti));
+        self.emit(OpCode::St(tag_reg, dest, 0));
+        for (i, arg) in args.iter().enumerate() {
+            let v = self.compile_expr(arg)?;
+            self.emit(OpCode::St(v, dest, (i + 1) as u16));
+        }
+        Ok(dest)
+    }
+
+    pub(in crate::compiler) fn compile_field_access(
+        &mut self,
+        base: &ast::Spanned<ast::Expr>,
+        field: &str,
+    ) -> Result<Register, String> {
+        if let ast::Expr::Identifier(base_name) = &base.node {
+            if let Some(info) = self.layouts.variants.get(field).cloned() {
+                if info.type_name == *base_name {
+                    let dest = self.alloc_register()?;
+                    self.emit(OpCode::Alloc(dest, 1));
+                    let tag_reg = self.alloc_register()?;
+                    let idx = self.add_constant(Value::Int(info.tag as i64))?;
+                    self.emit(OpCode::PushConst(tag_reg, idx));
+                    self.emit(OpCode::St(tag_reg, dest, 0));
+                    return Ok(dest);
+                }
+            }
+        }
+        let base_reg = self.compile_expr(base)?;
+        let type_name = self.infer_expr_type(base).and_then(|t| match t {
+            ast::Type::Named(n) => Some(n),
+            _ => None,
+        }).ok_or_else(|| format!("Cannot determine record type for field access '.{}'", field))?;
+        let layout = self.layouts.records.get(&type_name)
+            .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
+        let idx = layout.offset_of(field)
+            .ok_or_else(|| format!("No field '{}' in {}", field, type_name))?;
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Ld(dest, base_reg, idx));
+        Ok(dest)
+    }
+
+    pub(in crate::compiler) fn compile_array(
+        &mut self,
+        items: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Register, String> {
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Alloc(dest, items.len() as u16));
+        for (i, item) in items.iter().enumerate() {
+            let v = self.compile_expr(item)?;
+            self.emit(OpCode::St(v, dest, i as u16));
+        }
+        Ok(dest)
+    }
+
+    pub(in crate::compiler) fn compile_index(
+        &mut self,
+        base: &ast::Spanned<ast::Expr>,
+        index: &ast::Spanned<ast::Expr>,
+    ) -> Result<Register, String> {
+        let base_reg = self.compile_expr(base)?;
+        let idx_reg = self.compile_expr(index)?;
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::LdIdx(dest, base_reg, idx_reg));
+        Ok(dest)
+    }
+}

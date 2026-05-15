@@ -160,6 +160,31 @@ fn neg_borrow_across_effect_typeck_errors() {
 }
 
 #[test]
+fn closure_basic_capture_runs() {
+    // |y| x + y captures x from the surrounding fn. f(3) with x=5 returns 8.
+    let v = run_file("tests/scripts/closure_basic.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(8));
+}
+
+#[test]
+fn closure_multiple_captures_runs() {
+    // Captures a and b at env slots 0 and 1; f(3) returns 1 + 2 + 3 = 6.
+    let v = run_file("tests/scripts/closure_multiple_captures.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(6));
+}
+
+#[test]
+fn closure_no_capture_runs() {
+    // Closure with empty environment still pack-allocs (n=1 sentinel slot)
+    // and is called via the same direct-call path. f(7) returns 14.
+    let v = run_file("tests/scripts/closure_no_capture.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(14));
+}
+
+#[test]
 fn generic_inference_specializes_per_call_site() {
     let v = run_file("tests/scripts/generic_inference.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));

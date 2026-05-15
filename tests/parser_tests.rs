@@ -1400,3 +1400,35 @@ fn test_array_list_trailing_comma() {
         assert_eq!(items.len(), 3);
     } else { panic!("expected Array"); }
 }
+
+// ===== closures =====
+
+#[test]
+fn test_closure_implicit_borrow_default() {
+    let mut p = Parser::new(Lexer::new("|x| x + 1"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Closure { is_move, params, .. } = expr.node {
+        assert!(!is_move, "default closure must have is_move = false");
+        assert_eq!(params.len(), 1);
+    } else { panic!("expected Closure, got {:?}", expr.node); }
+}
+
+#[test]
+fn test_closure_move_keyword_sets_is_move() {
+    let mut p = Parser::new(Lexer::new("move |x| x + 1"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Closure { is_move, .. } = expr.node {
+        assert!(is_move, "`move |...|` must set is_move = true");
+    } else { panic!("expected Closure, got {:?}", expr.node); }
+}
+
+#[test]
+fn test_closure_with_typed_params() {
+    let mut p = Parser::new(Lexer::new("|x: Int, y: Int| x + y"));
+    let expr = p.parse_expr(Precedence::Lowest);
+    if let Expr::Closure { params, .. } = expr.node {
+        assert_eq!(params.len(), 2);
+        assert!(params[0].ty.is_some());
+        assert!(params[1].ty.is_some());
+    } else { panic!("expected Closure"); }
+}

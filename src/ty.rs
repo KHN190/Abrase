@@ -68,7 +68,11 @@ impl Type {
             }
             Type::Function { .. } => Ownership::Copy,
             Type::Named(name) if name == "Share" => Ownership::Copy,
-            Type::Named(_) | Type::Unknown => Ownership::Move,
+            Type::Named(_) => Ownership::Move,
+            // Conservative for unknown: treat as Copy so reads don't spuriously
+            // mark bindings as moved before inference completes (e.g. a closure
+            // param without a type annotation, used twice in its body).
+            Type::Unknown => Ownership::Copy,
         }
     }
 }
