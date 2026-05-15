@@ -100,6 +100,19 @@ Same shape as FileSystem: stateful handles, byte-stream I/O. Hosts may map this 
 | `0x01` | in | One random 64-bit word. |
 | `0x02` | out | Seed the generator with the written value. Hosts using a non-deterministic source may ignore. |
 
-## 17.9 Reserved (`0x80`–`0xFF`)
+## 17.9 Dispatch (`0xE0`)
 
-These device IDs are not assigned. Hosts may use them for experimental devices, but modules using IDs in this range are non-portable. When a new standard device lands, it takes the lowest unassigned ID in the `0x80`–`0xFF` range.
+The bridge between bytecode and the VM's handler stack. Used by compiler-generated dispatch thunks; user code never writes to these ports directly.
+
+| Port | Direction | Semantics |
+|---|---|---|
+| `0x00` | out | Write `(effect_id << 8) \| op_id`. Asks the VM to resolve the topmost handler matching `effect_id` and look up `op_id` in its dispatch table. |
+| `0x00` | in | After a `0x00` write, reading returns the arm function id (16-bit). If no matching handler is on the stack, the read returns `0xFFFF` and the host should trap; the typechecker rules this out in well-formed programs. |
+
+The VM provides this device unconditionally; modules using effects implicitly require it.
+
+Coroutines, schedulers, and other concurrency abstractions are built on top of this device by host-defined effect handlers — the bytecode itself has no concurrency primitives (no `spawn` / `join` / `yield`). A host that wants cooperative tasks declares a `scheduler` effect and implements its handler arms using the continuation-cell protocol of bytecode §3.9.
+
+## 17.10 Reserved
+
+Device IDs not listed above (`0x80`–`0xDF`, `0xE1`–`0xFF`) are not assigned. Hosts may use them for experimental devices, but modules using IDs in this range are non-portable. When a new standard device lands, it takes the lowest unassigned ID.

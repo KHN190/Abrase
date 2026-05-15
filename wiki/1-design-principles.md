@@ -40,5 +40,5 @@ Runtime cares:
 * arithmetic, 
 * control flow, 
 * device I/O, 
-* coroutines.
+* effect handlers (handle, resume, continuation cells).
 

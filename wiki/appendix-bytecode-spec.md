@@ -1,33 +1,23 @@
 # Appendix B: Bytecode Specification
 
-Bytecode never changes over the language iteration. We implement a host so it can run the dumped bytecode on different platforms, and we use a compiler to produce this product.
-
-Since the design is only 40 instructions, thus the VM does not know about types or data structures, only primitive integers and basic operations. A VM does not check, it only executes. We keep it simple to export to different platform implementations.
-
-But the compiler thus needs 2 passes — one yields high level representation (HIR), which contains tags, types, data structure tags, etc. Another lowers them to basic integers that the VM can directly execute.
-
-* The VM knows: registers, control flow, memory, two ports.
-* The compiler knows: types, layouts, devices, lowering.
-* The host knows: actual I/O.
-
-Below is the definition.
+This specification defines the bytecode structure. The VM only handles registers, control flow, memory, and device ports; it is entirely unaware of types or data structures. High-level semantics are lowered by the compiler.
 
 ## 1. Instruction Encoding
 
-Every instruction is 4 bytes, laid out in one of three forms:
+Every instruction is exactly 4 bytes, using one of three layouts:
 
 ```h
 3-register form:    [op:8] [r_a:8] [r_b:8] [r_c:8]
-reg + imm16:        [op:8] [r_a:8] [imm:16  little-endian]
-imm16 only:         [op:8] [pad:8] [imm:16  little-endian]
+reg + imm16:        [op:8] [r_a:8] [imm:16]
+imm16 only:         [op:8] [pad:8] [imm:16]
 ```
 
-Values that don't fit in 16 bits — full 64-bit integers, f64 literals, interned strings — go in the module's _constant pool_ and are loaded with `pushconst r_a, pool_idx`. The pool holds up to 65 536 entries; each entry is 64 bits.
+Values exceeding 16 bits (64-bit ints, floats, strings) live in the module's constant pool (up to 65,536 entries, 64-bit each) and are loaded via pushconst.
 
 ## 2. Register Model
 
-* **Per-frame**: 256 registers (`r0`–`r255`), each 64 bits.
-* **Frame stack**: each function call opens a new register window. The VM maintains a window stack and a return-address stack.
+* Per-frame: 256 registers (r0–r255), 64 bits each.
+* Frame stack: Every function call opens a new register window. The VM tracks the window base and return addresses internally.
 
 ## 3. Instruction Set
 
@@ -84,9 +74,7 @@ Shift count is taken modulo 64.
 | `0x19` | `call r_a, fn_id` | reg + imm16 | open new frame for `fn_id`; on return, write result to caller's `r_a` |
 | `0x1a` | `ret r_a` | 3-reg (`r_b`, `r_c` unused) | return value `r_a` to the caller's frame |
 
-Jump offsets are in **instruction units** (each instruction is 4 bytes), signed 16-bit: ±32 768 instructions ≈ ±128 KB of code per function. Functions that need farther jumps must be split.
-
-Functions are identified by a 16-bit id from the module's function table (up to 65 536 functions per module). Argument count is fixed by the function table; `call` does not encode it. See §5 for the calling convention.
+Jump offsets have each instruction 4 bytes, signed 16-bit. Functions that need farther jumps must be split. Functions are identified by a 16-bit id from the module's function table.
 
 ### 3.5 Data Movement — 3 opcodes (`0x1b`–`0x1d`)
 
@@ -95,8 +83,6 @@ Functions are identified by a 16-bit id from the module's function table (up to 
 | `0x1b` | `pushconst r_a, pool_idx` | reg + imm16 | `r_a := constants[pool_idx]` |
 | `0x1c` | `copy r_a, r_b` | 3-reg | `r_a := r_b`; both registers remain live |
 | `0x1d` | `move r_a, r_b` | 3-reg | `r_a := r_b`; `r_b` becomes empty (ownership transfer) |
-
-All literal values — integers larger than 16 bits, floats, interned strings — enter the program through `pushconst`. The compiler manages the pool.
 
 ### 3.6 Memory — 6 opcodes (`0x1e`–`0x23`)
 
@@ -108,8 +94,6 @@ All literal values — integers larger than 16 bits, floats, interned strings �
 | `0x21` | `stidx r_a, r_b, r_c` | 3-reg | `heap[r_b + r_c] := r_a` (dynamic offset) |
 | `0x22` | `lea r_a, r_b, offset` | reg + imm16 | `r_a := r_b + offset` (compute address, no load) |
 | `0x23` | `ref r_a, r_b` | 3-reg | allocate a 1-slot heap object, store `r_b` in it, return pointer in `r_a` |
-
-`ld` and `st` carry a 16-bit constant offset (record fields, fixed array slots). `ldidx` and `stidx` use a register offset (dynamic indexing, array access). `lea` computes an address without loading; the compiler uses it for nested-record fields and slice operations.
 
 Offsets are in 64-bit slot units, not bytes.
 
@@ -123,7 +107,7 @@ Offsets are in 64-bit slot units, not bytes.
 
 `alloc` size is in 64-bit slots. The maximum single allocation is 65 535 slots ≈ 512 KB; larger objects must be chunked.
 
-The compiler emits `drop` and `free` at scope boundaries. Reference counting (for `Shared<T>`) is synthesized by the compiler — allocate one extra slot for the rc cell, inline atomic-ish increments/decrements — and needs no dedicated opcode.
+Reference counting is synthesized by the compiler and needs no dedicated opcode.
 
 ### 3.8 Host I/O — 2 opcodes (`0x27`–`0x28`)
 
@@ -132,7 +116,7 @@ The compiler emits `drop` and `free` at scope boundaries. Reference counting (fo
 | `0x27` | `dei r_a, r_b` | 3-reg (`r_c` unused) | `r_a := device_read(port = low16(r_b))` |
 | `0x28` | `deo r_a, r_b` | 3-reg (`r_c` unused) | `device_write(port = low16(r_b), value = r_a)` |
 
-A **port** is a 16-bit address: the high byte names the device (`0x00`–`0xFF`, 256 devices), the low byte names a port within the device (`0x00`–`0xFF`, 256 ports per device). The standard device catalog fixes the semantics of every standard port; the VM itself has no opinion about what any device does.
+A **port** is a 16-bit address defined in _Appendix C: Device Catalog_.
 
 | Device ID | Device | Examples |
 |---|---|---|
@@ -144,49 +128,38 @@ A **port** is a 16-bit address: the high byte names the device (`0x00`–`0xFF`,
 | `0x50` | Network | connect, send, recv |
 | `0x60` | Clock | now, monotonic, sleep |
 | `0x70` | RandomSource | entropy |
-| `0x80`–`0xFF` | Reserved / experimental | — |
+| `0xE0` | Dispatch | handler-stack lookup for generic effect-op call sites |
+| `0x80`–`0xDF`, `0xE1`–`0xFF` | Reserved / experimental | — |
 
-A module declares the device IDs it requires in its header (§6). The loader rejects modules whose devices the host does not provide; stub implementations are forbidden.
+A module declares the device IDs it requires in its header (§6). The loader rejects modules whose devices the host does not provide.
 
 Host-defined functions are device ports: write arguments to argument ports, write a command index to a trigger port, read the result port. The compiler hides this protocol behind language-level call syntax.
 
-### 3.9 Coroutine — 3 opcodes (`0x29`–`0x2b`)
+### 3.9 Effect Handlers — 2 opcodes (`0x29`–`0x2a`)
 
 | Op | Mnemonic | Form | Semantics |
 |---|---|---|---|
-| `0x29` | `spawn r_a, fn_id` | reg + imm16 | spawn a coroutine running `fn_id`; handle in `r_a` |
-| `0x2a` | `join r_a` | 3-reg (`r_b`, `r_c` unused) | suspend until the coroutine handle in `r_a` completes |
-| `0x2b` | `yield` | imm16 only (unused) | voluntarily yield to the scheduler |
+| `0x29` | `handle r_a, effect_id` | reg + imm16 | push a handler frame for `effect_id` with dispatch table pointer in `r_a` |
+| `0x2a` | `resume r_a` | 3-reg (`r_b`, `r_c` unused) | resume the implicit continuation cell with value in `r_a` |
 
-These are runtime primitives the host scheduler uses when implementing a suspending effect handler. The compiler emits these opcodes only when lowering a handler the host has registered as a suspending one.
+* Handler Frame (VM): `{ effect_id, dispatch_table_ptr, saved_pc, saved_base }`
+* Dispatch Table (Pool): Array of function IDs (return arm at index 0, followed by op arms).
+* Continuation Cell (Heap): 4-slot object `[suspend_pc, suspend_base, dest_reg, alive]`. Created by compiler thunks using device `0xE0`, passed to the arm function, and kept alive for multi-shot resumes.
 
-Scheduling is cooperative. Suspension happens only at these opcodes (and at `resume` re-entry from §3.10). No preemption, no locks, no atomics.
+### 3.10 Opcode Summary
 
-### 3.10 Effect Handlers — 2 opcodes (`0x2c`–`0x2d`)
+Total: **37 opcodes** (`0x00`–`0x2a`). Slots `0x2b`–`0xFF` are reserved for compatible extension.
 
-| Op | Mnemonic | Form | Semantics |
-|---|---|---|---|
-| `0x2c` | `handle r_a, effect_id` | reg + imm16 | enter an effect handler frame for `effect_id`; dispatch table pointer in `r_a` |
-| `0x2d` | `resume r_a` | 3-reg (`r_b`, `r_c` unused) | resume a captured continuation in `r_a` |
-
-These are the lowering targets for the language's effect system. Exceptions are lowered to a single effect (`exn`); user-defined effects use `handle` with a custom dispatch table built at compile time. A handler whose body uses §3.9 opcodes is a suspending handler — that is how the host implements scheduler-like behavior without the language naming it.
-
-### 3.11 Opcode Summary
-
-Total: **40 opcodes** (`0x00`–`0x2d`). Slots `0x2e`–`0xFF` are reserved for compatible extension.
-
-## 5. Calling Convention
+## 4. Calling Convention
 
 When `call r_a, fn_id` executes:
 
 1. The VM looks up `fn_id` in the module's function table to find `(reg_count, param_count, code_offset)`.
 2. A new register window opens at `base += previous_reg_count`.
-3. The callee sees its parameters in `r0`–`r(param_count − 1)` of the new window. **The caller is responsible for arranging arguments there before the `call` instruction.** Typically the compiler emits a sequence of `copy` instructions targeting the upcoming window.
-4. When the callee executes `ret r_x`, the VM writes the value of `r_x` (in the callee's window) to `r_a` in the caller's window, and pops the frame.
+3. Caller must arrange arguments in the new window's `r0–r(param_count - 1)`before calling.
+4. On ret `r_x`, the VM writes `r_x` to the caller's target register and pops the frame.
 
-There is no explicit "argument count" operand. Function arity is fixed by the function table.
-
-## 6. Module Format (`.ecm`)
+## 5. Module Format (`.ecm`)
 
 All multi-byte integers are little-endian.
 
@@ -230,14 +203,9 @@ The `device_mask` is the contract between module and host. If a module sets bit 
 
 This is version **1.0-experimental**.
 
-While `1.x`:
-
 - New opcodes may be assigned in the reserved range (`0x2e`–`0xFF`).
 - New devices may be added to the catalog.
-- New optional sections may be appended to the module format.
-- **No existing instruction semantics change.** No existing device port meaning changes. No existing field layout changes.
-
-A `2.0` would be the first version permitted to break compatibility, and would require a new magic number.
+- No existing instruction semantics change. No existing device port meaning changes. No existing field layout changes.
 
 ## 8. Example
 
