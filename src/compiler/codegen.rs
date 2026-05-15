@@ -24,6 +24,7 @@ impl Compiler {
 
     pub(super) fn compile_expr(&mut self, expr: &ast::Spanned<ast::Expr>) -> Result<Register, String> {
         match &expr.node {
+            ast::Expr::Error => Err("Compilation aborted: parser error was not recovered; fix parser errors first".to_string()),
             ast::Expr::Literal(lit) => {
                 let reg = self.alloc_register()?;
                 let val = match lit {

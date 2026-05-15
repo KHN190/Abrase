@@ -124,6 +124,11 @@ impl VirtualMachine {
     }
 
     pub fn run_module(&mut self, module: &Module) -> Result<Value, String> {
+        let r = self.run_module_inner(module);
+        r.map_err(|e| format!("[fn {} pc {}] {}", self.current_func, self.pc, e))
+    }
+
+    fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
         self.pc = 0;
         self.base_reg = 0;
         self.current_func = module.entry;

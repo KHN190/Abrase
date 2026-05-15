@@ -92,10 +92,34 @@ impl<'a> Parser<'a> {
                 return;
             }
             match self.peek_token {
-                Token::Fn | Token::Let | Token::If | Token::Return => return,
+                Token::Fn | Token::Let | Token::If | Token::Return
+                | Token::Match | Token::While | Token::For | Token::Loop
+                | Token::Type | Token::Trait | Token::Impl | Token::Const
+                | Token::Import | Token::Effect | Token::Pub => return,
                 _ => self.next_token(),
             }
         }
+    }
+
+    fn prefix_to_expr_or_err(&mut self, r: Result<Expr, String>, span: Span) -> Option<Spanned<Expr>> {
+        match r {
+            Ok(e) => Some(Spanned { node: e, span }),
+            Err(msg) => {
+                self.report_error(msg, span);
+                Some(Spanned { node: Expr::Error, span })
+            }
+        }
+    }
+
+    fn is_stmt_start(tok: &Token) -> bool {
+        matches!(tok,
+            Token::Let | Token::Return | Token::If | Token::Match
+            | Token::While | Token::For | Token::Loop | Token::Break
+            | Token::Continue | Token::Throw | Token::LBrace
+            | Token::Ident(_) | Token::Int(_) | Token::Float(_)
+            | Token::String(_) | Token::True | Token::False
+            | Token::Bang | Token::Minus | Token::Ampersand | Token::LParen
+        )
     }
 
     fn expect_peek(&mut self, token: Token) -> bool {
@@ -787,15 +811,15 @@ impl<'a> Parser<'a> {
                 Expr::Unary { op, right: Box::new(right) }
             }
             Token::LBrace => self.parse_block_expr(),
-            Token::If => return self.parse_if_expr().ok().map(|e| Spanned { node: e, span }),
-            Token::Match => return self.parse_match_expr().ok().map(|e| Spanned { node: e, span }),
-            Token::For => return self.parse_for_expr().ok().map(|e| Spanned { node: e, span }),
-            Token::While => return self.parse_while_expr().ok().map(|e| Spanned { node: e, span }),
-            Token::Loop => return self.parse_loop_expr().ok().map(|e| Spanned { node: e, span }),
-            Token::Pipe => return self.parse_closure_expr().ok().map(|e| Spanned { node: e, span }),
-            Token::Scope => return self.parse_scope_expr().ok().map(|e| Spanned { node: e, span }),
-            Token::Region => return self.parse_region_expr().ok().map(|e| Spanned { node: e, span }),
-            Token::Handle => return self.parse_handle_expr().ok().map(|e| Spanned { node: e, span }),
+            Token::If => { let r = self.parse_if_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::Match => { let r = self.parse_match_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::For => { let r = self.parse_for_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::While => { let r = self.parse_while_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::Loop => { let r = self.parse_loop_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::Pipe => { let r = self.parse_closure_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::Scope => { let r = self.parse_scope_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::Region => { let r = self.parse_region_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::Handle => { let r = self.parse_handle_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Break => {
                 self.next_token();
                 let val = if self.current_token != Token::Semicolon && self.current_token != Token::RBrace && self.current_token != Token::Eof {
@@ -1233,34 +1257,53 @@ impl<'a> Parser<'a> {
         self.next_token(); // consume '{'
 
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
-            match self.parse_stmt() {
-                Ok(stmt) => stmts.push(stmt),
-                Err(_) => {
-                    self.synchronize();
+            let was_block = match self.parse_stmt() {
+                Ok(stmt) => {
+                    let block = matches!(&stmt.node, Stmt::Expr(e) if is_block_terminated(&e.node));
+                    stmts.push(stmt);
+                    block
+                }
+                Err(_) => { self.synchronize(); continue; }
+            };
+
+            if !was_block && self.current_token != Token::Semicolon {
+                if self.peek_token == Token::Semicolon {
+                    self.next_token();
+                    self.next_token();
+                } else if self.peek_token == Token::RBrace || self.peek_token == Token::Eof {
+                    self.next_token();
+                } else if Self::is_stmt_start(&self.peek_token) {
+                    let peek_span = self.peek_span;
+                    self.report_error(
+                        "Expected ';' or newline between statements".into(),
+                        peek_span,
+                    );
+                    self.next_token();
+                } else {
+                    self.next_token();
                 }
             }
-            if self.current_token != Token::RBrace && self.current_token != Token::Eof {
-                // Check if the next token looks like it's starting a new statement without proper separator
-                if self.peek_token != Token::Semicolon &&
-                   self.peek_token != Token::RBrace &&
-                   self.peek_token != Token::Eof &&
-                   !matches!(self.peek_token, Token::Else | Token::In | Token::Comma | Token::FatArrow) {
-                    // Check if current is a value-producing token and peek is also a statement start
-                    if matches!(self.current_token, Token::Int(_) | Token::Float(_) | Token::String(_) | Token::RParen | Token::RBracket) &&
-                       matches!(self.peek_token, Token::Int(_) | Token::Float(_) | Token::String(_) | Token::Ident(_) | Token::True | Token::False) {
-                        self.report_error("Expected separator (';') between statements".into(), self.peek_span);
-                    }
-                }
+
+            while self.current_token == Token::Semicolon {
                 self.next_token();
+            }
+
+            if self.current_token != Token::RBrace
+                && self.current_token != Token::Eof
+                && !Self::is_stmt_start(&self.current_token)
+            {
+                let tok = self.current_token.clone();
+                self.report_error(
+                    format!("Unexpected token {:?}; expected ';', '}}', or statement", tok),
+                    self.current_span,
+                );
+                self.synchronize();
             }
         }
 
-        // Check for unclosed block
         if self.current_token == Token::Eof {
             self.report_error("Expected '}' in block".into(), self.current_span);
         }
-
-        // Consume the closing '}'
         if self.current_token == Token::RBrace {
             self.next_token();
         }
