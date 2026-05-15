@@ -1,10 +1,10 @@
-// Shared helpers for compiler codegen tests
+#![allow(dead_code)]
+
 pub use abrase::ast::*;
 pub use abrase::compiler::Compiler;
 pub use abrase::lexer::Lexer;
 pub use abrase::parser::Parser;
 pub use abrase::vm::{Value, VirtualMachine};
-pub use abrase::lexer::Token;
 
 pub fn compile_and_run(ast: &[Decl]) -> Result<Value, String> {
     let mut compiler = Compiler::new();

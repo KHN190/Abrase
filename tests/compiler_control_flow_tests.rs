@@ -2,7 +2,6 @@
 mod compiler_codegen_common;
 
 use compiler_codegen_common::*;
-use abrase::ast::*;
 use abrase::vm::Value;
 
 #[test]
