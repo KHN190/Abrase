@@ -1,5 +1,7 @@
 # Appendix A: Complete Example
 
+For other examples, see provided [scripts](../tests/scripts/).
+
 ```rust
 mod example.notes
 
