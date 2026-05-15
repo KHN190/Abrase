@@ -7,6 +7,7 @@ pub mod effects;
 
 use crate::ast;
 use crate::bytecode::{Chunk, OpCode, Register, Module};
+use crate::error::{Error, ErrorCode};
 use crate::vm::Value;
 use std::collections::HashMap;
 
@@ -17,6 +18,8 @@ pub struct Compiler {
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) func_map: HashMap<String, usize>,
     pub(super) functions: Vec<Chunk>,
+    pub errors: Vec<Error>,
+    pub source: String,
 }
 
 impl Compiler {
@@ -28,7 +31,22 @@ impl Compiler {
             var_to_reg: HashMap::new(),
             func_map: HashMap::new(),
             functions: Vec::new(),
+            errors: Vec::new(),
+            source: String::new(),
         }
+    }
+
+    pub fn with_source(mut self, source: String) -> Self {
+        self.source = source;
+        self
+    }
+
+    pub fn pretty_print_errors(&self) -> String {
+        self.errors
+            .iter()
+            .map(|e| e.pretty_print(&self.source))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn compile(&mut self, ast: &[ast::Decl]) -> Result<Chunk, String> {
@@ -47,7 +65,7 @@ impl Compiler {
         })
     }
 
-    pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, String> {
+    pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
         let mut fn_decls = Vec::new();
 
         for decl in ast {
@@ -63,8 +81,17 @@ impl Compiler {
             }
         }
 
-        let entry = self.func_map.get("main").copied()
-            .ok_or("No main function found")?;
+        let entry = match self.func_map.get("main").copied() {
+            Some(idx) => idx,
+            None => {
+                self.errors.push(Error::new(
+                    ErrorCode::CodegenError,
+                    ast::Span::new(0, 0),
+                    "No main function found",
+                ));
+                return Err(self.errors.clone());
+            }
+        };
 
         for (idx, fn_decl) in fn_decls {
             let chunk = self.compile_fn(&fn_decl)?;
@@ -77,7 +104,7 @@ impl Compiler {
         })
     }
 
-    fn compile_fn(&mut self, fn_decl: &ast::FnDecl) -> Result<Chunk, String> {
+    fn compile_fn(&mut self, fn_decl: &ast::FnDecl) -> Result<Chunk, Vec<Error>> {
         let saved_code = std::mem::take(&mut self.code);
         let saved_constants = std::mem::take(&mut self.constants);
         let saved_next_reg = self.next_reg;
@@ -88,14 +115,34 @@ impl Compiler {
         for param in &fn_decl.params {
             if let ast::Param::Named { pattern, .. } = param {
                 if let ast::Pattern::Bind(name) = &pattern.node {
-                    let reg = self.alloc_register()?;
-                    self.var_to_reg.insert(name.clone(), reg);
+                    match self.alloc_register() {
+                        Ok(reg) => {
+                            self.var_to_reg.insert(name.clone(), reg);
+                        }
+                        Err(_) => {
+                            self.errors.push(Error::new(
+                                ErrorCode::CodegenError,
+                                pattern.span,
+                                format!("Failed to allocate register for parameter '{}'", name),
+                            ));
+                        }
+                    }
                 }
             }
         }
 
-        let result_reg = self.compile_block(&fn_decl.body)?;
-        self.emit(OpCode::Ret(result_reg));
+        if !self.errors.is_empty() {
+            return Err(self.errors.clone());
+        }
+
+        match self.compile_block(&fn_decl.body) {
+            Ok(result_reg) => {
+                self.emit(OpCode::Ret(result_reg));
+            }
+            Err(_) => {
+                return Err(self.errors.clone());
+            }
+        }
 
         let reg_count = self.next_reg as usize;
         let chunk = Chunk {

@@ -82,7 +82,7 @@ fn run_parser() {
 }
 
 fn parse_show(label: &str, input: &str) {
-    let mut parser = Parser::new(Lexer::new(input));
+    let mut parser = Parser::new(Lexer::new(input)).with_source(input.to_string());
     let decls = parser.parse_program();
     print!("\n[{}]", label);
     if parser.errors.is_empty() {
@@ -92,9 +92,7 @@ fn parse_show(label: &str, input: &str) {
         }
     } else {
         println!(" ✗  ({} error(s))", parser.errors.len());
-        for e in &parser.errors {
-            println!("  [{}:{}] {}", e.span.line, e.span.col, e.message);
-        }
+        println!("{}", parser.pretty_print_errors());
     }
 }
 

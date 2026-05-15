@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::error::{Error, ErrorCode};
 use crate::lexer::{Lexer, Token};
 
 #[derive(PartialOrd, PartialEq, Clone, Copy)]
@@ -33,32 +34,42 @@ impl Token {
     }
 }
 
-pub struct ParseError {
-    pub message: String,
-    pub span: Span,
-}
-
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current_token: Token,
     current_span: Span,
     peek_token: Token,
     peek_span: Span,
-    pub errors: Vec<ParseError>,
+    pub errors: Vec<Error>,
+    pub source: String,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(mut lexer: Lexer<'a>) -> Self {
         let (cur_tok, cur_span) = lexer.next_token();
         let (peek_tok, peek_span) = lexer.next_token();
-        Self { 
-            lexer, 
-            current_token: cur_tok, 
+        Self {
+            lexer,
+            current_token: cur_tok,
             current_span: cur_span,
-            peek_token: peek_tok, 
+            peek_token: peek_tok,
             peek_span,
-            errors: Vec::new() 
+            errors: Vec::new(),
+            source: String::new(),
         }
+    }
+
+    pub fn with_source(mut self, source: String) -> Self {
+        self.source = source;
+        self
+    }
+
+    pub fn pretty_print_errors(&self) -> String {
+        self.errors
+            .iter()
+            .map(|e| e.pretty_print(&self.source))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn next_token(&mut self) {
@@ -70,7 +81,7 @@ impl<'a> Parser<'a> {
     }
 
     fn report_error(&mut self, message: String, span: Span) {
-        self.errors.push(ParseError { message, span });
+        self.errors.push(Error::new(ErrorCode::ParseError, span, message));
     }
 
     fn synchronize(&mut self) {

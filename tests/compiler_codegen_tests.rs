@@ -12,7 +12,12 @@ fn compile_and_run(ast: &[Decl]) -> Result<Value, String> {
 
 fn compile_module_and_run(ast: &[Decl]) -> Result<Value, String> {
     let mut compiler = Compiler::new();
-    let module = compiler.compile_module(ast)?;
+    let module = compiler.compile_module(ast).map_err(|errs| {
+        errs.iter()
+            .map(|e| format!("{:?} at {}:{}: {}", e.code, e.span.line, e.span.col, e.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
     let mut vm = VirtualMachine::new();
     vm.run_module(&module)
 }

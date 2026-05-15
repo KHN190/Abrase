@@ -9,24 +9,20 @@ fn compile_and_run_file(path: &str) -> Result<Value, String> {
     let source = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
-    let mut parser = Parser::new(Lexer::new(&source));
+    let mut parser = Parser::new(Lexer::new(&source)).with_source(source.clone());
     let ast = parser.parse_program();
 
     if !parser.errors.is_empty() {
-        let errors = parser.errors.iter()
-            .map(|e| format!("{:?}", e.message))
-            .collect::<Vec<_>>()
-            .join("; ");
-        return Err(format!("Parser error: {}", errors));
+        return Err(format!("Parser errors:\n{}", parser.pretty_print_errors()));
     }
 
     if ast.is_empty() {
         return Err("Parser produced empty AST".to_string());
     }
 
-    let mut compiler = Compiler::new();
+    let mut compiler = Compiler::new().with_source(source);
     let module = compiler.compile_module(&ast)
-        .map_err(|e| format!("Compiler error: {}", e))?;
+        .map_err(|_| compiler.pretty_print_errors())?;
 
     let mut vm = VirtualMachine::new();
     vm.run_module(&module)
