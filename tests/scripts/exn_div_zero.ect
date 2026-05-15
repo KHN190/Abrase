@@ -1,0 +1,11 @@
+fn div(a: Int, b: Int) -> <exn> Int {
+  if b == 0 { throw 99 } else { a / b }
+}
+
+fn main() -> Int {
+  match div(10, 0) {
+    Ok(_) => 0
+    Err(code) => code
+    _ => -1
+  }
+}

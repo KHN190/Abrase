@@ -120,9 +120,13 @@ impl Checker {
                 let cons_ty = self.infer_expr(consequence);
                 if let Some(alt) = alternative {
                     let alt_ty = self.infer_expr(alt);
-                    if cons_ty != alt_ty && cons_ty != Type::Unknown && alt_ty != Type::Unknown {
+                    let compatible = cons_ty == alt_ty
+                        || cons_ty == Type::Unknown || alt_ty == Type::Unknown
+                        || cons_ty == Type::Never || alt_ty == Type::Never;
+                    if !compatible {
                         self.report_error("If branch types do not match".into(), alt.span);
                     }
+                    if cons_ty == Type::Never { return alt_ty; }
                 }
                 cons_ty
             }
@@ -464,16 +468,16 @@ impl Checker {
             }
             ast::Expr::Question(inner) => {
                 let inner_ty = self.infer_expr(inner);
+                let in_exn_fn = self.fn_declared_effects.iter()
+                    .any(|e| matches!(e, crate::ty::Effect::Exn(_)));
                 match &inner_ty {
                     Type::Generic { name, args } if name == "Result" => {
-                        // Result<T, E>? propagates exn<E> and unwraps T
                         let ok_ty = args.first().cloned().unwrap_or(Type::Unknown);
                         let err_ty = args.get(1).cloned().unwrap_or(Type::Unknown);
                         self.add_required_effect(crate::ty::Effect::Exn(Box::new(err_ty)));
                         ok_ty
                     }
                     Type::Generic { name, args } if name == "Option" => {
-                        // Option<T>? propagates exn and unwraps T
                         let inner_t = args.first().cloned().unwrap_or(Type::Unknown);
                         self.add_required_effect(crate::ty::Effect::Exn(
                             Box::new(Type::Named("NoneError".into()))
@@ -481,6 +485,7 @@ impl Checker {
                         inner_t
                     }
                     Type::Unknown => Type::Unknown,
+                    _ if in_exn_fn => inner_ty.clone(),
                     _ => {
                         self.report_error(
                             format!("'?' operator requires Result<T,E> or Option<T>, got {:?}", inner_ty),

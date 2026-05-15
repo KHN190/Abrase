@@ -1,4 +1,5 @@
 use super::*;
+use super::effects;
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::vm::Value;
@@ -44,6 +45,25 @@ impl Compiler {
             self.code[branch_pc] = OpCode::Jmp(off);
         }
         Ok(())
+    }
+
+    pub(super) fn wrap_ok(&mut self, value: Register) -> Result<Register, String> {
+        self.wrap_result(value, effects::OK_TAG)
+    }
+
+    pub(super) fn wrap_err(&mut self, value: Register) -> Result<Register, String> {
+        self.wrap_result(value, effects::ERR_TAG)
+    }
+
+    fn wrap_result(&mut self, value: Register, tag: u32) -> Result<Register, String> {
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Alloc(dest, 2));
+        let tag_reg = self.alloc_register()?;
+        let idx = self.add_constant(Value::Int(tag as i64))?;
+        self.emit(OpCode::PushConst(tag_reg, idx));
+        self.emit(OpCode::St(tag_reg, dest, 0));
+        self.emit(OpCode::St(value, dest, 1));
+        Ok(dest)
     }
 
     pub(super) fn compile_expr(&mut self, expr: &ast::Spanned<ast::Expr>) -> Result<Register, String> {
@@ -416,8 +436,41 @@ impl Compiler {
                     self.emit(OpCode::PushConst(reg, idx));
                     reg
                 };
-                self.emit(OpCode::Ret(r));
+                let ret_reg = if self.current_fn_fallible { self.wrap_ok(r)? } else { r };
+                self.emit(OpCode::Ret(ret_reg));
                 Ok(r)
+            }
+
+            ast::Expr::Throw(inner) => {
+                if !self.current_fn_fallible {
+                    return Err("`throw` outside <exn> function".to_string());
+                }
+                let err_val = self.compile_expr(inner)?;
+                let wrapped = self.wrap_err(err_val)?;
+                self.emit(OpCode::Ret(wrapped));
+                Ok(wrapped)
+            }
+
+            ast::Expr::Question(inner) => {
+                if !self.current_fn_fallible {
+                    return Err("`?` outside <exn> function".to_string());
+                }
+                let res = self.compile_expr(inner)?;
+                let tag = self.alloc_register()?;
+                self.emit(OpCode::Ld(tag, res, 0));
+                let err_tag = self.alloc_register()?;
+                let idx = self.add_constant(Value::Int(effects::ERR_TAG as i64))?;
+                self.emit(OpCode::PushConst(err_tag, idx));
+                let is_err = self.alloc_register()?;
+                self.emit(OpCode::Eq(is_err, tag, err_tag));
+                let jz_idx = self.code.len();
+                self.emit(OpCode::Jz(is_err, 0));
+                self.emit(OpCode::Ret(res));
+                let after = self.code.len();
+                self.patch_jz_at(jz_idx, after)?;
+                let val = self.alloc_register()?;
+                self.emit(OpCode::Ld(val, res, 1));
+                Ok(val)
             }
 
             ast::Expr::Record { ty, fields } => {

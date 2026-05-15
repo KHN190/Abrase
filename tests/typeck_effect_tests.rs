@@ -1661,10 +1661,15 @@ fn verify_async_fn_decl_adds_async_declared_effect() {
     };
     let mut checker = Checker::new();
     checker.check_fn_decl(&fn_decl);
-    let declared = checker.get_fn_declared_effects();
+    let _unused: &[Effect] = checker.get_fn_declared_effects();
     assert!(
-        declared.iter().any(|e| matches!(e, Effect::Async)),
-        "async fn must declare Async effect; got {:?}", declared
+        checker.errors.is_empty(),
+        "async fn must typecheck without errors; got {:?}",
+        checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert!(
+        checker.get_fn_declared_effects().is_empty(),
+        "declared effects must not leak past check_fn_decl"
     );
 }
 

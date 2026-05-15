@@ -23,6 +23,7 @@ pub struct Compiler {
     pub(super) functions: Vec<Chunk>,
     pub(super) layouts: LayoutCtx,
     pub(super) pending_arg_patches: Vec<(usize, u8)>,
+    pub(super) current_fn_fallible: bool,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -37,8 +38,13 @@ impl Compiler {
             var_types: HashMap::new(),
             func_map: HashMap::new(),
             functions: Vec::new(),
-            layouts: LayoutCtx::new(),
+            layouts: {
+                let mut l = LayoutCtx::new();
+                effects::install_result_variant(&mut l);
+                l
+            },
             pending_arg_patches: Vec::new(),
+            current_fn_fallible: false,
             errors: Vec::new(),
             source: String::new(),
         }
@@ -126,7 +132,9 @@ impl Compiler {
         let saved_next_reg = self.next_reg;
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
+        let saved_fallible = self.current_fn_fallible;
 
+        self.current_fn_fallible = effects::fn_is_fallible(fn_decl);
         self.next_reg = 0;
 
         for param in &fn_decl.params {
@@ -157,7 +165,18 @@ impl Compiler {
 
         match self.compile_block(&fn_decl.body) {
             Ok(result_reg) => {
-                self.emit(OpCode::Ret(result_reg));
+                let ret_reg = if self.current_fn_fallible {
+                    match self.wrap_ok(result_reg) {
+                        Ok(r) => r,
+                        Err(msg) => {
+                            self.errors.push(Error::new(ErrorCode::CodegenError, ast::Span::new(0, 0), msg));
+                            return Err(self.errors.clone());
+                        }
+                    }
+                } else {
+                    result_reg
+                };
+                self.emit(OpCode::Ret(ret_reg));
             }
             Err(msg) => {
                 self.errors.push(Error::new(
@@ -191,6 +210,7 @@ impl Compiler {
         self.next_reg = saved_next_reg;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
+        self.current_fn_fallible = saved_fallible;
 
         Ok(chunk)
     }

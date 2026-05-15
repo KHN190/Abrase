@@ -30,6 +30,7 @@ impl Token {
             Token::LParen => Precedence::Call,
             Token::LBracket => Precedence::Index,
             Token::Dot => Precedence::Index,
+            Token::Question => Precedence::Index,
             _ => Precedence::Lowest,
         }
     }
@@ -1346,6 +1347,9 @@ impl<'a> Parser<'a> {
                     self.report_error("Expected field name after dot".into(), self.current_span);
                     return Spanned { node: Expr::Error, span: self.current_span };
                 }
+            }
+            Token::Question => {
+                return Spanned { node: Expr::Question(Box::new(left)), span };
             }
             _ => return Spanned { node: Expr::Error, span: self.current_span },
         };

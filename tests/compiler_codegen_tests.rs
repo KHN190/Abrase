@@ -2355,3 +2355,1135 @@ fn verify_compile_recursive_function() {
     let result = compile_module_and_run(&ast);
     assert_eq!(result, Ok(Value::Int(0)));
 }
+
+#[test]
+fn verify_compile_record_simple_construction() {
+    let ast = vec![
+        Decl::Type {
+            name: "Point".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Record(vec![
+                RecordField {
+                    is_pub: true,
+                    name: "x".to_string(),
+                    ty: Type::Named("Int".to_string()),
+                },
+                RecordField {
+                    is_pub: true,
+                    name: "y".to_string(),
+                    ty: Type::Named("Int".to_string()),
+                },
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(42)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn verify_compile_record_field_access() {
+    let ast = vec![
+        Decl::Type {
+            name: "Rect".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Record(vec![
+                RecordField {
+                    is_pub: true,
+                    name: "w".to_string(),
+                    ty: Type::Named("Int".to_string()),
+                },
+                RecordField {
+                    is_pub: true,
+                    name: "h".to_string(),
+                    ty: Type::Named("Int".to_string()),
+                },
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(7)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(7)));
+}
+
+#[test]
+fn verify_compile_variant_unit_construction() {
+    let ast = vec![
+        Decl::Type {
+            name: "Status".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Variant(vec![
+                VariantCase::Unit("Ok".to_string()),
+                VariantCase::Unit("Error".to_string()),
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(1)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(1)));
+}
+
+#[test]
+fn verify_compile_variant_tuple_construction() {
+    let ast = vec![
+        Decl::Type {
+            name: "Result".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Variant(vec![
+                VariantCase::Tuple("Some".to_string(), vec![Type::Named("Int".to_string())]),
+                VariantCase::Unit("None".to_string()),
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(99)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(99)));
+}
+
+#[test]
+fn verify_compile_variant_pattern_match_unit() {
+    let ast = vec![
+        Decl::Type {
+            name: "Bool".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Variant(vec![
+                VariantCase::Unit("True".to_string()),
+                VariantCase::Unit("False".to_string()),
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(5)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(5)));
+}
+
+#[test]
+fn verify_compile_array_literal_construction() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::Int(3)),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(3)));
+}
+
+#[test]
+fn verify_compile_array_repeat_construction() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::Int(10)),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(10)));
+}
+
+#[test]
+fn verify_compile_array_indexing_constant() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::Int(20)),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(20)));
+}
+
+#[test]
+fn verify_compile_nested_record_in_array() {
+    let ast = vec![
+        Decl::Type {
+            name: "Pos".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Record(vec![
+                RecordField {
+                    is_pub: true,
+                    name: "a".to_string(),
+                    ty: Type::Named("Int".to_string()),
+                },
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(44)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(44)));
+}
+
+#[test]
+fn verify_compile_record_with_multiple_fields() {
+    let ast = vec![
+        Decl::Type {
+            name: "Triple".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Record(vec![
+                RecordField {
+                    is_pub: true,
+                    name: "a".to_string(),
+                    ty: Type::Named("Int".to_string()),
+                },
+                RecordField {
+                    is_pub: true,
+                    name: "b".to_string(),
+                    ty: Type::Named("Int".to_string()),
+                },
+                RecordField {
+                    is_pub: true,
+                    name: "c".to_string(),
+                    ty: Type::Named("Int".to_string()),
+                },
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(777)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(777)));
+}
+
+#[test]
+fn verify_compile_variant_with_multiple_fields() {
+    let ast = vec![
+        Decl::Type {
+            name: "Triple".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Variant(vec![
+                VariantCase::Tuple(
+                    "Triple".to_string(),
+                    vec![
+                        Type::Named("Int".to_string()),
+                        Type::Named("Int".to_string()),
+                        Type::Named("Int".to_string()),
+                    ],
+                ),
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(333)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(333)));
+}
+
+#[test]
+fn verify_compile_exn_simple_ok_result() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::Int(42)),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn verify_compile_exn_function_returns_result() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "maybe_fail".to_string(),
+            generics: vec![],
+            params: vec![Param::Named {
+                pattern: Spanned {
+                    node: Pattern::Bind("x".to_string()),
+                    span: Span::new(0, 0),
+                },
+                ty: Type::Named("Int".to_string()),
+            }],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Identifier("x".to_string()),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(100)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(100)));
+}
+
+#[test]
+fn verify_compile_exn_match_ok_pattern() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::Int(50)),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(50)));
+}
+
+#[test]
+fn verify_compile_exn_match_err_pattern() {
+    let ast = vec![Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        is_async: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("Int".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::Int(75)),
+                span: Span::new(0, 0),
+            })),
+        },
+    })];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(75)));
+}
+
+#[test]
+fn verify_compile_exn_throw_integer_code() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "throws".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(999)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(77)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(77)));
+}
+
+#[test]
+fn verify_compile_exn_conditional_throw() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "safe_div".to_string(),
+            generics: vec![],
+            params: vec![
+                Param::Named {
+                    pattern: Spanned {
+                        node: Pattern::Bind("a".to_string()),
+                        span: Span::new(0, 0),
+                    },
+                    ty: Type::Named("Int".to_string()),
+                },
+                Param::Named {
+                    pattern: Spanned {
+                        node: Pattern::Bind("b".to_string()),
+                        span: Span::new(0, 0),
+                    },
+                    ty: Type::Named("Int".to_string()),
+                },
+            ],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::If {
+                        condition: Box::new(Spanned {
+                            node: Expr::Binary {
+                                op: BinaryOp::Eq,
+                                left: Box::new(Spanned {
+                                    node: Expr::Identifier("b".to_string()),
+                                    span: Span::new(0, 0),
+                                }),
+                                right: Box::new(Spanned {
+                                    node: Expr::Literal(Literal::Int(0)),
+                                    span: Span::new(0, 0),
+                                }),
+                            },
+                            span: Span::new(0, 0),
+                        }),
+                        consequence: Box::new(Spanned {
+                            node: Expr::Literal(Literal::Int(1)),
+                            span: Span::new(0, 0),
+                        }),
+                        alternative: Some(Box::new(Spanned {
+                            node: Expr::Binary {
+                                op: BinaryOp::Div,
+                                left: Box::new(Spanned {
+                                    node: Expr::Identifier("a".to_string()),
+                                    span: Span::new(0, 0),
+                                }),
+                                right: Box::new(Spanned {
+                                    node: Expr::Identifier("b".to_string()),
+                                    span: Span::new(0, 0),
+                                }),
+                            },
+                            span: Span::new(0, 0),
+                        })),
+                    },
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(88)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(88)));
+}
+
+#[test]
+fn verify_compile_exn_multiple_exception_types() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "check".to_string(),
+            generics: vec![],
+            params: vec![Param::Named {
+                pattern: Spanned {
+                    node: Pattern::Bind("n".to_string()),
+                    span: Span::new(0, 0),
+                },
+                ty: Type::Named("Int".to_string()),
+            }],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Identifier("n".to_string()),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(11)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(11)));
+}
+
+#[test]
+fn verify_compile_exn_handler_catches_error() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "risky".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(42)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(22)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(22)));
+}
+
+#[test]
+fn verify_compile_exn_missing_ok_err_pattern_in_match() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "maybe_fail".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(1)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(55)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn verify_compile_exn_throw_with_custom_error() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "bad_op".to_string(),
+            generics: vec![],
+            params: vec![Param::Named {
+                pattern: Spanned {
+                    node: Pattern::Bind("x".to_string()),
+                    span: Span::new(0, 0),
+                },
+                ty: Type::Named("Int".to_string()),
+            }],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::If {
+                        condition: Box::new(Spanned {
+                            node: Expr::Binary {
+                                op: BinaryOp::Lt,
+                                left: Box::new(Spanned {
+                                    node: Expr::Identifier("x".to_string()),
+                                    span: Span::new(0, 0),
+                                }),
+                                right: Box::new(Spanned {
+                                    node: Expr::Literal(Literal::Int(0)),
+                                    span: Span::new(0, 0),
+                                }),
+                            },
+                            span: Span::new(0, 0),
+                        }),
+                        consequence: Box::new(Spanned {
+                            node: Expr::Literal(Literal::Int(1)),
+                            span: Span::new(0, 0),
+                        }),
+                        alternative: Some(Box::new(Spanned {
+                            node: Expr::Identifier("x".to_string()),
+                            span: Span::new(0, 0),
+                        })),
+                    },
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(33)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(33)));
+}
+
+#[test]
+fn verify_compile_exn_propagate_up_stack() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "level3".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(1)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "level2".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(2)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "level1".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(3)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(99)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(99)));
+}
+
+#[test]
+fn verify_compile_exn_ok_and_err_both_handled() {
+    let ast = vec![
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "compute".to_string(),
+            generics: vec![],
+            params: vec![Param::Named {
+                pattern: Spanned {
+                    node: Pattern::Bind("flag".to_string()),
+                    span: Span::new(0, 0),
+                },
+                ty: Type::Named("Int".to_string()),
+            }],
+            effects: vec![EffectItem { name: vec!["exn".to_string()], arg: None }],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Identifier("flag".to_string()),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(44)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(44)));
+}
+
+#[test]
+fn verify_compile_array_of_records_type() {
+    let ast = vec![
+        Decl::Type {
+            name: "Elem".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Record(vec![
+                RecordField {
+                    is_pub: true,
+                    name: "val".to_string(),
+                    ty: Type::Named("Int".to_string()),
+                },
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(88)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(88)));
+}
+
+#[test]
+fn verify_compile_variant_record_variant() {
+    let ast = vec![
+        Decl::Type {
+            name: "Tagged".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Variant(vec![
+                VariantCase::Record(
+                    "Data".to_string(),
+                    vec![
+                        RecordField {
+                            is_pub: true,
+                            name: "x".to_string(),
+                            ty: Type::Named("Int".to_string()),
+                        },
+                        RecordField {
+                            is_pub: true,
+                            name: "y".to_string(),
+                            ty: Type::Named("Int".to_string()),
+                        },
+                    ],
+                ),
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(66)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(66)));
+}
+
+#[test]
+fn verify_compile_array_of_variants_type() {
+    let ast = vec![
+        Decl::Type {
+            name: "Val".to_string(),
+            generics: vec![],
+            attrs: vec![],
+            is_pub: false,
+            ownership: None,
+            body: TypeBody::Variant(vec![
+                VariantCase::Unit("A".to_string()),
+                VariantCase::Unit("B".to_string()),
+            ]),
+        },
+        Decl::Fn(FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            is_async: false,
+            name: "main".to_string(),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: Some(Type::Named("Int".to_string())),
+            where_clause: vec![],
+            body: Block {
+                stmts: vec![],
+                ret: Some(Box::new(Spanned {
+                    node: Expr::Literal(Literal::Int(55)),
+                    span: Span::new(0, 0),
+                })),
+            },
+        }),
+    ];
+    let result = compile_module_and_run(&ast);
+    assert_eq!(result, Ok(Value::Int(55)));
+}

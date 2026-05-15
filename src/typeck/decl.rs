@@ -187,9 +187,23 @@ impl Checker {
             ast::Span { line: 0, col: 0 },
         );
 
-        // Async functions declare the Async effect
+        let saved_declared = std::mem::take(&mut self.fn_declared_effects);
         if fn_decl.is_async {
             self.fn_declared_effects.push(crate::ty::Effect::Async);
+        }
+        for item in &fn_decl.effects {
+            if let Some(name) = item.name.first() {
+                match name.as_str() {
+                    "exn" => {
+                        let err_ty = item.arg.as_ref()
+                            .map(|t| self.convert_type(t))
+                            .unwrap_or(crate::ty::Type::Unknown);
+                        self.fn_declared_effects.push(crate::ty::Effect::Exn(Box::new(err_ty)));
+                    }
+                    "async" => self.fn_declared_effects.push(crate::ty::Effect::Async),
+                    _ => {}
+                }
+            }
         }
 
         self.scopes.push(Scope { vars: HashMap::new() });
@@ -223,6 +237,7 @@ impl Checker {
             }
         }
         self.scopes.pop();
+        self.fn_declared_effects = saved_declared;
     }
 
     // Per-declaration check

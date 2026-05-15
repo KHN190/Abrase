@@ -82,6 +82,22 @@ fn test_memory() {
 }
 
 #[test]
+fn test_exn_ok_path() {
+    // <exn> Int return + `?` operator + match Ok/Err on the lowered Result
+    let v = run_file("tests/scripts/exn_div.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(6));
+}
+
+#[test]
+fn test_exn_err_path() {
+    // `throw` short-circuits up to the caller, who matches the Err branch
+    let v = run_file("tests/scripts/exn_div_zero.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(99));
+}
+
+#[test]
 fn neg_double_move_string_typeck_errors() {
     let errs = typeck_file("tests/scripts/bad_double_move.ect");
     assert!(errs.iter().any(|m| m.contains("moved")),

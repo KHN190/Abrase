@@ -199,6 +199,7 @@ impl Checker {
         match (expected, actual) {
             (a, b) if a == b => true,
             (Type::Unknown, _) | (_, Type::Unknown) => true,
+            (_, Type::Never) => true,
             (Type::Generic { name: e_name, args: e_args }, Type::Generic { name: a_name, args: a_args }) => {
                 e_name == a_name && e_args.len() == a_args.len() &&
                 e_args.iter().zip(a_args.iter())
