@@ -377,6 +377,33 @@ impl Compiler {
             }
 
             ast::Expr::Call { callee, args } => {
+                // Effect-op call: reroute Foo.op(args) to the lifted arm fn.
+                if let ast::Expr::FieldAccess { base, field } = &callee.node {
+                    if let ast::Expr::Identifier(eff_name) = &base.node {
+                        let key = (eff_name.clone(), field.clone());
+                        if let Some(arm_name) = self.effect_op_to_arm.get(&key).cloned() {
+                            let func_id = *self.func_map.get(&arm_name)
+                                .ok_or_else(|| format!(
+                                    "internal: arm '{}' missing from fn table", arm_name
+                                ))?;
+                            let mut arg_srcs = Vec::with_capacity(args.len());
+                            for arg in args {
+                                arg_srcs.push(self.compile_expr(arg)?);
+                            }
+                            for (i, src) in arg_srcs.iter().enumerate() {
+                                if i > u8::MAX as usize {
+                                    return Err("Too many arguments (>255)".to_string());
+                                }
+                                let pos = self.code.len();
+                                self.emit(OpCode::Copy(Register(0), *src));
+                                self.pending_arg_patches.push((pos, i as u8));
+                            }
+                            let dest = self.alloc_register()?;
+                            self.emit(OpCode::Call(dest, func_id as u16));
+                            return Ok(dest);
+                        }
+                    }
+                }
                 if let ast::Expr::Identifier(name) = &callee.node {
                     if name == "Shared" && args.len() == 1 {
                         let src = self.compile_expr(&args[0])?;
@@ -560,6 +587,10 @@ impl Compiler {
             }
 
             ast::Expr::Resume(arg) => {
+                // MVP: tail-position resume only. `resume(v)` lowers to a
+                // plain `ret v` from the surrounding (lifted) arm function.
+                // The arm fn's caller is the dispatch path that invoked it
+                // for this op; returning v makes the op-call evaluate to v.
                 let reg = if let Some(e) = arg {
                     self.compile_expr(e)?
                 } else {
@@ -568,8 +599,30 @@ impl Compiler {
                     self.emit(OpCode::PushConst(r, idx));
                     r
                 };
-                self.emit(OpCode::Resume(reg));
+                self.emit(OpCode::Ret(reg));
                 Ok(reg)
+            }
+
+            ast::Expr::Handle { expr: body, arms: _ } => {
+                // MVP: ignore the arm bodies here — the pre-pass already
+                // lifted them to top-level fns. Compile the protected body,
+                // then call the return-arm with its result.
+                let body_reg = self.compile_expr(body)?;
+                let ret_arm_name = self.return_arm_by_handle.get(&expr.span).cloned()
+                    .ok_or_else(|| format!(
+                        "internal: no return arm registered for handle at {:?}", expr.span
+                    ))?;
+                let func_id = *self.func_map.get(&ret_arm_name)
+                    .ok_or_else(|| format!("internal: return arm '{}' not in fn table", ret_arm_name))?;
+
+                // Pass body_reg as r0 of the new window.
+                let pos = self.code.len();
+                self.emit(OpCode::Copy(Register(0), body_reg));
+                self.pending_arg_patches.push((pos, 0));
+
+                let dest = self.alloc_register()?;
+                self.emit(OpCode::Call(dest, func_id as u16));
+                Ok(dest)
             }
 
             _ => Err(format!("Unsupported expression: {:?}", expr.node)),

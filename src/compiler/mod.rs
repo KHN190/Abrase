@@ -4,6 +4,7 @@ pub mod codegen;
 pub mod mono;
 pub mod closures;
 pub mod effects;
+pub mod handlers;
 
 use crate::ast;
 use crate::bytecode::{Chunk, OpCode, Register, Module};
@@ -24,6 +25,11 @@ pub struct Compiler {
     pub(super) layouts: LayoutCtx,
     pub(super) pending_arg_patches: Vec<(usize, u8)>,
     pub(super) current_fn_fallible: bool,
+    /// Effect-handler lowering tables built by the pre-pass.
+    /// (effect_name, op_name) -> synthesised arm fn name.
+    pub(super) effect_op_to_arm: HashMap<(String, String), String>,
+    /// Handle expression span -> synthesised return-arm fn name.
+    pub(super) return_arm_by_handle: HashMap<ast::Span, String>,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -45,6 +51,8 @@ impl Compiler {
             },
             pending_arg_patches: Vec::new(),
             current_fn_fallible: false,
+            effect_op_to_arm: HashMap::new(),
+            return_arm_by_handle: HashMap::new(),
             errors: Vec::new(),
             source: String::new(),
         }
@@ -81,6 +89,12 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
+        // Pre-pass: lift handler arms to synthetic top-level FnDecls.
+        let mut handler_lowering = handlers::HandleLowering::new();
+        handler_lowering.lower(ast);
+        self.effect_op_to_arm = handler_lowering.effect_op_to_arm;
+        self.return_arm_by_handle = handler_lowering.return_arm_by_handle;
+
         let mut fn_decls = Vec::new();
 
         for decl in ast {
@@ -101,6 +115,19 @@ impl Compiler {
                 }
                 _ => {}
             }
+        }
+
+        // Register the synthetic arm fns in the function table.
+        for arm_fn in handler_lowering.synthetic_fns {
+            let idx = self.functions.len();
+            self.func_map.insert(arm_fn.name.clone(), idx);
+            self.functions.push(Chunk {
+                code: Vec::new(),
+                constants: Vec::new(),
+                reg_count: 0,
+                param_count: 0,
+            });
+            fn_decls.push((idx, arm_fn));
         }
 
         let entry = match self.func_map.get("main").copied() {

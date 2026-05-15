@@ -129,6 +129,13 @@ fn neg_array_index_wrong_type_typeck_errors() {
 }
 
 #[test]
+fn effect_log_runs() {
+    let v = run_file("tests/scripts/effect_log.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(42));
+}
+
+#[test]
 fn generator_typechecks() {
     let errs = typeck_file("tests/scripts/generator.ect");
     assert!(errs.is_empty(),
