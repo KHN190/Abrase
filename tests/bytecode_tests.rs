@@ -48,7 +48,7 @@ fn test_chunk_empty() {
 fn test_opcode_variants() {
     let ops = vec![
         OpCode::PushConst(Register(0), 0),
-        OpCode::Mov(Register(0), Register(1)),
+        OpCode::Copy(Register(0), Register(1)),
         OpCode::Add(Register(2), Register(0), Register(1)),
         OpCode::Sub(Register(2), Register(0), Register(1)),
         OpCode::Mul(Register(2), Register(0), Register(1)),

@@ -11,29 +11,29 @@ impl Register {
 
 #[derive(Debug, Clone)]
 pub enum OpCode {
-    // Memory
     PushConst(Register, usize),
-    Mov(Register, Register),
-    // Arithmetic
+    Copy(Register, Register),
+    Move(Register, Register),
     Add(Register, Register, Register),
     Sub(Register, Register, Register),
     Mul(Register, Register, Register),
     Div(Register, Register, Register),
     Mod(Register, Register, Register),
-    // Comparison
     Eq(Register, Register, Register),
     Neq(Register, Register, Register),
     Lt(Register, Register, Register),
     Gt(Register, Register, Register),
     Lte(Register, Register, Register),
     Gte(Register, Register, Register),
-    // Control flow
     Jz(Register, usize),
     Jnz(Register, usize),
     Jmp(usize),
     Ret(Register),
-    // Functions
-    Call(Register, usize, Register, u8), // dest, func_id, first_arg_reg, arg_count
+    Call(Register, usize, Register, u8),
+    MakeShared(Register, Register),
+    Ref(Register, Register),
+    Deref(Register, Register),
+    Drop(Register),
 }
 
 #[derive(Clone)]

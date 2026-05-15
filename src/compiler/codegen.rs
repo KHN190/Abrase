@@ -45,6 +45,22 @@ impl Compiler {
                     .ok_or_else(|| format!("Undefined variable: {}", name))
             }
 
+            ast::Expr::Unary { op, right } => {
+                let src = self.compile_expr(right)?;
+                let dest = self.alloc_register()?;
+                match op {
+                    ast::UnaryOp::Ref | ast::UnaryOp::RefMut => {
+                        self.emit(OpCode::Ref(dest, src));
+                        Ok(dest)
+                    }
+                    ast::UnaryOp::Deref => {
+                        self.emit(OpCode::Deref(dest, src));
+                        Ok(dest)
+                    }
+                    _ => Err(format!("Unsupported unary op: {:?}", op)),
+                }
+            }
+
             ast::Expr::Binary { op, left, right } => {
                 match op {
                     ast::BinaryOp::Assign => {
@@ -52,7 +68,7 @@ impl Compiler {
                             let rr = self.compile_expr(right)?;
                             let dest_reg = self.var_to_reg.get(name).copied()
                                 .ok_or_else(|| format!("Undefined variable: {}", name))?;
-                            self.emit(OpCode::Mov(dest_reg, rr));
+                            self.emit(OpCode::Copy(dest_reg, rr));
                             Ok(dest_reg)
                         } else {
                             Err("Assignment target must be a variable".to_string())
@@ -89,7 +105,7 @@ impl Compiler {
 
                 let cons_reg = self.compile_expr(consequence)?;
                 let result_reg = self.alloc_register()?;
-                self.emit(OpCode::Mov(result_reg, cons_reg));
+                self.emit(OpCode::Copy(result_reg, cons_reg));
 
                 let jmp_idx = self.code.len();
                 self.emit(OpCode::Jmp(0)); // placeholder
@@ -105,7 +121,7 @@ impl Compiler {
                     self.emit(OpCode::PushConst(r, idx));
                     r
                 };
-                self.emit(OpCode::Mov(result_reg, alt_reg));
+                self.emit(OpCode::Copy(result_reg, alt_reg));
 
                 let end_addr = self.code.len();
                 self.code[jmp_idx] = OpCode::Jmp(end_addr);
@@ -155,7 +171,7 @@ impl Compiler {
                         ast::Pattern::Wildcard => {
                             // Wildcard always matches - compile body and we're done
                             let body_reg = self.compile_expr(&arm.body)?;
-                            self.emit(OpCode::Mov(result_reg, body_reg));
+                            self.emit(OpCode::Copy(result_reg, body_reg));
                             break; // Stop processing arms
                         }
                         ast::Pattern::Literal(lit) => {
@@ -182,7 +198,7 @@ impl Compiler {
 
                             // Pattern matched: compile body
                             let body_reg = self.compile_expr(&arm.body)?;
-                            self.emit(OpCode::Mov(result_reg, body_reg));
+                            self.emit(OpCode::Copy(result_reg, body_reg));
                             exit_jumps.push(self.code.len());
                             self.emit(OpCode::Jmp(0)); // placeholder to end
 
@@ -194,7 +210,7 @@ impl Compiler {
                             // Bind pattern always matches and binds variable
                             self.var_to_reg.insert(name.clone(), scrutinee_reg);
                             let body_reg = self.compile_expr(&arm.body)?;
-                            self.emit(OpCode::Mov(result_reg, body_reg));
+                            self.emit(OpCode::Copy(result_reg, body_reg));
                             break; // Stop processing arms
                         }
                         _ => return Err("Unsupported pattern in match".to_string()),
@@ -212,6 +228,12 @@ impl Compiler {
 
             ast::Expr::Call { callee, args } => {
                 if let ast::Expr::Identifier(name) = &callee.node {
+                    if name == "Shared" && args.len() == 1 {
+                        let src = self.compile_expr(&args[0])?;
+                        let dest = self.alloc_register()?;
+                        self.emit(OpCode::MakeShared(dest, src));
+                        return Ok(dest);
+                    }
                     let func_id = self.func_map.get(name).copied()
                         .ok_or_else(|| format!("Undefined function: {}", name))?;
 
@@ -224,7 +246,7 @@ impl Compiler {
 
                     for (i, arg) in args.iter().enumerate() {
                         let arg_val = self.compile_expr(arg)?;
-                        self.emit(OpCode::Mov(arg_regs[i], arg_val));
+                        self.emit(OpCode::Copy(arg_regs[i], arg_val));
                     }
 
                     let dest = self.alloc_register()?;
@@ -254,10 +276,28 @@ impl Compiler {
 
     pub(super) fn compile_stmt(&mut self, stmt: &ast::Spanned<ast::Stmt>) -> Result<(), String> {
         match &stmt.node {
-            ast::Stmt::Let { pattern, value, .. } => {
+            ast::Stmt::Let { pattern, value, ty, .. } => {
                 if let ast::Pattern::Bind(name) = &pattern.node {
-                    let reg = self.compile_expr(value)?;
-                    self.var_to_reg.insert(name.clone(), reg);
+                    let inferred_ty = ty.clone().or_else(|| self.infer_expr_type(value));
+                    let src_reg = self.compile_expr(value)?;
+                    let bound_reg = if let ast::Expr::Identifier(src_name) = &value.node {
+                        let dest = self.alloc_register()?;
+                        let is_move = inferred_ty.as_ref().map(is_move_type).unwrap_or(false);
+                        if is_move {
+                            self.emit(OpCode::Move(dest, src_reg));
+                            self.var_to_reg.remove(src_name);
+                            self.var_types.remove(src_name);
+                        } else {
+                            self.emit(OpCode::Copy(dest, src_reg));
+                        }
+                        dest
+                    } else {
+                        src_reg
+                    };
+                    self.var_to_reg.insert(name.clone(), bound_reg);
+                    if let Some(t) = inferred_ty {
+                        self.var_types.insert(name.clone(), t);
+                    }
                     Ok(())
                 } else {
                     Err("Only simple bindings supported".to_string())
@@ -269,16 +309,85 @@ impl Compiler {
     }
 
     pub(super) fn compile_block(&mut self, block: &ast::Block) -> Result<Register, String> {
+        let pre_bindings: std::collections::HashSet<String> = self.var_to_reg.keys().cloned().collect();
         for stmt in &block.stmts {
             self.compile_stmt(stmt)?;
         }
-        if let Some(ret) = &block.ret {
-            self.compile_expr(ret)
+        let result = if let Some(ret) = &block.ret {
+            self.compile_expr(ret)?
         } else {
             let reg = self.alloc_register()?;
             let idx = self.add_constant(Value::Unit);
             self.emit(OpCode::PushConst(reg, idx));
-            Ok(reg)
+            reg
+        };
+        let new_bindings: Vec<String> = self.var_to_reg.keys()
+            .filter(|k| !pre_bindings.contains(*k))
+            .cloned()
+            .collect();
+        for name in &new_bindings {
+            if let (Some(reg), Some(ty)) = (self.var_to_reg.get(name).copied(), self.var_types.get(name)) {
+                if is_move_type(ty) && reg != result {
+                    self.emit(OpCode::Drop(reg));
+                }
+            }
+            self.var_to_reg.remove(name);
+            self.var_types.remove(name);
         }
+        Ok(result)
+    }
+
+    pub(super) fn infer_expr_type(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Type> {
+        match &expr.node {
+            ast::Expr::Literal(lit) => Some(match lit {
+                ast::Literal::Int(_) => ast::Type::Named("Int".into()),
+                ast::Literal::Float(_) => ast::Type::Named("Float".into()),
+                ast::Literal::Bool(_) => ast::Type::Named("Bool".into()),
+                ast::Literal::Char(_) => ast::Type::Named("Char".into()),
+                ast::Literal::String(_) => ast::Type::Named("String".into()),
+                ast::Literal::Unit => ast::Type::Tuple(vec![]),
+                _ => return None,
+            }),
+            ast::Expr::Identifier(name) => self.var_types.get(name).cloned(),
+            _ => None,
+        }
+    }
+}
+
+pub(super) fn is_move_type(ty: &ast::Type) -> bool {
+    use crate::ty::Ownership;
+    let rty = ast_type_to_rt(ty);
+    matches!(rty.ownership(), Ownership::Move)
+}
+
+fn ast_type_to_rt(ty: &ast::Type) -> crate::ty::Type {
+    use crate::ty::Type as RTy;
+    match ty {
+        ast::Type::Named(n) => match n.as_str() {
+            "Int" => RTy::Int,
+            "Float" => RTy::Float,
+            "Bool" => RTy::Bool,
+            "Char" => RTy::Char,
+            "String" => RTy::String,
+            "Unit" => RTy::Unit,
+            "Never" => RTy::Never,
+            _ => RTy::Named(n.clone()),
+        },
+        ast::Type::Tuple(ts) if ts.is_empty() => RTy::Unit,
+        ast::Type::Tuple(ts) => RTy::Tuple(ts.iter().map(ast_type_to_rt).collect()),
+        ast::Type::Generic { name, args } => RTy::Generic {
+            name: name.clone(),
+            args: args.iter().map(ast_type_to_rt).collect(),
+        },
+        ast::Type::Function { params, ret, .. } => RTy::Function {
+            params: params.iter().map(ast_type_to_rt).collect(),
+            effects: vec![],
+            ret: Box::new(ast_type_to_rt(ret)),
+        },
+        ast::Type::Reference { is_mut, inner, .. } => RTy::Reference {
+            is_mut: *is_mut,
+            inner: Box::new(ast_type_to_rt(inner)),
+        },
+        _ => RTy::Unknown,
     }
 }

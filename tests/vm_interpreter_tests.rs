@@ -18,9 +18,14 @@ fn run_module(functions: Vec<(Vec<OpCode>, Vec<Value>)>) -> Result<Value, String
             let mut max_reg = 0;
             for op in &code {
                 match op {
-                    OpCode::PushConst(r, _) | OpCode::Mov(r, _) | OpCode::Ret(r) |
-                    OpCode::Jz(r, _) | OpCode::Jnz(r, _) => {
+                    OpCode::PushConst(r, _) | OpCode::Drop(r) | OpCode::Ret(r)
+                    | OpCode::Jz(r, _) | OpCode::Jnz(r, _) => {
                         max_reg = max_reg.max(r.to_usize() + 1);
+                    }
+                    OpCode::Copy(d, s) | OpCode::Move(d, s)
+                    | OpCode::MakeShared(d, s) | OpCode::Ref(d, s) | OpCode::Deref(d, s) => {
+                        max_reg = max_reg.max(d.to_usize() + 1);
+                        max_reg = max_reg.max(s.to_usize() + 1);
                     }
                     OpCode::Add(d, l, r) | OpCode::Sub(d, l, r) | OpCode::Mul(d, l, r) |
                     OpCode::Div(d, l, r) | OpCode::Mod(d, l, r) | OpCode::Eq(d, l, r) |
@@ -61,7 +66,7 @@ fn test_mov() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
-            OpCode::Mov(r(1), r(0)),
+            OpCode::Copy(r(1), r(0)),
             OpCode::Ret(r(1)),
         ],
         vec![Value::Int(7)],
@@ -535,7 +540,7 @@ fn test_jnz_falsy_int_zero() {
 fn test_mov_empty_source_register_errors() {
     let result = run(
         vec![
-            OpCode::Mov(r(0), r(1)),  // r1 is uninitialized
+            OpCode::Copy(r(0), r(1)),  // r1 is uninitialized
             OpCode::Ret(r(0)),
         ],
         vec![],

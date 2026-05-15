@@ -55,14 +55,17 @@ impl Type {
                     Ownership::Move
                 }
             }
-            Type::Generic { args, .. } => {
-                if args.iter().all(|t| t.ownership() == Ownership::Copy) {
+            Type::Generic { name, args } => {
+                if name == "Shared" {
+                    Ownership::Share
+                } else if args.iter().all(|t| t.ownership() == Ownership::Copy) {
                     Ownership::Copy
                 } else {
                     Ownership::Move
                 }
             }
             Type::Function { .. } => Ownership::Copy,
+            Type::Named(name) if name == "Share" => Ownership::Copy,
             Type::Named(_) | Type::Unknown => Ownership::Move,
         }
     }

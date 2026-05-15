@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     Int(i64),
@@ -11,4 +13,5 @@ pub enum Value {
     Record { tag: u32, fields: Vec<Value> },
     Closure { func_id: usize, env: Vec<Value> },
     Reference(Box<Value>),
+    Shared(Rc<Value>),
 }

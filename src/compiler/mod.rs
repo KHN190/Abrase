@@ -16,6 +16,7 @@ pub struct Compiler {
     pub(super) code: Vec<OpCode>,
     pub(super) next_reg: u8,
     pub(super) var_to_reg: HashMap<String, Register>,
+    pub(super) var_types: HashMap<String, ast::Type>,
     pub(super) func_map: HashMap<String, usize>,
     pub(super) functions: Vec<Chunk>,
     pub errors: Vec<Error>,
@@ -29,6 +30,7 @@ impl Compiler {
             code: Vec::new(),
             next_reg: 0,
             var_to_reg: HashMap::new(),
+            var_types: HashMap::new(),
             func_map: HashMap::new(),
             functions: Vec::new(),
             errors: Vec::new(),
@@ -109,15 +111,17 @@ impl Compiler {
         let saved_constants = std::mem::take(&mut self.constants);
         let saved_next_reg = self.next_reg;
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
+        let saved_var_types = std::mem::take(&mut self.var_types);
 
         self.next_reg = 0;
 
         for param in &fn_decl.params {
-            if let ast::Param::Named { pattern, .. } = param {
+            if let ast::Param::Named { pattern, ty } = param {
                 if let ast::Pattern::Bind(name) = &pattern.node {
                     match self.alloc_register() {
                         Ok(reg) => {
                             self.var_to_reg.insert(name.clone(), reg);
+                            self.var_types.insert(name.clone(), ty.clone());
                         }
                         Err(_) => {
                             self.errors.push(Error::new(
@@ -155,6 +159,7 @@ impl Compiler {
         self.constants = saved_constants;
         self.next_reg = saved_next_reg;
         self.var_to_reg = saved_var_to_reg;
+        self.var_types = saved_var_types;
 
         Ok(chunk)
     }

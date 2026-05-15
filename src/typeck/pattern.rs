@@ -385,7 +385,9 @@ impl Checker {
                     let msg = format!("Use of moved value '{}'. It was moved at line {}.", name, move_line);
                     return self.report_error(msg, usage_span);
                 }
-                if meta.ty.ownership() == Ownership::Move && !is_ref {
+                // Functions can be called multiple times, don't mark them as moved
+                if !matches!(&meta.ty, Type::Function { .. }) &&
+                   meta.ty.ownership() == Ownership::Move && !is_ref {
                     meta.is_moved = true;
                     meta.moved_at = Some(usage_span);
                 }

@@ -21,10 +21,38 @@ impl VirtualMachine {
                     }
                     self.registers[reg.to_usize()] = Some(chunk.constants[*const_idx].clone());
                 }
-                OpCode::Mov(dest, src) => {
+                OpCode::Copy(dest, src) => {
                     let val = self.registers[src.to_usize()].clone()
                         .ok_or("Source register is empty")?;
                     self.registers[dest.to_usize()] = Some(val);
+                }
+                OpCode::Move(dest, src) => {
+                    let val = self.registers[src.to_usize()].take()
+                        .ok_or("Source register is empty (already moved?)")?;
+                    self.registers[dest.to_usize()] = Some(val);
+                }
+                OpCode::MakeShared(dest, src) => {
+                    let val = self.registers[src.to_usize()].take()
+                        .ok_or("Source register is empty")?;
+                    self.registers[dest.to_usize()] = Some(Value::Shared(std::rc::Rc::new(val)));
+                }
+                OpCode::Ref(dest, src) => {
+                    let val = self.registers[src.to_usize()].clone()
+                        .ok_or("Source register is empty")?;
+                    self.registers[dest.to_usize()] = Some(Value::Reference(Box::new(val)));
+                }
+                OpCode::Deref(dest, src) => {
+                    let val = self.registers[src.to_usize()].clone()
+                        .ok_or("Source register is empty")?;
+                    let inner = match val {
+                        Value::Reference(b) => *b,
+                        Value::Shared(rc) => (*rc).clone(),
+                        v => v,
+                    };
+                    self.registers[dest.to_usize()] = Some(inner);
+                }
+                OpCode::Drop(reg) => {
+                    self.registers[reg.to_usize()] = None;
                 }
                 OpCode::Add(dest, left, right) => {
                     self.binary_op(*dest, *left, *right, |l, r| match (l, r) {
@@ -166,10 +194,38 @@ impl VirtualMachine {
                     }
                     self.registers[self.base_reg + reg.to_usize()] = Some(current_chunk.constants[*const_idx].clone());
                 }
-                OpCode::Mov(dest, src) => {
+                OpCode::Copy(dest, src) => {
                     let val = self.registers[self.base_reg + src.to_usize()].clone()
                         .ok_or("Source register is empty")?;
                     self.registers[self.base_reg + dest.to_usize()] = Some(val);
+                }
+                OpCode::Move(dest, src) => {
+                    let val = self.registers[self.base_reg + src.to_usize()].take()
+                        .ok_or("Source register is empty (already moved?)")?;
+                    self.registers[self.base_reg + dest.to_usize()] = Some(val);
+                }
+                OpCode::MakeShared(dest, src) => {
+                    let val = self.registers[self.base_reg + src.to_usize()].take()
+                        .ok_or("Source register is empty")?;
+                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Shared(std::rc::Rc::new(val)));
+                }
+                OpCode::Ref(dest, src) => {
+                    let val = self.registers[self.base_reg + src.to_usize()].clone()
+                        .ok_or("Source register is empty")?;
+                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Reference(Box::new(val)));
+                }
+                OpCode::Deref(dest, src) => {
+                    let val = self.registers[self.base_reg + src.to_usize()].clone()
+                        .ok_or("Source register is empty")?;
+                    let inner = match val {
+                        Value::Reference(b) => *b,
+                        Value::Shared(rc) => (*rc).clone(),
+                        v => v,
+                    };
+                    self.registers[self.base_reg + dest.to_usize()] = Some(inner);
+                }
+                OpCode::Drop(reg) => {
+                    self.registers[self.base_reg + reg.to_usize()] = None;
                 }
                 OpCode::Add(dest, left, right) => {
                     self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {

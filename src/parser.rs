@@ -118,7 +118,7 @@ impl<'a> Parser<'a> {
             | Token::Continue | Token::Throw | Token::LBrace
             | Token::Ident(_) | Token::Int(_) | Token::Float(_)
             | Token::String(_) | Token::True | Token::False
-            | Token::Bang | Token::Minus | Token::Ampersand | Token::LParen
+            | Token::Bang | Token::Minus | Token::Ampersand | Token::Asterisk | Token::LParen
         )
     }
 
@@ -799,11 +799,12 @@ impl<'a> Parser<'a> {
             Token::String(v) => Expr::Literal(Literal::String(v.clone())),
             Token::True => Expr::Literal(Literal::Bool(true)),
             Token::False => Expr::Literal(Literal::Bool(false)),
-            Token::Bang | Token::Minus | Token::Ampersand => {
+            Token::Bang | Token::Minus | Token::Ampersand | Token::Asterisk => {
                 let op = match self.current_token {
                     Token::Bang => UnaryOp::Not,
                     Token::Minus => UnaryOp::Neg,
                     Token::Ampersand => UnaryOp::Ref,
+                    Token::Asterisk => UnaryOp::Deref,
                     _ => unreachable!(),
                 };
                 self.next_token();
