@@ -1,0 +1,8 @@
+fn main() -> String {
+  let outer = "outer";
+  {
+    let inner = "inner";
+    inner;
+  };
+  outer
+}
