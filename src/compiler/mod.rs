@@ -11,6 +11,20 @@ use crate::error::{Error, ErrorCode};
 use crate::vm::Value;
 use std::collections::HashMap;
 
+#[derive(Clone, Debug)]
+pub(super) enum VariantShape {
+    Unit,
+    Tuple(usize),
+    Record(Vec<String>),
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct VariantInfo {
+    pub type_name: String,
+    pub tag: u32,
+    pub shape: VariantShape,
+}
+
 pub struct Compiler {
     pub(super) constants: Vec<Value>,
     pub(super) code: Vec<OpCode>,
@@ -19,6 +33,8 @@ pub struct Compiler {
     pub(super) var_types: HashMap<String, ast::Type>,
     pub(super) func_map: HashMap<String, usize>,
     pub(super) functions: Vec<Chunk>,
+    pub(super) record_fields: HashMap<String, Vec<String>>,
+    pub(super) variant_info: HashMap<String, VariantInfo>,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -33,6 +49,8 @@ impl Compiler {
             var_types: HashMap::new(),
             func_map: HashMap::new(),
             functions: Vec::new(),
+            record_fields: HashMap::new(),
+            variant_info: HashMap::new(),
             errors: Vec::new(),
             source: String::new(),
         }
@@ -49,6 +67,31 @@ impl Compiler {
             .map(|e| e.pretty_print(&self.source))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    pub(super) fn register_type_decl(&mut self, name: &str, body: &ast::TypeBody) {
+        match body {
+            ast::TypeBody::Record(fields) => {
+                let names = fields.iter().map(|f| f.name.clone()).collect();
+                self.record_fields.insert(name.to_string(), names);
+            }
+            ast::TypeBody::Variant(cases) => {
+                for (tag, case) in cases.iter().enumerate() {
+                    let (vname, shape) = match case {
+                        ast::VariantCase::Unit(n) => (n.clone(), VariantShape::Unit),
+                        ast::VariantCase::Tuple(n, tys) => (n.clone(), VariantShape::Tuple(tys.len())),
+                        ast::VariantCase::Record(n, fs) => {
+                            (n.clone(), VariantShape::Record(fs.iter().map(|f| f.name.clone()).collect()))
+                        }
+                    };
+                    self.variant_info.insert(vname, VariantInfo {
+                        type_name: name.to_string(),
+                        tag: tag as u32,
+                        shape,
+                    });
+                }
+            }
+        }
     }
 
     pub fn compile(&mut self, ast: &[ast::Decl]) -> Result<Chunk, String> {
@@ -71,15 +114,21 @@ impl Compiler {
         let mut fn_decls = Vec::new();
 
         for decl in ast {
-            if let ast::Decl::Fn(fn_decl) = decl {
-                let idx = self.functions.len();
-                self.func_map.insert(fn_decl.name.clone(), idx);
-                self.functions.push(Chunk {
-                    code: Vec::new(),
-                    constants: Vec::new(),
-                    reg_count: 0,
-                });
-                fn_decls.push((idx, fn_decl.clone()));
+            match decl {
+                ast::Decl::Fn(fn_decl) => {
+                    let idx = self.functions.len();
+                    self.func_map.insert(fn_decl.name.clone(), idx);
+                    self.functions.push(Chunk {
+                        code: Vec::new(),
+                        constants: Vec::new(),
+                        reg_count: 0,
+                    });
+                    fn_decls.push((idx, fn_decl.clone()));
+                }
+                ast::Decl::Type { name, body, .. } => {
+                    self.register_type_decl(name, body);
+                }
+                _ => {}
             }
         }
 
@@ -143,7 +192,12 @@ impl Compiler {
             Ok(result_reg) => {
                 self.emit(OpCode::Ret(result_reg));
             }
-            Err(_) => {
+            Err(msg) => {
+                self.errors.push(Error::new(
+                    ErrorCode::CodegenError,
+                    ast::Span::new(0, 0),
+                    msg,
+                ));
                 return Err(self.errors.clone());
             }
         }

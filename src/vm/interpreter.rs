@@ -4,6 +4,7 @@ use crate::vm::frame::Frame;
 
 // Max 2.5~3 MB
 const MAX_REGISTERS: usize = 1 << 16;
+const MAX_RECURSION_DEPTH: usize = 2048;
 
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
@@ -146,6 +147,7 @@ impl VirtualMachine {
                 OpCode::Call(_, _, _, _) => {
                     return Err("Call opcode not supported in single-chunk mode; use run_module()".to_string());
                 }
+                _ => return Err("opcode not supported in single-chunk mode; use run_module()".to_string()),
             }
         }
         Ok(Value::Unit)
@@ -226,6 +228,58 @@ impl VirtualMachine {
                 }
                 OpCode::Drop(reg) => {
                     self.registers[self.base_reg + reg.to_usize()] = None;
+                }
+                OpCode::MakeRecord(dest, tag, first, count) => {
+                    let mut fields = Vec::with_capacity(*count as usize);
+                    for i in 0..*count as usize {
+                        let v = self.registers[self.base_reg + first.to_usize() + i].clone()
+                            .ok_or("Record field register is empty")?;
+                        fields.push(v);
+                    }
+                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Record { tag: *tag, fields });
+                }
+                OpCode::GetField(dest, src, idx) => {
+                    let v = self.registers[self.base_reg + src.to_usize()].clone()
+                        .ok_or("Source register is empty")?;
+                    let inner = match v {
+                        Value::Record { fields, .. } => fields.get(*idx as usize).cloned()
+                            .ok_or_else(|| format!("Field index {} out of bounds", idx))?,
+                        Value::Tuple(items) => items.get(*idx as usize).cloned()
+                            .ok_or_else(|| format!("Tuple index {} out of bounds", idx))?,
+                        _ => return Err("GetField on non-record value".to_string()),
+                    };
+                    self.registers[self.base_reg + dest.to_usize()] = Some(inner);
+                }
+                OpCode::GetTag(dest, src) => {
+                    let v = self.registers[self.base_reg + src.to_usize()].clone()
+                        .ok_or("Source register is empty")?;
+                    let tag = match v {
+                        Value::Record { tag, .. } => tag as i64,
+                        _ => return Err("GetTag on non-record value".to_string()),
+                    };
+                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Int(tag));
+                }
+                OpCode::MakeArray(dest, first, count) => {
+                    let mut items = Vec::with_capacity(*count as usize);
+                    for i in 0..*count as usize {
+                        let v = self.registers[self.base_reg + first.to_usize() + i].clone()
+                            .ok_or("Array element register is empty")?;
+                        items.push(v);
+                    }
+                    self.registers[self.base_reg + dest.to_usize()] = Some(Value::Array(items));
+                }
+                OpCode::GetIndex(dest, base, idx) => {
+                    let arr = self.registers[self.base_reg + base.to_usize()].clone()
+                        .ok_or("Array register is empty")?;
+                    let idx_val = self.registers[self.base_reg + idx.to_usize()].clone()
+                        .ok_or("Index register is empty")?;
+                    let i = match idx_val { Value::Int(n) => n as usize, _ => return Err("Index must be Int".to_string()) };
+                    let elem = match arr {
+                        Value::Array(items) | Value::Tuple(items) => items.get(i).cloned()
+                            .ok_or_else(|| format!("Index {} out of bounds", i))?,
+                        _ => return Err("GetIndex on non-array value".to_string()),
+                    };
+                    self.registers[self.base_reg + dest.to_usize()] = Some(elem);
                 }
                 OpCode::Add(dest, left, right) => {
                     self.binary_op_windowed(*dest, *left, *right, |l, r| match (l, r) {
@@ -325,6 +379,14 @@ impl VirtualMachine {
                     }
                     if needed > self.registers.len() {
                         self.registers.resize(needed, None);
+                    }
+
+                    if self.frames.len() >= MAX_RECURSION_DEPTH {
+                        return Err(format!(
+                            "Stack overflow: recursion depth {} exceeds limit {}",
+                            self.frames.len(),
+                            MAX_RECURSION_DEPTH
+                        ));
                     }
 
                     self.frames.push(Frame {

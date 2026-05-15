@@ -28,6 +28,7 @@ impl Token {
             Token::Plus | Token::Minus => Precedence::Sum,
             Token::Asterisk | Token::Slash | Token::Percent => Precedence::Product,
             Token::LParen => Precedence::Call,
+            Token::LBracket => Precedence::Index,
             Token::Dot => Precedence::Index,
             _ => Precedence::Lowest,
         }
@@ -42,6 +43,7 @@ pub struct Parser<'a> {
     peek_span: Span,
     pub errors: Vec<Error>,
     pub source: String,
+    no_record_literal: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -56,6 +58,7 @@ impl<'a> Parser<'a> {
             peek_span,
             errors: Vec::new(),
             source: String::new(),
+            no_record_literal: false,
         }
     }
 
@@ -234,9 +237,65 @@ impl<'a> Parser<'a> {
             if !self.expect_peek(Token::RBrace) {
                 return Err("Expected '}' in record type".into());
             }
+            self.next_token();
             TypeBody::Record(fields)
+        } else if matches!(self.current_token, Token::Ident(_)) {
+            let mut cases = Vec::new();
+            loop {
+                let case_name = if let Token::Ident(n) = &self.current_token { n.clone() } else {
+                    return Err("Expected variant constructor name".into());
+                };
+                let case = if self.peek_token == Token::LParen {
+                    self.next_token();
+                    self.next_token();
+                    let mut tys = Vec::new();
+                    while self.current_token != Token::RParen && self.current_token != Token::Eof {
+                        tys.push(self.parse_type()?);
+                        if self.peek_token == Token::Comma {
+                            self.next_token();
+                            self.next_token();
+                        } else { break; }
+                    }
+                    if !self.expect_peek(Token::RParen) {
+                        return Err("Expected ')' in variant".into());
+                    }
+                    VariantCase::Tuple(case_name, tys)
+                } else if self.peek_token == Token::LBrace {
+                    self.next_token();
+                    self.next_token();
+                    let mut fs = Vec::new();
+                    while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+                        if let Token::Ident(fname) = &self.current_token {
+                            let fname = fname.clone();
+                            if !self.expect_peek(Token::Colon) {
+                                return Err("Expected ':' in variant field".into());
+                            }
+                            self.next_token();
+                            let ftype = self.parse_type()?;
+                            fs.push(RecordField { is_pub: false, name: fname, ty: ftype });
+                            if self.peek_token == Token::Comma {
+                                self.next_token();
+                                self.next_token();
+                            } else { break; }
+                        } else { break; }
+                    }
+                    if !self.expect_peek(Token::RBrace) {
+                        return Err("Expected '}' in variant record".into());
+                    }
+                    VariantCase::Record(case_name, fs)
+                } else {
+                    VariantCase::Unit(case_name)
+                };
+                cases.push(case);
+                if self.peek_token == Token::Pipe {
+                    self.next_token();
+                    self.next_token();
+                } else { break; }
+            }
+            self.next_token();
+            TypeBody::Variant(cases)
         } else {
-            return Err("Expected type body (only record supported)".into());
+            return Err("Expected type body".into());
         };
 
         Ok(Decl::Type { attrs: vec![], is_pub, ownership: None, name, generics, body })
@@ -793,7 +852,14 @@ impl<'a> Parser<'a> {
     pub fn parse_prefix(&mut self) -> Option<Spanned<Expr>> {
         let span = self.current_span;
         let node = match &self.current_token {
-            Token::Ident(name) => Expr::Identifier(name.clone()),
+            Token::Ident(name) => {
+                let nm = name.clone();
+                if !self.no_record_literal && self.peek_token == Token::LBrace {
+                    return Some(self.parse_record_literal(nm, span));
+                }
+                Expr::Identifier(nm)
+            }
+            Token::LBracket => return Some(self.parse_array_literal(span)),
             Token::Int(v) => Expr::Literal(Literal::Int(*v)),
             Token::Float(v) => Expr::Literal(Literal::Float(*v)),
             Token::String(v) => Expr::Literal(Literal::String(v.clone())),
@@ -848,10 +914,55 @@ impl<'a> Parser<'a> {
         Some(Spanned { node, span })
     }
 
+    fn parse_record_literal(&mut self, name: String, span: Span) -> Spanned<Expr> {
+        self.next_token(); // to '{'
+        self.next_token(); // to first field or '}'
+        let mut fields = Vec::new();
+        while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+            let fname = if let Token::Ident(n) = &self.current_token { n.clone() } else {
+                self.report_error(format!("Expected field name, got {:?}", self.current_token), self.current_span);
+                break;
+            };
+            let value = if self.peek_token == Token::Colon {
+                self.next_token();
+                self.next_token();
+                Some(self.parse_expr(Precedence::Lowest))
+            } else {
+                None
+            };
+            fields.push(FieldInit { name: fname, value });
+            if self.peek_token == Token::Comma {
+                self.next_token();
+                self.next_token();
+            } else {
+                self.next_token();
+            }
+        }
+        Spanned { node: Expr::Record { ty: vec![name], fields }, span }
+    }
+
+    fn parse_array_literal(&mut self, span: Span) -> Spanned<Expr> {
+        self.next_token(); // past '['
+        let mut items = Vec::new();
+        while self.current_token != Token::RBracket && self.current_token != Token::Eof {
+            items.push(self.parse_expr(Precedence::Lowest));
+            if self.peek_token == Token::Comma {
+                self.next_token();
+                self.next_token();
+            } else {
+                self.next_token();
+            }
+        }
+        Spanned { node: Expr::Array(items), span }
+    }
+
     fn parse_if_expr(&mut self) -> Result<Expr, String> {
         // current = 'if'
         self.next_token(); // move to condition
+        let prev = self.no_record_literal;
+        self.no_record_literal = true;
         let condition = Box::new(self.parse_expr(Precedence::Lowest));
+        self.no_record_literal = prev;
         if !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' after if condition".into());
         }
@@ -886,7 +997,10 @@ impl<'a> Parser<'a> {
 
     fn parse_match_expr(&mut self) -> Result<Expr, String> {
         self.next_token();
+        let prev = self.no_record_literal;
+        self.no_record_literal = true;
         let scrutinee = Box::new(self.parse_expr(Precedence::Lowest));
+        self.no_record_literal = prev;
         if !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' after match expr".into());
         }
@@ -934,7 +1048,10 @@ impl<'a> Parser<'a> {
             return Err("Expected 'in' in for loop".into());
         }
         self.next_token();
+        let prev = self.no_record_literal;
+        self.no_record_literal = true;
         let iter = Box::new(self.parse_expr(Precedence::Lowest));
+        self.no_record_literal = prev;
         if !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' in for loop".into());
         }
@@ -945,7 +1062,10 @@ impl<'a> Parser<'a> {
     fn parse_while_expr(&mut self) -> Result<Expr, String> {
         // current = 'while'
         self.next_token(); // move to condition
+        let prev = self.no_record_literal;
+        self.no_record_literal = true;
         let condition = Box::new(self.parse_expr(Precedence::Lowest));
+        self.no_record_literal = prev;
         if !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' in while loop".into());
         }
@@ -1031,7 +1151,10 @@ impl<'a> Parser<'a> {
 
     fn parse_handle_expr(&mut self) -> Result<Expr, String> {
         self.next_token();
+        let prev = self.no_record_literal;
+        self.no_record_literal = true;
         let expr = Box::new(self.parse_expr(Precedence::Lowest));
+        self.no_record_literal = prev;
         if !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' in handle".into());
         }
@@ -1204,6 +1327,15 @@ impl<'a> Parser<'a> {
             Token::Gte => BinaryOp::Gte,
             Token::Assign => BinaryOp::Assign,
             Token::LParen => return self.parse_call_expr(left),
+            Token::LBracket => {
+                self.next_token();
+                let index = self.parse_expr(Precedence::Lowest);
+                let span = self.current_span;
+                if !self.expect_peek(Token::RBracket) {
+                    self.report_error("Expected ']' in index expression".into(), self.current_span);
+                }
+                return Spanned { node: Expr::Index { base: Box::new(left), index: Box::new(index) }, span };
+            }
             Token::Dot => {
                 self.next_token();
                 if self.current_token == Token::Await {

@@ -34,6 +34,11 @@ pub enum OpCode {
     Ref(Register, Register),
     Deref(Register, Register),
     Drop(Register),
+    MakeRecord(Register, u32, Register, u8),
+    GetField(Register, Register, u32),
+    GetTag(Register, Register),
+    MakeArray(Register, Register, u8),
+    GetIndex(Register, Register, Register),
 }
 
 #[derive(Clone)]

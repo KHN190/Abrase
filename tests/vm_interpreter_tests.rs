@@ -23,9 +23,19 @@ fn run_module(functions: Vec<(Vec<OpCode>, Vec<Value>)>) -> Result<Value, String
                         max_reg = max_reg.max(r.to_usize() + 1);
                     }
                     OpCode::Copy(d, s) | OpCode::Move(d, s)
-                    | OpCode::MakeShared(d, s) | OpCode::Ref(d, s) | OpCode::Deref(d, s) => {
+                    | OpCode::MakeShared(d, s) | OpCode::Ref(d, s) | OpCode::Deref(d, s)
+                    | OpCode::GetTag(d, s) | OpCode::GetField(d, s, _) => {
                         max_reg = max_reg.max(d.to_usize() + 1);
                         max_reg = max_reg.max(s.to_usize() + 1);
+                    }
+                    OpCode::MakeRecord(d, _, first, count) | OpCode::MakeArray(d, first, count) => {
+                        max_reg = max_reg.max(d.to_usize() + 1);
+                        max_reg = max_reg.max(first.to_usize() + *count as usize);
+                    }
+                    OpCode::GetIndex(d, b, i) => {
+                        max_reg = max_reg.max(d.to_usize() + 1);
+                        max_reg = max_reg.max(b.to_usize() + 1);
+                        max_reg = max_reg.max(i.to_usize() + 1);
                     }
                     OpCode::Add(d, l, r) | OpCode::Sub(d, l, r) | OpCode::Mul(d, l, r) |
                     OpCode::Div(d, l, r) | OpCode::Mod(d, l, r) | OpCode::Eq(d, l, r) |

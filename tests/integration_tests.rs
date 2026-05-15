@@ -135,3 +135,42 @@ fn neg_use_after_move_into_call_typeck_errors() {
         errs
     );
 }
+
+#[test]
+fn test_record_field_access() {
+    let v = run_file("tests/scripts/point.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(7));
+}
+
+#[test]
+fn test_variant_match() {
+    let v = run_file("tests/scripts/color_variant.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(15));
+}
+
+#[test]
+fn test_array_index() {
+    let v = run_file("tests/scripts/array_index.ect")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(20));
+}
+
+#[test]
+fn neg_unknown_record_field_typeck_errors() {
+    let errs = typeck_file("tests/scripts/bad_unknown_field.ect");
+    assert!(
+        !errs.is_empty(),
+        "expected error for unknown record field, got no errors"
+    );
+}
+
+#[test]
+fn neg_array_index_wrong_type_typeck_errors() {
+    let errs = typeck_file("tests/scripts/bad_array_index_type.ect");
+    assert!(
+        !errs.is_empty(),
+        "expected error for non-Int array index, got no errors"
+    );
+}

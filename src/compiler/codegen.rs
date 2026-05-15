@@ -41,23 +41,64 @@ impl Compiler {
             }
 
             ast::Expr::Identifier(name) => {
-                self.var_to_reg.get(name).copied()
-                    .ok_or_else(|| format!("Undefined variable: {}", name))
+                if let Some(reg) = self.var_to_reg.get(name).copied() {
+                    return Ok(reg);
+                }
+                if let Some(info) = self.variant_info.get(name).cloned() {
+                    let dest = self.alloc_register()?;
+                    let placeholder = self.alloc_register()?;
+                    let idx = self.add_constant(Value::Unit);
+                    self.emit(OpCode::PushConst(placeholder, idx));
+                    self.emit(OpCode::MakeRecord(dest, info.tag, placeholder, 0));
+                    return Ok(dest);
+                }
+                Err(format!("Undefined variable: {}", name))
             }
 
             ast::Expr::Unary { op, right } => {
-                let src = self.compile_expr(right)?;
-                let dest = self.alloc_register()?;
                 match op {
                     ast::UnaryOp::Ref | ast::UnaryOp::RefMut => {
+                        let src = self.compile_expr(right)?;
+                        let dest = self.alloc_register()?;
                         self.emit(OpCode::Ref(dest, src));
                         Ok(dest)
                     }
                     ast::UnaryOp::Deref => {
+                        let src = self.compile_expr(right)?;
+                        let dest = self.alloc_register()?;
                         self.emit(OpCode::Deref(dest, src));
                         Ok(dest)
                     }
-                    _ => Err(format!("Unsupported unary op: {:?}", op)),
+                    ast::UnaryOp::Neg => {
+                        if let ast::Expr::Literal(ast::Literal::Int(n)) = &right.node {
+                            let reg = self.alloc_register()?;
+                            let idx = self.add_constant(Value::Int(-n));
+                            self.emit(OpCode::PushConst(reg, idx));
+                            return Ok(reg);
+                        }
+                        if let ast::Expr::Literal(ast::Literal::Float(f)) = &right.node {
+                            let reg = self.alloc_register()?;
+                            let idx = self.add_constant(Value::Float(-f));
+                            self.emit(OpCode::PushConst(reg, idx));
+                            return Ok(reg);
+                        }
+                        let src = self.compile_expr(right)?;
+                        let zero = self.alloc_register()?;
+                        let idx = self.add_constant(Value::Int(0));
+                        self.emit(OpCode::PushConst(zero, idx));
+                        let dest = self.alloc_register()?;
+                        self.emit(OpCode::Sub(dest, zero, src));
+                        Ok(dest)
+                    }
+                    ast::UnaryOp::Not => {
+                        let src = self.compile_expr(right)?;
+                        let zero = self.alloc_register()?;
+                        let idx = self.add_constant(Value::Bool(false));
+                        self.emit(OpCode::PushConst(zero, idx));
+                        let dest = self.alloc_register()?;
+                        self.emit(OpCode::Eq(dest, src, zero));
+                        Ok(dest)
+                    }
                 }
             }
 
@@ -207,11 +248,85 @@ impl Compiler {
                             self.code[jz_idx] = OpCode::Jz(eq_reg, next_addr);
                         }
                         ast::Pattern::Bind(name) => {
-                            // Bind pattern always matches and binds variable
-                            self.var_to_reg.insert(name.clone(), scrutinee_reg);
+                            if let Some(info) = self.variant_info.get(name).cloned() {
+                                let tag_reg = self.alloc_register()?;
+                                self.emit(OpCode::GetTag(tag_reg, scrutinee_reg));
+                                let expected_tag = self.alloc_register()?;
+                                let ti = self.add_constant(Value::Int(info.tag as i64));
+                                self.emit(OpCode::PushConst(expected_tag, ti));
+                                let eq_reg = self.alloc_register()?;
+                                self.emit(OpCode::Eq(eq_reg, tag_reg, expected_tag));
+                                let jz_idx = self.code.len();
+                                self.emit(OpCode::Jz(eq_reg, 0));
+                                let body_reg = self.compile_expr(&arm.body)?;
+                                self.emit(OpCode::Copy(result_reg, body_reg));
+                                exit_jumps.push(self.code.len());
+                                self.emit(OpCode::Jmp(0));
+                                let next_addr = self.code.len();
+                                self.code[jz_idx] = OpCode::Jz(eq_reg, next_addr);
+                            } else {
+                                self.var_to_reg.insert(name.clone(), scrutinee_reg);
+                                let body_reg = self.compile_expr(&arm.body)?;
+                                self.emit(OpCode::Copy(result_reg, body_reg));
+                                break;
+                            }
+                        }
+                        ast::Pattern::Variant { ty: vty, args } => {
+                            let vname = vty.last().cloned()
+                                .ok_or_else(|| "Variant pattern missing name".to_string())?;
+                            let info = self.variant_info.get(&vname).cloned()
+                                .ok_or_else(|| format!("Unknown variant: {}", vname))?;
+
+                            let tag_reg = self.alloc_register()?;
+                            self.emit(OpCode::GetTag(tag_reg, scrutinee_reg));
+                            let expected_tag = self.alloc_register()?;
+                            let ti = self.add_constant(Value::Int(info.tag as i64));
+                            self.emit(OpCode::PushConst(expected_tag, ti));
+                            let eq_reg = self.alloc_register()?;
+                            self.emit(OpCode::Eq(eq_reg, tag_reg, expected_tag));
+                            let jz_idx = self.code.len();
+                            self.emit(OpCode::Jz(eq_reg, 0));
+
+                            for (i, arg_pat) in args.iter().enumerate() {
+                                if let ast::Pattern::Bind(n) = &arg_pat.node {
+                                    let r = self.alloc_register()?;
+                                    self.emit(OpCode::GetField(r, scrutinee_reg, i as u32));
+                                    self.var_to_reg.insert(n.clone(), r);
+                                }
+                            }
+
                             let body_reg = self.compile_expr(&arm.body)?;
                             self.emit(OpCode::Copy(result_reg, body_reg));
-                            break; // Stop processing arms
+                            exit_jumps.push(self.code.len());
+                            self.emit(OpCode::Jmp(0));
+
+                            let next_addr = self.code.len();
+                            self.code[jz_idx] = OpCode::Jz(eq_reg, next_addr);
+                        }
+                        ast::Pattern::Record { ty: rty, fields, .. } => {
+                            let type_name = rty.last().cloned()
+                                .ok_or_else(|| "Record pattern missing type name".to_string())?;
+                            let field_order = self.record_fields.get(&type_name).cloned()
+                                .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
+
+                            for fp in fields {
+                                if let Some(idx) = field_order.iter().position(|n| n == &fp.name) {
+                                    let bind_name = match &fp.pattern {
+                                        Some(p) => if let ast::Pattern::Bind(n) = &p.node {
+                                            Some(n.clone())
+                                        } else { None },
+                                        None => Some(fp.name.clone()),
+                                    };
+                                    if let Some(n) = bind_name {
+                                        let r = self.alloc_register()?;
+                                        self.emit(OpCode::GetField(r, scrutinee_reg, idx as u32));
+                                        self.var_to_reg.insert(n, r);
+                                    }
+                                }
+                            }
+                            let body_reg = self.compile_expr(&arm.body)?;
+                            self.emit(OpCode::Copy(result_reg, body_reg));
+                            break;
                         }
                         _ => return Err("Unsupported pattern in match".to_string()),
                     }
@@ -232,6 +347,21 @@ impl Compiler {
                         let src = self.compile_expr(&args[0])?;
                         let dest = self.alloc_register()?;
                         self.emit(OpCode::MakeShared(dest, src));
+                        return Ok(dest);
+                    }
+                    if let Some(info) = self.variant_info.get(name).cloned() {
+                        let count = args.len();
+                        let first = self.alloc_register()?;
+                        let mut regs = vec![first];
+                        for _ in 1..count {
+                            regs.push(self.alloc_register()?);
+                        }
+                        for (i, arg) in args.iter().enumerate() {
+                            let v = self.compile_expr(arg)?;
+                            self.emit(OpCode::Copy(regs[i], v));
+                        }
+                        let dest = self.alloc_register()?;
+                        self.emit(OpCode::MakeRecord(dest, info.tag, first, count as u8));
                         return Ok(dest);
                     }
                     let func_id = self.func_map.get(name).copied()
@@ -268,6 +398,107 @@ impl Compiler {
                 };
                 self.emit(OpCode::Ret(r));
                 Ok(r)
+            }
+
+            ast::Expr::Record { ty, fields } => {
+                let type_name = ty.last().cloned()
+                    .ok_or_else(|| "Record literal missing type name".to_string())?;
+                let field_order = self.record_fields.get(&type_name).cloned()
+                    .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
+                let first = self.alloc_register()?;
+                let mut regs = vec![first];
+                for _ in 1..field_order.len() {
+                    regs.push(self.alloc_register()?);
+                }
+                for (i, fname) in field_order.iter().enumerate() {
+                    let init = fields.iter().find(|f| &f.name == fname)
+                        .ok_or_else(|| format!("Missing field '{}' in {}", fname, type_name))?;
+                    let src = if let Some(v) = &init.value {
+                        self.compile_expr(v)?
+                    } else {
+                        self.var_to_reg.get(&init.name).copied()
+                            .ok_or_else(|| format!("Undefined variable: {}", init.name))?
+                    };
+                    self.emit(OpCode::Copy(regs[i], src));
+                }
+                let dest = self.alloc_register()?;
+                self.emit(OpCode::MakeRecord(dest, 0, first, field_order.len() as u8));
+                Ok(dest)
+            }
+
+            ast::Expr::Variant { ty, args } => {
+                let vname = ty.last().cloned()
+                    .ok_or_else(|| "Variant constructor missing name".to_string())?;
+                let info = self.variant_info.get(&vname).cloned()
+                    .ok_or_else(|| format!("Unknown variant: {}", vname))?;
+                let count = args.len();
+                if count == 0 {
+                    let dest = self.alloc_register()?;
+                    let placeholder = self.alloc_register()?;
+                    let idx = self.add_constant(Value::Unit);
+                    self.emit(OpCode::PushConst(placeholder, idx));
+                    self.emit(OpCode::MakeRecord(dest, info.tag, placeholder, 0));
+                    Ok(dest)
+                } else {
+                    let first = self.alloc_register()?;
+                    let mut regs = vec![first];
+                    for _ in 1..count {
+                        regs.push(self.alloc_register()?);
+                    }
+                    for (i, arg) in args.iter().enumerate() {
+                        let v = self.compile_expr(arg)?;
+                        self.emit(OpCode::Copy(regs[i], v));
+                    }
+                    let dest = self.alloc_register()?;
+                    self.emit(OpCode::MakeRecord(dest, info.tag, first, count as u8));
+                    Ok(dest)
+                }
+            }
+
+            ast::Expr::FieldAccess { base, field } => {
+                let base_reg = self.compile_expr(base)?;
+                let type_name = self.infer_expr_type(base).and_then(|t| match t {
+                    ast::Type::Named(n) => Some(n),
+                    _ => None,
+                }).ok_or_else(|| format!("Cannot determine record type for field access '.{}'", field))?;
+                let fields = self.record_fields.get(&type_name)
+                    .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
+                let idx = fields.iter().position(|n| n == field)
+                    .ok_or_else(|| format!("No field '{}' in {}", field, type_name))? as u32;
+                let dest = self.alloc_register()?;
+                self.emit(OpCode::GetField(dest, base_reg, idx));
+                Ok(dest)
+            }
+
+            ast::Expr::Array(items) => {
+                if items.is_empty() {
+                    let dest = self.alloc_register()?;
+                    let placeholder = self.alloc_register()?;
+                    let idx = self.add_constant(Value::Unit);
+                    self.emit(OpCode::PushConst(placeholder, idx));
+                    self.emit(OpCode::MakeArray(dest, placeholder, 0));
+                    return Ok(dest);
+                }
+                let first = self.alloc_register()?;
+                let mut regs = vec![first];
+                for _ in 1..items.len() {
+                    regs.push(self.alloc_register()?);
+                }
+                for (i, item) in items.iter().enumerate() {
+                    let v = self.compile_expr(item)?;
+                    self.emit(OpCode::Copy(regs[i], v));
+                }
+                let dest = self.alloc_register()?;
+                self.emit(OpCode::MakeArray(dest, first, items.len() as u8));
+                Ok(dest)
+            }
+
+            ast::Expr::Index { base, index } => {
+                let base_reg = self.compile_expr(base)?;
+                let idx_reg = self.compile_expr(index)?;
+                let dest = self.alloc_register()?;
+                self.emit(OpCode::GetIndex(dest, base_reg, idx_reg));
+                Ok(dest)
             }
 
             _ => Err(format!("Unsupported expression: {:?}", expr.node)),
@@ -349,6 +580,10 @@ impl Compiler {
                 _ => return None,
             }),
             ast::Expr::Identifier(name) => self.var_types.get(name).cloned(),
+            ast::Expr::Record { ty, .. } => ty.last().map(|n| ast::Type::Named(n.clone())),
+            ast::Expr::Variant { ty, .. } => ty.last().and_then(|vname| {
+                self.variant_info.get(vname).map(|info| ast::Type::Named(info.type_name.clone()))
+            }),
             _ => None,
         }
     }
