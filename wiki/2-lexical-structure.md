@@ -1,52 +1,21 @@
-# Lexical Structure
+# 2. Lexical Structure
 
-## Encoding
+Minimize implicit conversions and parser ambiguity. Everything explicit, like identifiers follow strict naming conventions.
 
-Source files use UTF-8 encoding. Identifiers allow Unicode characters; keywords are ASCII only.
+UTF-8 source files with keywords, identifiers (Unicode), comments, literals, and block delimiters.
 
-## Keywords
+```rust
+// keywords
+fn, let, const, if, match, for, while, loop, async, await, handle, throw
 
-```
-fn        let        const      if         else
-match     for        while      loop       break
-continue  return     type       trait      impl
-import    mod        pub        scope      region
-handle    throw      true       false      where
-async     await      in         as         self
-Self      mut        thread     _
-```
+// identifier rules
+TypeName, value_name, effect_name, _
 
-## Identifiers
+// literals
+42, 3.14, true, 'a', "hello {name}", ()
 
-```
-identifier   ::= XID_Start XID_Continue*
-type_name    ::= UpperLetter (Letter | Digit)*
-value_name   ::= LowerLetter (Letter | Digit | "_")*
-effect_name  ::= LowerLetter (Letter | Digit | "_")*
+// syntax
+{ stmt; stmt; expr }
 ```
 
-## Comments
-
-```
-// line comment
-```
-
-## Literals
-
-| Type | Example |
-|------|---------|
-| Integer | `42` |
-| Float | `3.14` |
-| Boolean | `true`, `false` |
-| Character | `'a'`, `'\n'`, `'\u{1F600}'` |
-| String | `"hello"`, `"line1\nline2"` |
-| String interpolation | `"hello {name}, you are {age}"` (literals only) |
-| Unit | `()` |
-
-String interpolation expressions must be simple identifiers or field access.
-
-## Separation and Blocks
-
-- Statements end with semicolon `;`
-- Code blocks use `{ }`, no `;` after `{ }`
-- No indentation-sensitive syntax
+See BNF spec in appendix for formal lexical grammar.

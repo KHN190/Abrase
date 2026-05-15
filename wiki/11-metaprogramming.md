@@ -1,59 +1,39 @@
 # 11. Metaprogramming
 
-## Built-in Derive
+No user defined macros. Built-in derives only, it will expand in compile time. Const evaluation at compile time.
 
-Only compiler-built-in derive; users cannot extend.
+* 4 `@derive` types:
 
-```
-@derive(Eq, Ord, Show, Clone, Hash)
-type User = {
-  name: String,
-  age: Int,
+  * `Eq` (equality), 
+  * `Ord` (ordering), 
+  * `Show` (to string)
+  * `Clone` (deep copy)
+
+* `const fn` for compile-time evaluation.
+
+Note: If you derive a trait, all fields in the type must also have that trait.
+
+```rust
+@derive(Eq, Ord, Show, Clone)
+type Dog = { name: String, age: Int }
+
+impl Show for Dog {
+  fn show(self: &Self) -> String {
+    "I bark {self.name} at age {self.age}."
+  }
 }
-```
 
-Built-in derives:
-- `Eq` - structural equality
-- `Ord` - total order
-- `Show` - to string
-- `Hash` - hashing
-- `Clone` - deep copy (only when all fields Clone)
-- `Default` - default value
+// Animal can derive Eq because Dog also derives Eq
+@derive(Eq, Ord, Show, Clone)
+type Animal = 
+  | Dog { dog: Dog }
+  | Cat { name: String }
 
-Rust may register additional derives (e.g., `Serialize`, `Deserialize`), but these are Rust-provided, not language built-in.
-
-## const fn
-
-```
 const fn fib(n: Int) -> Int {
   if n < 2 { n } else { fib(n-1) + fib(n-2) }
 }
 
-const FIB_10: Int = fib(10);   // compile-time evaluation
+const FIB_10: Int = fib(10); // compile-time
 ```
 
-const fn limitations:
-- Effect set must be subset of `<total>`
-- Cannot call non-const fn
-- Cannot perform heap allocation (`<alloc>` not allowed)
-
-## Prohibited Features
-
-- User-defined macros (declarative or procedural)
-- Runtime reflection
-- `eval` / dynamic code loading
-- Dynamic dispatch disabled by default
-
-## Restricted Dynamic Dispatch
-
-For dynamic dispatch, use `dyn Trait`:
-
-```
-fn print_all(items: List<dyn Show>) -> <console> Unit {
-  for item in items {
-    println(item.show());
-  }
-}
-```
-
-`dyn Trait` is a fat pointer with runtime overhead. Explicit to draw LLM attention.
+Const fn must be `<total>`.

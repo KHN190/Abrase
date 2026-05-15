@@ -1,100 +1,42 @@
-# 2. Type System
+# 3. Type System
 
-## Primitive Types
+Static typing with local, bidirectional inference. Types are fully explicit in signatures.
 
-```
-Int      // 64 bit
-UInt     // 64 bit
-Float    // 64 bit
-Bool
-Char     // Unicode scalar value
-String   // UTF-8, immutable
-Unit     // type of ()
-Never    // divergent, subtype of any type
-```
+Ect provides:
 
-## Compound Types
+* Primitives (Int, Float, Bool, Char, String, Unit, Never), 
+* Compound types (tuple, array, list, record, variant), 
+* Functions, 
+* References, 
+* Generics.
 
-**Tuple**
-```
-(Int, String, Bool)
-()
-(Int,) // single element tuple needs ','
-```
+```rust
+// Primitives
+Int, Float, Bool, Char, String, Unit
 
-**Array** (stack-allocated, @copy when elements are @copy)
-```
-[Int; 16]
-[Float; 3]
-```
+// Tuples
+(Int, String, Bool), (Int,)
 
-**List** (dynamic length, heap-allocated, @move)
-```
-List<Int>
-List<List<String>>
-```
+// Array and List
+[Int; 16], List<Int>
 
-**Record**
-```
-type User = {
-  name: String,
-  age: Int,
-}
+// Record (named fields)
+type User = { name: String, age: Int }
+
+// Variant
+type Shape = | Circle { radius: Float } | Point
+
+// Function type
+(Int, String) -> <exn<E>> Bool
+
+// Generic function
+fn sort<T>(xs: List<T>) -> List<T> where T: Ord { ... }
 ```
 
-**Variant** (tagged union)
-```
-type Shape =
-  | Circle { radius: Float }
-  | Rect { width: Float, height: Float }
-  | Point
-```
+Notes:
 
-**Function Type**
-```
-(Int, String) -> Bool                    // pure function
-(Int) -> <io> Unit                       // with effect
-() -> <async, exn<E>> T                  // multiple effects
-```
+* Unit (`()`) is the empty type—return value of functions that don't return data (just side effects). 
 
-**Reference Type**
-```
-&T                  // immutable reference, inferred region
-&mut T              // exclusive mutable reference
-&T in r             // explicit region annotation
-```
+* Never is the divergent type for functions that never return (e.g., `panic`, infinite loop). Never is a subtype of any type.
 
-## Generics
-
-```
-fn map<T, U>(xs: List<T>, f: (T) -> U) -> List<U>
-
-type Pair<A, B> = { first: A, second: B }
-```
-
-**Constraints** use `where` clause:
-```
-fn sort<T>(xs: List<T>) -> List<T>
-  where T: Ord
-```
-
-## Type Inference
-
-Bidirectional + local Hindley-Milner.
-
-- Function signatures must be fully annotated
-- Local variables in function body can omit types
-- Type inference does not cross function boundaries
-
-## Subtyping
-
-No nominal subtyping. `Never` is the only exception: it's a subtype of any type.
-
-Structural equality for tuples and function types; nominal equality for records and variants.
-
-## Type Aliases
-
-```
-type alias UserId = Int
-type alias Callback = (Int) -> <io> Unit
-```
+References must be annotated with regions: `&T` or `&T in r`. 

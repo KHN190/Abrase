@@ -1,71 +1,33 @@
 # 7. Functions & Closures
 
-## Function Definition
+Functions are first-class. Signatures must declare effects and types explicitly for clarity. Traits enable polymorphism.
 
-```
-fn name(param1: T1, param2: T2) -> <effects> ReturnType {
-  body
-}
+Ect provides:
 
-// No return value
-fn greet(name: String) -> <console> Unit {
-  println("hello {name}");
-}
+* Functions with mandatory signature annotations. 
+* Generics with `where` constraints. 
+* Closures with implicit borrow (or explicit `move`). 
+* Methods via `self: &Self`, `self: &mut Self`, `self: Self`.
+* Traits for impls.
 
-// Generic + constraints
-fn max<T>(a: T, b: T) -> T
-  where T: Ord
-{
-  if a.compare(&b) == Ordering.Less { b } else { a }
-}
-```
+```rust
+fn greet(name: String) -> <console> Unit { println("hello {name}"); }
+fn max<T>(a: T, b: T) -> T where T: Ord { ... }
 
-## Closures
-
-```
 let add = |x: Int, y: Int| x + y;
-let inc = |x| x + 1;                   // type inference
-let with_effect = |s: String| -> <console> Unit {
-  println(s);
-};
-```
+let inc = |x| x + 1;
+let moved = move |x| uses_x;
 
-Closure capture follows ownership rules: default borrow, explicit `move |...| ...` when needed.
-
-## self Parameter
-
-Method first parameter named `self`:
-
-```
 impl User {
   fn name(self: &Self) -> &String { &self.name }
-  fn rename(self: &mut Self, new_name: String) -> Unit {
-    self.name = new_name;
-  }
+  fn rename(self: &mut Self, n: String) -> Unit { self.name = n; }
   fn consume(self: Self) -> String { self.name }
 }
+
+trait Show { fn show(self: &Self) -> String }
+impl Show for Int { fn show(self) -> String { ... } }
+
+user.name() or User.name(&user)
 ```
 
-Call syntax: `user.name()` or explicit `User.name(&user)`.
-
-## Traits
-
-```
-trait Show {
-  fn show(self: &Self) -> String
-}
-
-impl Show for Int {
-  fn show(self) -> String { int_to_string(self) }
-}
-```
-
-**Orphan rule strict:** `impl Trait for Type` must be defined in Type or Trait's module.
-
-## Default Parameters & Variadic Functions
-
-Not supported. Use builder pattern or multiple function versions instead.
-
-## Function Overloading
-
-Not supported. Functions with same name must have unique signature. Use generics or traits for polymorphism.
+No default parameters, variadics, or overloading; use generics/traits.

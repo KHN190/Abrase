@@ -1,63 +1,42 @@
 # 10. Error Handling
 
-## Two-Layer Model
+Recoverable errors (Result/exn) for expected failures. Panics for invariant violations. Effects make error flow explicit.
 
-| Layer | Mechanism | Use case |
-|-------|-----------|----------|
-| Recoverable | `Result<T, E>` + `<exn<E>>` effect | Business errors, IO failures |
-| Unrecoverable | `panic` | Invariant violations, bugs |
+A few options:
 
-## Result + exn
-
-`<exn<E>>` is an effect; `Result<T, E>` is a value. They can be converted.
+* `Result<T, E>` (value) and `<exn<E>>` effect are interconvertible.
+* `throw` raises, handlers catch by `handle`. 
+* `?` operator on exn calls: if error, propagate up; if ok, unwrap and continue. 
+* `panic` for unrecoverable bugs.
 
 ```rust
-// Exception version
+// Throws exn<E>
 fn parse(s: String) -> <exn<ParseError>> Int {
-  if !is_valid(s) { throw ParseError.Invalid }
+  if !is_valid(s) { throw ParseError.Invalid }  // raises error
+  to_int(s)
 }
 
-// Result version
+// Convert exn to Result using handle
 fn try_parse(s: String) -> Result<Int, ParseError> {
   handle parse(s) {
-    return v => Ok(v),
-    exn e => Err(e),
+    return v => Ok(v),      // on success, wrap in Ok
+    exn e => Err(e),        // on exn, wrap in Err
   }
 }
-```
 
-## throw and catch
-
-```rust
-fn divide(x: Int, y: Int) -> <exn<MathError>> Int {
-  if y == 0 { throw MathError.DivByZero }
-  x / y
-}
-
+// Catch exn and return default value
 fn safe_divide(x: Int, y: Int) -> Int {
   handle divide(x, y) {
-    return v => v,
-    exn _ => 0,
+    return v => v,          // success: return value
+    exn _ => 0,             // error: return 0
   }
 }
+
+// Propagate exn up the call stack
+let val = parse(s)?;  // if parse throws, exit early; else extract value
+
+// Panic on invariant violation (Never type)
+panic("invariant: list non-empty")
 ```
 
-## ? Operator
-
-Only for propagating `exn<E>` effect:
-
-```
-fn pipeline(s: String) -> <exn<ParseError>, exn<ValidateError>> Output {
-  let parsed = parse(s)?;
-  let valid = validate(parsed)?;
-  process(valid)
-}
-```
-
-## panic
-
-```
-panic("invariant violated: list should not be empty")
-```
-
-`panic` has type `Never`, usable anywhere. Panic cannot be caught by handler (unless `<panic>` effect explicitly enabled).
+Exn checked at compile time. Panic uncatchable by default.

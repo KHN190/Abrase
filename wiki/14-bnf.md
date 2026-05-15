@@ -420,9 +420,10 @@ p.s. `<expr-with-block>` doesn't need `;`, because it ends with `}` already.
                     | <identifier> '=' <literal>
 ```
 
-属性可前置于声明:
+Built-in derives:
+
 ```
-@derive(Eq, Ord)
+@derive(Eq, Ord, Show, Clone)
 @export
 pub fn handler(req: Request) -> Response { ... }
 ```

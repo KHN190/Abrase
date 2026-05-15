@@ -1,57 +1,45 @@
 # 1. Design Principles
 
-Four axioms guide the design:
+Ect is a Rust dialect with static types, effect system, region-based lifetime management.
 
-## P1: Local Reasoning
+Ect makes code explicit and checkable at compile time, so LLMs can reason about code with minimal local context, and the runtime stays simple thanks to compiler. All side effects, ownership, and type constraints visible in signatures.
 
-Expression types, effects, and ownership depend only on function signature and current scope bindings. No implicit global state, dynamic scope, runtime reflection, or macro rewriting.
+## Language Design
 
-## P2: Signature as Contract
+* Signature as contract — Signatures declare type, effect, and ownership.
+* Explicity over implicity.
+* Redundancy over compactness.
+* Error localization.
 
-Function signatures include three dimensions: type, effect, ownership. Reading the signature reveals what the function does, what resources it needs, and how it handles inputs.
+## Virtual Machine Design
 
-## P3: Redundancy Over Compactness
+Bytecode is the product.
 
-LLM context is cheap; explicit is preferred. Repeating type names is better than clever omission rules. No convenient but error-prone syntactic sugar.
+* Minimal - 40 opcodes; runs in any Rust app.
+* Safety - enforced by compiler; runtime executes only.
+* Debuggable - simplicity enables profilers, debuggers, traces.
 
-## P4: Error Localization
+## Compile vs. Runtime
 
-Parse, type, effect, and ownership errors must point to the smallest identifiable syntactic unit. No macro chain or inference chain expansion. Structured output for LLM fixes.
+Compile time resolves: 
 
-# VM Design
+* types, 
+* effects, 
+* ownership, 
+* regions, 
+* generics monomorphization, 
+* trait dispatch, 
+* async, 
+* handlers, 
+* pattern match, 
+* const evaluation.
 
-Core idea: Ect has all possible types and checks inferenced during compile time, and runtime VM doesn't need to know them.
+Runtime cares: 
 
-## P1: Run in any Rust application
+* bytecode execution, 
+* memory (move/copy/drop/refcount), 
+* arithmetic, 
+* control flow, 
+* device I/O, 
+* coroutines.
 
-The VM is designed in less than 300 lines so you can add it and execute compiled bytecode to any Rust application. It is simple so it can be transplanted to any platforms easily too.
-
-## P2: Safety
-
-Runtime safety is ensured because of simplicity.
-
-## P3: Debug
-
-Debugger, profiler and trace are made easy.
-
-These are checked and inferenced during compile:
-
-- Types
-- Effects
-- Ownership and borrows
-- Region
-- Generics monomorphization
-- Trait dispatch
-- Async transform
-- Effect handler lowering
-- Pattern match
-- Const fn and expr
-
-These are made to runtime:
-
-- Bytecode
-- Memory management (move, copy, drop, ref count)
-- Arithmetics
-- Control flow
-- Method calls
-- Host function calls
