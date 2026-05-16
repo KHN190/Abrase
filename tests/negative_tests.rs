@@ -281,3 +281,69 @@ fn let_pattern_destructure_length_mismatch() {
     assert!(err.contains("expects") || err.contains("arg"),
             "expected arg-count error, got: {}", err);
 }
+
+// --- Typeck rejection: for / loop / break / continue / tuple / array-repeat / range ---
+
+#[test]
+fn for_over_non_iterable_rejected() {
+    // `for x in 42 {}` — Int is not iterable.
+    let src = "fn main() -> Int { for x in 42 {}; 0 }";
+    let err = must_reject(src);
+    assert!(err.contains("not iterable") || err.contains("iterate"),
+            "expected 'not iterable' error, got: {}", err);
+}
+
+#[test]
+fn loop_break_type_mismatch_rejected() {
+    // `loop { break "wrong" }` used as `Int` — break value String ≠ declared return Int.
+    let src = r#"fn main() -> Int { loop { break "wrong" } }"#;
+    let err = must_reject(src);
+    assert!(!err.is_empty(), "break with wrong-type value must error");
+}
+
+#[test]
+fn break_outside_loop_rejected() {
+    // `break` at top-level of a function — no enclosing loop.
+    let src = "fn main() -> Int { break; 0 }";
+    let err = must_reject(src);
+    assert!(err.contains("Break outside") || err.contains("loop"),
+            "expected 'Break outside of loop' error, got: {}", err);
+}
+
+#[test]
+fn continue_outside_loop_rejected() {
+    // `continue` at top-level of a function — no enclosing loop.
+    let src = "fn main() -> Int { continue; 0 }";
+    let err = must_reject(src);
+    assert!(err.contains("Continue outside") || err.contains("loop"),
+            "expected 'Continue outside of loop' error, got: {}", err);
+}
+
+#[test]
+fn tuple_element_type_mismatch_rejected() {
+    // Passing (Int, String) where (Int, Bool) is expected.
+    let src = r#"
+        fn first(t: (Int, Bool)) -> Int { 0 }
+        fn main() -> Int { first((1, "not_bool")) }
+    "#;
+    let err = must_reject(src);
+    assert!(!err.is_empty(), "tuple element type mismatch must error");
+}
+
+#[test]
+fn array_repeat_non_int_count_rejected() {
+    // `[0; true]` — repeat count must be Int, not Bool.
+    let src = "fn main() -> Int { let _ = [0; true]; 0 }";
+    let err = must_reject(src);
+    assert!(err.contains("Array repeat count must be Int") || err.contains("count"),
+            "expected count type error, got: {}", err);
+}
+
+#[test]
+fn range_non_int_end_rejected() {
+    // `0..true` — range end must be Int, not Bool.
+    let src = "fn main() -> Int { let _ = 0..true; 0 }";
+    let err = must_reject(src);
+    assert!(err.contains("Range end must be Int") || err.contains("range") || err.contains("Int"),
+            "expected range end type error, got: {}", err);
+}

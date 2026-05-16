@@ -237,4 +237,80 @@ impl Compiler {
         self.emit(OpCode::LdIdx(dest, base_reg, idx_reg));
         Ok(dest)
     }
+
+    pub(in crate::compiler) fn compile_tuple(
+        &mut self,
+        items: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Register, String> {
+        let dest = self.alloc_register()?;
+        let count = to_u16(items.len(), "Tuple length")?;
+        self.emit(OpCode::Alloc(dest, count));
+        for (i, item) in items.iter().enumerate() {
+            let offset = to_u16(i, "Tuple element offset")?;
+            let v = self.compile_expr(item)?;
+            self.emit(OpCode::St(v, dest, offset));
+        }
+        Ok(dest)
+    }
+
+    pub(in crate::compiler) fn compile_array_repeat(
+        &mut self,
+        elem: &ast::Spanned<ast::Expr>,
+        count: &ast::Spanned<ast::Expr>,
+    ) -> Result<Register, String> {
+        let n = match &count.node {
+            ast::Expr::Literal(ast::Literal::Int(n)) if *n >= 0 => *n as usize,
+            _ => return Err("array-repeat count must be a non-negative integer literal".into()),
+        };
+        let dest = self.alloc_register()?;
+        let n_u16 = to_u16(n, "Array-repeat length")?;
+        self.emit(OpCode::Alloc(dest, n_u16));
+        let src = self.compile_expr(elem)?;
+        for i in 0..n {
+            let offset = to_u16(i, "Array-repeat offset")?;
+            let copy = self.alloc_register()?;
+            self.emit(OpCode::Copy(copy, src));
+            self.emit(OpCode::St(copy, dest, offset));
+        }
+        Ok(dest)
+    }
+
+    pub(in crate::compiler) fn compile_range(
+        &mut self,
+        start: Option<&ast::Spanned<ast::Expr>>,
+        end: Option<&ast::Spanned<ast::Expr>>,
+        inclusive: bool,
+    ) -> Result<Register, String> {
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Alloc(dest, 3));
+
+        let s_reg = match start {
+            Some(e) => self.compile_expr(e)?,
+            None => {
+                let r = self.alloc_register()?;
+                let i = self.add_constant(Value::from_int(0))?;
+                self.emit(OpCode::PushConst(r, i));
+                r
+            }
+        };
+        self.emit(OpCode::St(s_reg, dest, 0));
+
+        let e_reg = match end {
+            Some(e) => self.compile_expr(e)?,
+            None => {
+                let r = self.alloc_register()?;
+                let i = self.add_constant(Value::from_int(i64::MAX >> 16))?;
+                self.emit(OpCode::PushConst(r, i));
+                r
+            }
+        };
+        self.emit(OpCode::St(e_reg, dest, 1));
+
+        let inc_reg = self.alloc_register()?;
+        let inc_idx = self.add_constant(Value::from_int(if inclusive { 1 } else { 0 }))?;
+        self.emit(OpCode::PushConst(inc_reg, inc_idx));
+        self.emit(OpCode::St(inc_reg, dest, 2));
+
+        Ok(dest)
+    }
 }

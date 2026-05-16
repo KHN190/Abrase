@@ -306,23 +306,17 @@ fn verify_compile_undefined_function_call_errors() {
 }
 
 #[test]
-fn verify_codegen_emits_named_error_for_range() {
+fn verify_codegen_compiles_range_binding() {
+    // Range 现在是一等值,可以绑定后下游消费。
     let src = "fn main() -> Int { let _r = 0..5; 0 }";
-    let result = run_source(src);
-    assert!(result.is_err(), "expected NYI codegen error");
-    let err = result.unwrap_err();
-    assert!(err.contains("range expression") || err.contains("not yet implemented"),
-            "expected named NYI message, got: {}", err);
+    assert_eq!(run_source(src), Ok(Value::from_int(0)));
 }
 
 #[test]
-fn verify_codegen_emits_named_error_for_for_loop() {
-    let src = "fn main() -> Int { for x in 0..5 { } 0 }";
-    let result = run_source(src);
-    assert!(result.is_err(), "expected error (Range is not iterable / NYI)");
-    let err = result.unwrap_err();
-    assert!(err.contains("for loop") || err.contains("range expression") || err.contains("not iterable"),
-            "expected named NYI/iter message, got: {}", err);
+fn verify_codegen_runs_for_loop_over_inline_range() {
+    // for + inline 排他 range:0+1+2+3+4 = 10。
+    let src = "fn main() -> Int { let mut s = 0; for x in 0..5 { s = s + x }; s }";
+    assert_eq!(run_source(src), Ok(Value::from_int(10)));
 }
 
 
@@ -363,5 +357,12 @@ fn verify_method_call_on_unknown_receiver_emits_method_error() {
     let err = result.unwrap_err();
     assert!(err.contains("No method") || err.contains("bogus"),
             "expected method-specific error, got: {}", err);
+}
+
+#[test]
+fn verify_codegen_tuple_construction_and_index() {
+    // Tuple elements are accessible by index; sum of two Int elements.
+    let src = "fn main() -> Int { let t = (10, 20, 30); t[0] + t[2] }";
+    assert_eq!(run_source(src), Ok(Value::from_int(40)));
 }
 

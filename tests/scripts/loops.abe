@@ -1,0 +1,41 @@
+// Integration test exercising for / loop / break / continue / range.
+
+fn main() -> Int {
+  // 1. for + inline exclusive range
+  let mut a = 0;
+  for i in 1..5 { a = a + i };          // 1+2+3+4 = 10
+
+  // 2. for + inline inclusive range
+  let mut b = 0;
+  for i in 1..=5 { b = b + i };          // 1+2+3+4+5 = 15
+
+  // 3. for + range as first-class value
+  let r = 0..4;
+  let mut c = 0;
+  for i in r { c = c + i };              // 0+1+2+3 = 6
+
+  // 4. for + continue (skip odd via %)
+  let mut d = 0;
+  for i in 0..6 {
+    if i % 2 == 0 { continue } else { d = d + i }
+  };                                     // 1+3+5 = 9
+
+  // 5. loop + break with value
+  let mut k = 0;
+  let e = loop {
+    if k == 7 { break k * 10 } else { k = k + 1 }
+  };                                     // 70
+
+  // 6. loop + break + continue (sum 1..=10 skipping multiples of 3)
+  let mut j = 0;
+  let mut f = 0;
+  let mut iters = 0;
+  loop {
+    iters = iters + 1;
+    if iters > 20 { break } else { j = j + 1 };
+    if j > 10 { break } else { j };
+    if j % 3 == 0 { continue } else { f = f + j }
+  };                                     // 1+2+4+5+7+8+10 = 37
+
+  a + b + c + d + e + f                  // 10+15+6+9+70+37 = 147
+}

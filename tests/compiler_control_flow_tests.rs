@@ -4,6 +4,19 @@ mod compiler_codegen_common;
 use compiler_codegen_common::*;
 use abrase::vm::Value;
 
+fn run(src: &str) -> Result<Value, String> {
+    let mut parser = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = parser.parse_program();
+    if !parser.errors.is_empty() {
+        return Err(format!("parse: {}", parser.pretty_print_errors()));
+    }
+    let mut compiler = Compiler::new().with_source(src.into());
+    let module = compiler.compile_module(&ast)
+        .map_err(|_| compiler.pretty_print_errors())?;
+    let mut vm = VirtualMachine::new();
+    vm.run_module(&module)
+}
+
 #[test]
 fn verify_compile_if_true_branch() {
     let ast = vec![Decl::Fn(FnDecl {
@@ -535,3 +548,132 @@ fn verify_compile_if_zero_condition_falsy() {
     let result = compile_and_run(&ast);
     assert_eq!(result, Ok(Value::from_int(200)), "Falsy int (0) should take alternative");
 }
+
+#[test]
+fn tuple_construction_and_index() {
+    let src = "fn main() -> Int { let t = (10, 20, 30); t[1] }";
+    assert_eq!(run(src), Ok(Value::from_int(20)));
+}
+
+#[test]
+fn array_repeat_literal() {
+    let src = "fn main() -> Int { let a = [7; 4]; a[0] + a[3] }";
+    assert_eq!(run(src), Ok(Value::from_int(14)));
+}
+
+#[test]
+fn loop_with_break_value() {
+    let src = r#"
+        fn main() -> Int {
+            let mut i = 0;
+            loop {
+                if i == 5 { break i };
+                i = i + 1
+            }
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(5)));
+}
+
+#[test]
+fn loop_break_without_value() {
+    let src = r#"
+        fn main() -> Int {
+            let mut i = 0;
+            loop {
+                if i == 3 { break };
+                i = i + 1
+            };
+            i
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(3)));
+}
+
+#[test]
+fn break_outside_loop_rejected() {
+    let src = "fn main() -> Int { break; 0 }";
+    assert!(run(src).is_err());
+}
+
+#[test]
+fn continue_outside_loop_rejected() {
+    let src = "fn main() -> Int { continue; 0 }";
+    assert!(run(src).is_err());
+}
+
+#[test]
+fn for_range_exclusive_sums() {
+    let src = r#"
+        fn main() -> Int {
+            let mut sum = 0;
+            for i in 0..5 {
+                sum = sum + i
+            };
+            sum
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(10)));
+}
+
+#[test]
+fn for_range_inclusive_sums() {
+    let src = r#"
+        fn main() -> Int {
+            let mut sum = 0;
+            for i in 1..=5 {
+                sum = sum + i
+            };
+            sum
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(15)));
+}
+
+#[test]
+fn for_with_break() {
+    let src = r#"
+        fn main() -> Int {
+            let mut s = 0;
+            for i in 0..100 {
+                if i == 4 { break };
+                s = s + i
+            };
+            s
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(6)));
+}
+
+#[test]
+fn for_with_continue_skip_even() {
+    let src = r#"
+        fn main() -> Int {
+            let mut s = 0;
+            for i in 0..6 {
+                if i % 2 == 0 { continue };
+                s = s + i
+            };
+            s
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(9)));
+}
+
+#[test]
+fn nested_loop_inner_break_does_not_affect_outer() {
+    let src = r#"
+        fn main() -> Int {
+            let mut outer = 0;
+            for i in 0..3 {
+                for j in 0..10 {
+                    if j == 2 { break };
+                    outer = outer + 1
+                }
+            };
+            outer
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(6)));
+}
+

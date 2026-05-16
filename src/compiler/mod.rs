@@ -17,6 +17,13 @@ use std::rc::Rc;
 use self::hir::LayoutCtx;
 use crate::ty::Type as TyType;
 
+pub struct LoopCtx {
+    pub result_reg: Register,
+    pub continue_target: usize,
+    pub break_patches: Vec<usize>,
+    pub continue_patches: Vec<usize>,
+}
+
 #[derive(Clone)]
 pub struct HostFnDecl {
     pub name: String,
@@ -59,6 +66,7 @@ pub struct Compiler {
     pub(super) closure_by_span: HashMap<ast::Span, closures::ClosureInfo>,
     // Per-fn-body closure env mapping: enables direct calls to lifted fns.
     pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
+    pub(super) loop_stack: Vec<LoopCtx>,
     pub(super) concat_fn_id: Option<usize>,
     pub(super) to_str_fn_id: Option<usize>,
     pub(super) host_fns: HashMap<String, HostFnDecl>,
@@ -94,6 +102,7 @@ impl Compiler {
             method_dispatch: HashMap::new(),
             closure_by_span: HashMap::new(),
             closure_by_var: HashMap::new(),
+            loop_stack: Vec::new(),
             concat_fn_id: None,
             to_str_fn_id: None,
             host_fns: HashMap::new(),

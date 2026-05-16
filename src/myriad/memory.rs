@@ -1,19 +1,31 @@
 use super::{Value, BoxPool};
 
+pub const HEAP_BYTES_PER_VALUE: usize = std::mem::size_of::<Value>();
+
 pub struct Heap {
     cells: Vec<Option<Vec<Value>>>,
     rc: Vec<u32>,
     generation: Vec<u32>,
     free_list: Vec<u32>,
+    bytes_used: usize,
 }
 
 impl Heap {
     pub fn new() -> Self {
-        Self { cells: Vec::new(), rc: Vec::new(), generation: Vec::new(), free_list: Vec::new() }
+        Self {
+            cells: Vec::new(),
+            rc: Vec::new(),
+            generation: Vec::new(),
+            free_list: Vec::new(),
+            bytes_used: 0,
+        }
     }
+
+    pub fn bytes_used(&self) -> usize { self.bytes_used }
 
     pub fn alloc(&mut self, size: usize) -> (u32, u32) {
         let slot = vec![Value::NONE; size];
+        self.bytes_used = self.bytes_used.saturating_add(size * HEAP_BYTES_PER_VALUE);
         if let Some(h) = self.free_list.pop() {
             let idx = h as usize;
             self.cells[idx] = Some(slot);
@@ -88,6 +100,7 @@ impl Heap {
             return Ok(false);
         }
         let cell = self.cells[idx].take().unwrap();
+        self.bytes_used = self.bytes_used.saturating_sub(cell.len() * HEAP_BYTES_PER_VALUE);
         self.free_list.push(slot);
         for v in cell {
             if let Some((s, g)) = v.as_handle() {
@@ -106,6 +119,7 @@ impl Heap {
         if self.cells[idx].is_none() { return Ok(()); }
         if self.generation[idx] != generation { return Ok(()); }
         let cell = self.cells[idx].take().unwrap();
+        self.bytes_used = self.bytes_used.saturating_sub(cell.len() * HEAP_BYTES_PER_VALUE);
         self.rc[idx] = 0;
         self.free_list.push(slot);
         for v in cell {

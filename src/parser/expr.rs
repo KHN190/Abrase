@@ -87,6 +87,7 @@ impl<'a> Parser<'a> {
                 return Some(Spanned { node: Expr::Break(val), span });
             }
             Token::Continue => {
+                self.next_token();
                 return Some(Spanned { node: Expr::Continue, span });
             }
             Token::Return => {
@@ -136,6 +137,11 @@ impl<'a> Parser<'a> {
             } else {
                 self.next_token();
             }
+        }
+        // 与 if/while/loop 等同样以 `}` 结尾的表达式一致:消耗掉记录字面量的 `}`,
+        // 避免被外层 parse_block 误当作块结束符。
+        if self.current_token == Token::RBrace {
+            self.next_token();
         }
         Spanned { node: Expr::Record { ty: vec![name], fields }, span }
     }
@@ -500,6 +506,7 @@ impl<'a> Parser<'a> {
             Token::Minus => BinaryOp::Sub,
             Token::Asterisk => BinaryOp::Mul,
             Token::Slash => BinaryOp::Div,
+            Token::Percent => BinaryOp::Mod,
             Token::Eq => BinaryOp::Eq,
             Token::NotEq => BinaryOp::Neq,
             Token::Lt => BinaryOp::Lt,
@@ -604,7 +611,8 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            if !was_block && self.current_token != Token::Semicolon {
+            if !was_block && self.current_token != Token::Semicolon
+                && self.current_token != Token::RBrace && self.current_token != Token::Eof {
                 if self.peek_token == Token::Semicolon {
                     self.next_token();
                     self.next_token();

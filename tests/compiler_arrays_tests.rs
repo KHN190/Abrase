@@ -186,3 +186,10 @@ fn verify_compile_array_of_variants_type() {
     let result = compile_module_and_run(&ast);
     assert_eq!(result, Ok(Value::from_int(55)));
 }
+
+#[test]
+fn verify_codegen_array_repeat_element_value() {
+    // `[7; 4]` should create four copies of 7; all elements equal 7.
+    let src = "fn main() -> Int { let a = [7; 4]; a[0] + a[3] }";
+    assert_eq!(run_source(src), Ok(Value::from_int(14)));
+}

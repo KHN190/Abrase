@@ -11,5 +11,6 @@ pub fn is_block_terminated(expr: &Expr) -> bool {
             | Expr::Loop { .. }
             | Expr::Region { .. }
             | Expr::Handle { .. }
+            | Expr::Record { .. }
     )
 }

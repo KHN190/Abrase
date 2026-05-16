@@ -59,13 +59,15 @@ impl Runtime {
     fn register_default_hosts(&mut self) {
         // typeck should guarantee args[0]: String.
         self.register_host("println", vec![Type::String], Type::Unit, |pool, args| {
-            let idx = args[0].as_box()
-                .ok_or_else(|| format!("println: internal: args[0] not a Box ({:?})", args[0]))?;
-            let s = match pool.get(idx) {
-                Some(BoxedValue::String(s)) => s,
-                other => return Err(format!("println: internal: box holds {:?}", other)),
-            };
+            let s = host_arg_string(pool, args, "println")?;
             println!("{}", s);
+            Ok(Value::UNIT)
+        });
+        // 不带换行;用户可定义自己的 fn print(...)(优先级高于内置),
+        // 或直接用 dei/deo 访问 CONSOLE_ID 自行实现输出。
+        self.register_host("print", vec![Type::String], Type::Unit, |pool, args| {
+            let s = host_arg_string(pool, args, "print")?;
+            print!("{}", s);
             Ok(Value::UNIT)
         });
     }
@@ -93,5 +95,14 @@ impl Runtime {
         }
 
         self.vm.run_module(&module)
+    }
+}
+
+fn host_arg_string<'a>(pool: &'a BoxPool, args: &[Value], who: &str) -> Result<&'a str, String> {
+    let idx = args[0].as_box()
+        .ok_or_else(|| format!("{}: internal: args[0] not a Box ({:?})", who, args[0]))?;
+    match pool.get(idx) {
+        Some(BoxedValue::String(s)) => Ok(s.as_str()),
+        other => Err(format!("{}: internal: box holds {:?}", who, other)),
     }
 }

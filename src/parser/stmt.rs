@@ -32,7 +32,10 @@ impl<'a> Parser<'a> {
                 self.next_token();
                 let value = self.parse_expr(Precedence::Lowest);
 
-                if self.peek_token == Token::Semicolon {
+                if self.current_token != Token::RBrace
+                    && self.current_token != Token::Eof
+                    && self.peek_token == Token::Semicolon
+                {
                     self.next_token();
                 }
 
@@ -40,7 +43,10 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let expr = self.parse_expr(Precedence::Lowest);
-                if self.peek_token == Token::Semicolon {
+                if self.current_token != Token::RBrace
+                    && self.current_token != Token::Eof
+                    && self.peek_token == Token::Semicolon
+                {
                     self.next_token();
                 }
 

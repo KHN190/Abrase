@@ -45,3 +45,26 @@ fn hostimpl_signature_compatibility() {
     let res = f(&mut pool, &[Value::UNIT]);
     assert!(res.is_err()); // UNIT is not a Box
 }
+
+#[test]
+fn user_defined_print_shadows_builtin() {
+    // 用户用同名 fn 覆盖内置 print:这里返回 42 而非内置的 Unit。
+    let src = r#"
+        fn print(s: String) -> Int { 42 }
+        fn main() -> Int { print("ignored") }
+    "#;
+    let mut rt = abrase::myriad::host::Runtime::new();
+    let v = rt.eval(src).expect("eval should succeed");
+    assert_eq!(v, Value::from_int(42), "user-defined `print` must shadow built-in");
+}
+
+#[test]
+fn builtin_print_runs_when_not_shadowed() {
+    // 不定义同名 fn 时,调用内置 print(返回 Unit)。
+    let src = r#"
+        fn main() -> Int { print("hi"); 7 }
+    "#;
+    let mut rt = abrase::myriad::host::Runtime::new();
+    let v = rt.eval(src).expect("eval should succeed");
+    assert_eq!(v, Value::from_int(7));
+}

@@ -146,6 +146,11 @@ impl Compiler {
     ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
         if name == "Shared" && args.len() == 1 { return Ok(Some(CallTarget::SharedCtor)); }
+        // 用户同名函数定义优先(shadowing):比如用户可以自己写
+        // `fn print(s: String) -> Unit { /* dei/deo */ }` 覆盖内置 print。
+        if self.func_map.contains_key(name) {
+            return Ok(None);
+        }
         if let Some(host) = self.host_fns.get(name) {
             if host.params.len() != args.len() {
                 return Err(format!(

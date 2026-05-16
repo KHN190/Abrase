@@ -1,9 +1,14 @@
 use super::{VirtualMachine, Value};
+use super::memory::HEAP_BYTES_PER_VALUE;
+use super::value::{BoxPool, BoxedValue};
 use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS};
 use crate::myriad::frame::Frame;
 
 const MAX_REGISTERS: usize = 1 << 16;
 const MAX_RECURSION_DEPTH: usize = 2048;
+
+// Hard cap on VM-managed memory (heap cells + boxed values).
+pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
@@ -19,7 +24,7 @@ impl VirtualMachine {
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
         validate_module_register_budget(module)?;
         self.validate_module_devices(module)?;
-        self.resolve_constants(module);
+        self.resolve_constants(module)?;
         self.pc = 0;
         self.base_reg = 0;
         self.current_func = module.entry;
@@ -37,19 +42,15 @@ impl VirtualMachine {
                 if let Some(code) = self.exit_code {
                     return Ok(Value::from_int(code));
                 }
-                let v = self.read_abs(self.base_reg)?;
+                let v = self.read_abs(self.base_reg);
                 return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
             }
+            // current_func bounds are typeck-redundant: validated at module
+            // load, and do_call is the only writer (it validates fn_id first).
             debug_assert!(self.current_func < module.functions.len(),
                 "current_func {} out of bounds (functions.len {})",
                 self.current_func, module.functions.len());
-            if self.current_func >= module.functions.len() {
-                return Err(format!(
-                    "current_func {} out of bounds (functions.len {})",
-                    self.current_func, module.functions.len()
-                ));
-            }
-            let bc = match &module.functions[self.current_func] {
+            let bc = match unsafe { module.functions.get_unchecked(self.current_func) } {
                 Chunk::Bytecode(b) => b,
                 Chunk::Native(_) => return Err(format!(
                     "entry fn {} is native; cannot start execution there", self.current_func
@@ -59,15 +60,15 @@ impl VirtualMachine {
             loop {
                 if self.pc >= bc.code.len() {
                     if let Some(frame) = self.frames.pop() {
-                        let return_val = self.read_abs(self.base_reg)?;
+                        let return_val = self.read_abs(self.base_reg);
                         if return_val.is_none() { return Err("Return register is empty".to_string()); }
                         self.pc = frame.ip;
                         self.base_reg = frame.base_reg;
                         self.current_func = frame.func_id;
-                        self.write_abs(frame.dest_reg, return_val)?;
+                        self.write_abs(frame.dest_reg, return_val);
                         continue 'outer;
                     } else {
-                        let v = self.read_abs(self.base_reg)?;
+                        let v = self.read_abs(self.base_reg);
                         return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
                     }
                 }
@@ -90,7 +91,7 @@ impl VirtualMachine {
             OpCode::Mod(d, a, b)  => self.bin_i64_checked(*d, *a, *b, "mod by zero", |x, y| x.checked_rem(y)),
             OpCode::Neg(d, a)     => {
                 let v = self.read_i64(*a)?;
-                let r = Value::from_int_or_box(&mut self.box_pool, v.wrapping_neg());
+                let r = self.checked_int_or_box(v.wrapping_neg())?;
                 self.write(*d, r)
             }
             OpCode::FAdd(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x + y),
@@ -193,30 +194,30 @@ impl VirtualMachine {
             OpCode::Ref(d, s) => {
                 let v = self.read(*s)?;
                 self.value_rc_inc(&v)?;
-                let (slot, generation) = self.heap.alloc(1);
+                let (slot, generation) = self.checked_heap_alloc(1)?;
                 self.heap.st(slot, generation, 0, v)?;
                 self.write(*d, Value::from_handle(slot, generation))
             }
 
             OpCode::AddImm(d, s, imm) => {
                 let x = self.read_i64(*s)?;
-                let v = Value::from_int_or_box(&mut self.box_pool, x.wrapping_add(*imm as i64));
+                let v = self.checked_int_or_box(x.wrapping_add(*imm as i64))?;
                 self.write(*d, v)
             }
             OpCode::SubImm(d, s, imm) => {
                 let x = self.read_i64(*s)?;
-                let v = Value::from_int_or_box(&mut self.box_pool, x.wrapping_sub(*imm as i64));
+                let v = self.checked_int_or_box(x.wrapping_sub(*imm as i64))?;
                 self.write(*d, v)
             }
 
             OpCode::Alloc(d, size) => {
-                let (slot, generation) = self.heap.alloc(*size as usize);
+                let (slot, generation) = self.checked_heap_alloc(*size as usize)?;
                 self.region_record_alloc(slot, generation);
                 self.write(*d, Value::from_handle(slot, generation))
             }
             OpCode::Drop(reg) => {
-                let abs = self.abs(*reg)?;
-                let v = self.take_abs(abs)?;
+                let abs = self.abs(*reg);
+                let v = self.take_abs(abs);
                 if !v.is_none() { self.value_rc_dec(&v)?; }
                 Ok(())
             }
@@ -265,7 +266,7 @@ impl VirtualMachine {
             }
             OpCode::Handle(dest, fn_id) => {
                 // Heap-alloc continuation cell; `dest` is the suspended frame's result reg.
-                let (slot, generation) = self.heap.alloc(super::cont_slot::SIZE);
+                let (slot, generation) = self.checked_heap_alloc(super::cont_slot::SIZE)?;
                 // Region gap (3): record the cell so an enclosing region's
                 // force-free reclaims it if the handler doesn't fire resume.
                 self.region_record_alloc(slot, generation);
@@ -319,7 +320,13 @@ impl VirtualMachine {
                 self.pc = saved_pc;
                 self.base_reg = saved_base;
                 let abs = saved_base + dest_reg;
-                self.write_abs(abs, val)?;
+                // saved_base comes from a heap cell — not typeck-redundant.
+                if abs >= self.registers.len() {
+                    return Err(format!(
+                        "resume: dest abs {} out of registers (len {})",
+                        abs, self.registers.len()));
+                }
+                self.write_abs(abs, val);
                 self.heap.force_free(frame.cell_slot, frame.cell_gen, &mut self.box_pool)?;
                 Ok(())
             }
@@ -359,14 +366,14 @@ impl VirtualMachine {
         if let Chunk::Native(n) = &module.functions[fn_id] {
             let mut args: Vec<Value> = Vec::with_capacity(n.param_count);
             for i in 0..n.param_count {
-                let v = self.read_abs(new_base + i)?;
+                let v = self.read_abs(new_base + i);
                 if v.is_none() {
                     return Err(format!("native call: arg {} (r{}) is empty", i, i));
                 }
                 args.push(v);
             }
             let result = (n.func)(&mut self.box_pool, &args)?;
-            self.write_abs(dest_abs, result)?;
+            self.write_abs(dest_abs, result);
             return Ok(());
         }
 
@@ -391,17 +398,17 @@ impl VirtualMachine {
 
     #[inline]
     fn do_ret(&mut self, reg: Register) -> Result<(), String> {
-        let abs = self.abs(reg)?;
-        let return_val = self.take_abs(abs)?;
+        let abs = self.abs(reg);
+        let return_val = self.take_abs(abs);
         if return_val.is_none() { return Err("Return register is empty".to_string()); }
         if let Some(frame) = self.frames.pop() {
             self.pc = frame.ip;
             self.base_reg = frame.base_reg;
             self.current_func = frame.func_id;
-            self.write_abs(frame.dest_reg, return_val)?;
+            self.write_abs(frame.dest_reg, return_val);
             Ok(())
         } else {
-            self.write_abs(self.base_reg, return_val)?;
+            self.write_abs(self.base_reg, return_val);
             self.halted = true;
             Ok(())
         }
@@ -419,56 +426,52 @@ impl VirtualMachine {
         Ok(())
     }
 
-    // Frame-local r → absolute slot (upper bound is FRAME_REGS for outbound args).
+    // Frame-local r → absolute slot. Bounds are typeck-redundant: codegen
+    // never emits a register outside the frame's declared `reg_count`, and
+    // do_call resizes the vec to fit before transferring control. We keep a
+    // debug_assert! to catch codegen bugs in dev; release skips the check.
     #[inline(always)]
-    fn abs(&self, r: Register) -> Result<usize, String> {
+    fn abs(&self, r: Register) -> usize {
         let abs = self.base_reg + r.to_usize();
-        if abs >= self.registers.len() {
-            return Err(format!(
-                "r{} (abs {}) out of register window (len {})",
-                r.0, abs, self.registers.len()
-            ));
-        }
-        Ok(abs)
+        debug_assert!(abs < self.registers.len(),
+            "r{} (abs {}) out of register window (len {})",
+            r.0, abs, self.registers.len());
+        abs
     }
 
     #[inline(always)]
-    fn read_abs(&self, abs: usize) -> Result<Value, String> {
-        self.registers.get(abs).copied().ok_or_else(|| format!(
-            "register abs {} out of bounds (len {})", abs, self.registers.len()
-        ))
+    fn read_abs(&self, abs: usize) -> Value {
+        debug_assert!(abs < self.registers.len(),
+            "register abs {} out of bounds (len {})", abs, self.registers.len());
+        unsafe { *self.registers.get_unchecked(abs) }
     }
 
     #[inline(always)]
-    fn write_abs(&mut self, abs: usize, v: Value) -> Result<(), String> {
-        let len = self.registers.len();
-        let slot = self.registers.get_mut(abs).ok_or_else(|| format!(
-            "register abs {} out of bounds (len {})", abs, len
-        ))?;
-        *slot = v;
-        Ok(())
+    fn write_abs(&mut self, abs: usize, v: Value) {
+        debug_assert!(abs < self.registers.len(),
+            "register abs {} out of bounds (len {})", abs, self.registers.len());
+        unsafe { *self.registers.get_unchecked_mut(abs) = v; }
     }
 
     #[inline(always)]
-    fn take_abs(&mut self, abs: usize) -> Result<Value, String> {
-        let len = self.registers.len();
-        let slot = self.registers.get_mut(abs).ok_or_else(|| format!(
-            "register abs {} out of bounds (len {})", abs, len
-        ))?;
-        Ok(std::mem::replace(slot, Value::NONE))
+    fn take_abs(&mut self, abs: usize) -> Value {
+        debug_assert!(abs < self.registers.len(),
+            "register abs {} out of bounds (len {})", abs, self.registers.len());
+        unsafe { std::mem::replace(self.registers.get_unchecked_mut(abs), Value::NONE) }
     }
 
+    // r → Value with an `is_none()` (use-after-move) guard. The guard is
+    // typeck-redundant in well-formed programs but is a logic check, not a
+    // bounds check — keep it in release.
     #[inline(always)]
     fn read(&self, r: Register) -> Result<Value, String> {
-        let abs = self.abs(r)?;
-        let v = self.registers[abs];
+        let v = self.read_abs(self.abs(r));
         if v.is_none() { Err(format!("read: r{} is empty", r.0)) } else { Ok(v) }
     }
 
     #[inline(always)]
     fn take(&mut self, r: Register) -> Result<Value, String> {
-        let abs = self.abs(r)?;
-        let v = std::mem::replace(&mut self.registers[abs], Value::NONE);
+        let v = self.take_abs(self.abs(r));
         if v.is_none() {
             Err(format!("move: r{} is empty (already moved?)", r.0))
         } else { Ok(v) }
@@ -476,8 +479,7 @@ impl VirtualMachine {
 
     #[inline(always)]
     fn write(&mut self, r: Register, v: Value) -> Result<(), String> {
-        let abs = self.abs(r)?;
-        self.registers[abs] = v;
+        self.write_abs(self.abs(r), v);
         Ok(())
     }
 
@@ -506,24 +508,53 @@ impl VirtualMachine {
 
     #[inline(always)]
     fn read_i64(&self, r: Register) -> Result<i64, String> {
-        let abs = self.abs(r)?;
-        let v = self.registers[abs];
+        let v = self.read_abs(self.abs(r));
         if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
         v.as_int_full(&self.box_pool).ok_or_else(|| format!("expected i64, got {:?}", v))
     }
 
     #[inline(always)]
     fn read_f64(&self, r: Register) -> Result<f64, String> {
-        let abs = self.abs(r)?;
-        let v = self.registers[abs];
+        let v = self.read_abs(self.abs(r));
         if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
         v.as_float().ok_or_else(|| format!("expected f64, got {:?}", v))
     }
 
     #[inline(always)]
+    pub(crate) fn mem_used(&self) -> usize {
+        self.heap.bytes_used().saturating_add(self.box_pool.bytes_used())
+    }
+
+    #[inline(always)]
+    fn mem_charge(&self, bytes: usize) -> Result<(), String> {
+        let projected = self.mem_used().saturating_add(bytes);
+        if projected > MAX_RAM {
+            return Err(format!(
+                "out of memory: requested {} bytes, {} / {} already in use",
+                bytes, self.mem_used(), MAX_RAM
+            ));
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn checked_heap_alloc(&mut self, size: usize) -> Result<(u32, u32), String> {
+        self.mem_charge(size.saturating_mul(HEAP_BYTES_PER_VALUE))?;
+        Ok(self.heap.alloc(size))
+    }
+
+    #[inline(always)]
+    fn checked_int_or_box(&mut self, n: i64) -> Result<Value, String> {
+        if Value::fits_i48(n) {
+            return Ok(Value::from_int(n));
+        }
+        self.mem_charge(BoxPool::pending_bytes(&BoxedValue::Int(n)))?;
+        Ok(Value::from_int_or_box(&mut self.box_pool, n))
+    }
+
+    #[inline(always)]
     fn read_handle(&self, r: Register) -> Result<(u32, u32), String> {
-        let abs = self.abs(r)?;
-        let v = self.registers[abs];
+        let v = self.read_abs(self.abs(r));
         if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
         v.as_handle().ok_or_else(|| format!("expected handle, got {:?}", v))
     }
@@ -532,7 +563,7 @@ impl VirtualMachine {
     fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
-        let v = Value::from_int_or_box(&mut self.box_pool, f(x, y));
+        let v = self.checked_int_or_box(f(x, y))?;
         self.write(d, v)
     }
 
@@ -541,7 +572,7 @@ impl VirtualMachine {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
         let r = f(x, y).ok_or_else(|| msg.to_string())?;
-        let v = Value::from_int_or_box(&mut self.box_pool, r);
+        let v = self.checked_int_or_box(r)?;
         self.write(d, v)
     }
 
@@ -566,23 +597,32 @@ impl VirtualMachine {
         self.write(d, Value::from_bool(f(x, y)))
     }
 
-    fn resolve_constants(&mut self, module: &Module) {
+    fn resolve_constants(&mut self, module: &Module) -> Result<(), String> {
         self.resolved_constants.clear();
         self.resolved_constants.reserve(module.functions.len());
         for chunk in &module.functions {
-            let resolved = match chunk {
-                Chunk::Bytecode(bc) => bc.constants.iter().map(|v| {
-                    if let Some(sidx) = v.as_str_const() {
-                        let s = bc.string_constants.get(sidx as usize)
-                            .cloned().unwrap_or_default();
-                        let bidx = self.box_pool.intern(super::BoxedValue::String(s));
-                        Value::from_box(bidx)
-                    } else { *v }
-                }).collect(),
+            let resolved: Vec<Value> = match chunk {
+                Chunk::Bytecode(bc) => {
+                    let mut out = Vec::with_capacity(bc.constants.len());
+                    for v in &bc.constants {
+                        if let Some(sidx) = v.as_str_const() {
+                            let s = bc.string_constants.get(sidx as usize)
+                                .cloned().unwrap_or_default();
+                            let pending = BoxedValue::String(s);
+                            self.mem_charge(BoxPool::pending_bytes(&pending))?;
+                            let bidx = self.box_pool.intern(pending);
+                            out.push(Value::from_box(bidx));
+                        } else {
+                            out.push(*v);
+                        }
+                    }
+                    out
+                }
                 Chunk::Native(_) => Vec::new(),
             };
             self.resolved_constants.push(resolved);
         }
+        Ok(())
     }
 
     fn validate_module_devices(&self, module: &Module) -> Result<(), String> {

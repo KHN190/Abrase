@@ -49,13 +49,15 @@ impl Compiler {
             ast::Expr::Resume(arg)             => self.compile_resume(arg.as_deref()),
             ast::Expr::Handle { expr: body, arms } => self.compile_handle(body, expr.span, arms),
             ast::Expr::Closure { .. }          => self.compile_closure(expr.span),
-            ast::Expr::For { .. }     => Err(nyi(expr.span, "for loop")),
-            ast::Expr::Loop { .. }    => Err(nyi(expr.span, "loop expression")),
-            ast::Expr::Break(_)       => Err(nyi(expr.span, "break expression")),
-            ast::Expr::Continue       => Err(nyi(expr.span, "continue expression")),
-            ast::Expr::Tuple(_)       => Err(nyi(expr.span, "tuple expression")),
-            ast::Expr::ArrayRepeat { .. } => Err(nyi(expr.span, "array-repeat literal '[x; n]'")),
-            ast::Expr::Range { .. }   => Err(nyi(expr.span, "range expression")),
+            ast::Expr::For { pattern, iter, body } => self.compile_for(pattern, iter, body),
+            ast::Expr::Loop { body }     => self.compile_loop(body),
+            ast::Expr::Break(val)        => self.compile_break(val.as_deref()),
+            ast::Expr::Continue          => self.compile_continue(),
+            ast::Expr::Tuple(items)      => self.compile_tuple(items),
+            ast::Expr::ArrayRepeat { elem, count } => self.compile_array_repeat(elem, count),
+            ast::Expr::Range { start, end, inclusive } => {
+                self.compile_range(start.as_deref(), end.as_deref(), *inclusive)
+            }
             ast::Expr::Region { body, .. } => {
                 self.emit_region_push()?;
                 let result = self.compile_block(body);
@@ -169,8 +171,4 @@ impl Compiler {
         }
         Ok(())
     }
-}
-
-fn nyi(span: ast::Span, what: &str) -> String {
-    format!("{:?}: codegen not yet implemented for {}", span, what)
 }

@@ -643,6 +643,7 @@ impl Checker {
                 }
             }
             Type::String => Type::Char,
+            Type::Named(n) if n == "Range<Int>" || n.starts_with("Range") => Type::Int,
             other => {
                 self.report_error(
                     format!("Type {:?} is not iterable", other),

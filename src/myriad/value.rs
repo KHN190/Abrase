@@ -181,21 +181,49 @@ pub enum BoxedValue {
 pub struct BoxPool {
     slots: Vec<Option<BoxedValue>>,
     rc: Vec<u32>,
+    bytes: Vec<usize>,
     free_list: Vec<u32>,
+    bytes_used: usize,
+}
+
+pub fn boxed_value_bytes(b: &BoxedValue) -> usize {
+    let base = std::mem::size_of::<BoxedValue>();
+    match b {
+        BoxedValue::String(s) => base + s.capacity(),
+        _ => base,
+    }
 }
 
 impl BoxPool {
-    pub fn new() -> Self { Self { slots: Vec::new(), rc: Vec::new(), free_list: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            rc: Vec::new(),
+            bytes: Vec::new(),
+            free_list: Vec::new(),
+            bytes_used: 0,
+        }
+    }
+
+    pub fn bytes_used(&self) -> usize { self.bytes_used }
+
+    // Bytes the next intern of `b` would charge — caller checks the budget
+    // before paying.
+    pub fn pending_bytes(b: &BoxedValue) -> usize { boxed_value_bytes(b) }
 
     pub fn intern(&mut self, b: BoxedValue) -> u32 {
+        let cost = boxed_value_bytes(&b);
+        self.bytes_used = self.bytes_used.saturating_add(cost);
         if let Some(idx) = self.free_list.pop() {
             self.slots[idx as usize] = Some(b);
             self.rc[idx as usize] = 1;
+            self.bytes[idx as usize] = cost;
             idx
         } else {
             let idx = self.slots.len() as u32;
             self.slots.push(Some(b));
             self.rc.push(1);
+            self.bytes.push(cost);
             idx
         }
     }
@@ -226,6 +254,8 @@ impl BoxPool {
         self.rc[i] -= 1;
         if self.rc[i] == 0 {
             self.slots[i] = None;
+            self.bytes_used = self.bytes_used.saturating_sub(self.bytes[i]);
+            self.bytes[i] = 0;
             self.free_list.push(idx);
             true
         } else {
@@ -237,6 +267,11 @@ impl BoxPool {
         if (idx as usize) < self.slots.len() && self.slots[idx as usize].is_some() {
             self.slots[idx as usize] = None;
             if (idx as usize) < self.rc.len() { self.rc[idx as usize] = 0; }
+            let i = idx as usize;
+            if i < self.bytes.len() {
+                self.bytes_used = self.bytes_used.saturating_sub(self.bytes[i]);
+                self.bytes[i] = 0;
+            }
             self.free_list.push(idx);
         }
     }
