@@ -1481,65 +1481,67 @@ fn verify_field_access_on_generic_container_concrete_field() {
 
 // Type Substitution Helpers (unit tests for extract_iterable_element_type)
 
+fn z_span() -> abrase::ast::Span { abrase::ast::Span::new(0, 0) }
+
 #[test]
 fn verify_extract_iterable_element_type_list_int() {
-    let checker = Checker::new();
+    let mut checker = Checker::new();
     let elem_ty = checker.extract_iterable_element_type(&Type::Generic {
         name: "List".into(),
         args: vec![Type::Int],
-    });
+    }, z_span());
     assert_eq!(elem_ty, Type::Int);
 }
 
 #[test]
 fn verify_extract_iterable_element_type_vec_string() {
-    let checker = Checker::new();
+    let mut checker = Checker::new();
     let elem_ty = checker.extract_iterable_element_type(&Type::Generic {
         name: "Vec".into(),
         args: vec![Type::String],
-    });
+    }, z_span());
     assert_eq!(elem_ty, Type::String);
 }
 
 #[test]
 fn verify_extract_iterable_element_type_option_bool() {
-    let checker = Checker::new();
+    let mut checker = Checker::new();
     let elem_ty = checker.extract_iterable_element_type(&Type::Generic {
         name: "Option".into(),
         args: vec![Type::Bool],
-    });
+    }, z_span());
     assert_eq!(elem_ty, Type::Bool);
 }
 
 #[test]
 fn verify_extract_iterable_element_type_result_int_string() {
-    let checker = Checker::new();
+    let mut checker = Checker::new();
     let elem_ty = checker.extract_iterable_element_type(&Type::Generic {
         name: "Result".into(),
         args: vec![Type::Int, Type::String],
-    });
+    }, z_span());
     assert_eq!(elem_ty, Type::Int);
 }
 
 #[test]
 fn verify_extract_iterable_element_type_string() {
-    let checker = Checker::new();
-    assert_eq!(checker.extract_iterable_element_type(&Type::String), Type::Char);
+    let mut checker = Checker::new();
+    assert_eq!(checker.extract_iterable_element_type(&Type::String, z_span()), Type::Char);
 }
 
 #[test]
 fn verify_extract_iterable_element_type_non_iterable() {
-    let checker = Checker::new();
-    assert_eq!(checker.extract_iterable_element_type(&Type::Int), Type::Unknown);
+    let mut checker = Checker::new();
+    assert_eq!(checker.extract_iterable_element_type(&Type::Int, z_span()), Type::Unknown);
 }
 
 #[test]
 fn verify_extract_iterable_element_type_unknown_generic() {
-    let checker = Checker::new();
+    let mut checker = Checker::new();
     let elem_ty = checker.extract_iterable_element_type(&Type::Generic {
         name: "UnknownType".into(),
         args: vec![Type::Int],
-    });
+    }, z_span());
     assert_eq!(elem_ty, Type::Unknown);
 }
 

@@ -50,7 +50,14 @@ impl<'a> Parser<'a> {
                     Token::Minus => UnaryOp::Neg,
                     Token::Ampersand => UnaryOp::Ref,
                     Token::Asterisk => UnaryOp::Deref,
-                    _ => unreachable!(),
+                    _ => {
+                        self.report_error(
+                            format!("internal: prefix outer guard accepted {:?} but inner match did not",
+                                    self.current_token),
+                            span,
+                        );
+                        return None;
+                    }
                 };
                 self.next_token();
                 let right = self.parse_expr(Precedence::Prefix);
@@ -577,13 +584,18 @@ impl<'a> Parser<'a> {
         self.next_token();
 
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+            let stmt_span = self.current_span;
             let was_block = match self.parse_stmt() {
                 Ok(stmt) => {
                     let block = matches!(&stmt.node, Stmt::Expr(e) if is_block_terminated(&e.node));
                     stmts.push(stmt);
                     block
                 }
-                Err(_) => { self.synchronize(); continue; }
+                Err(msg) => {
+                    self.report_error(msg, stmt_span);
+                    self.synchronize();
+                    continue;
+                }
             };
 
             if !was_block && self.current_token != Token::Semicolon {

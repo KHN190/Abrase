@@ -7,6 +7,14 @@ use crate::compiler::Compiler;
 use crate::compiler::effects;
 use crate::myriad::Value;
 
+pub(in crate::compiler) fn to_u16(n: usize, what: &str) -> Result<u16, String> {
+    u16::try_from(n).map_err(|_| format!("{} exceeds u16 range (got {}, max {})", what, n, u16::MAX))
+}
+
+pub(in crate::compiler) fn to_u8(n: usize, what: &str) -> Result<u8, String> {
+    u8::try_from(n).map_err(|_| format!("{} exceeds u8 range (got {}, max {})", what, n, u8::MAX))
+}
+
 impl Compiler {
     pub(in crate::compiler) fn alloc_register(&mut self) -> Result<Register, String> {
         if (self.next_reg as usize) >= FRAME_REGS {

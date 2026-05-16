@@ -5,6 +5,7 @@ use crate::ast::*;
 pub struct ImplLowering {
     pub synthetic_fns: Vec<FnDecl>,
     pub method_dispatch: HashMap<(String, String), String>,
+    pub errors: Vec<String>,
 }
 
 impl ImplLowering {
@@ -12,6 +13,7 @@ impl ImplLowering {
         Self {
             synthetic_fns: Vec::new(),
             method_dispatch: HashMap::new(),
+            errors: Vec::new(),
         }
     }
 
@@ -21,7 +23,13 @@ impl ImplLowering {
                 let type_name = match for_type {
                     Type::Named(n) => n.clone(),
                     Type::Qualified(parts) => parts.join("::"),
-                    _ => continue,
+                    other => {
+                        self.errors.push(format!(
+                            "impl target type is not supported (only named/qualified types): {:?}",
+                            other
+                        ));
+                        continue;
+                    }
                 };
                 let trait_str = match trait_name {
                     Some(parts) => parts.join("::"),

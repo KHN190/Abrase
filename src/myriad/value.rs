@@ -36,12 +36,26 @@ impl Value {
     fn tag(self) -> u64 { (self.0 & TAG_MASK) >> TAG_SHIFT }
 
     #[inline(always)]
+    pub fn fits_i48(n: i64) -> bool { (I48_MIN..=I48_MAX).contains(&n) }
+
+    // Inline-only Int constructor. Caller must pre-check range; outside i48 the
+    // bits are masked (sandbox-safe but value-lossy). Use `from_int_or_box` for
+    // correct overflow handling.
+    #[inline(always)]
     pub fn from_int(n: i64) -> Value {
-        if (I48_MIN..=I48_MAX).contains(&n) {
-            let payload = (n as u64) & PAYLOAD_MASK;
-            Value(QNAN_MASK | (TAG_INT << TAG_SHIFT) | payload)
+        debug_assert!(Self::fits_i48(n), "from_int: {} outside i48; use from_int_or_box", n);
+        let payload = (n as u64) & PAYLOAD_MASK;
+        Value(QNAN_MASK | (TAG_INT << TAG_SHIFT) | payload)
+    }
+
+    // Inline if it fits i48, otherwise intern as `BoxedValue::Int` and return a TAG_BOX.
+    #[inline]
+    pub fn from_int_or_box(pool: &mut BoxPool, n: i64) -> Value {
+        if Self::fits_i48(n) {
+            Self::from_int(n)
         } else {
-            panic!("Int {} outside i48 inline range (heap-box overflow not yet implemented)", n)
+            let idx = pool.intern(BoxedValue::Int(n));
+            Self::from_box(idx)
         }
     }
 
@@ -84,6 +98,16 @@ impl Value {
         if self.is_float() || self.tag() != TAG_INT { return None; }
         let payload = self.0 & PAYLOAD_MASK;
         Some(((payload as i64) << 16) >> 16)
+    }
+
+    // Read i64 from inline TAG_INT or from a boxed BoxedValue::Int (i48 overflow path).
+    #[inline]
+    pub fn as_int_full(self, pool: &BoxPool) -> Option<i64> {
+        if let Some(n) = self.as_int() { return Some(n); }
+        if let Some(idx) = self.as_box() {
+            if let Some(BoxedValue::Int(n)) = pool.get(idx) { return Some(*n); }
+        }
+        None
     }
 
     #[inline(always)]
@@ -150,6 +174,9 @@ pub enum BoxedValue {
     String(String),
     Closure { func_id: usize, env_slot: u32, env_gen: u32 },
     Reference(Value),
+    // i64 values outside the inline i48 range. Result of arithmetic that
+    // overflows the NaN-box int payload.
+    Int(i64),
 }
 
 // Design: per-VM pool (option A). B/C (module-owned / process-shared) still on the table — revisit when cartridge serialize lands.
@@ -184,11 +211,14 @@ impl BoxPool {
     }
 
     #[inline]
-    pub fn inc(&mut self, idx: u32) {
+    pub fn inc(&mut self, idx: u32) -> Result<(), String> {
         let i = idx as usize;
-        if i < self.rc.len() {
-            self.rc[i] = self.rc[i].saturating_add(1);
+        if i >= self.rc.len() {
+            return Err(format!("BoxPool::inc: slot {} out of range", idx));
         }
+        self.rc[i] = self.rc[i].checked_add(1)
+            .ok_or_else(|| format!("BoxPool::inc: refcount overflow at slot {}", idx))?;
+        Ok(())
     }
 
     #[inline]
@@ -287,13 +317,30 @@ mod tests {
     fn box_pool_rc_reclaims_at_zero() {
         let mut pool = BoxPool::new();
         let idx = pool.intern(BoxedValue::String("a".into()));   // rc=1
-        pool.inc(idx);                                            // rc=2
+        pool.inc(idx).unwrap();                                   // rc=2
         assert_eq!(pool.live_count(), 1);
         assert!(!pool.dec(idx));                                  // rc=1, not freed
         assert!(pool.get(idx).is_some());
         assert!(pool.dec(idx));                                   // rc=0, freed
         assert!(pool.get(idx).is_none());
         assert_eq!(pool.live_count(), 0);
+    }
+
+    #[test]
+    fn box_pool_inc_rejects_out_of_range() {
+        let mut pool = BoxPool::new();
+        let err = pool.inc(99).expect_err("out-of-range slot must err");
+        assert!(err.contains("out of range"), "msg: {}", err);
+    }
+
+    #[test]
+    fn box_pool_inc_rejects_overflow() {
+        // Force rc to u32::MAX then try to inc — must Err, not silently saturate.
+        let mut pool = BoxPool::new();
+        let idx = pool.intern(BoxedValue::String("x".into()));
+        pool.rc[idx as usize] = u32::MAX;
+        let err = pool.inc(idx).expect_err("rc overflow must err");
+        assert!(err.contains("overflow"), "msg: {}", err);
     }
 
     #[test]
@@ -304,5 +351,32 @@ mod tests {
         let b = pool.intern(BoxedValue::String("b".into()));
         assert_eq!(a, b);
         assert_eq!(pool.live_count(), 1);
+    }
+
+    #[test]
+    fn from_int_or_box_inline_path_for_small_values() {
+        let mut pool = BoxPool::new();
+        let v = Value::from_int_or_box(&mut pool, 42);
+        assert_eq!(v.as_int(), Some(42));
+        assert_eq!(v.as_int_full(&pool), Some(42));
+        assert_eq!(pool.live_count(), 0);
+    }
+
+    #[test]
+    fn from_int_or_box_boxes_i64_min() {
+        let mut pool = BoxPool::new();
+        let v = Value::from_int_or_box(&mut pool, i64::MIN);
+        assert_eq!(v.as_int(), None);              // not inline
+        assert_eq!(v.as_int_full(&pool), Some(i64::MIN));
+        assert_eq!(pool.live_count(), 1);
+    }
+
+    #[test]
+    fn from_int_or_box_boxes_just_outside_i48() {
+        let mut pool = BoxPool::new();
+        let n = I48_MAX + 1;
+        let v = Value::from_int_or_box(&mut pool, n);
+        assert_eq!(v.as_int(), None);
+        assert_eq!(v.as_int_full(&pool), Some(n));
     }
 }

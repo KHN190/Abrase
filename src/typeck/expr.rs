@@ -279,7 +279,7 @@ impl Checker {
                 self.loop_depth += 1;
                 self.loop_break_types.push(None);
 
-                let element_ty = self.extract_iterable_element_type(&iter_ty);
+                let element_ty = self.extract_iterable_element_type(&iter_ty, iter.span);
                 if let ast::Pattern::Bind(name) = &pattern.node {
                     self.insert_var(name.clone(), element_ty, false, pattern.span);
                 }
@@ -687,7 +687,7 @@ impl Checker {
             ast::Expr::Array(elems) => {
                 self.context_stack.push("In array construction".into());
                 let result = if elems.is_empty() {
-                    Type::Named("Array<Unknown>".into())
+                    Type::Generic { name: "Array".into(), args: vec![Type::Unknown] }
                 } else {
                     let first_ty = self.infer_expr(&elems[0]);
                     for elem in &elems[1..] {
@@ -696,20 +696,20 @@ impl Checker {
                             self.report_error("Array elements must have same type".into(), elem.span);
                         }
                     }
-                    Type::Named(format!("Array<{:?}>", first_ty))
+                    Type::Generic { name: "Array".into(), args: vec![first_ty] }
                 };
                 self.context_stack.pop();
                 result
             }
             ast::Expr::ArrayRepeat { elem, count } => {
                 self.context_stack.push("In array repeat".into());
-                let _elem_ty = self.infer_expr(elem);
+                let elem_ty = self.infer_expr(elem);
                 let count_ty = self.infer_expr(count);
                 if count_ty != Type::Int && count_ty != Type::Unknown {
                     self.report_error("Array repeat count must be Int".into(), count.span);
                 }
                 self.context_stack.pop();
-                Type::Named("Array<Unknown>".into())
+                Type::Generic { name: "Array".into(), args: vec![elem_ty] }
             }
             ast::Expr::Index { base, index } => {
                 self.context_stack.push("In array indexing".into());
@@ -721,11 +721,14 @@ impl Checker {
                 }
 
                 let result = match base_ty {
-                    Type::Named(ref name) if name.starts_with("Array") => Type::Unknown,
+                    Type::Generic { ref name, ref args } if name == "Array" => {
+                        args.get(0).cloned().unwrap_or(Type::Unknown)
+                    }
                     Type::Tuple(ref elems) => {
                         if elems.is_empty() { Type::Unknown }
                         else { elems[0].clone() }
                     }
+                    Type::Unknown => Type::Unknown,
                     _ => self.report_error("Can only index arrays or tuples".into(), base.span),
                 };
 
@@ -816,14 +819,35 @@ impl Checker {
                 result
             }
             ast::Expr::Record { ty, fields } => {
-                self.context_stack.push(format!("In record construction of '{}'", ty.join(".")));
+                let type_name = ty.join(".");
+                self.context_stack.push(format!("In record construction of '{}'", type_name));
                 for field in fields {
                     if let Some(value) = &field.value {
                         let _field_ty = self.infer_expr(value);
                     }
                 }
+                if let Some(ast::TypeBody::Record(declared)) = self.type_registry.get(&type_name).cloned() {
+                    let known: Vec<String> = declared.iter().map(|f| f.name.clone()).collect();
+                    for field in fields {
+                        if !known.iter().any(|n| n == &field.name) {
+                            self.report_error(
+                                format!("Record '{}' has no field '{}'; known fields: {:?}",
+                                        type_name, field.name, known),
+                                expr.span,
+                            );
+                        }
+                    }
+                    for declared_name in &known {
+                        if !fields.iter().any(|f| &f.name == declared_name) {
+                            self.report_error(
+                                format!("Record '{}' missing required field '{}'", type_name, declared_name),
+                                expr.span,
+                            );
+                        }
+                    }
+                }
                 self.context_stack.pop();
-                Type::Named(ty.join("."))
+                Type::Named(type_name)
             }
             ast::Expr::Variant { ty, args } => {
                 self.context_stack.push(format!("In variant construction of '{}'", ty.join(".")));

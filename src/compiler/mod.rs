@@ -170,6 +170,12 @@ impl Compiler {
         // used to rewrite `x.method(...)` calls.
         let mut impl_lowering = impls::ImplLowering::new();
         impl_lowering.lower(ast);
+        if !impl_lowering.errors.is_empty() {
+            for msg in impl_lowering.errors {
+                self.errors.push(Error::new(ErrorCode::TypeError, ast::Span::new(0, 0), msg));
+            }
+            return Err(self.errors.clone());
+        }
         self.method_dispatch = impl_lowering.method_dispatch.clone();
         let mut decls_with_impls: Vec<ast::Decl> = ast.to_vec();
         for fd in impl_lowering.synthetic_fns {

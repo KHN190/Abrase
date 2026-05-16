@@ -604,37 +604,39 @@ impl Checker {
         }
     }
 
-    pub fn extract_iterable_element_type(&self, iter_ty: &Type) -> Type {
+    pub fn extract_iterable_element_type(&mut self, iter_ty: &Type, span: Span) -> Type {
         match iter_ty {
+            Type::Unknown => Type::Unknown,
             Type::Generic { name, args } => {
                 match name.as_str() {
-                    "List" | "Vec" | "Array" => {
-                        if !args.is_empty() {
-                            args[0].clone()
-                        } else {
+                    "List" | "Vec" | "Array" | "Option" | "Result" => {
+                        if args.is_empty() {
+                            self.report_error(
+                                format!("Generic type '{}' iterated without a type argument", name),
+                                span,
+                            );
                             Type::Unknown
-                        }
-                    },
-                    "Option" => {
-                        if !args.is_empty() {
-                            args[0].clone()
                         } else {
-                            Type::Unknown
-                        }
-                    },
-                    "Result" => {
-                        if !args.is_empty() {
                             args[0].clone()
-                        } else {
-                            Type::Unknown
                         }
-                    },
-                    _ => Type::Unknown,
+                    }
+                    _ => {
+                        self.report_error(
+                            format!("Type '{}<...>' is not iterable", name),
+                            span,
+                        );
+                        Type::Unknown
+                    }
                 }
-            },
+            }
             Type::String => Type::Char,
-            Type::Named(_) => Type::Unknown,
-            _ => Type::Unknown,
+            other => {
+                self.report_error(
+                    format!("Type {:?} is not iterable", other),
+                    span,
+                );
+                Type::Unknown
+            }
         }
     }
 

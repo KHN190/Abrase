@@ -319,10 +319,10 @@ fn verify_codegen_emits_named_error_for_range() {
 fn verify_codegen_emits_named_error_for_for_loop() {
     let src = "fn main() -> Int { for x in 0..5 { } 0 }";
     let result = run_source(src);
-    assert!(result.is_err(), "expected NYI codegen error");
+    assert!(result.is_err(), "expected error (Range is not iterable / NYI)");
     let err = result.unwrap_err();
-    assert!(err.contains("for loop") || err.contains("range expression"),
-            "expected named NYI message, got: {}", err);
+    assert!(err.contains("for loop") || err.contains("range expression") || err.contains("not iterable"),
+            "expected named NYI/iter message, got: {}", err);
 }
 
 

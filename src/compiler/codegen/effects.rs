@@ -94,7 +94,8 @@ impl Compiler {
         self.pending_arg_patches.push((pos, 1));
 
         let dest = self.alloc_register()?;
-        self.emit(OpCode::Call(dest, func_id as u16));
+        let fid = super::scaffold::to_u16(func_id, "Handler arm fn_id")?;
+        self.emit(OpCode::Call(dest, fid));
         Ok(dest)
     }
 
@@ -134,15 +135,16 @@ impl Compiler {
             let captures = self.arm_captures.get(name).cloned().unwrap_or_default();
             let env_reg = self.alloc_register()?;
             let n = captures.len();
-            // alloc at least one slot
-            self.emit(OpCode::Alloc(env_reg, n.max(1) as u16));
+            let alloc_size = super::scaffold::to_u16(n.max(1), &format!("Handler arm '{}' env size", name))?;
+            self.emit(OpCode::Alloc(env_reg, alloc_size));
             for (i, cap) in captures.iter().enumerate() {
+                let offset = super::scaffold::to_u16(i, "Handler env offset")?;
                 let src = *self.var_to_reg.get(&cap.name)
                     .ok_or_else(|| format!(
                         "internal: handler arm '{}' captures '{}', not in scope at handle site",
                         name, cap.name
                     ))?;
-                self.emit(OpCode::St(src, env_reg, i as u16));
+                self.emit(OpCode::St(src, env_reg, offset));
             }
             envs.insert(name.clone(), env_reg);
         }

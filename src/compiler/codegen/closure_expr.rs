@@ -1,10 +1,3 @@
-// Codegen for the closure expression: allocate an env heap object holding
-// one slot per capture, populate it from the surrounding scope, and return
-// the env handle as the closure's runtime value.
-//
-// The closures pre-pass (compiler/closures.rs) does the lambda lifting; this
-// file only handles the per-site env construction.
-
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
@@ -21,8 +14,10 @@ impl Compiler {
 
         let env_reg = self.alloc_register()?;
         let n = info.captures.len();
-        self.emit(OpCode::Alloc(env_reg, n.max(1) as u16));
+        let alloc_size = super::scaffold::to_u16(n.max(1), "Closure env size")?;
+        self.emit(OpCode::Alloc(env_reg, alloc_size));
         for (i, cap) in info.captures.iter().enumerate() {
+            let offset = super::scaffold::to_u16(i, "Closure env offset")?;
             let src = *self.var_to_reg.get(&cap.name)
                 .ok_or_else(|| format!(
                     "internal: closure capture '{}' not in scope at closure site",
@@ -30,13 +25,13 @@ impl Compiler {
                 ))?;
             // `move |...|` takes src; default is Copy-then-St so the outer binding survives.
             if info.is_move {
-                self.emit(OpCode::St(src, env_reg, i as u16));
+                self.emit(OpCode::St(src, env_reg, offset));
                 self.var_to_reg.remove(&cap.name);
                 self.var_types.remove(&cap.name);
             } else {
                 let tmp = self.alloc_register()?;
                 self.emit(OpCode::Copy(tmp, src));
-                self.emit(OpCode::St(tmp, env_reg, i as u16));
+                self.emit(OpCode::St(tmp, env_reg, offset));
             }
         }
         Ok(env_reg)

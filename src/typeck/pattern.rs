@@ -365,9 +365,10 @@ impl Checker {
             ast::Pattern::Array(pats) => {
                 // Array pattern: all elements must match element type
                 match value_ty {
-                    Type::Named(name) if name.starts_with("Array") => {
+                    Type::Generic { name, args } if name == "Array" => {
+                        let elem_ty = args.get(0).cloned().unwrap_or(Type::Unknown);
                         for pat in pats {
-                            self.check_pattern(pat, &Type::Unknown, pat.span);
+                            self.check_pattern(pat, &elem_ty, pat.span);
                         }
                     }
                     _ => {
@@ -392,11 +393,44 @@ impl Checker {
                 // this, args were typed Unknown, which behaves as Move — so a
                 // bound `Int` field like `v` in `Node(v, l, r)` would be marked
                 // moved on first read.
+                debug_assert!(!ty.is_empty(), "variant pattern with empty type path");
                 let case_name = ty.last().cloned().unwrap_or_default();
-                let payload_tys: Vec<Type> = match self.lookup_variant_constructor(&case_name) {
+                let lookup = self.lookup_variant_constructor(&case_name);
+                let was_resolved = lookup.is_some();
+                let payload_tys: Vec<Type> = match lookup {
                     Some(Type::Function { params, .. }) => params,
                     _ => Vec::new(),
                 };
+                if was_resolved && args.len() != payload_tys.len() {
+                    self.report_error(
+                        format!(
+                            "variant pattern '{}' expects {} arg(s), got {}",
+                            case_name, payload_tys.len(), args.len()
+                        ),
+                        pattern.span,
+                    );
+                }
+                if was_resolved && case_name != "Shared" {
+                    let scrutinee_type_name = match value_ty {
+                        Type::Named(n) => Some(n.clone()),
+                        Type::Generic { name, .. } => Some(name.clone()),
+                        _ => None,
+                    };
+                    if let Some(stn) = scrutinee_type_name {
+                        let case_ok = self.variant_registry.get(&stn)
+                            .map(|cases| cases.iter().any(|c| c == &case_name))
+                            .unwrap_or(true); // unknown type — let other checks surface it
+                        if !case_ok {
+                            self.report_error(
+                                format!(
+                                    "variant pattern '{}' does not belong to type '{}'",
+                                    case_name, stn
+                                ),
+                                pattern.span,
+                            );
+                        }
+                    }
+                }
                 for (i, pat) in args.iter().enumerate() {
                     let arg_ty = payload_tys.get(i).cloned().unwrap_or(Type::Unknown);
                     self.check_pattern(pat, &arg_ty, pat.span);

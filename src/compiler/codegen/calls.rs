@@ -61,10 +61,8 @@ impl Compiler {
         };
         let func_id = self.func_map.get(name).copied()
             .ok_or_else(|| format!("Undefined function: {}", name))?;
-        if func_id > u16::MAX as usize {
-            return Err(format!("Function id {} exceeds u16 range", func_id));
-        }
-        Ok(CallTarget::Function { func_id: func_id as u16, env: CallEnv::None })
+        let fid = super::scaffold::to_u16(func_id, &format!("Function id for '{}'", name))?;
+        Ok(CallTarget::Function { func_id: fid, env: CallEnv::None })
     }
 
     fn resolve_env_load<'a>(
@@ -80,7 +78,9 @@ impl Compiler {
         };
         let env_reg = *self.var_to_reg.get(env_name)
             .ok_or_else(|| format!("internal: env binding '{}' not in scope", env_name))?;
-        Ok(Some(CallTarget::EnvLoad { env_reg, idx: *idx as u16 }))
+        if *idx < 0 { return Err(format!("Env-load index must be non-negative, got {}", idx)); }
+        let env_idx = super::scaffold::to_u16(*idx as usize, "Env-load index")?;
+        Ok(Some(CallTarget::EnvLoad { env_reg, idx: env_idx }))
     }
 
     fn resolve_closure_call<'a>(
@@ -93,7 +93,8 @@ impl Compiler {
             .ok_or_else(|| format!("internal: lifted closure fn '{}' not in fn table", info.lifted_fn))?;
         let env_reg = *self.var_to_reg.get(name)
             .ok_or_else(|| format!("internal: closure binding '{}' has no register", name))?;
-        Ok(Some(CallTarget::Function { func_id: func_id as u16, env: CallEnv::Reg(env_reg) }))
+        let fid = super::scaffold::to_u16(func_id, &format!("Closure fn_id for '{}'", name))?;
+        Ok(Some(CallTarget::Function { func_id: fid, env: CallEnv::Reg(env_reg) }))
     }
 
     fn resolve_effect_op_call<'a>(
@@ -116,7 +117,8 @@ impl Compiler {
             Some(r) => CallEnv::Reg(r),
             None => CallEnv::EmptyAlloc,
         };
-        Ok(Some(CallTarget::Function { func_id: func_id as u16, env }))
+        let fid = super::scaffold::to_u16(func_id, &format!("Effect arm fn_id for '{}'", arm_name))?;
+        Ok(Some(CallTarget::Function { func_id: fid, env }))
     }
 
     fn resolve_method_call<'a>(
@@ -128,10 +130,8 @@ impl Compiler {
         let Some(mangled) = self.method_dispatch.get(&(rname, field.clone())).cloned() else { return Ok(None) };
         let func_id = *self.func_map.get(&mangled)
             .ok_or_else(|| format!("internal: method '{}' missing from fn table", mangled))?;
-        if func_id > u16::MAX as usize {
-            return Err(format!("Function id {} exceeds u16 range", func_id));
-        }
-        Ok(Some(CallTarget::Method { func_id: func_id as u16, receiver: base }))
+        let fid = super::scaffold::to_u16(func_id, &format!("Method fn_id for '{}'", mangled))?;
+        Ok(Some(CallTarget::Method { func_id: fid, receiver: base }))
     }
 
     fn resolve_host_or_ctor<'a>(
@@ -205,14 +205,16 @@ impl Compiler {
 
     fn emit_variant_ctor(&mut self, tag: u32, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
         let dest = self.alloc_register()?;
-        self.emit(OpCode::Alloc(dest, (args.len() + 1) as u16));
+        let alloc_size = super::scaffold::to_u16(args.len() + 1, "Variant ctor payload size")?;
+        self.emit(OpCode::Alloc(dest, alloc_size));
         let tag_reg = self.alloc_register()?;
         let ti = self.add_constant(Value::from_int(tag as i64))?;
         self.emit(OpCode::PushConst(tag_reg, ti));
         self.emit(OpCode::St(tag_reg, dest, 0));
         for (i, arg) in args.iter().enumerate() {
+            let offset = super::scaffold::to_u16(i + 1, "Variant ctor offset")?;
             let v = self.compile_expr(arg)?;
-            self.emit(OpCode::St(v, dest, (i + 1) as u16));
+            self.emit(OpCode::St(v, dest, offset));
         }
         Ok(dest)
     }
@@ -275,16 +277,14 @@ impl Compiler {
 
     fn stage_call_args(&mut self, staged: &[(Register, bool)]) -> Result<(), String> {
         for (i, (src, want_move)) in staged.iter().enumerate() {
-            if i > u8::MAX as usize {
-                return Err("Too many arguments (>255)".to_string());
-            }
+            let slot = super::scaffold::to_u8(i, "Argument slot")?;
             let pos = self.code.len();
             if *want_move {
                 self.emit(OpCode::Move(Register(0), *src));
             } else {
                 self.emit(OpCode::Copy(Register(0), *src));
             }
-            self.pending_arg_patches.push((pos, i as u8));
+            self.pending_arg_patches.push((pos, slot));
         }
         Ok(())
     }

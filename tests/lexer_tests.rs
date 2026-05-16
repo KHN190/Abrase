@@ -118,6 +118,81 @@ mod tests {
     }
 
     #[test]
+    fn test_lexer_int_literal_overflow_rejected() {
+        // i64 max is 9223372036854775807; this is one digit too many.
+        let mut lexer = Lexer::new("99999999999999999999");
+        let (tok, _) = lexer.next_token();
+        match tok {
+            Token::Illegal(msg) => assert!(msg.contains("out of range"), "msg: {}", msg),
+            other => panic!("expected Illegal for int overflow, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lexer_float_overflow_produces_inf_or_illegal() {
+        // f64 max is ~1.8e308; this exceeds. Rust's parse returns inf, not Err,
+        // so this test documents current behaviour rather than rejecting it.
+        let mut lexer = Lexer::new("1e500");
+        let (tok, _) = lexer.next_token();
+        match tok {
+            Token::Float(f) => assert!(f.is_infinite()),
+            Token::Illegal(_) => {} // also acceptable
+            other => panic!("expected Float(inf) or Illegal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lexer_unknown_escape_rejected() {
+        // `"\q"` is not a defined escape. Previously kept the literal 'q'.
+        let mut lexer = Lexer::new(r#""hello\q""#);
+        let (tok, _) = lexer.next_token();
+        match tok {
+            Token::Illegal(msg) => assert!(msg.contains("unknown escape"), "msg: {}", msg),
+            other => panic!("expected Illegal for unknown escape, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lexer_unicode_escape_missing_brace_rejected() {
+        // `\u` without `{...}` was silently REPLACEMENT_CHARACTER.
+        let mut lexer = Lexer::new("\"\\u41\"");
+        let (tok, _) = lexer.next_token();
+        match tok {
+            Token::Illegal(msg) => assert!(msg.contains("expected '{'"), "msg: {}", msg),
+            other => panic!("expected Illegal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lexer_unicode_escape_bad_hex_rejected() {
+        let mut lexer = Lexer::new(r#""\u{ZZZZ}""#);
+        let (tok, _) = lexer.next_token();
+        match tok {
+            Token::Illegal(msg) => assert!(msg.contains("not valid hex"), "msg: {}", msg),
+            other => panic!("expected Illegal for bad hex, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lexer_unicode_escape_invalid_codepoint_rejected() {
+        // U+D800 is a high surrogate — not a valid scalar value.
+        let mut lexer = Lexer::new(r#""\u{D800}""#);
+        let (tok, _) = lexer.next_token();
+        match tok {
+            Token::Illegal(msg) => assert!(msg.contains("invalid unicode codepoint"), "msg: {}", msg),
+            other => panic!("expected Illegal for surrogate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lexer_unicode_escape_valid_still_works() {
+        // Sanity check: legitimate escapes still produce the right token.
+        let mut lexer = Lexer::new(r#""\u{4E2D}""#);
+        let (tok, _) = lexer.next_token();
+        assert_eq!(tok, Token::String("中".to_string()));
+    }
+
+    #[test]
     fn test_lexer_plain_string_stays_string() {
         // A literal with no `{...}` segments must NOT become a StringInterp.
         let mut lexer = Lexer::new("\"plain\"");

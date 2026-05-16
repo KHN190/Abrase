@@ -486,6 +486,8 @@ fn verify_match_guard_must_be_bool() {
 
 #[test]
 fn verify_for_loop_binding() {
+    // Iterator must be a known iterable (List/Vec/Array/Option/Result/String).
+    // Use an empty Array literal as a real iterable; verify x is in scope.
     let mut checker = Checker::new();
     let body = ast::Block {
         stmts: vec![
@@ -495,11 +497,29 @@ fn verify_for_loop_binding() {
     };
     let expr = sp(ast::Expr::For {
         pattern: sp(Pattern::Bind("x".into())),
+        iter: Box::new(sp(ast::Expr::Array(vec![sp(ast::Expr::Literal(ast::Literal::Int(0)))]))),
+        body,
+    });
+    let _ty = checker.infer_expr(&expr);
+    assert!(checker.errors.is_empty(),
+            "For loop with valid iterable should bind pattern variable, got errors: {:?}",
+            checker.errors);
+}
+
+#[test]
+fn verify_for_loop_non_iterable_rejected() {
+    // `for x in 10 { ... }` — Int is not iterable, must surface an error.
+    let mut checker = Checker::new();
+    let body = ast::Block { stmts: vec![], ret: None };
+    let expr = sp(ast::Expr::For {
+        pattern: sp(Pattern::Bind("x".into())),
         iter: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(10)))),
         body,
     });
     let _ty = checker.infer_expr(&expr);
-    assert!(checker.errors.is_empty(), "For loop should bind pattern variable");
+    assert!(!checker.errors.is_empty(), "Int is not iterable; must report error");
+    assert!(checker.errors.iter().any(|e| e.message.contains("not iterable")),
+            "expected 'not iterable' error, got: {:?}", checker.errors);
 }
 
 #[test]
@@ -759,7 +779,11 @@ fn verify_array_repeat_non_int_count() {
 #[test]
 fn verify_index_expression_on_array() {
     let mut checker = Checker::new();
-    checker.insert_var("arr".into(), Type::Named("Array<Int>".into()), false, d_span());
+    checker.insert_var(
+        "arr".into(),
+        Type::Generic { name: "Array".into(), args: vec![Type::Int] },
+        false, d_span()
+    );
 
     let expr = sp(ast::Expr::Index {
         base: Box::new(sp(ast::Expr::Identifier("arr".into()))),
@@ -767,13 +791,17 @@ fn verify_index_expression_on_array() {
     });
 
     let _ty = checker.infer_expr(&expr);
-    assert!(checker.errors.is_empty());
+    assert!(checker.errors.is_empty(), "got errors: {:?}", checker.errors);
 }
 
 #[test]
 fn verify_index_non_int_index() {
     let mut checker = Checker::new();
-    checker.insert_var("arr".into(), Type::Named("Array<Int>".into()), false, d_span());
+    checker.insert_var(
+        "arr".into(),
+        Type::Generic { name: "Array".into(), args: vec![Type::Int] },
+        false, d_span()
+    );
 
     let expr = sp(ast::Expr::Index {
         base: Box::new(sp(ast::Expr::Identifier("arr".into()))),

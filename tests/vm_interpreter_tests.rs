@@ -1291,5 +1291,26 @@ fn test_sub_imm() {
     assert_eq!(result, Ok(Value::from_int(16)));
 }
 
-// test_sub_imm_underflow_wraps removed: relied on i64::MIN, which is outside the
-// i48 inline range. Will be restored when heap-boxed bigints land.
+#[test]
+fn test_sub_imm_boxes_overflow_below_i48() {
+    // Start with a value just above i48_min (inline-representable), subtract
+    // enough to push it below i48_min — VM should box the result into BoxPool
+    // (via from_int_or_box) instead of panicking.
+    let i48_min: i64 = -(1i64 << 47);
+    let start = i48_min + 1;
+    let mut vm = VirtualMachine::new();
+    let chunk = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::SubImm(r(1), r(0), 5),  // start - 5 = i48_min - 4 → outside i48
+            OpCode::Ret(r(1)),
+        ],
+        constants: vec![Value::from_int(start)],
+        string_constants: vec![],
+        reg_count: 2,
+        param_count: 0,
+    });
+    let result = vm.run(&chunk).expect("vm should not panic on i48 underflow");
+    let expected = start.wrapping_sub(5);
+    assert_eq!(result.as_int_full(vm.box_pool()), Some(expected));
+}

@@ -453,7 +453,7 @@ fn verify_pattern_array() {
         sp(Pattern::Bind("x".into())),
         sp(Pattern::Bind("y".into())),
     ]));
-    let array_ty = Type::Named("Array<Int>".into());
+    let array_ty = Type::Generic { name: "Array".into(), args: vec![Type::Int] };
     checker.check_pattern(&pattern, &array_ty, d_span());
     assert!(checker.errors.is_empty());
 }

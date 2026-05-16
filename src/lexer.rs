@@ -244,42 +244,49 @@ impl<'a> Lexer<'a> {
         }
 
         if is_float {
-            (Token::Float(number.parse().unwrap_or(0.0)), span)
+            match number.parse::<f64>() {
+                Ok(f) => (Token::Float(f), span),
+                Err(_) => (Token::Illegal(format!("float literal cannot be parsed: {}", number)), span),
+            }
         } else {
-            (Token::Int(number.parse().unwrap_or(0)), span)
+            match number.parse::<i64>() {
+                Ok(n) => (Token::Int(n), span),
+                Err(_) => (Token::Illegal(format!("integer literal out of range: {}", number)), span),
+            }
         }
     }
 
-    fn read_escape(&mut self) -> char {
+    fn read_escape(&mut self) -> Result<char, String> {
         self.read_char(); // skip '\'
         match self.current_char {
-            Some('n')  => { self.read_char(); '\n' }
-            Some('t')  => { self.read_char(); '\t' }
-            Some('r')  => { self.read_char(); '\r' }
-            Some('\\') => { self.read_char(); '\\' }
-            Some('"')  => { self.read_char(); '"'  }
-            Some('\'') => { self.read_char(); '\'' }
-            Some('0')  => { self.read_char(); '\0' }
+            Some('n')  => { self.read_char(); Ok('\n') }
+            Some('t')  => { self.read_char(); Ok('\t') }
+            Some('r')  => { self.read_char(); Ok('\r') }
+            Some('\\') => { self.read_char(); Ok('\\') }
+            Some('"')  => { self.read_char(); Ok('"')  }
+            Some('\'') => { self.read_char(); Ok('\'') }
+            Some('0')  => { self.read_char(); Ok('\0') }
             Some('u')  => {
                 self.read_char(); // skip 'u'
-                if self.current_char == Some('{') {
-                    self.read_char(); // skip '{'
-                    let mut hex = String::new();
-                    while let Some(c) = self.current_char {
-                        if c == '}' { self.read_char(); break; }
-                        hex.push(c);
-                        self.read_char();
-                    }
-                    u32::from_str_radix(&hex, 16)
-                        .ok()
-                        .and_then(char::from_u32)
-                        .unwrap_or(char::REPLACEMENT_CHARACTER)
-                } else {
-                    char::REPLACEMENT_CHARACTER
+                if self.current_char != Some('{') {
+                    return Err("invalid unicode escape: expected '{' after \\u".into());
                 }
+                self.read_char(); // skip '{'
+                let mut hex = String::new();
+                let mut closed = false;
+                while let Some(c) = self.current_char {
+                    if c == '}' { self.read_char(); closed = true; break; }
+                    hex.push(c);
+                    self.read_char();
+                }
+                if !closed { return Err("unterminated unicode escape: missing '}'".into()); }
+                let code = u32::from_str_radix(&hex, 16)
+                    .map_err(|_| format!("invalid unicode escape: \\u{{{}}} is not valid hex", hex))?;
+                char::from_u32(code)
+                    .ok_or_else(|| format!("invalid unicode codepoint: U+{:04X}", code))
             }
-            Some(c) => { self.read_char(); c } // unknown escape: keep literal char
-            None => char::REPLACEMENT_CHARACTER,
+            Some(c) => Err(format!("unknown escape sequence: \\{}", c)),
+            None => Err("unterminated escape sequence at end of input".into()),
         }
     }
 
@@ -292,7 +299,10 @@ impl<'a> Lexer<'a> {
         while let Some(c) = self.current_char {
             match c {
                 '"' => { self.read_char(); break; }
-                '\\' => literal.push(self.read_escape()),
+                '\\' => match self.read_escape() {
+                    Ok(ch) => literal.push(ch),
+                    Err(msg) => return (Token::Illegal(msg), span),
+                },
                 '{' => {
                     self.read_char(); // skip '{'
                     if !literal.is_empty() {
@@ -355,11 +365,18 @@ impl<'a> Lexer<'a> {
     fn read_char_literal(&mut self, span: Span) -> (Token, Span) {
         self.read_char(); // skip opening '
         let c = match self.current_char {
-            Some('\\') => self.read_escape(),
+            Some('\\') => match self.read_escape() {
+                Ok(ch) => ch,
+                Err(msg) => return (Token::Illegal(msg), span),
+            },
             Some(c) => { self.read_char(); c }
-            None => '\0',
+            None => return (Token::Illegal("unterminated char literal".into()), span),
         };
-        if self.current_char == Some('\'') { self.read_char(); }
+        if self.current_char == Some('\'') {
+            self.read_char();
+        } else {
+            return (Token::Illegal("char literal must be a single character".into()), span);
+        }
         (Token::Char(c), span)
     }
 }

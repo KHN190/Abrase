@@ -57,16 +57,16 @@ impl Runtime {
     }
 
     fn register_default_hosts(&mut self) {
+        // typeck should guarantee args[0]: String.
         self.register_host("println", vec![Type::String], Type::Unit, |pool, args| {
             let idx = args[0].as_box()
-                .ok_or_else(|| format!("println: expected String, got {:?}", args[0]))?;
-            match pool.get(idx) {
-                Some(BoxedValue::String(s)) => {
-                    println!("{}", s);
-                    Ok(Value::UNIT)
-                }
-                other => Err(format!("println: expected String box, got {:?}", other)),
-            }
+                .ok_or_else(|| format!("println: internal: args[0] not a Box ({:?})", args[0]))?;
+            let s = match pool.get(idx) {
+                Some(BoxedValue::String(s)) => s,
+                other => return Err(format!("println: internal: box holds {:?}", other)),
+            };
+            println!("{}", s);
+            Ok(Value::UNIT)
         });
     }
 

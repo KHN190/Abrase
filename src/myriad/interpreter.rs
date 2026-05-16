@@ -29,7 +29,7 @@ impl VirtualMachine {
         self.exit_code = None;
         let needed = FRAME_REGS;
         if needed > self.registers.len() {
-            self.registers.resize(needed, None);
+            self.registers.resize(needed, Value::NONE);
         }
 
         'outer: loop {
@@ -37,8 +37,8 @@ impl VirtualMachine {
                 if let Some(code) = self.exit_code {
                     return Ok(Value::from_int(code));
                 }
-                return self.registers[self.base_reg].clone()
-                    .ok_or("Return register is empty".to_string());
+                let v = self.registers[self.base_reg];
+                return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
             }
             let bc = match &module.functions[self.current_func] {
                 Chunk::Bytecode(b) => b,
@@ -50,16 +50,16 @@ impl VirtualMachine {
             loop {
                 if self.pc >= bc.code.len() {
                     if let Some(frame) = self.frames.pop() {
-                        let return_val = self.registers[self.base_reg].clone()
-                            .ok_or("Return register is empty")?;
+                        let return_val = self.registers[self.base_reg];
+                        if return_val.is_none() { return Err("Return register is empty".to_string()); }
                         self.pc = frame.ip;
                         self.base_reg = frame.base_reg;
                         self.current_func = frame.func_id;
-                        self.registers[frame.dest_reg] = Some(return_val);
+                        self.registers[frame.dest_reg] = return_val;
                         continue 'outer;
                     } else {
-                        return self.registers[self.base_reg].clone()
-                            .ok_or("Return register is empty".to_string());
+                        let v = self.registers[self.base_reg];
+                        return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
                     }
                 }
                 let opcode = &bc.code[self.pc];
@@ -81,7 +81,8 @@ impl VirtualMachine {
             OpCode::Mod(d, a, b)  => self.bin_i64_checked(*d, *a, *b, "mod by zero", |x, y| x.checked_rem(y)),
             OpCode::Neg(d, a)     => {
                 let v = self.read_i64(*a)?;
-                self.write(*d, Value::from_int(v.wrapping_neg()))
+                let r = Value::from_int_or_box(&mut self.box_pool, v.wrapping_neg());
+                self.write(*d, r)
             }
             OpCode::FAdd(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x + y),
             OpCode::FSub(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x - y),
@@ -190,11 +191,13 @@ impl VirtualMachine {
 
             OpCode::AddImm(d, s, imm) => {
                 let x = self.read_i64(*s)?;
-                self.write(*d, Value::from_int(x.wrapping_add(*imm as i64)))
+                let v = Value::from_int_or_box(&mut self.box_pool, x.wrapping_add(*imm as i64));
+                self.write(*d, v)
             }
             OpCode::SubImm(d, s, imm) => {
                 let x = self.read_i64(*s)?;
-                self.write(*d, Value::from_int(x.wrapping_sub(*imm as i64)))
+                let v = Value::from_int_or_box(&mut self.box_pool, x.wrapping_sub(*imm as i64));
+                self.write(*d, v)
             }
 
             OpCode::Alloc(d, size) => {
@@ -203,9 +206,8 @@ impl VirtualMachine {
             }
             OpCode::Drop(reg) => {
                 let abs = self.abs(*reg)?;
-                if let Some(v) = self.registers[abs].take() {
-                    self.value_rc_dec(&v)?;
-                }
+                let v = std::mem::replace(&mut self.registers[abs], Value::NONE);
+                if !v.is_none() { self.value_rc_dec(&v)?; }
                 Ok(())
             }
 
@@ -302,7 +304,7 @@ impl VirtualMachine {
                         dest_reg, abs, self.registers.len()
                     ));
                 }
-                self.registers[abs] = Some(val);
+                self.registers[abs] = val;
                 self.heap.force_free(frame.cell_slot, frame.cell_gen)?;
                 Ok(())
             }
@@ -336,19 +338,21 @@ impl VirtualMachine {
             ));
         }
         if needed > self.registers.len() {
-            self.registers.resize(needed, None);
+            self.registers.resize(needed, Value::NONE);
         }
 
         if let Chunk::Native(n) = &module.functions[fn_id] {
             let mut args: Vec<Value> = Vec::with_capacity(n.param_count);
             for i in 0..n.param_count {
                 let slot = new_base + i;
-                let v = self.registers[slot].clone()
-                    .ok_or_else(|| format!("native call: arg {} (r{}) is empty", i, i))?;
+                let v = self.registers[slot];
+                if v.is_none() {
+                    return Err(format!("native call: arg {} (r{}) is empty", i, i));
+                }
                 args.push(v);
             }
             let result = (n.func)(&mut self.box_pool, &args)?;
-            self.registers[dest_abs] = Some(result);
+            self.registers[dest_abs] = result;
             return Ok(());
         }
 
@@ -374,16 +378,16 @@ impl VirtualMachine {
     #[inline]
     fn do_ret(&mut self, reg: Register) -> Result<(), String> {
         let abs = self.abs(reg)?;
-        let return_val = self.registers[abs].take()
-            .ok_or("Return register is empty")?;
+        let return_val = std::mem::replace(&mut self.registers[abs], Value::NONE);
+        if return_val.is_none() { return Err("Return register is empty".to_string()); }
         if let Some(frame) = self.frames.pop() {
             self.pc = frame.ip;
             self.base_reg = frame.base_reg;
             self.current_func = frame.func_id;
-            self.registers[frame.dest_reg] = Some(return_val);
+            self.registers[frame.dest_reg] = return_val;
             Ok(())
         } else {
-            self.registers[self.base_reg] = Some(return_val);
+            self.registers[self.base_reg] = return_val;
             self.halted = true;
             Ok(())
         }
@@ -419,21 +423,23 @@ impl VirtualMachine {
     #[inline(always)]
     fn read(&self, r: Register) -> Result<Value, String> {
         let abs = self.abs(r)?;
-        self.registers[abs].clone()
-            .ok_or_else(|| format!("read: r{} is empty", r.0))
+        let v = self.registers[abs];
+        if v.is_none() { Err(format!("read: r{} is empty", r.0)) } else { Ok(v) }
     }
 
     #[inline(always)]
     fn take(&mut self, r: Register) -> Result<Value, String> {
         let abs = self.abs(r)?;
-        self.registers[abs].take()
-            .ok_or_else(|| format!("move: r{} is empty (already moved?)", r.0))
+        let v = std::mem::replace(&mut self.registers[abs], Value::NONE);
+        if v.is_none() {
+            Err(format!("move: r{} is empty (already moved?)", r.0))
+        } else { Ok(v) }
     }
 
     #[inline(always)]
     fn write(&mut self, r: Register, v: Value) -> Result<(), String> {
         let abs = self.abs(r)?;
-        self.registers[abs] = Some(v);
+        self.registers[abs] = v;
         Ok(())
     }
 
@@ -442,8 +448,7 @@ impl VirtualMachine {
         if let Some((slot, generation)) = v.as_handle() {
             self.heap.rc_inc(slot, generation)
         } else if let Some(idx) = v.as_box() {
-            self.box_pool.inc(idx);
-            Ok(())
+            self.box_pool.inc(idx)
         } else {
             Ok(())
         }
@@ -464,35 +469,33 @@ impl VirtualMachine {
     #[inline(always)]
     fn read_i64(&self, r: Register) -> Result<i64, String> {
         let abs = self.abs(r)?;
-        match &self.registers[abs] {
-            Some(v) => v.as_int().ok_or_else(|| format!("expected i64, got {:?}", v)),
-            None => Err(format!("read: r{} is empty", r.0)),
-        }
+        let v = self.registers[abs];
+        if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
+        v.as_int_full(&self.box_pool).ok_or_else(|| format!("expected i64, got {:?}", v))
     }
 
     #[inline(always)]
     fn read_f64(&self, r: Register) -> Result<f64, String> {
         let abs = self.abs(r)?;
-        match &self.registers[abs] {
-            Some(v) => v.as_float().ok_or_else(|| format!("expected f64, got {:?}", v)),
-            None => Err(format!("read: r{} is empty", r.0)),
-        }
+        let v = self.registers[abs];
+        if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
+        v.as_float().ok_or_else(|| format!("expected f64, got {:?}", v))
     }
 
     #[inline(always)]
     fn read_handle(&self, r: Register) -> Result<(u32, u32), String> {
         let abs = self.abs(r)?;
-        match &self.registers[abs] {
-            Some(v) => v.as_handle().ok_or_else(|| format!("expected handle, got {:?}", v)),
-            None => Err(format!("read: r{} is empty", r.0)),
-        }
+        let v = self.registers[abs];
+        if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
+        v.as_handle().ok_or_else(|| format!("expected handle, got {:?}", v))
     }
 
     #[inline(always)]
     fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
-        self.write(d, Value::from_int(f(x, y)))
+        let v = Value::from_int_or_box(&mut self.box_pool, f(x, y));
+        self.write(d, v)
     }
 
     #[inline(always)]
@@ -500,7 +503,8 @@ impl VirtualMachine {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
         let r = f(x, y).ok_or_else(|| msg.to_string())?;
-        self.write(d, Value::from_int(r))
+        let v = Value::from_int_or_box(&mut self.box_pool, r);
+        self.write(d, v)
     }
 
     #[inline(always)]

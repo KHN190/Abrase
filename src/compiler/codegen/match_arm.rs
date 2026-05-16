@@ -160,7 +160,8 @@ impl Compiler {
         for (i, arg_pat) in args.iter().enumerate() {
             if let ast::Pattern::Bind(n) = &arg_pat.node {
                 let r = self.alloc_register()?;
-                self.emit(OpCode::Ld(r, scrutinee_reg, (i + 1) as u16));
+                let offset = super::scaffold::to_u16(i + 1, "Variant pattern arg offset")?;
+                self.emit(OpCode::Ld(r, scrutinee_reg, offset));
                 self.var_to_reg.insert(n.clone(), r);
             }
         }
@@ -198,7 +199,8 @@ impl Compiler {
                 };
                 if let Some(n) = bind_name {
                     let r = self.alloc_register()?;
-                    self.emit(OpCode::Ld(r, scrutinee_reg, idx as u16));
+                    let offset = super::scaffold::to_u16(idx, "Record pattern field offset")?;
+                    self.emit(OpCode::Ld(r, scrutinee_reg, offset));
                     self.var_to_reg.insert(n, r);
                 }
             }

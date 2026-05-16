@@ -14,7 +14,7 @@ use frame::Frame;
 use memory::Heap;
 
 pub struct VirtualMachine {
-    pub(crate) registers: Vec<Option<Value>>,
+    pub(crate) registers: Vec<Value>,
     pub(crate) frames: Vec<Frame>,
     pub(crate) pc: usize,
     pub(crate) base_reg: usize,

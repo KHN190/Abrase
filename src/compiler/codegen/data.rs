@@ -2,6 +2,7 @@ use crate::ast;
 use crate::ast::{Span, Spanned};
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
+use crate::compiler::codegen::scaffold::{to_u8, to_u16};
 use crate::myriad::Value;
 
 impl Compiler {
@@ -10,19 +11,15 @@ impl Compiler {
         fn_id: usize,
         arg_srcs: &[Register],
     ) -> Result<Register, String> {
-        if fn_id > u16::MAX as usize {
-            return Err(format!("Function id {} exceeds u16 range", fn_id));
-        }
+        let fn_id_u16 = to_u16(fn_id, "Function id")?;
         for (i, src) in arg_srcs.iter().enumerate() {
-            if i > u8::MAX as usize {
-                return Err("Too many arguments (>255)".to_string());
-            }
+            let slot = to_u8(i, "Argument index")?;
             let pos = self.code.len();
             self.emit(OpCode::Copy(Register(0), *src));
-            self.pending_arg_patches.push((pos, i as u8));
+            self.pending_arg_patches.push((pos, slot));
         }
         let dest = self.alloc_register()?;
-        self.emit(OpCode::Call(dest, fn_id as u16));
+        self.emit(OpCode::Call(dest, fn_id_u16));
         Ok(dest)
     }
 }
@@ -140,8 +137,10 @@ impl Compiler {
         let field_order = self.layouts.records.get(&type_name).cloned()
             .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
         let dest = self.alloc_register()?;
-        self.emit(OpCode::Alloc(dest, field_order.fields.len() as u16));
+        let field_count = to_u16(field_order.fields.len(), &format!("Record '{}' field count", type_name))?;
+        self.emit(OpCode::Alloc(dest, field_count));
         for (i, fname) in field_order.fields.iter().enumerate() {
+            let offset = to_u16(i, "Record field offset")?;
             let init = fields.iter().find(|f| &f.name == fname)
                 .ok_or_else(|| format!("Missing field '{}' in {}", fname, type_name))?;
             let src = if let Some(v) = &init.value {
@@ -150,7 +149,7 @@ impl Compiler {
                 self.var_to_reg.get(&init.name).copied()
                     .ok_or_else(|| format!("Undefined variable: {}", init.name))?
             };
-            self.emit(OpCode::St(src, dest, i as u16));
+            self.emit(OpCode::St(src, dest, offset));
         }
         Ok(dest)
     }
@@ -166,14 +165,16 @@ impl Compiler {
             .ok_or_else(|| format!("Unknown variant: {}", vname))?;
         let dest = self.alloc_register()?;
         let payload = args.len();
-        self.emit(OpCode::Alloc(dest, (payload + 1) as u16));
+        let alloc_size = to_u16(payload + 1, &format!("Variant '{}' payload size", vname))?;
+        self.emit(OpCode::Alloc(dest, alloc_size));
         let tag_reg = self.alloc_register()?;
         let ti = self.add_constant(Value::from_int(info.tag as i64))?;
         self.emit(OpCode::PushConst(tag_reg, ti));
         self.emit(OpCode::St(tag_reg, dest, 0));
         for (i, arg) in args.iter().enumerate() {
+            let offset = to_u16(i + 1, "Variant payload offset")?;
             let v = self.compile_expr(arg)?;
-            self.emit(OpCode::St(v, dest, (i + 1) as u16));
+            self.emit(OpCode::St(v, dest, offset));
         }
         Ok(dest)
     }
@@ -215,10 +216,12 @@ impl Compiler {
         items: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
         let dest = self.alloc_register()?;
-        self.emit(OpCode::Alloc(dest, items.len() as u16));
+        let count = to_u16(items.len(), "Array literal length")?;
+        self.emit(OpCode::Alloc(dest, count));
         for (i, item) in items.iter().enumerate() {
+            let offset = to_u16(i, "Array element offset")?;
             let v = self.compile_expr(item)?;
-            self.emit(OpCode::St(v, dest, i as u16));
+            self.emit(OpCode::St(v, dest, offset));
         }
         Ok(dest)
     }

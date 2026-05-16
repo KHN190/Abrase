@@ -103,7 +103,9 @@ impl Heap {
         self.free_list.push(slot);
         for v in cell {
             if let Some((s, g)) = v.as_handle() {
-                let _ = self.rc_dec(s, g);
+                if let Err(e) = self.rc_dec(s, g) {
+                    debug_assert!(false, "force_free cascade rc_dec failed: {}", e);
+                }
             }
         }
         Ok(())
