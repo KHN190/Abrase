@@ -41,10 +41,7 @@ pub struct Compiler {
     // Effect-handler lowering tables built by the pre-pass.
     // (effect_name, op_name) -> synthesised arm fn name.
     pub(super) effect_op_to_arm: HashMap<(String, String), String>,
-    // Per-call-site dispatch table. Spans of `e.op(args)` call expressions
-    // are mapped to the arm fn of the innermost lexically enclosing handle.
-    // Codegen consults this *before* the global fallback so nested handlers
-    // for the same effect dispatch correctly.
+    // Per-call-site op dispatch: handle nested effects before global fallback.
     pub(super) op_call_to_arm: HashMap<ast::Span, String>,
     // Handle expression span -> synthesised return-arm fn name.
     pub(super) return_arm_by_handle: HashMap<ast::Span, String>,

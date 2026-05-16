@@ -23,13 +23,9 @@ pub struct ClosureLowering {
     pub by_span: HashMap<Span, ClosureInfo>,
     pub synthetic_fns: Vec<FnDecl>,
     next_id: usize,
-    // Names that are always considered "in scope" globally (top-level fns,
-    // types, effect names, variant constructors). Free-variable analysis
-    // treats these as non-captures.
+    // Global names (top-level fns, types, effects, constructors) that don't count as captures.
     globals: HashSet<String>,
-    // Set by `walk_stmt` for `let name = closure ...` and consumed by the
-    // immediate Closure handler in `walk_expr` (cleared so nested closures
-    // don't inherit).
+    // Pending self-name from `let name = closure ...` for closure lowering.
     pending_self_name: Option<String>,
 }
 
@@ -120,9 +116,8 @@ impl ClosureLowering {
                 // Consume self_name BEFORE recursing so nested closures don't
                 // inherit our binding name.
                 let self_name = self.pending_self_name.take();
-                // Recurse FIRST so any nested closures get their own lifts;
-                // the outer closure captures whatever the inner one captures
-                // from the outer scope.
+                // Recurse first so nested closures get their own lifts before capturing from outer scope.
+
                 let mut inner_env = env.shadow_with_params(params);
                 self.walk_expr(body, &mut inner_env);
                 // Collect free variables of this closure
@@ -141,9 +136,7 @@ impl ClosureLowering {
                 let lifted_name = format!("__closure_{}", self.next_id);
                 self.next_id += 1;
 
-                // Build the lifted fn:
-                //   first param: env_ptr (Int handle).
-                //   rest:        the closure's own params.
+                // Build lifted fn: first param is env_ptr (Int), rest are closure params.
                 let mut lifted_params: Vec<Param> = Vec::new();
                 lifted_params.push(Param::Named {
                     pattern: Spanned { node: Pattern::Bind("__env".into()), span: expr.span },
@@ -292,9 +285,7 @@ fn param_names(params: &[ClosureParam]) -> HashSet<String> {
     }).collect()
 }
 
-// Walk an expr collecting identifiers that are NOT bound by `bound`. Visit
-// order is left-to-right so the resulting Vec is deterministic; `seen`
-// dedups across the walk.
+// Collect unbound identifiers left-to-right (deterministic). `seen` deduplicates.
 pub fn collect_free_vars(
     expr: &Spanned<Expr>,
     bound: &HashSet<String>,
@@ -441,9 +432,7 @@ fn rewrite_node(
             right: Box::new(rewrite_captures(right, layout, params, self_name, lifted_fn_name)),
         },
         Expr::Call { callee, args } => {
-            // Self-recursion: `f(x)` inside `let f = |...| ...` rewrites to a
-            // direct call of the lifted fn with the current env, so the env
-            // never has to capture `f` (which would form an rc cycle).
+            // Self-recursion: rewrite to lifted fn call with current env to avoid rc cycle.
             if let (Some(sn), Expr::Identifier(name)) = (self_name, &callee.node) {
                 if name == sn && !params.contains(name) && !layout.contains_key(name) {
                     let mut new_args = vec![Spanned {

@@ -1,6 +1,4 @@
-// Low-level helpers shared by every other codegen submodule:
-// register allocation, opcode emission, constant interning, jump patching,
-// and the Result-tag wrapping used by the exn lowering.
+// Low-level codegen helpers: register allocation, opcodes, constants, jumps, result-wrapping.
 
 use crate::bytecode::{OpCode, Register, FRAME_REGS};
 use crate::compiler::Compiler;

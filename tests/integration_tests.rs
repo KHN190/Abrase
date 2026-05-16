@@ -119,6 +119,21 @@ fn effect_log_runs() {
 }
 
 #[test]
+fn region_all_allowed_shapes() {
+    // Exercises every currently-allowed `region { }` form: anonymous,
+    // labeled, nested, empty-body, multi-Shared, sibling regions. Body
+    // computes a deterministic sum, then we assert the heap is empty —
+    // every Shared/Alloc inside any region must be force-freed at exit.
+    let (v, vm) = run_file_full("tests/scripts/region.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(382),
+        "11 (a) + 20 (b) + 300 (c) + 30 (d) + 6 (e) + 7 (f) + 8 (g)");
+    assert_eq!(vm.heap_live_count(), 0,
+        "all region-tagged allocs must be force-freed at exit, got live={}",
+        vm.heap_live_count());
+}
+
+#[test]
 fn effect_handlers_typecheck() {
     // generator (single-shot resume) and backtracking (multi-shot resume) handlers.
     let errs = typeck_file("tests/scripts/effect_handlers.abe");

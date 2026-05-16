@@ -19,9 +19,7 @@ impl Compiler {
         let result_reg = self.alloc_register()?;
 
         let cons_reg = self.compile_expr(consequence)?;
-        // Peephole only on leaf expressions: phi-joining forms (Match, If,
-        // Block-with-control-tail) write the same reg from multiple sites
-        // and can't be redirected by a single last-emit rewrite.
+        // Peephole only on leaf expressions; phi-joining forms can't be redirected.
         if !is_leaf_for_peephole(&consequence.node)
             || !self.try_redirect_last_dest(cons_reg, result_reg)
         {

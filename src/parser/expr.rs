@@ -18,6 +18,12 @@ impl<'a> Parser<'a> {
                 Spanned { node: Expr::Error, span }
             }
         };
+        if is_block_terminated(&left.node)
+            && matches!(self.current_token,
+                Token::Semicolon | Token::RBrace | Token::RParen | Token::RBracket | Token::Comma | Token::Eof)
+        {
+            return left;
+        }
         while self.peek_token != Token::Semicolon && precedence < self.peek_token.precedence() {
             self.next_token();
             left = self.parse_infix(left);

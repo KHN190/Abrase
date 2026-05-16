@@ -1,8 +1,5 @@
-// Compile-time type inference.
-//
-// These are best-effort and limited to what codegen needs to make local
-// decisions (move vs copy on let-binding, receiver-type resolution for
-// method calls, etc.). The real type system lives in `typeck`.
+// Compile-time type inference for codegen: best-effort moves vs copies and method dispatch.
+// The real type system lives in `typeck`.
 
 use crate::ast;
 use crate::compiler::Compiler;
