@@ -77,6 +77,28 @@ fn main() -> Int {
   }
 }
 
+// Generators by effect system
+
+effect gen { fn yield(v: Int) -> Unit }
+
+fn produce() -> <gen> Unit { gen.yield(10); gen.yield(20) }
+
+fn sum() -> Int {
+  handle produce() {
+    return _      => 0,
+    gen.yield v   => v + resume(())   // resume continues the producer
+  }
+}
+
+// Regions — bulk free on scope exit
+
+fn main() -> Int {
+  region cache {
+    let s = Shared(42);     // allocation tagged with region `cache`
+    *s
+  }                          // region exit force-frees `s` regardless of rc
+}
+
 // String interpolation
 
 fn greet(name: String) -> String { "hello {name}" }
