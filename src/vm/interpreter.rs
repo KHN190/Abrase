@@ -112,6 +112,13 @@ impl VirtualMachine {
                 if !is_falsy(&v) { self.branch(module, *off) } else { Ok(()) }
             }
             OpCode::Call(dest, fn_id) => self.do_call(module, *dest, *fn_id as usize),
+            OpCode::CallReg(dest, fn_id_reg) => {
+                let fn_id = self.read_i64(*fn_id_reg)?;
+                if !(0..=0xFFFF).contains(&fn_id) {
+                    return Err(format!("call_reg: fn_id {} out of u16 range", fn_id));
+                }
+                self.do_call(module, *dest, fn_id as usize)
+            }
             OpCode::Ret(reg) => self.do_ret(*reg),
 
             OpCode::PushConst(reg, pool_idx) => {
@@ -196,6 +203,10 @@ impl VirtualMachine {
             OpCode::Dei(d, port_reg) => {
                 let port_val = self.read_i64(*port_reg)?;
                 let (device_id, port) = split_port(port_val)?;
+                if device_id == super::DISPATCH_ID && port == super::DISPATCH_PORT_LOOKUP {
+                    let r = self.dispatch_last_result.unwrap_or(super::DISPATCH_NO_MATCH);
+                    return self.write(*d, Value::Int(r as i64));
+                }
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
                 let v = dev.read(port)?;
@@ -210,6 +221,14 @@ impl VirtualMachine {
                         self.exit_code = Some(n & 0xFFFF_FFFF);
                     }
                     self.halted = true;
+                }
+                if device_id == super::DISPATCH_ID && port == super::DISPATCH_PORT_LOOKUP {
+                    let key = match v {
+                        Value::Int(n) if (0..=0xFFFF).contains(&n) => n as u16,
+                        _ => return Err(format!("dispatch.lookup: bad key {:?}", v)),
+                    };
+                    self.dispatch_last_result = Some(self.resolve_dispatch(key));
+                    return Ok(());
                 }
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
@@ -227,7 +246,10 @@ impl VirtualMachine {
                 self.heap.st(slot, generation, super::cont_slot::ALIVE,
                     Value::Int(1))?;
                 self.handlers.push(super::HandlerFrame {
+                    effect_id: 0,
                     handler_fn: *fn_id as usize,
+                    dispatch_table_slot: None,
+                    dispatch_table_gen: 0,
                     cell_slot: slot,
                     cell_gen: generation,
                 });
@@ -494,11 +516,35 @@ impl VirtualMachine {
     fn validate_module_devices(&self, module: &Module) -> Result<(), String> {
         for id in 0u16..=255 {
             let id = id as u8;
+            if id == super::DISPATCH_ID { continue; }
             if module.requires_device(id) && !self.devices.has(id) {
                 return Err(format!("module requires device {:#04x} but it is not installed", id));
             }
         }
         Ok(())
+    }
+
+    // Dispatch device 0xE0 lookup: walk handlers top-down, find one matching
+    // effect_id (= key >> 8); look up op_id (= key & 0xFF) in its dispatch
+    // table. Falls back to single-fn handler_fn when no table present. Returns
+    // DISPATCH_NO_MATCH if nothing matches.
+    fn resolve_dispatch(&self, key: u16) -> u16 {
+        let effect_id = (key >> 8) as u16;
+        let op_id = (key & 0xFF) as usize;
+        for h in self.handlers.iter().rev() {
+            if h.effect_id != effect_id { continue; }
+            if let Some(slot) = h.dispatch_table_slot {
+                if let Ok(v) = self.heap.ld(slot, h.dispatch_table_gen, op_id) {
+                    if let Value::Int(n) = v {
+                        if (0..=0xFFFF).contains(&n) { return n as u16; }
+                    }
+                }
+            }
+            if op_id == 0 && h.handler_fn <= 0xFFFF {
+                return h.handler_fn as u16;
+            }
+        }
+        super::DISPATCH_NO_MATCH
     }
 }
 

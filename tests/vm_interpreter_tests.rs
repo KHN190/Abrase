@@ -1168,3 +1168,106 @@ fn test_jmp_past_end_traps() {
     assert!(result.is_err(), "branch past end must trap, got {:?}", result);
 }
 
+
+#[test]
+fn test_call_reg_dispatches_to_bytecode() {
+    let callee = BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(1), 0),
+            OpCode::Add(r(0), r(0), r(1)),
+            OpCode::Ret(r(0)),
+        ],
+        constants: vec![Value::Int(1)],
+        reg_count: 2,
+        param_count: 1,
+    };
+    let caller = BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Copy(r(4), r(0)),
+            OpCode::CallReg(r(2), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        constants: vec![Value::Int(41), Value::Int(0)],
+        reg_count: 4,
+        param_count: 0,
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(callee), Chunk::Bytecode(caller)],
+        entry: 1, device_mask: [0; 32],
+    };
+    assert_eq!(VirtualMachine::new().run_module(&module), Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_call_reg_dispatches_to_native() {
+    let native = NativeChunk {
+        param_count: 1,
+        func: Rc::new(|args: &[Value]| {
+            match &args[0] {
+                Value::Int(n) => Ok(Value::Int(n * 2)),
+                _ => Err("expected int".into()),
+            }
+        }),
+    };
+    let caller = BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Copy(r(4), r(0)),
+            OpCode::CallReg(r(2), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        constants: vec![Value::Int(21), Value::Int(0)],
+        reg_count: 4,
+        param_count: 0,
+    };
+    let module = Module {
+        functions: vec![Chunk::Native(native), Chunk::Bytecode(caller)],
+        entry: 1, device_mask: [0; 32],
+    };
+    assert_eq!(VirtualMachine::new().run_module(&module), Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_call_reg_out_of_range_fn_id_traps() {
+    let caller = BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(1), 0),
+            OpCode::CallReg(r(2), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        constants: vec![Value::Int(99999)],
+        reg_count: 3,
+        param_count: 0,
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(caller)],
+        entry: 0, device_mask: [0; 32],
+    };
+    let result = VirtualMachine::new().run_module(&module);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("out of u16 range"));
+}
+
+#[test]
+fn test_call_reg_unknown_fn_id_traps() {
+    let caller = BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(1), 0),
+            OpCode::CallReg(r(2), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        constants: vec![Value::Int(5)],
+        reg_count: 3,
+        param_count: 0,
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(caller)],
+        entry: 0, device_mask: [0; 32],
+    };
+    let result = VirtualMachine::new().run_module(&module);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("unknown fn_id"));
+}

@@ -45,6 +45,7 @@ pub enum OpCode {
     Jz(Register, i16),
     Jnz(Register, i16),
     Call(Register, u16),
+    CallReg(Register, Register),
     Ret(Register),
 
     PushConst(Register, u16),

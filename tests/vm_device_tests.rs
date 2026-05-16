@@ -288,3 +288,59 @@ fn runtime_user_registered_host_fn() {
     "#;
     assert_eq!(rt.eval(src).unwrap(), Value::Int(42));
 }
+
+#[test]
+fn dispatch_no_matching_handler_returns_no_match() {
+    let mut vm = VirtualMachine::new();
+    let module = module_with(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Deo(r(0), r(1)),
+            OpCode::Dei(r(2), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::Int(0x0500), Value::Int(0xE000)],
+        3,
+        [0; 32],
+    );
+    let v = vm.run_module(&module).unwrap();
+    assert_eq!(v, Value::Int(0xFFFF), "dispatch with no handlers must return DISPATCH_NO_MATCH");
+}
+
+#[test]
+fn dispatch_via_handler_fn_fallback_after_handle() {
+    // Handle (current single-arm form) sets effect_id=0, handler_fn=imm16.
+    // Lookup key (effect_id 0, op_id 0) = 0x0000 falls back to handler_fn.
+    let module = module_with(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Handle(r(0), 42),
+            OpCode::PushConst(r(1), 1),
+            OpCode::PushConst(r(2), 2),
+            OpCode::Deo(r(1), r(2)),
+            OpCode::Dei(r(3), r(2)),
+            OpCode::Ret(r(3)),
+        ],
+        vec![Value::Int(0), Value::Int(0x0000), Value::Int(0xE000)],
+        4,
+        [0; 32],
+    );
+    let v = VirtualMachine::new().run_module(&module).unwrap();
+    assert_eq!(v, Value::Int(42), "op_id 0 falls back to handler_fn");
+}
+
+#[test]
+fn dispatch_device_is_vm_intrinsic_not_a_device_mask_requirement() {
+    let mut vm = VirtualMachine::new();
+    let mut mask = [0u8; 32];
+    mask[0xE0 / 8] |= 1 << (0xE0 % 8);
+    let module = module_with(
+        vec![OpCode::PushConst(r(0), 0), OpCode::Ret(r(0))],
+        vec![Value::Int(0)],
+        1,
+        mask,
+    );
+    assert!(vm.run_module(&module).is_ok(),
+        "modules requiring 0xE0 should load without explicit install (it's intrinsic)");
+}

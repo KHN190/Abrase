@@ -22,17 +22,28 @@ pub struct VirtualMachine {
     pub(crate) handlers: Vec<HandlerFrame>,
     pub(crate) halted: bool,
     pub(crate) exit_code: Option<i64>,
+    pub(crate) dispatch_last_result: Option<u16>,
     pub(crate) devices: DeviceTable,
 }
 
+pub const DISPATCH_ID: u8 = 0xE0;
+pub const DISPATCH_PORT_LOOKUP: u8 = 0x00;
+pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
+
 // `cell_*` point at the 4-slot heap continuation: [pc, base, dest_reg, alive].
+// `dispatch_table_*` point at a heap array of arm fn_ids (one per op), used by
+// Dispatch device (0xE0) lookup. `handler_fn` is the fallback for single-op
+// handlers built by the current codegen path.
 pub struct HandlerFrame {
+    pub effect_id: u16,
     pub handler_fn: usize,
+    pub dispatch_table_slot: Option<u32>,
+    pub dispatch_table_gen: u32,
     pub cell_slot: u32,
     pub cell_gen: u32,
 }
 
-pub(crate) mod cont_slot {
+pub mod cont_slot {
     pub const SUSPEND_PC: usize = 0;
     pub const SUSPEND_BASE: usize = 1;
     pub const DEST_REG: usize = 2;
@@ -52,6 +63,7 @@ impl VirtualMachine {
             handlers: Vec::new(),
             halted: false,
             exit_code: None,
+            dispatch_last_result: None,
             devices: DeviceTable::new(),
         }
     }
@@ -66,5 +78,17 @@ impl VirtualMachine {
 
     pub fn take_device(&mut self, id: u8) -> Option<Box<dyn Device>> {
         self.devices.take(id)
+    }
+
+    pub fn heap_alloc(&mut self, size: usize) -> (u32, u32) {
+        self.heap.alloc(size)
+    }
+
+    pub fn heap_st(&mut self, slot: u32, gen_: u32, offset: usize, val: Value) -> Result<Value, String> {
+        self.heap.st(slot, gen_, offset, val)
+    }
+
+    pub fn push_handler(&mut self, h: HandlerFrame) {
+        self.handlers.push(h);
     }
 }
