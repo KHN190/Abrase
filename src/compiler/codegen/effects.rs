@@ -3,7 +3,7 @@ use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
 use crate::compiler::effects;
-use crate::vm::Value;
+use crate::myriad::Value;
 
 impl Compiler {
     pub(in crate::compiler) fn compile_throw(
@@ -30,7 +30,7 @@ impl Compiler {
         let tag = self.alloc_register()?;
         self.emit(OpCode::Ld(tag, res, 0));
         let err_tag = self.alloc_register()?;
-        let idx = self.add_constant(Value::Int(effects::ERR_TAG as i64))?;
+        let idx = self.add_constant(Value::from_int(effects::ERR_TAG as i64))?;
         self.emit(OpCode::PushConst(err_tag, idx));
         let is_err = self.alloc_register()?;
         self.emit(OpCode::Eq(is_err, tag, err_tag));
@@ -53,7 +53,7 @@ impl Compiler {
             self.compile_expr(e)?
         } else {
             let r = self.alloc_register()?;
-            let idx = self.add_constant(Value::Unit)?;
+            let idx = self.add_constant(Value::UNIT)?;
             self.emit(OpCode::PushConst(r, idx));
             r
         };

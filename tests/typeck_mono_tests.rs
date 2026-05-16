@@ -70,7 +70,7 @@ mod tests {
                 args: vec![sp(Expr::Literal(Literal::Int(5)))],
             }),
         ];
-        assert_eq!(compile_and_run(&ast), Ok(Value::Int(5)));
+        assert_eq!(compile_and_run(&ast), Ok(Value::from_int(5)));
     }
 
     // Two specialisations of `id` coexist: id(5) and id(true), summed via Int branch.
@@ -106,7 +106,7 @@ mod tests {
             alternative: Some(Box::new(sp(Expr::Literal(Literal::Int(0))))),
         });
         let ast = vec![id_fn, main_fn];
-        assert_eq!(compile_and_run(&ast), Ok(Value::Int(10)));
+        assert_eq!(compile_and_run(&ast), Ok(Value::from_int(10)));
     }
 
     // outer<T>(x) calls inner<T>(x); main inference through transitive generic call.
@@ -154,7 +154,7 @@ mod tests {
             args: vec![sp(Expr::Literal(Literal::Int(7)))],
         });
         let ast = vec![inner_fn, outer_fn, main_fn];
-        assert_eq!(compile_and_run(&ast), Ok(Value::Int(7)));
+        assert_eq!(compile_and_run(&ast), Ok(Value::from_int(7)));
     }
 
     // Recursion through a generic specialization: cnt<T>__Int rewrites its recursive call.
@@ -213,7 +213,7 @@ mod tests {
             ],
         });
         let ast = vec![cnt, main_fn];
-        assert_eq!(compile_and_run(&ast), Ok(Value::Int(3)));
+        assert_eq!(compile_and_run(&ast), Ok(Value::from_int(3)));
     }
 
     // make<T>(x: Int) — unused T means type-arg cannot be inferred.
@@ -310,7 +310,7 @@ mod tests {
             args: vec![],
         });
         let ast = vec![trait_decl, impl_decl, main_fn];
-        assert_eq!(compile_and_run(&ast), Ok(Value::Int(10)));
+        assert_eq!(compile_and_run(&ast), Ok(Value::from_int(10)));
     }
 
     #[test]
@@ -357,7 +357,7 @@ mod tests {
             args: vec![sp(Expr::Literal(Literal::Int(41)))],
         });
         let ast = vec![trait_decl, impl_decl, p_fn, main_fn];
-        assert_eq!(compile_and_run(&ast), Ok(Value::Int(42)));
+        assert_eq!(compile_and_run(&ast), Ok(Value::from_int(42)));
     }
 
     #[test]
@@ -400,6 +400,6 @@ mod tests {
             })),
         });
         let ast = vec![trait_decl, impl_int, impl_bool, main_fn];
-        assert_eq!(compile_and_run(&ast), Ok(Value::Int(51)));
+        assert_eq!(compile_and_run(&ast), Ok(Value::from_int(51)));
     }
 }

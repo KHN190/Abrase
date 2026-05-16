@@ -45,7 +45,7 @@ fn verify_compile_record_simple_construction() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn verify_compile_record_field_access() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(7)));
+    assert_eq!(result, Ok(Value::from_int(7)));
 }
 
 #[test]
@@ -138,5 +138,5 @@ fn verify_compile_record_with_multiple_fields() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(777)));
+    assert_eq!(result, Ok(Value::from_int(777)));
 }

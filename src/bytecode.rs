@@ -1,9 +1,9 @@
-use crate::vm::Value;
+use crate::myriad::{Value, BoxPool};
 use std::rc::Rc;
 
 pub const FRAME_REGS: usize = 256;
 
-pub type NativeFn = Rc<dyn Fn(&[Value]) -> Result<Value, String>>;
+pub type NativeFn = Rc<dyn Fn(&mut BoxPool, &[Value]) -> Result<Value, String>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Register(pub u8);
@@ -56,11 +56,12 @@ pub enum OpCode {
     St(Register, Register, u16),
     LdIdx(Register, Register, Register),
     StIdx(Register, Register, Register),
-    Lea(Register, Register, u16),
     Ref(Register, Register),
 
+    AddImm(Register, Register, i8),
+    SubImm(Register, Register, i8),
+
     Alloc(Register, u16),
-    Free(Register),
     Drop(Register),
 
     Dei(Register, Register),
@@ -70,10 +71,11 @@ pub enum OpCode {
     Resume(Register),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct BytecodeChunk {
     pub code: Vec<OpCode>,
     pub constants: Vec<Value>,
+    pub string_constants: Vec<String>,
     pub reg_count: usize,
     pub param_count: usize,
 }

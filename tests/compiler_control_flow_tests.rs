@@ -38,7 +38,7 @@ fn verify_compile_if_true_branch() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(10));
+    assert_eq!(result, Value::from_int(10));
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn verify_compile_if_false_branch() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(20));
+    assert_eq!(result, Value::from_int(20));
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn verify_compile_if_with_comparison() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(100));
+    assert_eq!(result, Value::from_int(100));
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn verify_compile_if_without_else_true() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(42));
+    assert_eq!(result, Value::from_int(42));
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn verify_compile_if_without_else_false() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Unit);
+    assert_eq!(result, Value::UNIT);
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn verify_compile_while_loop_simple() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Unit);
+    assert_eq!(result, Value::UNIT);
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn verify_compile_while_with_comparison() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Unit);
+    assert_eq!(result, Value::UNIT);
 }
 
 #[test]
@@ -392,7 +392,7 @@ fn verify_compile_while_loop_with_mutation() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(5));
+    assert_eq!(result, Value::from_int(5));
 }
 
 #[test]
@@ -426,7 +426,7 @@ fn verify_compile_if_without_else_returns_unit() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Unit);
+    assert_eq!(result, Value::UNIT);
 }
 
 #[test]
@@ -459,7 +459,7 @@ fn verify_compile_while_never_executes() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Unit);
+    assert_eq!(result, Value::UNIT);
 }
 
 #[test]
@@ -496,7 +496,7 @@ fn verify_compile_if_non_bool_condition_truthy() {
     })];
 
     let result = compile_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(100)), "Truthy int (5) should take consequence");
+    assert_eq!(result, Ok(Value::from_int(100)), "Truthy int (5) should take consequence");
 }
 
 #[test]
@@ -533,5 +533,5 @@ fn verify_compile_if_zero_condition_falsy() {
     })];
 
     let result = compile_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(200)), "Falsy int (0) should take alternative");
+    assert_eq!(result, Ok(Value::from_int(200)), "Falsy int (0) should take alternative");
 }

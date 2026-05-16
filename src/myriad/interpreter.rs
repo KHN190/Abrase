@@ -1,6 +1,6 @@
 use super::{VirtualMachine, Value};
 use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS};
-use crate::vm::frame::Frame;
+use crate::myriad::frame::Frame;
 
 const MAX_REGISTERS: usize = 1 << 16;
 const MAX_RECURSION_DEPTH: usize = 2048;
@@ -19,6 +19,7 @@ impl VirtualMachine {
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
         validate_module_register_budget(module)?;
         self.validate_module_devices(module)?;
+        self.resolve_constants(module);
         self.pc = 0;
         self.base_reg = 0;
         self.current_func = module.entry;
@@ -34,7 +35,7 @@ impl VirtualMachine {
         'outer: loop {
             if self.halted {
                 if let Some(code) = self.exit_code {
-                    return Ok(Value::Int(code));
+                    return Ok(Value::from_int(code));
                 }
                 return self.registers[self.base_reg].clone()
                     .ok_or("Return register is empty".to_string());
@@ -80,7 +81,7 @@ impl VirtualMachine {
             OpCode::Mod(d, a, b)  => self.bin_i64_checked(*d, *a, *b, "mod by zero", |x, y| x.checked_rem(y)),
             OpCode::Neg(d, a)     => {
                 let v = self.read_i64(*a)?;
-                self.write(*d, Value::Int(v.wrapping_neg()))
+                self.write(*d, Value::from_int(v.wrapping_neg()))
             }
             OpCode::FAdd(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x + y),
             OpCode::FSub(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x - y),
@@ -97,7 +98,7 @@ impl VirtualMachine {
                 let x = self.read_f64(*a)?;
                 let y = self.read_f64(*b)?;
                 let r = if x.is_nan() || y.is_nan() { false } else { x < y };
-                self.write(*d, Value::Bool(r))
+                self.write(*d, Value::from_bool(r))
             }
 
             OpCode::And(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x & y),
@@ -127,10 +128,12 @@ impl VirtualMachine {
 
             OpCode::PushConst(reg, pool_idx) => {
                 let idx = *pool_idx as usize;
-                if idx >= bc.constants.len() {
+                let resolved = &self.resolved_constants[self.current_func];
+                if idx >= resolved.len() {
                     return Err("Constant index out of bounds".to_string());
                 }
-                self.write(*reg, bc.constants[idx].clone())
+                let v = resolved[idx];
+                self.write(*reg, v)
             }
             OpCode::Copy(d, s) => {
                 let v = self.read(*s)?;
@@ -176,24 +179,26 @@ impl VirtualMachine {
                 self.value_rc_dec(&old)?;
                 Ok(())
             }
-            OpCode::Lea(_, _, _) => {
-                Err("lea: not supported under handle/generation model".to_string())
-            }
             OpCode::Ref(d, s) => {
                 let v = self.read(*s)?;
                 self.value_rc_inc(&v)?;
                 let (slot, generation) = self.heap.alloc(1);
                 self.heap.st(slot, generation, 0, v)?;
-                self.write(*d, Value::Handle { slot, generation })
+                self.write(*d, Value::from_handle(slot, generation))
+            }
+
+            OpCode::AddImm(d, s, imm) => {
+                let x = self.read_i64(*s)?;
+                self.write(*d, Value::from_int(x.wrapping_add(*imm as i64)))
+            }
+            OpCode::SubImm(d, s, imm) => {
+                let x = self.read_i64(*s)?;
+                self.write(*d, Value::from_int(x.wrapping_sub(*imm as i64)))
             }
 
             OpCode::Alloc(d, size) => {
                 let (slot, generation) = self.heap.alloc(*size as usize);
-                self.write(*d, Value::Handle { slot, generation })
-            }
-            OpCode::Free(reg) => {
-                let (slot, generation) = self.read_handle(*reg)?;
-                self.heap.force_free(slot, generation)
+                self.write(*d, Value::from_handle(slot, generation))
             }
             OpCode::Drop(reg) => {
                 let abs = self.abs(*reg)?;
@@ -208,7 +213,7 @@ impl VirtualMachine {
                 let (device_id, port) = split_port(port_val)?;
                 if device_id == super::DISPATCH_ID && port == super::DISPATCH_PORT_LOOKUP {
                     let r = self.dispatch_last_result.unwrap_or(super::DISPATCH_NO_MATCH);
-                    return self.write(*d, Value::Int(r as i64));
+                    return self.write(*d, Value::from_int(r as i64));
                 }
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
@@ -220,14 +225,14 @@ impl VirtualMachine {
                 let port_val = self.read_i64(*port_reg)?;
                 let (device_id, port) = split_port(port_val)?;
                 if device_id == 0x00 && port == 0x01 {
-                    if let Value::Int(n) = v {
+                    if let Some(n) = v.as_int() {
                         self.exit_code = Some(n & 0xFFFF_FFFF);
                     }
                     self.halted = true;
                 }
                 if device_id == super::DISPATCH_ID && port == super::DISPATCH_PORT_LOOKUP {
-                    let key = match v {
-                        Value::Int(n) if (0..=0xFFFF).contains(&n) => n as u16,
+                    let key = match v.as_int() {
+                        Some(n) if (0..=0xFFFF).contains(&n) => n as u16,
                         _ => return Err(format!("dispatch.lookup: bad key {:?}", v)),
                     };
                     self.dispatch_last_result = Some(self.resolve_dispatch(key));
@@ -235,19 +240,19 @@ impl VirtualMachine {
                 }
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
-                dev.write(port, v)
+                dev.write_with_pool(port, v, &mut self.box_pool)
             }
             OpCode::Handle(dest, fn_id) => {
                 // Heap-alloc continuation cell; `dest` is the suspended frame's result reg.
                 let (slot, generation) = self.heap.alloc(super::cont_slot::SIZE);
                 self.heap.st(slot, generation, super::cont_slot::SUSPEND_PC,
-                    Value::Int(self.pc as i64))?;
+                    Value::from_int(self.pc as i64))?;
                 self.heap.st(slot, generation, super::cont_slot::SUSPEND_BASE,
-                    Value::Int(self.base_reg as i64))?;
+                    Value::from_int(self.base_reg as i64))?;
                 self.heap.st(slot, generation, super::cont_slot::DEST_REG,
-                    Value::Int(dest.to_usize() as i64))?;
+                    Value::from_int(dest.to_usize() as i64))?;
                 self.heap.st(slot, generation, super::cont_slot::ALIVE,
-                    Value::Int(1))?;
+                    Value::from_int(1))?;
                 self.handlers.push(super::HandlerFrame {
                     effect_id: 0,
                     handler_fn: *fn_id as usize,
@@ -259,39 +264,34 @@ impl VirtualMachine {
                 Ok(())
             }
             OpCode::Resume(reg) => {
-                // Single-shot: alive check, restore (pc, base, dest), mark dead, free cell.
                 let frame = self.handlers.pop()
                     .ok_or("Resume outside an active handler frame")?;
                 let alive = self.heap.ld(frame.cell_slot, frame.cell_gen,
                     super::cont_slot::ALIVE)?;
-                match alive {
-                    Value::Int(1) => {}
-                    Value::Int(0) => return Err(
-                        "resume: continuation already consumed".to_string()),
-                    other => return Err(format!(
-                        "resume: continuation cell corrupted (alive slot = {:?})", other)),
+                match alive.as_int() {
+                    Some(1) => {}
+                    Some(0) => return Err("resume: continuation already consumed".to_string()),
+                    _ => return Err(format!(
+                        "resume: continuation cell corrupted (alive slot = {:?})", alive)),
                 }
                 let saved_pc = match self.heap.ld(frame.cell_slot, frame.cell_gen,
-                    super::cont_slot::SUSPEND_PC)? {
-                    Value::Int(n) if n >= 0 => n as usize,
-                    other => return Err(format!(
-                        "resume: continuation cell has invalid pc {:?}", other)),
+                    super::cont_slot::SUSPEND_PC)?.as_int() {
+                    Some(n) if n >= 0 => n as usize,
+                    _ => return Err("resume: continuation cell has invalid pc".to_string()),
                 };
                 let saved_base = match self.heap.ld(frame.cell_slot, frame.cell_gen,
-                    super::cont_slot::SUSPEND_BASE)? {
-                    Value::Int(n) if n >= 0 => n as usize,
-                    other => return Err(format!(
-                        "resume: continuation cell has invalid base {:?}", other)),
+                    super::cont_slot::SUSPEND_BASE)?.as_int() {
+                    Some(n) if n >= 0 => n as usize,
+                    _ => return Err("resume: continuation cell has invalid base".to_string()),
                 };
                 let dest_reg = match self.heap.ld(frame.cell_slot, frame.cell_gen,
-                    super::cont_slot::DEST_REG)? {
-                    Value::Int(n) if (0..256).contains(&n) => n as usize,
-                    other => return Err(format!(
-                        "resume: continuation cell has invalid dest_reg {:?}", other)),
+                    super::cont_slot::DEST_REG)?.as_int() {
+                    Some(n) if (0..256).contains(&n) => n as usize,
+                    _ => return Err("resume: continuation cell has invalid dest_reg".to_string()),
                 };
                 let val = self.read(*reg)?;
                 self.heap.st(frame.cell_slot, frame.cell_gen,
-                    super::cont_slot::ALIVE, Value::Int(0))?;
+                    super::cont_slot::ALIVE, Value::from_int(0))?;
                 self.pc = saved_pc;
                 self.base_reg = saved_base;
                 let abs = saved_base + dest_reg;
@@ -346,7 +346,7 @@ impl VirtualMachine {
                     .ok_or_else(|| format!("native call: arg {} (r{}) is empty", i, i))?;
                 args.push(v);
             }
-            let result = (n.func)(&args)?;
+            let result = (n.func)(&mut self.box_pool, &args)?;
             self.registers[dest_abs] = Some(result);
             return Ok(());
         }
@@ -436,38 +436,21 @@ impl VirtualMachine {
         Ok(())
     }
 
-    // Hot fast path: scalars take zero refcount edges.
     #[inline(always)]
     fn value_rc_inc(&mut self, v: &Value) -> Result<(), String> {
-        match v {
-            Value::Int(_) | Value::Float(_) | Value::Bool(_)
-            | Value::Char(_) | Value::Unit => Ok(()),
-            _ => self.value_rc_inc_slow(v),
-        }
-    }
-
-    fn value_rc_inc_slow(&mut self, v: &Value) -> Result<(), String> {
-        match v {
-            Value::Handle { slot, generation } => self.heap.rc_inc(*slot, *generation),
-            Value::Closure { env_slot, env_gen, .. } => self.heap.rc_inc(*env_slot, *env_gen),
-            _ => Ok(()),
+        if let Some((slot, generation)) = v.as_handle() {
+            self.heap.rc_inc(slot, generation)
+        } else {
+            Ok(())
         }
     }
 
     #[inline(always)]
     fn value_rc_dec(&mut self, v: &Value) -> Result<(), String> {
-        match v {
-            Value::Int(_) | Value::Float(_) | Value::Bool(_)
-            | Value::Char(_) | Value::Unit => Ok(()),
-            _ => self.value_rc_dec_slow(v),
-        }
-    }
-
-    fn value_rc_dec_slow(&mut self, v: &Value) -> Result<(), String> {
-        match v {
-            Value::Handle { slot, generation } => self.heap.rc_dec(*slot, *generation).map(|_| ()),
-            Value::Closure { env_slot, env_gen, .. } => self.heap.rc_dec(*env_slot, *env_gen).map(|_| ()),
-            _ => Ok(()),
+        if let Some((slot, generation)) = v.as_handle() {
+            self.heap.rc_dec(slot, generation).map(|_| ())
+        } else {
+            Ok(())
         }
     }
 
@@ -475,8 +458,7 @@ impl VirtualMachine {
     fn read_i64(&self, r: Register) -> Result<i64, String> {
         let abs = self.abs(r)?;
         match &self.registers[abs] {
-            Some(Value::Int(n)) => Ok(*n),
-            Some(v) => Err(format!("expected i64, got {:?}", v)),
+            Some(v) => v.as_int().ok_or_else(|| format!("expected i64, got {:?}", v)),
             None => Err(format!("read: r{} is empty", r.0)),
         }
     }
@@ -485,8 +467,7 @@ impl VirtualMachine {
     fn read_f64(&self, r: Register) -> Result<f64, String> {
         let abs = self.abs(r)?;
         match &self.registers[abs] {
-            Some(Value::Float(n)) => Ok(*n),
-            Some(v) => Err(format!("expected f64, got {:?}", v)),
+            Some(v) => v.as_float().ok_or_else(|| format!("expected f64, got {:?}", v)),
             None => Err(format!("read: r{} is empty", r.0)),
         }
     }
@@ -495,8 +476,7 @@ impl VirtualMachine {
     fn read_handle(&self, r: Register) -> Result<(u32, u32), String> {
         let abs = self.abs(r)?;
         match &self.registers[abs] {
-            Some(Value::Handle { slot, generation }) => Ok((*slot, *generation)),
-            Some(v) => Err(format!("expected handle, got {:?}", v)),
+            Some(v) => v.as_handle().ok_or_else(|| format!("expected handle, got {:?}", v)),
             None => Err(format!("read: r{} is empty", r.0)),
         }
     }
@@ -505,7 +485,7 @@ impl VirtualMachine {
     fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
-        self.write(d, Value::Int(f(x, y)))
+        self.write(d, Value::from_int(f(x, y)))
     }
 
     #[inline(always)]
@@ -513,28 +493,47 @@ impl VirtualMachine {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
         let r = f(x, y).ok_or_else(|| msg.to_string())?;
-        self.write(d, Value::Int(r))
+        self.write(d, Value::from_int(r))
     }
 
     #[inline(always)]
     fn bin_f64<F: Fn(f64, f64) -> f64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_f64(a)?;
         let y = self.read_f64(b)?;
-        self.write(d, Value::Float(f(x, y)))
+        self.write(d, Value::from_float(f(x, y)))
     }
 
     #[inline(always)]
     fn bin_cmp<F: Fn(&Value, &Value) -> bool>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read(a)?;
         let y = self.read(b)?;
-        self.write(d, Value::Bool(f(&x, &y)))
+        self.write(d, Value::from_bool(f(&x, &y)))
     }
 
     #[inline(always)]
     fn bin_i64_cmp<F: Fn(i64, i64) -> bool>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
-        self.write(d, Value::Bool(f(x, y)))
+        self.write(d, Value::from_bool(f(x, y)))
+    }
+
+    fn resolve_constants(&mut self, module: &Module) {
+        self.resolved_constants.clear();
+        self.resolved_constants.reserve(module.functions.len());
+        for chunk in &module.functions {
+            let resolved = match chunk {
+                Chunk::Bytecode(bc) => bc.constants.iter().map(|v| {
+                    if let Some(sidx) = v.as_str_const() {
+                        let s = bc.string_constants.get(sidx as usize)
+                            .cloned().unwrap_or_default();
+                        let bidx = self.box_pool.intern(super::BoxedValue::String(s));
+                        Value::from_box(bidx)
+                    } else { *v }
+                }).collect(),
+                Chunk::Native(_) => Vec::new(),
+            };
+            self.resolved_constants.push(resolved);
+        }
     }
 
     fn validate_module_devices(&self, module: &Module) -> Result<(), String> {
@@ -556,7 +555,7 @@ impl VirtualMachine {
             if h.effect_id != effect_id { continue; }
             if let Some(slot) = h.dispatch_table_slot {
                 if let Ok(v) = self.heap.ld(slot, h.dispatch_table_gen, op_id) {
-                    if let Value::Int(n) = v {
+                    if let Some(n) = v.as_int() {
                         if (0..=0xFFFF).contains(&n) { return n as u16; }
                     }
                 }
@@ -570,12 +569,9 @@ impl VirtualMachine {
 }
 
 fn is_falsy(val: &Value) -> bool {
-    match val {
-        Value::Bool(b) => !b,
-        Value::Int(i) => *i == 0,
-        Value::Unit => true,
-        _ => false,
-    }
+    if let Some(b) = val.as_bool() { return !b; }
+    if let Some(i) = val.as_int() { return i == 0; }
+    val.is_unit()
 }
 
 #[allow(dead_code)]

@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::rc::Rc;
-use crate::vm::{Device, Value};
+use crate::myriad::{Device, Value};
 
 pub const CONSOLE_ID: u8 = 0x10;
 pub const PORT_STDIN: u8 = 0x00;
@@ -20,17 +20,17 @@ impl Device for Box<dyn Console> {
     fn read(&mut self, port: u8) -> Result<Value, String> {
         match port {
             PORT_STDIN => match self.read_byte()? {
-                Some(b) => Ok(Value::Int(b as i64)),
-                None => Ok(Value::Int(-1)),
+                Some(b) => Ok(Value::from_int(b as i64)),
+                None => Ok(Value::from_int(-1)),
             },
-            _ => Ok(Value::Int(0)),
+            _ => Ok(Value::from_int(0)),
         }
     }
 
     fn write(&mut self, port: u8, val: Value) -> Result<(), String> {
-        let n = match val {
-            Value::Int(n) => n,
-            _ => return Ok(()),
+        let n = match val.as_int() {
+            Some(n) => n,
+            None => return Ok(()),
         };
         match port {
             PORT_STDOUT => self.write_stdout((n & 0xFF) as u8),

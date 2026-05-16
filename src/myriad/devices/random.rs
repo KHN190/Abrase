@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::vm::{Device, Value};
+use crate::myriad::{Device, Value};
 
 pub const RANDOM_ID: u8 = 0x70;
 pub const PORT_BYTE: u8 = 0x00;
@@ -33,15 +33,15 @@ impl RandomDevice {
 impl Device for RandomDevice {
     fn read(&mut self, port: u8) -> Result<Value, String> {
         match port {
-            PORT_BYTE => Ok(Value::Int((self.next_u64() & 0xFF) as i64)),
-            PORT_U64 => Ok(Value::Int(self.next_u64() as i64)),
-            _ => Ok(Value::Int(0)),
+            PORT_BYTE => Ok(Value::from_int((self.next_u64() & 0xFF) as i64)),
+            PORT_U64 => Ok(Value::from_int(self.next_u64() as i64)),
+            _ => Ok(Value::from_int(0)),
         }
     }
 
     fn write(&mut self, port: u8, val: Value) -> Result<(), String> {
         if port == PORT_SEED {
-            if let Value::Int(n) = val {
+            if let Some(n) = val.as_int() {
                 self.state.set((n as u64) | 1);
             }
         }

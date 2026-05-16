@@ -29,9 +29,10 @@ fn test_chunk_construction() {
             OpCode::PushConst(Register(0), 0),
             OpCode::Ret(Register(0)),
         ],
-        constants: vec![Value::Int(42)],
+        constants: vec![Value::from_int(42)],
         reg_count: 1,
         param_count: 0,
+        string_constants: Vec::new(),
     });
     let b = as_bc(&chunk);
     assert_eq!(b.code.len(), 2);
@@ -45,6 +46,7 @@ fn test_chunk_empty() {
         constants: vec![],
         reg_count: 0,
         param_count: 0,
+        string_constants: Vec::new(),
     });
     let b = as_bc(&chunk);
     assert!(b.code.is_empty());
@@ -92,9 +94,10 @@ fn test_call_opcode() {
 fn test_chunk_reg_count() {
     let chunk = bc(BytecodeChunk {
         code: vec![OpCode::PushConst(Register(0), 0)],
-        constants: vec![Value::Int(10)],
+        constants: vec![Value::from_int(10)],
         reg_count: 42,
         param_count: 0,
+        string_constants: Vec::new(),
     });
     assert_eq!(as_bc(&chunk).reg_count, 42);
 }
@@ -152,17 +155,6 @@ fn test_st_opcode() {
 }
 
 #[test]
-fn test_free_opcode() {
-    let free_op = OpCode::Free(Register(3));
-    match free_op {
-        OpCode::Free(reg) => {
-            assert_eq!(reg.to_usize(), 3);
-        }
-        _ => panic!("Not a Free opcode"),
-    }
-}
-
-#[test]
 fn test_ldidx_opcode() {
     let ldidx_op = OpCode::LdIdx(Register(0), Register(1), Register(2));
     match ldidx_op {
@@ -189,19 +181,6 @@ fn test_stidx_opcode() {
 }
 
 #[test]
-fn test_lea_opcode() {
-    let lea_op = OpCode::Lea(Register(0), Register(1), 12);
-    match lea_op {
-        OpCode::Lea(dest, base, offset) => {
-            assert_eq!(dest.to_usize(), 0);
-            assert_eq!(base.to_usize(), 1);
-            assert_eq!(offset, 12);
-        }
-        _ => panic!("Not an Lea opcode"),
-    }
-}
-
-#[test]
 fn test_memory_opcodes_in_chunk() {
     let chunk = bc(BytecodeChunk {
         code: vec![
@@ -212,9 +191,10 @@ fn test_memory_opcodes_in_chunk() {
             OpCode::Ld(Register(3), Register(1), 0),
             OpCode::Ret(Register(3)),
         ],
-        constants: vec![Value::Int(42), Value::Int(100)],
+        constants: vec![Value::from_int(42), Value::from_int(100)],
         reg_count: 4,
         param_count: 0,
+        string_constants: Vec::new(),
     });
     let b = as_bc(&chunk);
     assert_eq!(b.code.len(), 6);

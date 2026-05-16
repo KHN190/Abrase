@@ -1,4 +1,4 @@
-use crate::vm::{Device, Value};
+use crate::myriad::{Device, Value};
 
 pub const SYSTEM_ID: u8 = 0x00;
 pub const PORT_VERSION: u8 = 0x00;
@@ -11,21 +11,20 @@ pub const SPEC_VERSION: i64 = 1i64 << 32;
 pub struct SystemDevice {
     pub last_exit: Option<i64>,
     pub flags: i64,
-    pub constants: Option<std::rc::Rc<Vec<Value>>>,
 }
 
 impl SystemDevice {
     pub fn new() -> Self {
-        Self { last_exit: None, flags: 0, constants: None }
+        Self { last_exit: None, flags: 0 }
     }
 }
 
 impl Device for SystemDevice {
     fn read(&mut self, port: u8) -> Result<Value, String> {
         match port {
-            PORT_VERSION => Ok(Value::Int(SPEC_VERSION)),
-            PORT_FLAGS => Ok(Value::Int(self.flags)),
-            _ => Ok(Value::Int(0)),
+            PORT_VERSION => Ok(Value::from_int(SPEC_VERSION)),
+            PORT_FLAGS => Ok(Value::from_int(self.flags)),
+            _ => Ok(Value::from_int(0)),
         }
     }
 
@@ -38,11 +37,7 @@ impl Device for SystemDevice {
             }
             PORT_PANIC => {
                 let idx = as_int(val, "system.panic")? as usize;
-                let msg = self.constants.as_ref()
-                    .and_then(|c| c.get(idx))
-                    .and_then(|v| if let Value::String(s) = v { Some((**s).clone()) } else { None })
-                    .unwrap_or_else(|| format!("panic (pool idx {})", idx));
-                Err(format!("panic: {}", msg))
+                Err(format!("panic (pool idx {})", idx))
             }
             _ => Ok(()),
         }
@@ -50,5 +45,5 @@ impl Device for SystemDevice {
 }
 
 fn as_int(v: Value, op: &str) -> Result<i64, String> {
-    match v { Value::Int(n) => Ok(n), other => Err(format!("{}: expected Int, got {:?}", op, other)) }
+    v.as_int().ok_or_else(|| format!("{}: expected Int, got {:?}", op, v))
 }

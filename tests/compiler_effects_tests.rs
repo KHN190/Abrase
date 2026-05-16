@@ -14,7 +14,7 @@ fn handle_with_only_return_arm_passes_body_through() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(42)));
+    assert_eq!(run_source(src), Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn return_arm_transforms_body_value() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(42)));
+    assert_eq!(run_source(src), Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn effect_op_call_reroutes_to_arm() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(8)));
+    assert_eq!(run_source(src), Ok(Value::from_int(8)));
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn arm_body_can_short_circuit_without_resume() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(50)));
+    assert_eq!(run_source(src), Ok(Value::from_int(50)));
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn effect_op_with_param_is_visible_to_arm() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(106)));
+    assert_eq!(run_source(src), Ok(Value::from_int(106)));
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn multiple_op_calls_each_dispatch_to_arm() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(5)));
+    assert_eq!(run_source(src), Ok(Value::from_int(5)));
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn arm_can_call_top_level_function() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(14)));
+    assert_eq!(run_source(src), Ok(Value::from_int(14)));
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn two_handlers_for_different_effects_in_one_module() {
             x + y
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(42)));
+    assert_eq!(run_source(src), Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn return_arm_body_captures_outer_let_binding() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(105)));
+    assert_eq!(run_source(src), Ok(Value::from_int(105)));
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn op_arm_body_captures_outer_let_binding() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(70)));
+    assert_eq!(run_source(src), Ok(Value::from_int(70)));
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn nested_handlers_same_effect_use_inner_arm() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(110)));
+    assert_eq!(run_source(src), Ok(Value::from_int(110)));
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn handle_compiles_when_body_is_pure() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::Int(14)));
+    assert_eq!(run_source(src), Ok(Value::from_int(14)));
 }
 
 #[test]

@@ -10,7 +10,7 @@ fn r(n: u8) -> Register { Register(n) }
 
 fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize, mask: [u8; 32]) -> Module {
     Module {
-        functions: vec![Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count: 0 })],
+        functions: vec![Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count: 0, string_constants: Vec::new() })],
         entry: 0,
         device_mask: mask,
     }
@@ -38,7 +38,7 @@ fn console_write_byte_to_stdout() {
             OpCode::PushConst(r(2), 2),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(b'A' as i64), Value::Int(0x1001), Value::Int(0)],
+        vec![Value::from_int(b'A' as i64), Value::from_int(0x1001), Value::from_int(0)],
         3,
         mask_with(&[CONSOLE_ID]),
     );
@@ -62,7 +62,7 @@ fn console_write_byte_to_stderr() {
             OpCode::PushConst(r(2), 2),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(b'E' as i64), Value::Int(0x1002), Value::Int(0)],
+        vec![Value::from_int(b'E' as i64), Value::from_int(0x1002), Value::from_int(0)],
         3,
         mask_with(&[CONSOLE_ID]),
     );
@@ -82,11 +82,11 @@ fn console_stdin_read_returns_minus_one_on_empty() {
             OpCode::Dei(r(1), r(0)),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(0x1000)],
+        vec![Value::from_int(0x1000)],
         2,
         mask_with(&[CONSOLE_ID]),
     );
-    assert_eq!(vm.run_module(&module).unwrap(), Value::Int(-1));
+    assert_eq!(vm.run_module(&module).unwrap(), Value::from_int(-1));
 }
 
 #[test]
@@ -100,11 +100,11 @@ fn system_halt_returns_exit_code() {
             OpCode::Deo(r(0), r(1)),
             OpCode::Ret(r(0)),
         ],
-        vec![Value::Int(7), Value::Int(0x0001)],
+        vec![Value::from_int(7), Value::from_int(0x0001)],
         2,
         mask_with(&[SYSTEM_ID]),
     );
-    assert_eq!(vm.run_module(&module).unwrap(), Value::Int(7));
+    assert_eq!(vm.run_module(&module).unwrap(), Value::from_int(7));
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn system_panic_traps() {
             OpCode::Deo(r(0), r(1)),
             OpCode::Ret(r(0)),
         ],
-        vec![Value::Int(0), Value::Int(0x0002)],
+        vec![Value::from_int(0), Value::from_int(0x0002)],
         2,
         mask_with(&[SYSTEM_ID]),
     );
@@ -137,12 +137,12 @@ fn system_version_read() {
             OpCode::Dei(r(1), r(0)),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(0x0000)],
+        vec![Value::from_int(0x0000)],
         2,
         mask_with(&[SYSTEM_ID]),
     );
     let v = vm.run_module(&module).unwrap();
-    if let Value::Int(n) = v {
+    if let Some(n) = v.as_int() {
         assert!(n >= (1i64 << 32), "version must be at least major=1");
     } else { panic!("expected Int, got {:?}", v); }
 }
@@ -152,7 +152,7 @@ fn missing_device_load_rejected() {
     let mut vm = VirtualMachine::new();
     let module = module_with(
         vec![OpCode::PushConst(r(0), 0), OpCode::Ret(r(0))],
-        vec![Value::Int(0)],
+        vec![Value::from_int(0)],
         1,
         mask_with(&[CONSOLE_ID]),
     );
@@ -170,7 +170,7 @@ fn dei_on_uninstalled_device_traps() {
             OpCode::Dei(r(1), r(0)),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(0x9000)],
+        vec![Value::from_int(0x9000)],
         2,
         [0; 32],
     );
@@ -183,12 +183,10 @@ fn dei_on_uninstalled_device_traps() {
 fn hostfunc_round_trip() {
     let mut vm = VirtualMachine::new();
     let mut dev = HostFuncDevice::new();
-    dev.register(Rc::new(|args: &[Value]| {
-        let (a, b) = match (&args[0], &args[1]) {
-            (Value::Int(a), Value::Int(b)) => (*a, *b),
-            _ => return Err("expected ints".into()),
-        };
-        Ok(Value::Int(a + b))
+    dev.register(Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
+        let a = args[0].as_int().ok_or("expected int")?;
+        let b = args[1].as_int().ok_or("expected int")?;
+        Ok(Value::from_int(a + b))
     }));
     vm.install_device(HOSTFUNC_ID, Box::new(dev));
 
@@ -207,16 +205,16 @@ fn hostfunc_round_trip() {
             OpCode::Ret(r(6)),
         ],
         vec![
-            Value::Int(7), Value::Int(35),
-            Value::Int(0xF018),
-            Value::Int(0),
-            Value::Int(0xF01F),
-            Value::Int(0xF01E),
+            Value::from_int(7), Value::from_int(35),
+            Value::from_int(0xF018),
+            Value::from_int(0),
+            Value::from_int(0xF01F),
+            Value::from_int(0xF01E),
         ],
         7,
         mask_with(&[HOSTFUNC_ID]),
     );
-    assert_eq!(vm.run_module(&module).unwrap(), Value::Int(42));
+    assert_eq!(vm.run_module(&module).unwrap(), Value::from_int(42));
 }
 
 #[test]
@@ -229,12 +227,12 @@ fn clock_returns_monotonic_progress() {
             OpCode::Dei(r(1), r(0)),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(0x6001)],
+        vec![Value::from_int(0x6001)],
         2,
         mask_with(&[CLOCK_ID]),
     );
     let v = vm.run_module(&module).unwrap();
-    assert!(matches!(v, Value::Int(n) if n >= 0));
+    assert!(matches!(v.as_int(), Some(n) if n >= 0));
 }
 
 #[test]
@@ -247,7 +245,7 @@ fn random_seeded_is_deterministic() {
             OpCode::Dei(r(1), r(0)),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(0x7001)],
+        vec![Value::from_int(0x7001)],
         2,
         mask_with(&[RANDOM_ID]),
     );
@@ -270,7 +268,7 @@ fn runtime_eval_with_default_println() {
         }
     "#;
     let v = rt.eval(src).unwrap();
-    assert_eq!(v, Value::Int(0));
+    assert_eq!(v, Value::from_int(0));
     let _ = out_handle;
 }
 
@@ -279,14 +277,14 @@ fn runtime_user_registered_host_fn() {
     use abrase::host::Runtime;
     use abrase::ty::Type;
     let (mut rt, _console) = Runtime::new_for_tests();
-    rt.register_host("triple", vec![Type::Int], Type::Int, |args| {
-        let n = match &args[0] { Value::Int(n) => *n, _ => return Err("Int".into()) };
-        Ok(Value::Int(n * 3))
+    rt.register_host("triple", vec![Type::Int], Type::Int, |_pool, args| {
+        let n = args[0].as_int().ok_or("Int")?;
+        Ok(Value::from_int(n * 3))
     });
     let src = r#"
         fn main() -> Int { triple(14) }
     "#;
-    assert_eq!(rt.eval(src).unwrap(), Value::Int(42));
+    assert_eq!(rt.eval(src).unwrap(), Value::from_int(42));
 }
 
 #[test]
@@ -300,12 +298,12 @@ fn dispatch_no_matching_handler_returns_no_match() {
             OpCode::Dei(r(2), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(0x0500), Value::Int(0xE000)],
+        vec![Value::from_int(0x0500), Value::from_int(0xE000)],
         3,
         [0; 32],
     );
     let v = vm.run_module(&module).unwrap();
-    assert_eq!(v, Value::Int(0xFFFF), "dispatch with no handlers must return DISPATCH_NO_MATCH");
+    assert_eq!(v, Value::from_int(0xFFFF), "dispatch with no handlers must return DISPATCH_NO_MATCH");
 }
 
 #[test]
@@ -322,12 +320,12 @@ fn dispatch_via_handler_fn_fallback_after_handle() {
             OpCode::Dei(r(3), r(2)),
             OpCode::Ret(r(3)),
         ],
-        vec![Value::Int(0), Value::Int(0x0000), Value::Int(0xE000)],
+        vec![Value::from_int(0), Value::from_int(0x0000), Value::from_int(0xE000)],
         4,
         [0; 32],
     );
     let v = VirtualMachine::new().run_module(&module).unwrap();
-    assert_eq!(v, Value::Int(42), "op_id 0 falls back to handler_fn");
+    assert_eq!(v, Value::from_int(42), "op_id 0 falls back to handler_fn");
 }
 
 #[test]
@@ -337,7 +335,7 @@ fn dispatch_device_is_vm_intrinsic_not_a_device_mask_requirement() {
     mask[0xE0 / 8] |= 1 << (0xE0 % 8);
     let module = module_with(
         vec![OpCode::PushConst(r(0), 0), OpCode::Ret(r(0))],
-        vec![Value::Int(0)],
+        vec![Value::from_int(0)],
         1,
         mask,
     );

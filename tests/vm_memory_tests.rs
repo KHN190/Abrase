@@ -1,157 +1,57 @@
-// Value variants, clone/eq behaviour.
+// NaN-boxed Value: scalar equality and tag round-trips.
 use abrase::vm::Value;
 
 #[test]
 fn test_value_int_eq() {
-    assert_eq!(Value::Int(1), Value::Int(1));
-    assert_ne!(Value::Int(1), Value::Int(2));
+    assert_eq!(Value::from_int(1), Value::from_int(1));
+    assert_ne!(Value::from_int(1), Value::from_int(2));
 }
 
 #[test]
 fn test_value_bool_variants() {
-    assert_eq!(Value::Bool(true), Value::Bool(true));
-    assert_ne!(Value::Bool(true), Value::Bool(false));
-}
-
-#[test]
-fn test_value_tuple_eq() {
-    let a = Value::Tuple(Box::new(vec![Value::Int(1), Value::Bool(true)]));
-    let b = Value::Tuple(Box::new(vec![Value::Int(1), Value::Bool(true)]));
-    assert_eq!(a, b);
-}
-
-#[test]
-fn test_value_clone() {
-    let v = Value::String(Box::new("hello".into()));
-    assert_eq!(v.clone(), v);
-}
-
-#[test]
-fn test_value_record_tag_distinguishes_variants() {
-    let a = Value::Record { tag: 0, fields: Box::new(vec![Value::Int(1)]) };
-    let b = Value::Record { tag: 1, fields: Box::new(vec![Value::Int(1)]) };
-    assert_ne!(a, b);
+    assert_eq!(Value::from_bool(true), Value::from_bool(true));
+    assert_ne!(Value::from_bool(true), Value::from_bool(false));
 }
 
 #[test]
 fn test_value_float_eq() {
-    assert_eq!(Value::Float(3.14), Value::Float(3.14));
-    assert_ne!(Value::Float(3.14), Value::Float(2.71));
+    assert_eq!(Value::from_float(3.14), Value::from_float(3.14));
+    assert_ne!(Value::from_float(3.14), Value::from_float(2.71));
 }
 
 #[test]
 fn test_value_unit_eq() {
-    assert_eq!(Value::Unit, Value::Unit);
-}
-
-#[test]
-fn test_value_string_eq() {
-    assert_eq!(Value::String(Box::new("hello".into())), Value::String(Box::new("hello".into())));
-    assert_ne!(Value::String(Box::new("hello".into())), Value::String(Box::new("world".into())));
-}
-
-#[test]
-fn test_value_cross_type_inequality() {
-    assert_ne!(Value::Int(1), Value::Bool(true));
-    assert_ne!(Value::Int(1), Value::Float(1.0));
-    assert_ne!(Value::Bool(false), Value::Unit);
-    assert_ne!(Value::String(Box::new("1".into())), Value::Int(1));
-}
-
-#[test]
-fn test_value_tuple_inequality() {
-    let a = Value::Tuple(Box::new(vec![Value::Int(1), Value::Bool(true)]));
-    let b = Value::Tuple(Box::new(vec![Value::Int(1), Value::Bool(false)]));
-    assert_ne!(a, b);
-}
-
-#[test]
-fn test_value_record_fields_distinguish() {
-    let a = Value::Record { tag: 0, fields: Box::new(vec![Value::Int(1)]) };
-    let b = Value::Record { tag: 0, fields: Box::new(vec![Value::Int(2)]) };
-    assert_ne!(a, b);
+    assert_eq!(Value::UNIT, Value::UNIT);
 }
 
 #[test]
 fn test_value_char_eq() {
-    assert_eq!(Value::Char('a'), Value::Char('a'));
-    assert_ne!(Value::Char('a'), Value::Char('b'));
+    assert_eq!(Value::from_char('a'), Value::from_char('a'));
+    assert_ne!(Value::from_char('a'), Value::from_char('b'));
 }
 
 #[test]
-fn test_value_array_eq() {
-    let a = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
-    let b = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
-    assert_eq!(a, b);
+fn test_value_cross_type_inequality() {
+    assert_ne!(Value::from_int(1), Value::from_bool(true));
+    assert_ne!(Value::from_int(1), Value::from_float(1.0));
+    assert_ne!(Value::from_bool(false), Value::UNIT);
 }
 
 #[test]
-fn test_value_array_ne() {
-    let a = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2)]));
-    let b = Value::Array(Box::new(vec![Value::Int(1), Value::Int(3)]));
-    assert_ne!(a, b);
+fn test_handle_round_trip() {
+    let v = Value::from_handle(42, 7);
+    assert_eq!(v.as_handle(), Some((42, 7)));
+    assert!(v.is_handle());
 }
 
 #[test]
-fn test_value_array_different_length() {
-    let a = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2)]));
-    let b = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
-    assert_ne!(a, b);
+fn test_none_unit_distinct() {
+    assert_ne!(Value::NONE, Value::UNIT);
+    assert!(Value::NONE.is_none());
+    assert!(Value::UNIT.is_unit());
 }
 
 #[test]
-fn test_value_closure_eq() {
-    let a = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
-    let b = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
-    assert_eq!(a, b);
-}
-
-#[test]
-fn test_value_closure_ne_different_func_id() {
-    let a = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
-    let b = Value::Closure { func_id: 1, env_slot: 7, env_gen: 0 };
-    assert_ne!(a, b);
-}
-
-#[test]
-fn test_value_closure_ne_different_env() {
-    let a = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
-    let b = Value::Closure { func_id: 0, env_slot: 8, env_gen: 0 };
-    assert_ne!(a, b);
-}
-
-#[test]
-fn test_value_closure_ne_different_generation() {
-    let a = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
-    let b = Value::Closure { func_id: 0, env_slot: 7, env_gen: 1 };
-    assert_ne!(a, b);
-}
-
-#[test]
-fn test_value_reference_eq() {
-    let a = Value::Reference(Box::new(Value::Int(42)));
-    let b = Value::Reference(Box::new(Value::Int(42)));
-    assert_eq!(a, b);
-}
-
-#[test]
-fn test_value_reference_ne() {
-    let a = Value::Reference(Box::new(Value::Int(42)));
-    let b = Value::Reference(Box::new(Value::Int(99)));
-    assert_ne!(a, b);
-}
-
-#[test]
-fn test_value_reference_nested() {
-    let a = Value::Reference(Box::new(Value::Reference(Box::new(Value::Int(42)))));
-    let b = Value::Reference(Box::new(Value::Reference(Box::new(Value::Int(42)))));
-    assert_eq!(a, b);
-}
-
-#[test]
-fn test_value_mixed_types_inequality() {
-    assert_ne!(Value::Char('a'), Value::Int(97));
-    assert_ne!(Value::Array(Box::new(vec![Value::Int(1)])), Value::Tuple(Box::new(vec![Value::Int(1)])));
-    assert_ne!(Value::Closure { func_id: 0, env_slot: 0, env_gen: 0 }, Value::Int(0));
-    assert_ne!(Value::Reference(Box::new(Value::Int(1))), Value::Int(1));
+fn test_value_size_8_bytes() {
+    assert_eq!(std::mem::size_of::<Value>(), 8);
 }

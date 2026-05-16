@@ -3,7 +3,7 @@
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
-use crate::vm::Value;
+use crate::myriad::Value;
 
 impl Compiler {
     pub(in crate::compiler) fn compile_unary(
@@ -27,13 +27,13 @@ impl Compiler {
             ast::UnaryOp::Neg => {
                 if let ast::Expr::Literal(ast::Literal::Int(n)) = &right.node {
                     let reg = self.alloc_register()?;
-                    let idx = self.add_constant(Value::Int(-n))?;
+                    let idx = self.add_constant(Value::from_int(-n))?;
                     self.emit(OpCode::PushConst(reg, idx));
                     return Ok(reg);
                 }
                 if let ast::Expr::Literal(ast::Literal::Float(f)) = &right.node {
                     let reg = self.alloc_register()?;
-                    let idx = self.add_constant(Value::Float(-f))?;
+                    let idx = self.add_constant(Value::from_float(-f))?;
                     self.emit(OpCode::PushConst(reg, idx));
                     return Ok(reg);
                 }
@@ -45,7 +45,7 @@ impl Compiler {
             ast::UnaryOp::Not => {
                 let src = self.compile_expr(right)?;
                 let zero = self.alloc_register()?;
-                let idx = self.add_constant(Value::Bool(false))?;
+                let idx = self.add_constant(Value::from_bool(false))?;
                 self.emit(OpCode::PushConst(zero, idx));
                 let dest = self.alloc_register()?;
                 self.emit(OpCode::Eq(dest, src, zero));
@@ -73,6 +73,27 @@ impl Compiler {
                 }
             }
             _ => {
+                // Fuse `x ± i8-literal` into a single AddImm/SubImm.
+                if matches!(op, ast::BinaryOp::Add | ast::BinaryOp::Sub) {
+                    if let Some(imm) = lit_i8(&right.node) {
+                        let lr = self.compile_expr(left)?;
+                        let dr = self.alloc_register()?;
+                        self.emit(match op {
+                            ast::BinaryOp::Add => OpCode::AddImm(dr, lr, imm),
+                            _                  => OpCode::SubImm(dr, lr, imm),
+                        });
+                        return Ok(dr);
+                    }
+                }
+                // Add is commutative: also fuse `i8-literal + x`.
+                if matches!(op, ast::BinaryOp::Add) {
+                    if let Some(imm) = lit_i8(&left.node) {
+                        let rr = self.compile_expr(right)?;
+                        let dr = self.alloc_register()?;
+                        self.emit(OpCode::AddImm(dr, rr, imm));
+                        return Ok(dr);
+                    }
+                }
                 let lr = self.compile_expr(left)?;
                 let rr = self.compile_expr(right)?;
                 let dr = self.alloc_register()?;
@@ -95,4 +116,13 @@ impl Compiler {
             }
         }
     }
+}
+
+fn lit_i8(node: &ast::Expr) -> Option<i8> {
+    if let ast::Expr::Literal(ast::Literal::Int(n)) = node {
+        if (i8::MIN as i64..=i8::MAX as i64).contains(n) {
+            return Some(*n as i8);
+        }
+    }
+    None
 }

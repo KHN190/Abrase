@@ -24,7 +24,7 @@ fn verify_compile_exn_simple_ok_result() {
         },
     })];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn verify_compile_exn_function_returns_result() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(100)));
+    assert_eq!(result, Ok(Value::from_int(100)));
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn verify_compile_exn_match_ok_pattern() {
         },
     })];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(50)));
+    assert_eq!(result, Ok(Value::from_int(50)));
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn verify_compile_exn_match_err_pattern() {
         },
     })];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(75)));
+    assert_eq!(result, Ok(Value::from_int(75)));
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn verify_compile_exn_throw_integer_code() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(77)));
+    assert_eq!(result, Ok(Value::from_int(77)));
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn verify_compile_exn_conditional_throw() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(88)));
+    assert_eq!(result, Ok(Value::from_int(88)));
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn verify_compile_exn_multiple_exception_types() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(11)));
+    assert_eq!(result, Ok(Value::from_int(11)));
 }
 
 #[test]
@@ -340,7 +340,7 @@ fn verify_compile_exn_handler_catches_error() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(22)));
+    assert_eq!(result, Ok(Value::from_int(22)));
 }
 
 #[test]
@@ -453,7 +453,7 @@ fn verify_compile_exn_throw_with_custom_error() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(33)));
+    assert_eq!(result, Ok(Value::from_int(33)));
 }
 
 #[test]
@@ -529,7 +529,7 @@ fn verify_compile_exn_propagate_up_stack() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(99)));
+    assert_eq!(result, Ok(Value::from_int(99)));
 }
 
 #[test]
@@ -577,5 +577,5 @@ fn verify_compile_exn_ok_and_err_both_handled() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(44)));
+    assert_eq!(result, Ok(Value::from_int(44)));
 }

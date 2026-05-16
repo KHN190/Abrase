@@ -2,7 +2,7 @@ use crate::ast;
 use crate::ast::{Span, Spanned};
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
-use crate::vm::Value;
+use crate::myriad::Value;
 
 impl Compiler {
     fn emit_builtin_call(
@@ -33,15 +33,14 @@ impl Compiler {
         lit: &ast::Literal,
     ) -> Result<Register, String> {
         let reg = self.alloc_register()?;
-        let val = match lit {
-            ast::Literal::Int(n)    => Value::Int(*n),
-            ast::Literal::Float(f)  => Value::Float(*f),
-            ast::Literal::Bool(b)   => Value::Bool(*b),
-            ast::Literal::String(s) => Value::String(Box::new(s.clone())),
-            ast::Literal::Unit      => Value::Unit,
+        let idx = match lit {
+            ast::Literal::Int(n)    => self.add_constant(Value::from_int(*n))?,
+            ast::Literal::Float(f)  => self.add_constant(Value::from_float(*f))?,
+            ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
+            ast::Literal::String(s) => self.add_string_constant(s)?,
+            ast::Literal::Unit      => self.add_constant(Value::UNIT)?,
             _ => return Err("Unsupported literal".to_string()),
         };
-        let idx = self.add_constant(val)?;
         self.emit(OpCode::PushConst(reg, idx));
         Ok(reg)
     }
@@ -53,7 +52,7 @@ impl Compiler {
     ) -> Result<Register, String> {
         if parts.is_empty() {
             let reg = self.alloc_register()?;
-            let idx = self.add_constant(Value::String(Box::new(String::new())))?;
+            let idx = self.add_string_constant("")?;
             self.emit(OpCode::PushConst(reg, idx));
             return Ok(reg);
         }
@@ -80,14 +79,14 @@ impl Compiler {
         match part {
             ast::StringPart::Literal(s) => {
                 let reg = self.alloc_register()?;
-                let idx = self.add_constant(Value::String(Box::new(s.clone())))?;
+                let idx = self.add_string_constant(s)?;
                 self.emit(OpCode::PushConst(reg, idx));
                 Ok(reg)
             }
             ast::StringPart::Interp(path) => {
                 if path.is_empty() {
                     let reg = self.alloc_register()?;
-                    let idx = self.add_constant(Value::String(Box::new(String::new())))?;
+                    let idx = self.add_string_constant("")?;
                     self.emit(OpCode::PushConst(reg, idx));
                     return Ok(reg);
                 }
@@ -123,7 +122,7 @@ impl Compiler {
             let dest = self.alloc_register()?;
             self.emit(OpCode::Alloc(dest, 1));
             let tag_reg = self.alloc_register()?;
-            let idx = self.add_constant(Value::Int(info.tag as i64))?;
+            let idx = self.add_constant(Value::from_int(info.tag as i64))?;
             self.emit(OpCode::PushConst(tag_reg, idx));
             self.emit(OpCode::St(tag_reg, dest, 0));
             return Ok(dest);
@@ -169,7 +168,7 @@ impl Compiler {
         let payload = args.len();
         self.emit(OpCode::Alloc(dest, (payload + 1) as u16));
         let tag_reg = self.alloc_register()?;
-        let ti = self.add_constant(Value::Int(info.tag as i64))?;
+        let ti = self.add_constant(Value::from_int(info.tag as i64))?;
         self.emit(OpCode::PushConst(tag_reg, ti));
         self.emit(OpCode::St(tag_reg, dest, 0));
         for (i, arg) in args.iter().enumerate() {
@@ -190,7 +189,7 @@ impl Compiler {
                     let dest = self.alloc_register()?;
                     self.emit(OpCode::Alloc(dest, 1));
                     let tag_reg = self.alloc_register()?;
-                    let idx = self.add_constant(Value::Int(info.tag as i64))?;
+                    let idx = self.add_constant(Value::from_int(info.tag as i64))?;
                     self.emit(OpCode::PushConst(tag_reg, idx));
                     self.emit(OpCode::St(tag_reg, dest, 0));
                     return Ok(dest);

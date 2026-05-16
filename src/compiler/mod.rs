@@ -10,7 +10,7 @@ pub mod handlers;
 use crate::ast;
 use crate::bytecode::{BytecodeChunk, Chunk, NativeChunk, OpCode, Register, Module};
 use crate::error::{Error, ErrorCode};
-use crate::vm::Value;
+use crate::myriad::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -27,6 +27,7 @@ pub struct HostFnDecl {
 
 pub struct Compiler {
     pub(super) constants: Vec<Value>,
+    pub(super) string_constants: Vec<String>,
     pub(super) code: Vec<OpCode>,
     // Next register to allocate. u16 so the "exhausted" state (256) fits.
     pub(super) next_reg: u16,
@@ -76,6 +77,7 @@ impl Compiler {
     pub fn new() -> Self {
         Self {
             constants: Vec::new(),
+            string_constants: Vec::new(),
             code: Vec::new(),
             next_reg: 0,
             var_to_reg: HashMap::new(),
@@ -136,6 +138,7 @@ impl Compiler {
         Ok(Chunk::Bytecode(BytecodeChunk {
             code: self.code.clone(),
             constants: self.constants.clone(),
+            string_constants: self.string_constants.clone(),
             reg_count: self.next_reg as usize,
             param_count: 0,
         }))
@@ -210,12 +213,7 @@ impl Compiler {
                 ast::Decl::Fn(fn_decl) => {
                     let idx = self.functions.len();
                     self.func_map.insert(fn_decl.name.clone(), idx);
-                    self.functions.push(Chunk::Bytecode(BytecodeChunk {
-                        code: Vec::new(),
-                        constants: Vec::new(),
-                        reg_count: 0,
-                        param_count: 0,
-                    }));
+                    self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
                     fn_decls.push((idx, fn_decl.clone()));
                 }
                 ast::Decl::Type { name, body, .. } => {
@@ -229,12 +227,7 @@ impl Compiler {
         for arm_fn in handler_lowering.synthetic_fns {
             let idx = self.functions.len();
             self.func_map.insert(arm_fn.name.clone(), idx);
-            self.functions.push(Chunk::Bytecode(BytecodeChunk {
-                code: Vec::new(),
-                constants: Vec::new(),
-                reg_count: 0,
-                param_count: 0,
-            }));
+            self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
             fn_decls.push((idx, arm_fn));
         }
 
@@ -267,6 +260,7 @@ impl Compiler {
     fn compile_fn(&mut self, fn_decl: &ast::FnDecl) -> Result<Chunk, Vec<Error>> {
         let saved_code = std::mem::take(&mut self.code);
         let saved_constants = std::mem::take(&mut self.constants);
+        let saved_string_constants = std::mem::take(&mut self.string_constants);
         let saved_next_reg = self.next_reg;
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
@@ -339,12 +333,14 @@ impl Compiler {
         let chunk = Chunk::Bytecode(BytecodeChunk {
             code: std::mem::take(&mut self.code),
             constants: std::mem::take(&mut self.constants),
+            string_constants: std::mem::take(&mut self.string_constants),
             reg_count,
             param_count,
         });
 
         self.code = saved_code;
         self.constants = saved_constants;
+        self.string_constants = saved_string_constants;
         self.next_reg = saved_next_reg;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
@@ -356,31 +352,29 @@ impl Compiler {
     fn register_builtins(&mut self) {
         let concat = NativeChunk {
             param_count: 2,
-            func: Rc::new(|args: &[Value]| {
-                match (&args[0], &args[1]) {
-                    (Value::String(a), Value::String(b)) => {
-                        let mut out = String::with_capacity(a.len() + b.len());
-                        out.push_str(a);
-                        out.push_str(b);
-                        Ok(Value::String(Box::new(out)))
-                    }
-                    (a, b) => Err(format!("__concat expects two Strings, got {:?} and {:?}", a, b)),
-                }
+            func: Rc::new(|pool: &mut crate::myriad::BoxPool, args: &[Value]| {
+                let a = extract_string(pool, &args[0]).ok_or_else(|| format!("__concat: arg0 not a String: {:?}", args[0]))?;
+                let b = extract_string(pool, &args[1]).ok_or_else(|| format!("__concat: arg1 not a String: {:?}", args[1]))?;
+                let mut out = String::with_capacity(a.len() + b.len());
+                out.push_str(&a);
+                out.push_str(&b);
+                let idx = pool.intern(crate::myriad::BoxedValue::String(out));
+                Ok(Value::from_box(idx))
             }),
         };
         let to_str = NativeChunk {
             param_count: 1,
-            func: Rc::new(|args: &[Value]| {
-                let s: String = match &args[0] {
-                    Value::String(s) => (**s).clone(),
-                    Value::Int(n) => n.to_string(),
-                    Value::Float(f) => f.to_string(),
-                    Value::Bool(b) => b.to_string(),
-                    Value::Char(c) => c.to_string(),
-                    Value::Unit => "()".to_string(),
-                    other => return Err(format!("__to_str: cannot convert {:?}", other)),
-                };
-                Ok(Value::String(Box::new(s)))
+            func: Rc::new(|pool: &mut crate::myriad::BoxPool, args: &[Value]| {
+                let v = &args[0];
+                let s = if let Some(n) = v.as_int() { n.to_string() }
+                    else if let Some(f) = v.as_float() { f.to_string() }
+                    else if let Some(b) = v.as_bool() { b.to_string() }
+                    else if let Some(c) = v.as_char() { c.to_string() }
+                    else if v.is_unit() { "()".to_string() }
+                    else if let Some(s) = extract_string(pool, v) { s }
+                    else { return Err(format!("__to_str: cannot convert {:?}", v)); };
+                let idx = pool.intern(crate::myriad::BoxedValue::String(s));
+                Ok(Value::from_box(idx))
             }),
         };
         let cid = self.functions.len();
@@ -392,5 +386,13 @@ impl Compiler {
         self.func_map.insert("__to_str".into(), tid);
         self.functions.push(Chunk::Native(to_str));
         self.to_str_fn_id = Some(tid);
+    }
+}
+
+fn extract_string(pool: &crate::myriad::BoxPool, v: &Value) -> Option<String> {
+    let idx = v.as_box()?;
+    match pool.get(idx)? {
+        crate::myriad::BoxedValue::String(s) => Some(s.clone()),
+        _ => None,
     }
 }

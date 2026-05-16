@@ -24,7 +24,7 @@ fn verify_compile_array_literal_construction() {
         },
     })];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(3)));
+    assert_eq!(result, Ok(Value::from_int(3)));
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn verify_compile_array_repeat_construction() {
         },
     })];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(10)));
+    assert_eq!(result, Ok(Value::from_int(10)));
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn verify_compile_array_indexing_constant() {
         },
     })];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(20)));
+    assert_eq!(result, Ok(Value::from_int(20)));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn verify_compile_nested_record_in_array() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(44)));
+    assert_eq!(result, Ok(Value::from_int(44)));
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn verify_compile_array_of_records_type() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(88)));
+    assert_eq!(result, Ok(Value::from_int(88)));
 }
 
 #[test]
@@ -184,5 +184,5 @@ fn verify_compile_array_of_variants_type() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(55)));
+    assert_eq!(result, Ok(Value::from_int(55)));
 }

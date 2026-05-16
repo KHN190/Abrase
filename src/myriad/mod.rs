@@ -5,8 +5,9 @@ pub mod device;
 pub mod devices;
 pub mod interpreter;
 pub mod loader;
+pub mod host;
 
-pub use value::Value;
+pub use value::{Value, BoxPool, BoxedValue};
 pub use device::{Device, DeviceTable};
 
 use frame::Frame;
@@ -24,6 +25,8 @@ pub struct VirtualMachine {
     pub(crate) exit_code: Option<i64>,
     pub(crate) dispatch_last_result: Option<u16>,
     pub(crate) devices: DeviceTable,
+    pub(crate) box_pool: BoxPool,
+    pub(crate) resolved_constants: Vec<Vec<Value>>,
 }
 
 pub const DISPATCH_ID: u8 = 0xE0;
@@ -65,11 +68,17 @@ impl VirtualMachine {
             exit_code: None,
             dispatch_last_result: None,
             devices: DeviceTable::new(),
+            box_pool: BoxPool::new(),
+            resolved_constants: Vec::new(),
         }
     }
 
     pub fn heap_live_count(&self) -> usize {
         self.heap.live_count()
+    }
+
+    pub fn box_pool(&self) -> &BoxPool {
+        &self.box_pool
     }
 
     pub fn install_device(&mut self, id: u8, dev: Box<dyn Device>) {

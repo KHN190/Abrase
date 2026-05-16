@@ -54,7 +54,7 @@ fn verify_compile_match_literal_int_with_wildcard() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(10));
+    assert_eq!(result, Value::from_int(10));
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn verify_compile_match_wildcard_only() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(42));
+    assert_eq!(result, Value::from_int(42));
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn verify_compile_match_bind_pattern() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(15));
+    assert_eq!(result, Value::from_int(15));
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn verify_compile_match_bool_patterns() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(1));
+    assert_eq!(result, Value::from_int(1));
 }
 
 #[test]
@@ -319,7 +319,7 @@ fn verify_compile_match_multiple_literals_with_wildcard() {
     })];
 
     let result = compile_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(20)));
+    assert_eq!(result, Ok(Value::from_int(20)));
 }
 
 #[test]
@@ -393,7 +393,7 @@ fn verify_compile_match_nested_in_if() {
     })];
 
     let result = compile_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(20)));
+    assert_eq!(result, Ok(Value::from_int(20)));
 }
 
 #[test]

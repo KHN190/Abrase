@@ -1,7 +1,7 @@
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
-use crate::vm::Value;
+use crate::myriad::Value;
 
 pub(in crate::compiler) enum CallEnv {
     None,
@@ -181,21 +181,21 @@ impl Compiler {
 
     fn emit_host_fn_call(&mut self, fn_id: u16, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
         let arg_port = self.alloc_register()?;
-        let arg_port_idx = self.add_constant(Value::Int(0xF018))?;
+        let arg_port_idx = self.add_constant(Value::from_int(0xF018))?;
         self.emit(OpCode::PushConst(arg_port, arg_port_idx));
         for a in args {
             let v = self.compile_expr(a)?;
             self.emit(OpCode::Deo(v, arg_port));
         }
         let trigger_reg = self.alloc_register()?;
-        let trigger_val_idx = self.add_constant(Value::Int(fn_id as i64))?;
+        let trigger_val_idx = self.add_constant(Value::from_int(fn_id as i64))?;
         self.emit(OpCode::PushConst(trigger_reg, trigger_val_idx));
         let trigger_port = self.alloc_register()?;
-        let trigger_port_idx = self.add_constant(Value::Int(0xF01F))?;
+        let trigger_port_idx = self.add_constant(Value::from_int(0xF01F))?;
         self.emit(OpCode::PushConst(trigger_port, trigger_port_idx));
         self.emit(OpCode::Deo(trigger_reg, trigger_port));
         let result_port = self.alloc_register()?;
-        let result_port_idx = self.add_constant(Value::Int(0xF01E))?;
+        let result_port_idx = self.add_constant(Value::from_int(0xF01E))?;
         self.emit(OpCode::PushConst(result_port, result_port_idx));
         let result = self.alloc_register()?;
         self.emit(OpCode::Dei(result, result_port));
@@ -207,7 +207,7 @@ impl Compiler {
         let dest = self.alloc_register()?;
         self.emit(OpCode::Alloc(dest, (args.len() + 1) as u16));
         let tag_reg = self.alloc_register()?;
-        let ti = self.add_constant(Value::Int(tag as i64))?;
+        let ti = self.add_constant(Value::from_int(tag as i64))?;
         self.emit(OpCode::PushConst(tag_reg, ti));
         self.emit(OpCode::St(tag_reg, dest, 0));
         for (i, arg) in args.iter().enumerate() {

@@ -4,13 +4,54 @@ pub use abrase::ast::*;
 pub use abrase::compiler::Compiler;
 pub use abrase::lexer::Lexer;
 pub use abrase::parser::Parser;
-pub use abrase::vm::{Value, VirtualMachine};
+pub use abrase::vm::{Value, VirtualMachine, BoxedValue};
 
 pub fn compile_and_run(ast: &[Decl]) -> Result<Value, String> {
     let mut compiler = Compiler::new();
     let chunk = compiler.compile(ast)?;
     let mut vm = VirtualMachine::new();
     vm.run(&chunk)
+}
+
+pub fn compile_and_run_string(ast: &[Decl]) -> Result<String, String> {
+    let mut compiler = Compiler::new();
+    let chunk = compiler.compile(ast)?;
+    let mut vm = VirtualMachine::new();
+    let v = vm.run(&chunk)?;
+    extract_string(&vm, v)
+}
+
+pub fn run_source_string(src: &str) -> Result<String, String> {
+    let ast = parse_source(src);
+    let mut compiler = Compiler::new();
+    let module = compiler.compile_module(&ast).map_err(|errs| {
+        errs.iter().map(|e| format!("{:?}: {}", e.code, e.message))
+            .collect::<Vec<_>>().join("\n")
+    })?;
+    let mut vm = VirtualMachine::new();
+    let v = vm.run_module(&module)?;
+    extract_string(&vm, v)
+}
+
+pub fn extract_string(vm: &VirtualMachine, v: Value) -> Result<String, String> {
+    let idx = v.as_box().ok_or_else(|| format!("expected box, got {:?}", v))?;
+    match vm.box_pool().get(idx) {
+        Some(BoxedValue::String(s)) => Ok(s.clone()),
+        other => Err(format!("expected string box, got {:?}", other)),
+    }
+}
+
+pub fn compile_module_and_run_string(ast: &[Decl]) -> Result<String, String> {
+    let mut compiler = Compiler::new();
+    let module = compiler.compile_module(ast).map_err(|errs| {
+        errs.iter()
+            .map(|e| format!("{:?} at {}:{}: {}", e.code, e.span.line, e.span.col, e.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    let mut vm = VirtualMachine::new();
+    let v = vm.run_module(&module)?;
+    extract_string(&vm, v)
 }
 
 pub fn compile_module_and_run(ast: &[Decl]) -> Result<Value, String> {

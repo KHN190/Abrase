@@ -7,7 +7,7 @@ fn r(n: u8) -> Register { Register(n) }
 fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
     let reg_count = 256;
     VirtualMachine::new().run(&Chunk::Bytecode(BytecodeChunk {
-        code: ops, constants, reg_count, param_count: 0,
+        code: ops, constants, reg_count, param_count: 0, string_constants: Vec::new(),
     }))
 }
 
@@ -16,7 +16,7 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
     let chunks: Vec<Chunk> = functions
         .into_iter()
         .map(|(code, constants, reg_count, param_count)| {
-            Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count })
+            Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count, string_constants: Vec::new() })
         })
         .collect();
     let module = Module { functions: chunks, entry: num_functions - 1, device_mask: [0; 32] };
@@ -27,9 +27,9 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
 fn test_push_const_and_ret() {
     let result = run(
         vec![OpCode::PushConst(r(0), 0), OpCode::Ret(r(0))],
-        vec![Value::Int(42)],
+        vec![Value::from_int(42)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -40,9 +40,9 @@ fn test_mov() {
             OpCode::Copy(r(1), r(0)),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(7)],
+        vec![Value::from_int(7)],
     );
-    assert_eq!(result, Ok(Value::Int(7)));
+    assert_eq!(result, Ok(Value::from_int(7)));
 }
 
 #[test]
@@ -54,9 +54,9 @@ fn test_add() {
             OpCode::Add(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(3), Value::Int(4)],
+        vec![Value::from_int(3), Value::from_int(4)],
     );
-    assert_eq!(result, Ok(Value::Int(7)));
+    assert_eq!(result, Ok(Value::from_int(7)));
 }
 
 #[test]
@@ -68,9 +68,9 @@ fn test_sub() {
             OpCode::Sub(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(10), Value::Int(3)],
+        vec![Value::from_int(10), Value::from_int(3)],
     );
-    assert_eq!(result, Ok(Value::Int(7)));
+    assert_eq!(result, Ok(Value::from_int(7)));
 }
 
 #[test]
@@ -82,9 +82,9 @@ fn test_mul() {
             OpCode::Mul(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(6), Value::Int(7)],
+        vec![Value::from_int(6), Value::from_int(7)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -96,9 +96,9 @@ fn test_div() {
             OpCode::Div(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(20), Value::Int(4)],
+        vec![Value::from_int(20), Value::from_int(4)],
     );
-    assert_eq!(result, Ok(Value::Int(5)));
+    assert_eq!(result, Ok(Value::from_int(5)));
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn test_div_by_zero_traps() {
             OpCode::Div(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(10), Value::Int(0)],
+        vec![Value::from_int(10), Value::from_int(0)],
     );
     assert!(result.is_err());
 }
@@ -124,9 +124,9 @@ fn test_mod() {
             OpCode::Mod(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(10), Value::Int(3)],
+        vec![Value::from_int(10), Value::from_int(3)],
     );
-    assert_eq!(result, Ok(Value::Int(1)));
+    assert_eq!(result, Ok(Value::from_int(1)));
 }
 
 #[test]
@@ -149,9 +149,9 @@ fn test_eq_true() {
             OpCode::Eq(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5)],
+        vec![Value::from_int(5)],
     );
-    assert_eq!(result, Ok(Value::Bool(true)));
+    assert_eq!(result, Ok(Value::from_bool(true)));
 }
 
 #[test]
@@ -163,9 +163,9 @@ fn test_eq_false() {
             OpCode::Eq(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5), Value::Int(3)],
+        vec![Value::from_int(5), Value::from_int(3)],
     );
-    assert_eq!(result, Ok(Value::Bool(false)));
+    assert_eq!(result, Ok(Value::from_bool(false)));
 }
 
 #[test]
@@ -177,9 +177,9 @@ fn test_neq_true() {
             OpCode::Neq(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5), Value::Int(3)],
+        vec![Value::from_int(5), Value::from_int(3)],
     );
-    assert_eq!(result, Ok(Value::Bool(true)));
+    assert_eq!(result, Ok(Value::from_bool(true)));
 }
 
 #[test]
@@ -191,9 +191,9 @@ fn test_neq_false() {
             OpCode::Neq(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5)],
+        vec![Value::from_int(5)],
     );
-    assert_eq!(result, Ok(Value::Bool(false)));
+    assert_eq!(result, Ok(Value::from_bool(false)));
 }
 
 #[test]
@@ -205,9 +205,9 @@ fn test_lt_true() {
             OpCode::Lt(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(3), Value::Int(5)],
+        vec![Value::from_int(3), Value::from_int(5)],
     );
-    assert_eq!(result, Ok(Value::Bool(true)));
+    assert_eq!(result, Ok(Value::from_bool(true)));
 }
 
 #[test]
@@ -219,9 +219,9 @@ fn test_lt_false() {
             OpCode::Lt(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5), Value::Int(3)],
+        vec![Value::from_int(5), Value::from_int(3)],
     );
-    assert_eq!(result, Ok(Value::Bool(false)));
+    assert_eq!(result, Ok(Value::from_bool(false)));
 }
 
 #[test]
@@ -233,9 +233,9 @@ fn test_gt_true() {
             OpCode::Gt(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5), Value::Int(3)],
+        vec![Value::from_int(5), Value::from_int(3)],
     );
-    assert_eq!(result, Ok(Value::Bool(true)));
+    assert_eq!(result, Ok(Value::from_bool(true)));
 }
 
 #[test]
@@ -247,9 +247,9 @@ fn test_gt_false() {
             OpCode::Gt(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(3), Value::Int(5)],
+        vec![Value::from_int(3), Value::from_int(5)],
     );
-    assert_eq!(result, Ok(Value::Bool(false)));
+    assert_eq!(result, Ok(Value::from_bool(false)));
 }
 
 #[test]
@@ -261,9 +261,9 @@ fn test_lte_true() {
             OpCode::Lte(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5), Value::Int(5)],
+        vec![Value::from_int(5), Value::from_int(5)],
     );
-    assert_eq!(result, Ok(Value::Bool(true)));
+    assert_eq!(result, Ok(Value::from_bool(true)));
 }
 
 #[test]
@@ -275,9 +275,9 @@ fn test_lte_false() {
             OpCode::Lte(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5), Value::Int(3)],
+        vec![Value::from_int(5), Value::from_int(3)],
     );
-    assert_eq!(result, Ok(Value::Bool(false)));
+    assert_eq!(result, Ok(Value::from_bool(false)));
 }
 
 #[test]
@@ -289,9 +289,9 @@ fn test_gte_true() {
             OpCode::Gte(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5), Value::Int(3)],
+        vec![Value::from_int(5), Value::from_int(3)],
     );
-    assert_eq!(result, Ok(Value::Bool(true)));
+    assert_eq!(result, Ok(Value::from_bool(true)));
 }
 
 #[test]
@@ -303,9 +303,9 @@ fn test_gte_false() {
             OpCode::Gte(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(3), Value::Int(5)],
+        vec![Value::from_int(3), Value::from_int(5)],
     );
-    assert_eq!(result, Ok(Value::Bool(false)));
+    assert_eq!(result, Ok(Value::from_bool(false)));
 }
 
 #[test]
@@ -319,9 +319,9 @@ fn test_jz_takes_jump_when_zero() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(0), Value::Int(42)],
+        vec![Value::from_int(0), Value::from_int(42)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -334,9 +334,9 @@ fn test_jz_skips_jump_when_nonzero() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(1), Value::Int(99)],
+        vec![Value::from_int(1), Value::from_int(99)],
     );
-    assert_eq!(result, Ok(Value::Int(99)));
+    assert_eq!(result, Ok(Value::from_int(99)));
 }
 
 #[test]
@@ -349,9 +349,9 @@ fn test_jnz_takes_jump_when_nonzero() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(5), Value::Int(42)],
+        vec![Value::from_int(5), Value::from_int(42)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -363,9 +363,9 @@ fn test_jnz_skips_jump_when_zero() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(0), Value::Int(99)],
+        vec![Value::from_int(0), Value::from_int(99)],
     );
-    assert_eq!(result, Ok(Value::Int(99)));
+    assert_eq!(result, Ok(Value::from_int(99)));
 }
 
 #[test]
@@ -377,9 +377,9 @@ fn test_jmp_unconditional() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(0)),
         ],
-        vec![Value::Int(42), Value::Int(99)],
+        vec![Value::from_int(42), Value::from_int(99)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -392,9 +392,9 @@ fn test_jz_with_bool_false_takes_jump() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Bool(false), Value::Int(42)],
+        vec![Value::from_bool(false), Value::from_int(42)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -411,9 +411,9 @@ fn test_loop_counter() {
             OpCode::Jmp(-5),
             OpCode::Ret(r(0)),
         ],
-        vec![Value::Int(0), Value::Int(3), Value::Int(1)],
+        vec![Value::from_int(0), Value::from_int(3), Value::from_int(1)],
     );
-    assert_eq!(result, Ok(Value::Int(3)));
+    assert_eq!(result, Ok(Value::from_int(3)));
 }
 
 #[test]
@@ -425,9 +425,9 @@ fn test_lte_equal_boundary() {
             OpCode::Lte(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5)],
+        vec![Value::from_int(5)],
     );
-    assert_eq!(result, Ok(Value::Bool(true)));
+    assert_eq!(result, Ok(Value::from_bool(true)));
 }
 
 #[test]
@@ -439,9 +439,9 @@ fn test_gte_equal_boundary() {
             OpCode::Gte(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5)],
+        vec![Value::from_int(5)],
     );
-    assert_eq!(result, Ok(Value::Bool(true)));
+    assert_eq!(result, Ok(Value::from_bool(true)));
 }
 
 #[test]
@@ -454,9 +454,9 @@ fn test_jz_falsy_int_zero() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(0), Value::Int(42)],
+        vec![Value::from_int(0), Value::from_int(42)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -468,9 +468,9 @@ fn test_jz_truthy_int_nonzero() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(7), Value::Int(99)],
+        vec![Value::from_int(7), Value::from_int(99)],
     );
-    assert_eq!(result, Ok(Value::Int(99)));
+    assert_eq!(result, Ok(Value::from_int(99)));
 }
 
 #[test]
@@ -483,9 +483,9 @@ fn test_jnz_truthy_int_nonzero() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(7), Value::Int(42)],
+        vec![Value::from_int(7), Value::from_int(42)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -497,9 +497,9 @@ fn test_jnz_falsy_int_zero() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Int(0), Value::Int(99)],
+        vec![Value::from_int(0), Value::from_int(99)],
     );
-    assert_eq!(result, Ok(Value::Int(99)));
+    assert_eq!(result, Ok(Value::from_int(99)));
 }
 
 #[test]
@@ -536,9 +536,9 @@ fn test_jz_with_unit_falsy() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Unit, Value::Int(42)],
+        vec![Value::UNIT, Value::from_int(42)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -551,9 +551,9 @@ fn test_jnz_with_bool_true() {
             OpCode::PushConst(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::Bool(true), Value::Int(42)],
+        vec![Value::from_bool(true), Value::from_int(42)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -565,7 +565,7 @@ fn test_mod_by_zero_traps() {
             OpCode::Mod(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(10), Value::Int(0)],
+        vec![Value::from_int(10), Value::from_int(0)],
     );
     assert!(result.is_err());
 }
@@ -590,7 +590,7 @@ fn test_add_empty_left_register_errors() {
             OpCode::Add(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5)],
+        vec![Value::from_int(5)],
     );
     assert!(result.is_err());
 }
@@ -603,7 +603,7 @@ fn test_add_empty_right_register_errors() {
             OpCode::Add(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5)],
+        vec![Value::from_int(5)],
     );
     assert!(result.is_err());
 }
@@ -616,7 +616,7 @@ fn test_sub_empty_left_register_errors() {
             OpCode::Sub(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5)],
+        vec![Value::from_int(5)],
     );
     assert!(result.is_err());
 }
@@ -629,7 +629,7 @@ fn test_mul_empty_right_register_errors() {
             OpCode::Mul(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
         ],
-        vec![Value::Int(5)],
+        vec![Value::from_int(5)],
     );
     assert!(result.is_err());
 }
@@ -653,11 +653,11 @@ fn test_call_simple() {
                 OpCode::Call(r(0), 0),
                 OpCode::Ret(r(0)),
             ],
-            vec![Value::Int(2), Value::Int(3)],
+            vec![Value::from_int(2), Value::from_int(3)],
             1, 0,
         ),
     ]);
-    assert_eq!(result, Ok(Value::Int(5)));
+    assert_eq!(result, Ok(Value::from_int(5)));
 }
 
 #[test]
@@ -675,11 +675,11 @@ fn test_call_passes_args_to_callee() {
                 OpCode::Call(r(0), 0),
                 OpCode::Ret(r(0)),
             ],
-            vec![Value::Int(10), Value::Int(20)],
+            vec![Value::from_int(10), Value::from_int(20)],
             1, 0,
         ),
     ]);
-    assert_eq!(result, Ok(Value::Int(20)));
+    assert_eq!(result, Ok(Value::from_int(20)));
 }
 
 #[test]
@@ -691,7 +691,7 @@ fn test_call_return_value_in_dest() {
                 OpCode::Add(r(0), r(0), r(1)),
                 OpCode::Ret(r(0)),
             ],
-            vec![Value::Int(1)],
+            vec![Value::from_int(1)],
             2, 1,
         ),
         (
@@ -700,11 +700,11 @@ fn test_call_return_value_in_dest() {
                 OpCode::Call(r(0), 0),
                 OpCode::Ret(r(0)),
             ],
-            vec![Value::Int(5)],
+            vec![Value::from_int(5)],
             1, 0,
         ),
     ]);
-    assert_eq!(result, Ok(Value::Int(6)));
+    assert_eq!(result, Ok(Value::from_int(6)));
 }
 
 #[test]
@@ -724,7 +724,7 @@ fn test_recursion_simple() {
                 OpCode::Call(r(3), 0),
                 OpCode::Ret(r(3)),
             ],
-            vec![Value::Int(0), Value::Int(0), Value::Int(1)],
+            vec![Value::from_int(0), Value::from_int(0), Value::from_int(1)],
             4, 1,
         ),
         (
@@ -733,11 +733,11 @@ fn test_recursion_simple() {
                 OpCode::Call(r(0), 0),
                 OpCode::Ret(r(0)),
             ],
-            vec![Value::Int(2)],
+            vec![Value::from_int(2)],
             1, 0,
         ),
     ]);
-    assert_eq!(result, Ok(Value::Int(0)));
+    assert_eq!(result, Ok(Value::from_int(0)));
 }
 
 #[test]
@@ -751,7 +751,7 @@ fn test_alloc_and_free() {
     );
 
     match result {
-        Ok(Value::Handle { .. }) => {},
+        Ok(v) if v.is_handle() => {},
         _ => panic!("Expected Handle from Alloc, got {:?}", result),
     }
 }
@@ -766,9 +766,9 @@ fn test_store_and_load() {
             OpCode::Ld(r(2), r(0), 0),    // r2 = load from [r0+0]
             OpCode::Ret(r(2)),             // return r2
         ],
-        vec![Value::Int(42)],
+        vec![Value::from_int(42)],
     );
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -785,9 +785,9 @@ fn test_store_multiple_fields() {
             OpCode::Add(r(5), r(3), r(4)),// r5 = 10 + 20 = 30
             OpCode::Ret(r(5)),             // return r5
         ],
-        vec![Value::Int(10), Value::Int(20)],
+        vec![Value::from_int(10), Value::from_int(20)],
     );
-    assert_eq!(result, Ok(Value::Int(30)));
+    assert_eq!(result, Ok(Value::from_int(30)));
 }
 
 #[test]
@@ -803,15 +803,15 @@ fn test_drop_reclaims_heap_via_rc_dec() {
                 OpCode::PushConst(r(2), 0),
                 OpCode::Ret(r(2)),
             ],
-            constants: vec![Value::Int(0)],
+            constants: vec![Value::from_int(0)],
             reg_count: 3,
-            param_count: 0,
+            param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,
         device_mask: [0; 32],
     };
     let result = vm.run_module(&module);
-    assert_eq!(result, Ok(Value::Int(0)));
+    assert_eq!(result, Ok(Value::from_int(0)));
     assert_eq!(vm.heap_live_count(), 0, "all heap cells must be reclaimed");
 }
 
@@ -831,15 +831,15 @@ fn test_handle_after_free_is_rejected_via_generation() {
                 OpCode::PushConst(r(4), 0),
                 OpCode::Ret(r(4)),
             ],
-            constants: vec![Value::Int(0)],
+            constants: vec![Value::from_int(0)],
             reg_count: 5,
-            param_count: 0,
+            param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,
         device_mask: [0; 32],
     };
     let result = vm.run_module(&module);
-    assert_eq!(result, Ok(Value::Int(0)));
+    assert_eq!(result, Ok(Value::from_int(0)));
 }
 
 #[test]
@@ -855,8 +855,8 @@ fn test_heap_ld_rejects_stale_generation() {
     let err = heap.ld(slot, gen0, 0).unwrap_err();
     assert!(err.contains("stale handle"), "got: {}", err);
 
-    heap.st(slot2, gen1, 0, Value::Int(7)).unwrap();
-    assert_eq!(heap.ld(slot2, gen1, 0).unwrap(), Value::Int(7));
+    heap.st(slot2, gen1, 0, Value::from_int(7)).unwrap();
+    assert_eq!(heap.ld(slot2, gen1, 0).unwrap(), Value::from_int(7));
 }
 
 #[test]
@@ -878,7 +878,7 @@ fn test_recursive_drop_reclaims_nested_handles() {
     let mut heap = Heap::new();
     let (child, cgen) = heap.alloc(1);
     let (parent, pgen) = heap.alloc(1);
-    heap.st(parent, pgen, 0, Value::Handle { slot: child, generation: cgen }).unwrap();
+    heap.st(parent, pgen, 0, Value::from_handle(child, cgen)).unwrap();
     heap.rc_dec(parent, pgen).unwrap();
     assert_eq!(heap.live_count(), 0, "child must be reclaimed transitively");
 }
@@ -894,18 +894,16 @@ fn test_call_dispatches_to_native_chunk() {
             OpCode::Call(r(2), 1),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::Int(7), Value::Int(35)],
+        constants: vec![Value::from_int(7), Value::from_int(35)],
         reg_count: 3,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     };
     let native = NativeChunk {
         param_count: 2,
-        func: Rc::new(|args: &[Value]| {
-            let (a, b) = match (&args[0], &args[1]) {
-                (Value::Int(a), Value::Int(b)) => (*a, *b),
-                _ => return Err("expected ints".into()),
-            };
-            Ok(Value::Int(a + b))
+        func: Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
+            let a = args[0].as_int().ok_or("expected int")?;
+            let b = args[1].as_int().ok_or("expected int")?;
+            Ok(Value::from_int(a + b))
         }),
     };
     let module = Module {
@@ -913,7 +911,7 @@ fn test_call_dispatches_to_native_chunk() {
         entry: 0, device_mask: [0; 32]
     };
     let result = VirtualMachine::new().run_module(&module);
-    assert_eq!(result, Ok(Value::Int(42)));
+    assert_eq!(result, Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -925,13 +923,13 @@ fn test_native_chunk_propagates_error() {
             OpCode::Call(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        constants: vec![Value::Int(0)],
+        constants: vec![Value::from_int(0)],
         reg_count: 2,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     };
     let native = NativeChunk {
         param_count: 1,
-        func: Rc::new(|_args: &[Value]| Err("boom".to_string())),
+        func: Rc::new(|_pool: &mut abrase::vm::BoxPool, _args: &[Value]| Err("boom".to_string())),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
@@ -951,7 +949,7 @@ fn test_jmp_negative_offset_underflow_traps() {
             OpCode::PushConst(r(0), 0),
             OpCode::Ret(r(0)),
         ],
-        vec![Value::Int(42)],
+        vec![Value::from_int(42)],
     );
     assert!(result.is_err(), "negative PC must trap, got {:?}", result);
     let err = result.unwrap_err();
@@ -967,7 +965,7 @@ fn test_jz_negative_offset_underflow_traps() {
             OpCode::Jz(r(0), -100),
             OpCode::Ret(r(0)),
         ],
-        vec![Value::Int(0)],
+        vec![Value::from_int(0)],
     );
     assert!(result.is_err(), "negative PC via Jz must trap, got {:?}", result);
 }
@@ -980,7 +978,7 @@ fn test_jnz_negative_offset_underflow_traps() {
             OpCode::Jnz(r(0), -100),
             OpCode::Ret(r(0)),
         ],
-        vec![Value::Int(1)],
+        vec![Value::from_int(1)],
     );
     assert!(result.is_err(), "negative PC via Jnz must trap, got {:?}", result);
 }
@@ -994,9 +992,9 @@ fn test_jz_not_taken_skips_validation() {
             OpCode::Jz(r(0), -10000),  // not taken because r0 is non-zero
             OpCode::Ret(r(0)),
         ],
-        vec![Value::Int(7)],
+        vec![Value::from_int(7)],
     );
-    assert_eq!(result, Ok(Value::Int(7)));
+    assert_eq!(result, Ok(Value::from_int(7)));
 }
 
 // Drive Handle/Resume opcodes directly; codegen lowers `handle` to arm-fn Calls.
@@ -1008,7 +1006,7 @@ fn test_resume_without_handler_traps() {
             OpCode::Resume(r(0)),
             OpCode::Ret(r(0)),
         ],
-        vec![Value::Int(7)],
+        vec![Value::from_int(7)],
     );
     assert!(result.is_err(), "resume without handler must trap");
 }
@@ -1024,9 +1022,9 @@ fn test_handle_allocates_cell_and_resume_frees_it() {
             OpCode::Resume(r(0)),          // pops, writes 99 → r3, frees cell
             OpCode::Ret(r(3)),
         ],
-        constants: vec![Value::Int(99)],
+        constants: vec![Value::from_int(99)],
         reg_count: 256,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     });
     let _ = vm.run(&chunk);
     assert_eq!(vm.heap_live_count(), 0,
@@ -1043,7 +1041,7 @@ fn test_double_resume_traps_after_single_shot() {
             OpCode::Resume(r(0)),
             OpCode::Ret(r(3)),
         ],
-        vec![Value::Int(99)],
+        vec![Value::from_int(99)],
     );
     assert!(result.is_err(), "second resume must trap, got {:?}", result);
     let err = result.unwrap_err();
@@ -1060,36 +1058,20 @@ fn test_handle_allocates_one_cell_per_install() {
             OpCode::Handle(r(7), 0),       // dest = r7
             OpCode::Ret(r(0)),
         ],
-        constants: vec![Value::Int(0)],
+        constants: vec![Value::from_int(0)],
         reg_count: 256,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     });
     let _ = vm.run(&install);
     assert_eq!(vm.heap_live_count(), 1,
         "Handle must allocate exactly one continuation cell");
 }
 
-// Lea is meaningless under the handle/generation heap and must trap.
-#[test]
-fn test_lea_traps() {
-    let result = run(
-        vec![
-            OpCode::Alloc(r(0), 4),
-            OpCode::Lea(r(1), r(0), 1),
-            OpCode::Ret(r(1)),
-        ],
-        vec![],
-    );
-    assert!(result.is_err(), "lea must trap");
-    let err = result.unwrap_err();
-    assert!(err.contains("lea"), "expected lea error, got: {}", err);
-}
-
 //  Call whose `dest` is outside the caller's reg_count must trap.
 #[test]
 fn test_call_dest_out_of_caller_window_traps() {
     let result = run_module_with_param_counts(vec![
-        (vec![OpCode::Ret(r(0))], vec![Value::Int(1)], 1, 0),
+        (vec![OpCode::Ret(r(0))], vec![Value::from_int(1)], 1, 0),
         // Caller has reg_count=2 but Call writes to r9 — out of window.
         (vec![OpCode::Call(r(9), 0), OpCode::Ret(r(0))], vec![], 2, 0),
     ]);
@@ -1106,7 +1088,7 @@ fn test_module_load_rejects_oversize_reg_count() {
         code: vec![OpCode::Ret(r(0))],
         constants: vec![],
         reg_count: 257,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(bad)],
@@ -1125,7 +1107,7 @@ fn test_module_load_rejects_param_count_exceeds_reg_count() {
         code: vec![OpCode::Ret(r(0))],
         constants: vec![],
         reg_count: 2,
-        param_count: 5,
+        param_count: 5, string_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(bad)],
@@ -1143,16 +1125,16 @@ fn test_module_load_accepts_exact_frame_budget() {
             OpCode::PushConst(r(0), 0),
             OpCode::Ret(r(0)),
         ],
-        constants: vec![Value::Int(7)],
+        constants: vec![Value::from_int(7)],
         reg_count: 256,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(chunk)],
         entry: 0, device_mask: [0; 32]
     };
     let result = VirtualMachine::new().run_module(&module);
-    assert_eq!(result, Ok(Value::Int(7)));
+    assert_eq!(result, Ok(Value::from_int(7)));
 }
 
 #[test]
@@ -1177,9 +1159,9 @@ fn test_call_reg_dispatches_to_bytecode() {
             OpCode::Add(r(0), r(0), r(1)),
             OpCode::Ret(r(0)),
         ],
-        constants: vec![Value::Int(1)],
+        constants: vec![Value::from_int(1)],
         reg_count: 2,
-        param_count: 1,
+        param_count: 1, string_constants: Vec::new(),
     };
     let caller = BytecodeChunk {
         code: vec![
@@ -1189,26 +1171,24 @@ fn test_call_reg_dispatches_to_bytecode() {
             OpCode::CallReg(r(2), r(1)),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::Int(41), Value::Int(0)],
+        constants: vec![Value::from_int(41), Value::from_int(0)],
         reg_count: 4,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(callee), Chunk::Bytecode(caller)],
         entry: 1, device_mask: [0; 32],
     };
-    assert_eq!(VirtualMachine::new().run_module(&module), Ok(Value::Int(42)));
+    assert_eq!(VirtualMachine::new().run_module(&module), Ok(Value::from_int(42)));
 }
 
 #[test]
 fn test_call_reg_dispatches_to_native() {
     let native = NativeChunk {
         param_count: 1,
-        func: Rc::new(|args: &[Value]| {
-            match &args[0] {
-                Value::Int(n) => Ok(Value::Int(n * 2)),
-                _ => Err("expected int".into()),
-            }
+        func: Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
+            let n = args[0].as_int().ok_or("expected int")?;
+            Ok(Value::from_int(n * 2))
         }),
     };
     let caller = BytecodeChunk {
@@ -1219,15 +1199,15 @@ fn test_call_reg_dispatches_to_native() {
             OpCode::CallReg(r(2), r(1)),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::Int(21), Value::Int(0)],
+        constants: vec![Value::from_int(21), Value::from_int(0)],
         reg_count: 4,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Native(native), Chunk::Bytecode(caller)],
         entry: 1, device_mask: [0; 32],
     };
-    assert_eq!(VirtualMachine::new().run_module(&module), Ok(Value::Int(42)));
+    assert_eq!(VirtualMachine::new().run_module(&module), Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -1238,9 +1218,9 @@ fn test_call_reg_out_of_range_fn_id_traps() {
             OpCode::CallReg(r(2), r(1)),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::Int(99999)],
+        constants: vec![Value::from_int(99999)],
         reg_count: 3,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller)],
@@ -1259,9 +1239,9 @@ fn test_call_reg_unknown_fn_id_traps() {
             OpCode::CallReg(r(2), r(1)),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::Int(5)],
+        constants: vec![Value::from_int(5)],
         reg_count: 3,
-        param_count: 0,
+        param_count: 0, string_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller)],
@@ -1271,3 +1251,45 @@ fn test_call_reg_unknown_fn_id_traps() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("unknown fn_id"));
 }
+
+#[test]
+fn test_add_imm_positive() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::AddImm(r(1), r(0), 5),
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::from_int(10)],
+    );
+    assert_eq!(result, Ok(Value::from_int(15)));
+}
+
+#[test]
+fn test_add_imm_negative() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::AddImm(r(1), r(0), -3),
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::from_int(10)],
+    );
+    assert_eq!(result, Ok(Value::from_int(7)));
+}
+
+#[test]
+fn test_sub_imm() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::SubImm(r(1), r(0), 4),
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::from_int(20)],
+    );
+    assert_eq!(result, Ok(Value::from_int(16)));
+}
+
+// test_sub_imm_underflow_wraps removed: relied on i64::MIN, which is outside the
+// i48 inline range. Will be restored when heap-boxed bigints land.

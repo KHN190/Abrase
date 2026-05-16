@@ -13,7 +13,7 @@ impl Heap {
     }
 
     pub fn alloc(&mut self, size: usize) -> (u32, u32) {
-        let slot = vec![Value::Unit; size];
+        let slot = vec![Value::NONE; size];
         if let Some(h) = self.free_list.pop() {
             let idx = h as usize;
             self.cells[idx] = Some(slot);
@@ -89,26 +89,21 @@ impl Heap {
         let cell = self.cells[idx].take().unwrap();
         self.free_list.push(slot);
         for v in cell {
-            match v {
-                Value::Handle { slot: s, generation: g } => { self.rc_dec(s, g)?; }
-                Value::Closure { env_slot: s, env_gen: g, .. } => { self.rc_dec(s, g)?; }
-                _ => {}
+            if let Some((s, g)) = v.as_handle() {
+                self.rc_dec(s, g)?;
             }
         }
         Ok(true)
     }
 
-    // Reclaim regardless of rc; recursively rc_dec child handles. For `Free` opcode.
     pub fn force_free(&mut self, slot: u32, generation: u32) -> Result<(), String> {
         let idx = self.check(slot, generation, "free")?;
         let cell = self.cells[idx].take().unwrap();
         self.rc[idx] = 0;
         self.free_list.push(slot);
         for v in cell {
-            match v {
-                Value::Handle { slot: s, generation: g } => { let _ = self.rc_dec(s, g); }
-                Value::Closure { env_slot: s, env_gen: g, .. } => { let _ = self.rc_dec(s, g); }
-                _ => {}
+            if let Some((s, g)) = v.as_handle() {
+                let _ = self.rc_dec(s, g);
             }
         }
         Ok(())

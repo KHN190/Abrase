@@ -8,7 +8,7 @@ use abrase::vm::Value;
 fn verify_compile_literal_int() {
     let ast = parse_literal_int(42);
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(42));
+    assert_eq!(result, Value::from_int(42));
 }
 
 #[test]
@@ -32,7 +32,7 @@ fn verify_compile_literal_bool() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Bool(true));
+    assert_eq!(result, Value::from_bool(true));
 }
 
 #[test]
@@ -55,8 +55,8 @@ fn verify_compile_literal_string() {
         },
     })];
 
-    let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::String(Box::new("hello".to_string())));
+    let result = compile_and_run_string(&ast).expect("Execution failed");
+    assert_eq!(result, "hello");
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn verify_compile_literal_float() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Float(3.14));
+    assert_eq!(result, Value::from_float(3.14));
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn verify_compile_literal_unit() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Unit);
+    assert_eq!(result, Value::UNIT);
 }
 
 #[test]
@@ -128,5 +128,5 @@ fn verify_compile_literal_bool_false() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Bool(false));
+    assert_eq!(result, Value::from_bool(false));
 }

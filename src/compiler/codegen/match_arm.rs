@@ -1,7 +1,7 @@
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
-use crate::vm::Value;
+use crate::myriad::Value;
 
 impl Compiler {
     pub(in crate::compiler) fn compile_match(
@@ -80,15 +80,14 @@ impl Compiler {
         result_reg: Register,
         exit_jumps: &mut Vec<usize>,
     ) -> Result<(), String> {
-        let pat_val = match lit {
-            ast::Literal::Int(n)    => Value::Int(*n),
-            ast::Literal::Float(f)  => Value::Float(*f),
-            ast::Literal::Bool(b)   => Value::Bool(*b),
-            ast::Literal::String(s) => Value::String(Box::new(s.clone())),
-            ast::Literal::Unit      => Value::Unit,
+        let pat_idx = match lit {
+            ast::Literal::Int(n)    => self.add_constant(Value::from_int(*n))?,
+            ast::Literal::Float(f)  => self.add_constant(Value::from_float(*f))?,
+            ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
+            ast::Literal::String(s) => self.add_string_constant(s)?,
+            ast::Literal::Unit      => self.add_constant(Value::UNIT)?,
             _ => return Err("Unsupported literal in pattern".to_string()),
         };
-        let pat_idx = self.add_constant(pat_val)?;
         let pat_reg = self.alloc_register()?;
         self.emit(OpCode::PushConst(pat_reg, pat_idx));
 
@@ -119,7 +118,7 @@ impl Compiler {
         let tag_reg = self.alloc_register()?;
         self.emit(OpCode::Ld(tag_reg, scrutinee_reg, 0));
         let expected = self.alloc_register()?;
-        let ti = self.add_constant(Value::Int(expected_tag as i64))?;
+        let ti = self.add_constant(Value::from_int(expected_tag as i64))?;
         self.emit(OpCode::PushConst(expected, ti));
         let eq_reg = self.alloc_register()?;
         self.emit(OpCode::Eq(eq_reg, tag_reg, expected));
@@ -151,7 +150,7 @@ impl Compiler {
         let tag_reg = self.alloc_register()?;
         self.emit(OpCode::Ld(tag_reg, scrutinee_reg, 0));
         let expected_tag = self.alloc_register()?;
-        let ti = self.add_constant(Value::Int(info.tag as i64))?;
+        let ti = self.add_constant(Value::from_int(info.tag as i64))?;
         self.emit(OpCode::PushConst(expected_tag, ti));
         let eq_reg = self.alloc_register()?;
         self.emit(OpCode::Eq(eq_reg, tag_reg, expected_tag));

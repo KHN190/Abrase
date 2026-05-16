@@ -6,7 +6,7 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use abrase::vm::VirtualMachine;
+use abrase::myriad::{BoxedValue, Value, VirtualMachine};
 
 const USAGE: &str = "\
 Abrase compiler & Myriad VM
@@ -82,9 +82,20 @@ fn cmd_run(source: &str) -> ExitCode {
 
     let mut vm = VirtualMachine::new();
     match vm.run_module(&module) {
-        Ok(v) => { println!("{:?}", v); ExitCode::SUCCESS }
+        Ok(v) => { print_result(&vm, v); ExitCode::SUCCESS }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
     }
+}
+
+fn print_result(vm: &VirtualMachine, v: Value) {
+    if let Some(idx) = v.as_box() {
+        match vm.box_pool().get(idx) {
+            Some(BoxedValue::String(s)) => { println!("{}", s); return; }
+            Some(b) => { println!("{:?}", b); return; }
+            None => {}
+        }
+    }
+    println!("{:?}", v);
 }
 
 fn cmd_check(source: &str) -> ExitCode {

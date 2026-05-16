@@ -9,7 +9,7 @@ fn verify_compile_variable_binding() {
     // let x = 5; let y = x + 1; y
     let ast = parse_let_expr();
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(6));
+    assert_eq!(result, Value::from_int(6));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn verify_compile_multiple_variables() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(30));
+    assert_eq!(result, Value::from_int(30));
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn verify_compile_assignment_literal_int() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(42));
+    assert_eq!(result, Value::from_int(42));
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn verify_compile_assignment_multiple() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Int(3));
+    assert_eq!(result, Value::from_int(3));
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn verify_compile_assignment_bool() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::Bool(false));
+    assert_eq!(result, Value::from_bool(false));
 }
 
 #[test]

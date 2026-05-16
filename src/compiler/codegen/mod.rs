@@ -13,7 +13,7 @@ pub(in crate::compiler) use inference::is_move_type;
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
-use crate::vm::Value;
+use crate::myriad::Value;
 
 impl Compiler {
     pub(in crate::compiler) fn compile_expr(
@@ -125,7 +125,7 @@ impl Compiler {
             self.compile_expr(ret)?
         } else {
             let reg = self.alloc_register()?;
-            let idx = self.add_constant(Value::Unit)?;
+            let idx = self.add_constant(Value::UNIT)?;
             self.emit(OpCode::PushConst(reg, idx));
             reg
         };

@@ -37,7 +37,7 @@ fn verify_compile_variant_unit_construction() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(1)));
+    assert_eq!(result, Ok(Value::from_int(1)));
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn verify_compile_variant_tuple_construction() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(99)));
+    assert_eq!(result, Ok(Value::from_int(99)));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn verify_compile_variant_pattern_match_unit() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(5)));
+    assert_eq!(result, Ok(Value::from_int(5)));
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn verify_compile_variant_with_multiple_fields() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(333)));
+    assert_eq!(result, Ok(Value::from_int(333)));
 }
 
 #[test]
@@ -200,5 +200,5 @@ fn verify_compile_variant_record_variant() {
         }),
     ];
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(66)));
+    assert_eq!(result, Ok(Value::from_int(66)));
 }

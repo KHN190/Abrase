@@ -105,7 +105,7 @@ fn verify_compile_unsupported_literal_char_errors() {
 
 #[test]
 fn verify_compile_string_interp_literal_only_runs() {
-    let result = compile_module_and_run(&vec![Decl::Fn(FnDecl {
+    let result = compile_module_and_run_string(&vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
         name: "main".to_string(),
@@ -125,7 +125,7 @@ fn verify_compile_string_interp_literal_only_runs() {
         },
     })]);
 
-    assert_eq!(result, Ok(Value::String(Box::new("hello".to_string()))));
+    assert_eq!(result, Ok("hello".to_string()));
 }
 
 #[test]
@@ -165,8 +165,8 @@ fn verify_compile_string_interp_with_int_var_concat() {
         },
     });
 
-    let result = compile_module_and_run(&vec![main]);
-    assert_eq!(result, Ok(Value::String(Box::new("n=5".to_string()))));
+    let result = compile_module_and_run_string(&vec![main]);
+    assert_eq!(result, Ok("n=5".to_string()));
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn c1_expr_stmt_record_does_not_leak() {
     "#;
     let ast = parse_source(src);
     let (v, live) = compile_module_and_run_with_heap(&ast).unwrap();
-    assert_eq!(v, Value::Int(0));
+    assert_eq!(v, Value::from_int(0));
     assert_eq!(live, 0, "expression-statement Pt should be dropped; heap_live_count={}", live);
 }
 
@@ -351,7 +351,7 @@ fn c1_expr_stmt_copy_type_emits_no_drop() {
     "#;
     let ast = parse_source(src);
     let (v, live) = compile_module_and_run_with_heap(&ast).unwrap();
-    assert_eq!(v, Value::Int(7));
+    assert_eq!(v, Value::from_int(7));
     assert_eq!(live, 0);
 }
 

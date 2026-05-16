@@ -5,7 +5,7 @@
 use crate::bytecode::{OpCode, Register, FRAME_REGS};
 use crate::compiler::Compiler;
 use crate::compiler::effects;
-use crate::vm::Value;
+use crate::myriad::Value;
 
 impl Compiler {
     pub(in crate::compiler) fn alloc_register(&mut self) -> Result<Register, String> {
@@ -40,7 +40,8 @@ impl Compiler {
             OpCode::PushConst(d, _) |
             OpCode::Copy(d, _) | OpCode::Move(d, _) |
             OpCode::Ld(d, _, _) | OpCode::LdIdx(d, _, _) |
-            OpCode::Lea(d, _, _) | OpCode::Ref(d, _) |
+            OpCode::Ref(d, _) |
+            OpCode::AddImm(d, _, _) | OpCode::SubImm(d, _, _) |
             OpCode::Alloc(d, _) |
             OpCode::Call(d, _) | OpCode::CallReg(d, _) => d,
             _ => return false,
@@ -62,6 +63,19 @@ impl Compiler {
         }
         self.constants.push(val);
         Ok((self.constants.len() - 1) as u16)
+    }
+
+    pub(in crate::compiler) fn add_string_constant(&mut self, s: &str) -> Result<u16, String> {
+        let str_idx = if let Some(i) = self.string_constants.iter().position(|c| c == s) {
+            i as u32
+        } else {
+            if self.string_constants.len() >= u32::MAX as usize {
+                return Err("String constant pool overflow".to_string());
+            }
+            self.string_constants.push(s.to_string());
+            (self.string_constants.len() - 1) as u32
+        };
+        self.add_constant(Value::from_str_const(str_idx))
     }
 
     pub(in crate::compiler) fn rel_offset(&self, target_pc: usize, branch_pc: usize) -> Result<i16, String> {
@@ -97,7 +111,7 @@ impl Compiler {
         let dest = self.alloc_register()?;
         self.emit(OpCode::Alloc(dest, 2));
         let tag_reg = self.alloc_register()?;
-        let idx = self.add_constant(Value::Int(tag as i64))?;
+        let idx = self.add_constant(Value::from_int(tag as i64))?;
         self.emit(OpCode::PushConst(tag_reg, idx));
         self.emit(OpCode::St(tag_reg, dest, 0));
         self.emit(OpCode::St(value, dest, 1));

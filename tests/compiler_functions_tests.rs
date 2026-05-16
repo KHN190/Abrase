@@ -84,7 +84,7 @@ fn verify_compile_simple_function_call() {
     ];
 
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(5)));
+    assert_eq!(result, Ok(Value::from_int(5)));
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn verify_compile_recursive_function() {
     ];
 
     let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::Int(0)));
+    assert_eq!(result, Ok(Value::from_int(0)));
 }
 
 #[test]

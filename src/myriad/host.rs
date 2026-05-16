@@ -3,8 +3,8 @@ use crate::compiler::{Compiler, HostFnDecl};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::ty::Type;
-use crate::vm::{Value, VirtualMachine};
-use crate::vm::devices::{
+use crate::myriad::{BoxPool, BoxedValue, Value, VirtualMachine};
+use crate::myriad::devices::{
     HostFuncDevice, HostImpl, HOSTFUNC_ID,
     Console, BufferConsole, StdoutConsole, CONSOLE_ID,
     SystemDevice, SYSTEM_ID,
@@ -44,7 +44,7 @@ impl Runtime {
     }
 
     pub fn register_host<F>(&mut self, name: &str, params: Vec<Type>, ret: Type, func: F)
-    where F: Fn(&[Value]) -> Result<Value, String> + 'static
+    where F: Fn(&mut BoxPool, &[Value]) -> Result<Value, String> + 'static
     {
         let fn_id = self.pending_host.len() as u16;
         self.pending_host.push(HostFnDecl {
@@ -57,13 +57,16 @@ impl Runtime {
     }
 
     fn register_default_hosts(&mut self) {
-        self.register_host("println", vec![Type::String], Type::Unit, |args| {
-            let s = match &args[0] {
-                Value::String(s) => s.clone(),
-                other => return Err(format!("println: expected String, got {:?}", other)),
-            };
-            println!("{}", s);
-            Ok(Value::Unit)
+        self.register_host("println", vec![Type::String], Type::Unit, |pool, args| {
+            let idx = args[0].as_box()
+                .ok_or_else(|| format!("println: expected String, got {:?}", args[0]))?;
+            match pool.get(idx) {
+                Some(BoxedValue::String(s)) => {
+                    println!("{}", s);
+                    Ok(Value::UNIT)
+                }
+                other => Err(format!("println: expected String box, got {:?}", other)),
+            }
         });
     }
 
