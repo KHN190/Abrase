@@ -5,6 +5,3 @@ edition = "2024"
 
 [dependencies]
 polka = { path = "../polka" }
-
-[dev-dependencies]
-myriad = { path = "../myriad" }
