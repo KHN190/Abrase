@@ -7,7 +7,7 @@ const MAX_RECURSION_DEPTH: usize = 2048;
 
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
-        let module = Module { functions: vec![chunk.clone()], entry: 0 };
+        let module = Module { functions: vec![chunk.clone()], entry: 0, device_mask: [0; 32] };
         self.run_module(&module)
     }
 
@@ -18,6 +18,7 @@ impl VirtualMachine {
 
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
         validate_module_register_budget(module)?;
+        self.validate_module_devices(module)?;
         self.pc = 0;
         self.base_reg = 0;
         self.current_func = module.entry;
@@ -188,8 +189,24 @@ impl VirtualMachine {
                 Ok(())
             }
 
-            OpCode::Dei(_, _) | OpCode::Deo(_, _) => {
-                Err("device I/O not yet implemented".to_string())
+            OpCode::Dei(d, port_reg) => {
+                let port_val = self.read_i64(*port_reg)?;
+                let (device_id, port) = split_port(port_val)?;
+                let dev = self.devices.get_mut(device_id)
+                    .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
+                let v = dev.read(port)?;
+                self.write(*d, v)
+            }
+            OpCode::Deo(src, port_reg) => {
+                let v = self.read(*src)?;
+                let port_val = self.read_i64(*port_reg)?;
+                let (device_id, port) = split_port(port_val)?;
+                if device_id == 0x00 && port == 0x00 {
+                    self.halted = true;
+                }
+                let dev = self.devices.get_mut(device_id)
+                    .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
+                dev.write(port, v)
             }
             OpCode::Handle(dest, fn_id) => {
                 // Heap-alloc continuation cell; `dest` is the suspended frame's result reg.
@@ -208,28 +225,6 @@ impl VirtualMachine {
                     cell_gen: generation,
                 });
                 Ok(())
-            }
-            OpCode::MakeClosure(dest, func_id, env_reg) => {
-                // Move the env Handle from env_reg into a new Value::Closure
-                // (single owner — no rc_inc).
-                let v = self.take(*env_reg)?;
-                let (env_slot, env_gen) = match v {
-                    Value::Handle { slot, generation } => (slot, generation),
-                    other => return Err(format!(
-                        "make_closure: expected env handle, got {:?}", other)),
-                };
-                self.write(*dest, Value::Closure {
-                    func_id: *func_id as usize,
-                    env_slot,
-                    env_gen,
-                })
-            }
-            OpCode::CallIndirect(dest, closure_reg) => {
-                let (func_id, env_slot, env_gen) = match self.read(*closure_reg)? {
-                    Value::Closure { func_id, env_slot, env_gen } => (func_id, env_slot, env_gen),
-                    v => return Err(format!("call_indirect: expected closure, got {:?}", v)),
-                };
-                self.do_indirect_call(module, *dest, func_id, env_slot, env_gen)
             }
             OpCode::Resume(reg) => {
                 // Single-shot: alive check, restore (pc, base, dest), mark dead, free cell.
@@ -326,90 +321,6 @@ impl VirtualMachine {
         }
 
         if let Chunk::Native(n) = &module.functions[fn_id] {
-            let mut args: Vec<Value> = Vec::with_capacity(n.param_count);
-            for i in 0..n.param_count {
-                let slot = new_base + i;
-                let v = self.registers[slot].clone()
-                    .ok_or_else(|| format!("native call: arg {} (r{}) is empty", i, i))?;
-                args.push(v);
-            }
-            let result = (n.func)(&args)?;
-            self.registers[dest_abs] = Some(result);
-            return Ok(());
-        }
-
-        if self.frames.len() >= MAX_RECURSION_DEPTH {
-            return Err(format!(
-                "Stack overflow: recursion depth {} exceeds limit {}",
-                self.frames.len(),
-                MAX_RECURSION_DEPTH
-            ));
-        }
-        self.frames.push(Frame {
-            func_id: self.current_func,
-            ip: self.pc,
-            base_reg: self.base_reg,
-            dest_reg: dest_abs,
-            reg_count: caller_reg_count,
-        });
-        self.base_reg = new_base;
-        self.current_func = fn_id;
-        self.pc = 0;
-        Ok(())
-    }
-
-    // Indirect call dispatched from a Value::Closure. Caller stages args at
-    // r1.. in the new window; we write the closure's env handle to r0 so
-    // the callee's first param receives it.
-    fn do_indirect_call(
-        &mut self,
-        module: &Module,
-        dest: Register,
-        fn_id: usize,
-        env_slot: u32,
-        env_gen: u32,
-    ) -> Result<(), String> {
-        if fn_id >= module.functions.len() {
-            return Err(format!("call_indirect: unknown fn_id {}", fn_id));
-        }
-        let caller_bc = expect_bytecode(module, self.current_func)?;
-        let caller_reg_count = caller_bc.reg_count;
-        if dest.to_usize() >= caller_reg_count {
-            return Err(format!(
-                "call_indirect: dest r{} out of caller window (reg_count {})",
-                dest.0, caller_reg_count
-            ));
-        }
-        let dest_abs = self.base_reg + dest.to_usize();
-        let new_base = self.base_reg + caller_reg_count;
-        let callee_reg_count = match &module.functions[fn_id] {
-            Chunk::Bytecode(b) => b.reg_count,
-            Chunk::Native(_) => 0,
-        };
-        if callee_reg_count > FRAME_REGS {
-            return Err(format!(
-                "call_indirect: callee fn {} has reg_count {} > frame budget {}",
-                fn_id, callee_reg_count, FRAME_REGS
-            ));
-        }
-        let window = callee_reg_count.max(FRAME_REGS);
-        let needed = new_base + window;
-        if needed > MAX_REGISTERS {
-            return Err(format!(
-                "Stack overflow: register window {} exceeds limit {}",
-                needed, MAX_REGISTERS
-            ));
-        }
-        if needed > self.registers.len() {
-            self.registers.resize(needed, None);
-        }
-        // Place env handle in callee r0; rc-inc because we keep our copy
-        // in the Value::Closure too.
-        self.heap.rc_inc(env_slot, env_gen)?;
-        self.registers[new_base] = Some(Value::Handle { slot: env_slot, generation: env_gen });
-
-        if let Chunk::Native(n) = &module.functions[fn_id] {
-            // Native expects (env, args...) in r0..
             let mut args: Vec<Value> = Vec::with_capacity(n.param_count);
             for i in 0..n.param_count {
                 let slot = new_base + i;
@@ -573,6 +484,16 @@ impl VirtualMachine {
         let y = self.read_i64(b)?;
         self.write(d, Value::Bool(f(x, y)))
     }
+
+    fn validate_module_devices(&self, module: &Module) -> Result<(), String> {
+        for id in 0u16..=255 {
+            let id = id as u8;
+            if module.requires_device(id) && !self.devices.has(id) {
+                return Err(format!("module requires device {:#04x} but it is not installed", id));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn is_falsy(val: &Value) -> bool {
@@ -589,6 +510,16 @@ fn expect_bytecode(module: &Module, fn_id: usize) -> Result<&BytecodeChunk, Stri
         Chunk::Bytecode(b) => Ok(b),
         Chunk::Native(_) => Err(format!("expected bytecode chunk at fn {}, found native", fn_id)),
     }
+}
+
+// 16-bit port = (device_id << 8) | port_offset (spec §3.8).
+fn split_port(port_val: i64) -> Result<(u8, u8), String> {
+    if !(0..=0xFFFF).contains(&port_val) {
+        return Err(format!("device port {:#x} out of 16-bit range", port_val));
+    }
+    let device_id = ((port_val >> 8) & 0xFF) as u8;
+    let port = (port_val & 0xFF) as u8;
+    Ok((device_id, port))
 }
 
 // Reject chunks declaring more than FRAME_REGS registers (spec §2).

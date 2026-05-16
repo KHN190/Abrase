@@ -88,15 +88,6 @@ fn closures_no_single_and_multi_capture() {
 }
 
 #[test]
-fn closures_indirect_call_through_param() {
-    // apply takes a closure-typed param and invokes it indirectly via the
-    // CallIndirect opcode (closures pre-pass cannot resolve `f` statically).
-    let v = run_file("tests/scripts/closures_indirect.abe")
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(12));
-}
-
-#[test]
 fn closures_default_capture_leaves_outer_binding_live() {
     // Non-move closure captures clone the outer value, so the outer
     // binding remains usable after the closure expression.

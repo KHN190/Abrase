@@ -59,6 +59,7 @@ pub struct Compiler {
     pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
     pub(super) concat_fn_id: Option<usize>,
     pub(super) to_str_fn_id: Option<usize>,
+    pub(super) device_mask: [u8; 32],
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -90,6 +91,7 @@ impl Compiler {
             closure_by_var: HashMap::new(),
             concat_fn_id: None,
             to_str_fn_id: None,
+            device_mask: [0; 32],
             errors: Vec::new(),
             source: String::new(),
         }
@@ -237,6 +239,7 @@ impl Compiler {
         Ok(Module {
             functions: self.functions.clone(),
             entry,
+            device_mask: self.device_mask,
         })
     }
 

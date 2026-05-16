@@ -55,37 +55,32 @@ impl Compiler {
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Option<Register>, String> {
         let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
-        if !self.closure_by_var.contains_key(name) { return Ok(None); }
-        let closure_reg = *self.var_to_reg.get(name)
+        let Some(info) = self.closure_by_var.get(name).cloned() else { return Ok(None) };
+
+        let func_id = *self.func_map.get(&info.lifted_fn)
+            .ok_or_else(|| format!(
+                "internal: lifted closure fn '{}' not in fn table",
+                info.lifted_fn
+            ))?;
+        let env_reg = *self.var_to_reg.get(name)
             .ok_or_else(|| format!(
                 "internal: closure binding '{}' has no register", name
             ))?;
-        self.compile_indirect_call(closure_reg, args).map(Some)
-    }
-
-    // Stage args at r{caller_reg_count + 1..} (r0 is auto-populated by
-    // CallIndirect with the closure's env handle), then emit CallIndirect.
-    fn compile_indirect_call(
-        &mut self,
-        closure_reg: Register,
-        args: &[ast::Spanned<ast::Expr>],
-    ) -> Result<Register, String> {
         let mut arg_srcs = Vec::with_capacity(args.len());
         for arg in args {
             arg_srcs.push(self.compile_expr(arg)?);
         }
+        let pos = self.code.len();
+        self.emit(OpCode::Copy(Register(0), env_reg));
+        self.pending_arg_patches.push((pos, 0));
         for (i, src) in arg_srcs.iter().enumerate() {
-            let slot = i + 1;
-            if slot > u8::MAX as usize {
-                return Err("Too many arguments (>255)".to_string());
-            }
             let pos = self.code.len();
             self.emit(OpCode::Copy(Register(0), *src));
-            self.pending_arg_patches.push((pos, slot as u8));
+            self.pending_arg_patches.push((pos, (i + 1) as u8));
         }
         let dest = self.alloc_register()?;
-        self.emit(OpCode::CallIndirect(dest, closure_reg));
-        Ok(dest)
+        self.emit(OpCode::Call(dest, func_id as u16));
+        Ok(Some(dest))
     }
 
     // Effect-op call: `Foo.op(args)`
@@ -208,6 +203,26 @@ impl Compiler {
             return Ok(Some(dest));
         }
 
+        if name == "__host_println" && args.len() == 1 {
+            let src = self.compile_expr(&args[0])?;
+            let port_reg = self.alloc_register()?;
+            let port_idx = self.add_constant(Value::Int(0x101A))?;
+            self.emit(OpCode::PushConst(port_reg, port_idx));
+            self.emit(OpCode::Deo(src, port_reg));
+            let nl_reg = self.alloc_register()?;
+            let nl_idx = self.add_constant(Value::Int(b'\n' as i64))?;
+            self.emit(OpCode::PushConst(nl_reg, nl_idx));
+            let byte_port = self.alloc_register()?;
+            let byte_port_idx = self.add_constant(Value::Int(0x1018))?;
+            self.emit(OpCode::PushConst(byte_port, byte_port_idx));
+            self.emit(OpCode::Deo(nl_reg, byte_port));
+            self.device_mask[0x10 / 8] |= 1 << (0x10 % 8);
+            let unit = self.alloc_register()?;
+            let unit_idx = self.add_constant(Value::Unit)?;
+            self.emit(OpCode::PushConst(unit, unit_idx));
+            return Ok(Some(unit));
+        }
+
         let Some(info) = self.layouts.variants.get(name).cloned() else { return Ok(None) };
         let dest = self.alloc_register()?;
         let payload = args.len();
@@ -223,9 +238,7 @@ impl Compiler {
         Ok(Some(dest))
     }
 
-    // Fallback: a plain by-id call to a top-level fn, OR an indirect call
-    // through a local register that holds a Value::Closure (a closure
-    // parameter, a closure returned from another fn, etc.).
+    // Plain by-id call to a top-level fn.
     fn compile_plain_call(
         &mut self,
         callee: &ast::Spanned<ast::Expr>,
@@ -234,15 +247,8 @@ impl Compiler {
         let ast::Expr::Identifier(name) = &callee.node else {
             return Err("Call target must be a function identifier".to_string());
         };
-        let func_id = match self.func_map.get(name).copied() {
-            Some(id) => id,
-            None => {
-                if let Some(reg) = self.var_to_reg.get(name).copied() {
-                    return self.compile_indirect_call(reg, args);
-                }
-                return Err(format!("Undefined function: {}", name));
-            }
-        };
+        let func_id = self.func_map.get(name).copied()
+            .ok_or_else(|| format!("Undefined function: {}", name))?;
         if func_id > u16::MAX as usize {
             return Err(format!("Function id {} exceeds u16 range", func_id));
         }

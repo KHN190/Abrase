@@ -19,7 +19,7 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
             Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count })
         })
         .collect();
-    let module = Module { functions: chunks, entry: num_functions - 1 };
+    let module = Module { functions: chunks, entry: num_functions - 1, device_mask: [0; 32] };
     VirtualMachine::new().run_module(&module)
 }
 
@@ -808,6 +808,7 @@ fn test_drop_reclaims_heap_via_rc_dec() {
             param_count: 0,
         })],
         entry: 0,
+        device_mask: [0; 32],
     };
     let result = vm.run_module(&module);
     assert_eq!(result, Ok(Value::Int(0)));
@@ -835,6 +836,7 @@ fn test_handle_after_free_is_rejected_via_generation() {
             param_count: 0,
         })],
         entry: 0,
+        device_mask: [0; 32],
     };
     let result = vm.run_module(&module);
     assert_eq!(result, Ok(Value::Int(0)));
@@ -908,7 +910,7 @@ fn test_call_dispatches_to_native_chunk() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
-        entry: 0,
+        entry: 0, device_mask: [0; 32]
     };
     let result = VirtualMachine::new().run_module(&module);
     assert_eq!(result, Ok(Value::Int(42)));
@@ -933,7 +935,7 @@ fn test_native_chunk_propagates_error() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
-        entry: 0,
+        entry: 0, device_mask: [0; 32]
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err());
@@ -1067,99 +1069,6 @@ fn test_handle_allocates_one_cell_per_install() {
         "Handle must allocate exactly one continuation cell");
 }
 
-// MakeClosure packs (func_id, env_handle) into Value::Closure;
-// CallIndirect dispatches through that value, auto-staging env in r0.
-#[test]
-fn test_call_indirect_invokes_closure() {
-    // Callee (params=1): receives env in r0, loads env[0], returns it.
-    let callee = (
-        vec![
-            OpCode::Ld(r(1), r(0), 0),
-            OpCode::Ret(r(1)),
-        ],
-        vec![],
-        2usize, 1usize,
-    );
-    // Caller reg_count=4 so r3 (dest) is inside the window; new_base = 4 → callee r0 lands at r4.
-    let caller = (
-        vec![
-            OpCode::Alloc(r(0), 1),
-            OpCode::PushConst(r(1), 0),
-            OpCode::St(r(1), r(0), 0),
-            OpCode::MakeClosure(r(2), 0, r(0)),
-            OpCode::CallIndirect(r(3), r(2)),
-            OpCode::Ret(r(3)),
-        ],
-        vec![Value::Int(99)],
-        4usize, 0usize,
-    );
-    let result = run_module_with_param_counts(vec![callee, caller]);
-    assert_eq!(result, Ok(Value::Int(99)));
-}
-
-#[test]
-fn test_call_indirect_passes_extra_args() {
-    // Callee (params=2): returns env[0] + x.
-    let callee = (
-        vec![
-            OpCode::Ld(r(2), r(0), 0),
-            OpCode::Add(r(3), r(2), r(1)),
-            OpCode::Ret(r(3)),
-        ],
-        vec![],
-        4, 2,
-    );
-    // Caller reg_count=5 → new_base = 5; env auto-lands at r5 (callee r0), x staged at r6 (callee r1).
-    let caller = (
-        vec![
-            OpCode::Alloc(r(0), 1),
-            OpCode::PushConst(r(1), 0),
-            OpCode::St(r(1), r(0), 0),
-            OpCode::MakeClosure(r(2), 0, r(0)),
-            OpCode::PushConst(r(3), 1),
-            OpCode::Copy(r(6), r(3)),
-            OpCode::CallIndirect(r(4), r(2)),
-            OpCode::Ret(r(4)),
-        ],
-        vec![Value::Int(10), Value::Int(7)],
-        5, 0,
-    );
-    let result = run_module_with_param_counts(vec![callee, caller]);
-    assert_eq!(result, Ok(Value::Int(17)));
-}
-
-#[test]
-fn test_call_indirect_on_non_closure_traps() {
-    let result = run(
-        vec![
-            OpCode::PushConst(r(0), 0),
-            OpCode::CallIndirect(r(1), r(0)),
-            OpCode::Ret(r(1)),
-        ],
-        vec![Value::Int(7)],
-    );
-    assert!(result.is_err(), "non-closure indirect must trap");
-    let err = result.unwrap_err();
-    assert!(err.contains("expected closure"),
-            "expected closure-type error, got: {}", err);
-}
-
-#[test]
-fn test_make_closure_rejects_non_handle() {
-    let result = run(
-        vec![
-            OpCode::PushConst(r(0), 0),
-            OpCode::MakeClosure(r(1), 0, r(0)),
-            OpCode::Ret(r(1)),
-        ],
-        vec![Value::Int(7)],
-    );
-    assert!(result.is_err(), "make_closure on Int must trap");
-    let err = result.unwrap_err();
-    assert!(err.contains("env handle"),
-            "expected env-handle error, got: {}", err);
-}
-
 // Lea is meaningless under the handle/generation heap and must trap.
 #[test]
 fn test_lea_traps() {
@@ -1201,7 +1110,7 @@ fn test_module_load_rejects_oversize_reg_count() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(bad)],
-        entry: 0,
+        entry: 0, device_mask: [0; 32]
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err(), "oversize reg_count must be rejected");
@@ -1220,7 +1129,7 @@ fn test_module_load_rejects_param_count_exceeds_reg_count() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(bad)],
-        entry: 0,
+        entry: 0, device_mask: [0; 32]
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err(), "param_count > reg_count must be rejected");
@@ -1240,7 +1149,7 @@ fn test_module_load_accepts_exact_frame_budget() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(chunk)],
-        entry: 0,
+        entry: 0, device_mask: [0; 32]
     };
     let result = VirtualMachine::new().run_module(&module);
     assert_eq!(result, Ok(Value::Int(7)));

@@ -1,10 +1,13 @@
 pub mod value;
 pub mod frame;
 pub mod memory;
+pub mod device;
+pub mod devices;
 pub mod interpreter;
 pub mod loader;
 
 pub use value::Value;
+pub use device::{Device, DeviceTable};
 
 use frame::Frame;
 use memory::Heap;
@@ -18,6 +21,7 @@ pub struct VirtualMachine {
     pub(crate) heap: Heap,
     pub(crate) handlers: Vec<HandlerFrame>,
     pub(crate) halted: bool,
+    pub(crate) devices: DeviceTable,
 }
 
 // `cell_*` point at the 4-slot heap continuation: [pc, base, dest_reg, alive].
@@ -46,10 +50,19 @@ impl VirtualMachine {
             heap: Heap::new(),
             handlers: Vec::new(),
             halted: false,
+            devices: DeviceTable::new(),
         }
     }
 
     pub fn heap_live_count(&self) -> usize {
         self.heap.live_count()
+    }
+
+    pub fn install_device(&mut self, id: u8, dev: Box<dyn Device>) {
+        self.devices.install(id, dev);
+    }
+
+    pub fn take_device(&mut self, id: u8) -> Option<Box<dyn Device>> {
+        self.devices.take(id)
     }
 }
