@@ -92,7 +92,7 @@ fn greet(name: String) -> String { "hello {name}" }
 
 Naive recursive `fib(30)`.
 
-| Runtime | Time | vs. Abrase |
+| Runtime | Time | vs. |
 |---|---|---|
 | Abrase | _180 ms_ | 4.3× |
 | Python 3 (CPython) | _131 ms_ | _3.1x_ |
