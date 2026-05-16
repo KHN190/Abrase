@@ -4,7 +4,7 @@ pub use abrase::ast::*;
 pub use abrase::compiler::Compiler;
 pub use abrase::lexer::Lexer;
 pub use abrase::parser::Parser;
-pub use abrase::vm::{Value, VirtualMachine, BoxedValue};
+pub use myriad::{Value, VirtualMachine, BoxedValue};
 
 pub fn compile_and_run(ast: &[Decl]) -> Result<Value, String> {
     let mut compiler = Compiler::new();

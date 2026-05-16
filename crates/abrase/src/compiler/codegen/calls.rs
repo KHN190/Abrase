@@ -1,7 +1,7 @@
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
-use crate::myriad::Value;
+use crate::bytecode::Value;
 
 pub(in crate::compiler) enum CallEnv {
     None,

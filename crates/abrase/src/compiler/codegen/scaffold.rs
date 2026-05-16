@@ -3,7 +3,7 @@
 use crate::bytecode::{OpCode, Register, FRAME_REGS};
 use crate::compiler::Compiler;
 use crate::compiler::effects;
-use crate::myriad::Value;
+use crate::bytecode::Value;
 
 pub(in crate::compiler) fn to_u16(n: usize, what: &str) -> Result<u16, String> {
     u16::try_from(n).map_err(|_| format!("{} exceeds u16 range (got {}, max {})", what, n, u16::MAX))

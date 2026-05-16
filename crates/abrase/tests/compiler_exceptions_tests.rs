@@ -2,7 +2,7 @@
 mod compiler_codegen_common;
 
 use compiler_codegen_common::*;
-use abrase::vm::Value;
+use myriad::Value;
 
 #[test]
 fn verify_compile_exn_simple_ok_result() {

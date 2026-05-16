@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::myriad::{BoxPool, Device, Value};
+use crate::{BoxPool, Device, Value};
 
 pub const HOSTFUNC_ID: u8 = 0xF0;
 pub const PORT_ARG: u8 = 0x18;

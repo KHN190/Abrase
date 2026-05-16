@@ -1,10 +1,10 @@
 use std::rc::Rc;
-use crate::compiler::{Compiler, HostFnDecl};
-use crate::lexer::Lexer;
-use crate::parser::Parser;
-use crate::ty::Type;
-use crate::myriad::{BoxPool, Value, VirtualMachine};
-use crate::myriad::devices::{
+use abrase::compiler::{Compiler, HostFnDecl};
+use abrase::lexer::Lexer;
+use abrase::parser::Parser;
+use abrase::ty::Type;
+use myriad::{BoxPool, Value, VirtualMachine};
+use myriad::devices::{
     HostFuncDevice, HostImpl, HOSTFUNC_ID,
     Console, BufferConsole, StdoutConsole, CONSOLE_ID,
     SystemDevice, SYSTEM_ID,

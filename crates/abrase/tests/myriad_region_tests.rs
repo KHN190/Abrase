@@ -1,6 +1,6 @@
 // Integration tests for the RegionTable runtime.
 
-use abrase::myriad::{BoxPool, BoxedValue, Heap, RegionTable, Value};
+use myriad::{BoxPool, BoxedValue, Heap, RegionTable, Value};
 
 #[cfg(test)]
 mod tests {

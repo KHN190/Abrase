@@ -1,7 +1,7 @@
 use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
-use abrase::vm::{BoxedValue, Value, VirtualMachine};
+use myriad::{BoxedValue, Value, VirtualMachine};
 
 fn run(source: &str) -> Result<Value, String> {
     let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());

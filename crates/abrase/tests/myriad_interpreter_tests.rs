@@ -1,5 +1,5 @@
 use abrase::bytecode::{BytecodeChunk, Chunk, NativeChunk, OpCode, Register, Module};
-use abrase::vm::{Value, VirtualMachine};
+use myriad::{Value, VirtualMachine};
 use std::rc::Rc;
 
 fn r(n: u8) -> Register { Register(n) }
@@ -844,8 +844,8 @@ fn test_handle_after_free_is_rejected_via_generation() {
 
 #[test]
 fn test_heap_ld_rejects_stale_generation() {
-    use abrase::vm::memory::Heap;
-    use abrase::myriad::BoxPool;
+    use myriad::memory::Heap;
+    use myriad::BoxPool;
     let mut heap = Heap::new();
     let mut pool = BoxPool::new();
     let (slot, gen0) = heap.alloc(2);
@@ -863,8 +863,8 @@ fn test_heap_ld_rejects_stale_generation() {
 
 #[test]
 fn test_rc_inc_keeps_cell_alive_until_balanced() {
-    use abrase::vm::memory::Heap;
-    use abrase::myriad::BoxPool;
+    use myriad::memory::Heap;
+    use myriad::BoxPool;
     let mut heap = Heap::new();
     let mut pool = BoxPool::new();
     let (slot, g_) = heap.alloc(1);
@@ -878,8 +878,8 @@ fn test_rc_inc_keeps_cell_alive_until_balanced() {
 
 #[test]
 fn test_recursive_drop_reclaims_nested_handles() {
-    use abrase::vm::memory::Heap;
-    use abrase::myriad::BoxPool;
+    use myriad::memory::Heap;
+    use myriad::BoxPool;
     let mut heap = Heap::new();
     let mut pool = BoxPool::new();
     let (child, cgen) = heap.alloc(1);
@@ -913,7 +913,7 @@ fn test_call_dispatches_to_native_chunk() {
         entry: 0, device_mask: [0; 32]
     };
     let mut vm = VirtualMachine::new();
-    vm.register_native("test_add", Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
+    vm.register_native("test_add", Rc::new(|_pool: &mut myriad::BoxPool, args: &[Value]| {
         let a = args[0].as_int().ok_or("expected int")?;
         let b = args[1].as_int().ok_or("expected int")?;
         Ok(Value::from_int(a + b))
@@ -944,7 +944,7 @@ fn test_native_chunk_propagates_error() {
         entry: 0, device_mask: [0; 32]
     };
     let mut vm = VirtualMachine::new();
-    vm.register_native("test_boom", Rc::new(|_pool: &mut abrase::vm::BoxPool, _args: &[Value]| Err("boom".to_string())));
+    vm.register_native("test_boom", Rc::new(|_pool: &mut myriad::BoxPool, _args: &[Value]| Err("boom".to_string())));
     let result = vm.run_module(&module);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("boom"));
@@ -1215,7 +1215,7 @@ fn test_call_reg_dispatches_to_native() {
         entry: 1, device_mask: [0; 32],
     };
     let mut vm = VirtualMachine::new();
-    vm.register_native("test_double", Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
+    vm.register_native("test_double", Rc::new(|_pool: &mut myriad::BoxPool, args: &[Value]| {
         let n = args[0].as_int().ok_or("expected int")?;
         Ok(Value::from_int(n * 2))
     }));

@@ -1,5 +1,5 @@
 use abrase::bytecode::{BytecodeChunk, Chunk, OpCode, Register};
-use abrase::vm::Value;
+use myriad::Value;
 
 fn bc(b: BytecodeChunk) -> Chunk { Chunk::Bytecode(b) }
 fn as_bc(c: &Chunk) -> &BytecodeChunk { c.as_bytecode().expect("expected bytecode chunk") }
@@ -104,7 +104,7 @@ fn test_chunk_reg_count() {
 
 #[test]
 fn test_frame_dest_reg() {
-    let frame = abrase::vm::frame::Frame {
+    let frame = myriad::frame::Frame {
         func_id: 1,
         ip: 10,
         base_reg: 64,

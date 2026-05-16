@@ -1,6 +1,6 @@
 use abrase::bytecode::{BytecodeChunk, Chunk, Module, OpCode, Register};
-use abrase::vm::{Value, VirtualMachine};
-use abrase::vm::devices::{
+use myriad::{Value, VirtualMachine};
+use myriad::devices::{
     BufferConsole, ClockDevice, Console, HostFuncDevice, RandomDevice, SystemDevice,
     CLOCK_ID, CONSOLE_ID, HOSTFUNC_ID, RANDOM_ID, SYSTEM_ID,
 };
@@ -183,7 +183,7 @@ fn dei_on_uninstalled_device_traps() {
 fn hostfunc_round_trip() {
     let mut vm = VirtualMachine::new();
     let mut dev = HostFuncDevice::new();
-    dev.register(Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
+    dev.register(Rc::new(|_pool: &mut myriad::BoxPool, args: &[Value]| {
         let a = args[0].as_int().ok_or("expected int")?;
         let b = args[1].as_int().ok_or("expected int")?;
         Ok(Value::from_int(a + b))
@@ -261,7 +261,7 @@ fn random_seeded_is_deterministic() {
 // fn name surfaces a clean compile error rather than panicking.
 #[test]
 fn runtime_eval_unregistered_fn_errors_cleanly() {
-    use abrase::host::Runtime;
+    use abrase_cli::host::Runtime;
     let (mut rt, _console) = Runtime::new_for_tests();
     let src = r#"
         fn main() -> Int { println("hi"); 0 }
@@ -274,7 +274,7 @@ fn runtime_eval_unregistered_fn_errors_cleanly() {
 
 #[test]
 fn runtime_user_registered_host_fn() {
-    use abrase::host::Runtime;
+    use abrase_cli::host::Runtime;
     use abrase::ty::Type;
     let (mut rt, _console) = Runtime::new_for_tests();
     rt.register_host("triple", vec![Type::Int], Type::Int, |_pool, args| {

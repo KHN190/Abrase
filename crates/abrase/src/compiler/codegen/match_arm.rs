@@ -1,7 +1,7 @@
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
-use crate::myriad::Value;
+use crate::bytecode::Value;
 
 impl Compiler {
     pub(in crate::compiler) fn compile_match(

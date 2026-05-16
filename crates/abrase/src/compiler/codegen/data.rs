@@ -3,7 +3,7 @@ use crate::ast::{Span, Spanned};
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
 use crate::compiler::codegen::scaffold::{to_u8, to_u16};
-use crate::myriad::Value;
+use crate::bytecode::Value;
 
 impl Compiler {
     fn emit_builtin_call(

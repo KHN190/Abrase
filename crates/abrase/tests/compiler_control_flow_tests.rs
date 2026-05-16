@@ -2,7 +2,7 @@
 mod compiler_codegen_common;
 
 use compiler_codegen_common::*;
-use abrase::vm::Value;
+use myriad::Value;
 
 fn run(src: &str) -> Result<Value, String> {
     let mut parser = Parser::new(Lexer::new(src)).with_source(src.into());

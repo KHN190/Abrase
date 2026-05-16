@@ -1,5 +1,5 @@
 // host code must never panic on user input.
-use abrase::myriad::{BoxPool, BoxedValue, Value};
+use myriad::{BoxPool, BoxedValue, Value};
 use std::rc::Rc;
 
 fn println_like(pool: &mut BoxPool, args: &[Value]) -> Result<Value, String> {
@@ -54,7 +54,7 @@ fn user_can_define_print_when_host_does_not_register_it() {
         fn print(s: String) -> Int { 42 }
         fn main() -> Int { print("ignored") }
     "#;
-    let mut rt = abrase::myriad::host::Runtime::new();
+    let mut rt = abrase_cli::host::Runtime::new();
     let v = rt.eval(src).expect("eval should succeed");
     assert_eq!(v, Value::from_int(42));
 }
@@ -67,7 +67,7 @@ fn user_cannot_shadow_device_in() {
         fn device_in(port: Int, data: Int) -> Unit { () }
         fn main() -> Int { 0 }
     "#;
-    let mut rt = abrase::myriad::host::Runtime::new();
+    let mut rt = abrase_cli::host::Runtime::new();
     let err = rt.eval(src).expect_err("must reject user fn shadowing `device_in`");
     assert!(err.contains("device_in"),
         "error should mention device_in; got: {}", err);
@@ -83,7 +83,7 @@ fn device_in_writes_byte_to_console() {
             0
         }
     "#;
-    let (mut rt, console) = abrase::myriad::host::Runtime::new_for_tests();
+    let (mut rt, console) = abrase_cli::host::Runtime::new_for_tests();
     let (out_handle, _) = console.handles();
     let v = rt.eval(src).expect("device_in to console must succeed");
     assert_eq!(v, Value::from_int(0));
@@ -99,7 +99,7 @@ fn device_out_reads_back_dispatch_state() {
     let src = r#"
         fn main() -> Int { device_out(57344) }
     "#;
-    let mut rt = abrase::myriad::host::Runtime::new();
+    let mut rt = abrase_cli::host::Runtime::new();
     let err = rt.eval(src).expect_err("dispatch read without prior lookup must err");
     assert!(err.contains("dispatch"),
         "error should reference dispatch device; got: {}", err);
@@ -111,7 +111,7 @@ fn user_cannot_shadow_device_out() {
         fn device_out(port: Int) -> Int { 0 }
         fn main() -> Int { 0 }
     "#;
-    let mut rt = abrase::myriad::host::Runtime::new();
+    let mut rt = abrase_cli::host::Runtime::new();
     let err = rt.eval(src).expect_err("must reject user fn shadowing `device_out`");
     assert!(err.contains("device_out"),
         "error should mention device_out; got: {}", err);

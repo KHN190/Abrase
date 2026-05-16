@@ -2,7 +2,7 @@
 mod compiler_codegen_common;
 
 use compiler_codegen_common::*;
-use abrase::vm::Value;
+use myriad::Value;
 
 #[test]
 fn handle_with_only_return_arm_passes_body_through() {

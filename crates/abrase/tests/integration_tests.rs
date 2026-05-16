@@ -2,7 +2,7 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use abrase::vm::{BoxedValue, Value, VirtualMachine};
+use myriad::{BoxedValue, Value, VirtualMachine};
 use std::fs;
 
 fn run_file(path: &str) -> Result<Value, String> {

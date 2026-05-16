@@ -1,4 +1,4 @@
-use crate::myriad::{Device, Value};
+use crate::{Device, Value};
 
 pub const SYSTEM_ID: u8 = 0x00;
 pub const PORT_VERSION: u8 = 0x00;

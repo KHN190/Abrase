@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use crate::myriad::{Device, Value};
+use crate::{Device, Value};
 
 pub const CLOCK_ID: u8 = 0x60;
 pub const PORT_WALL_MS: u8 = 0x00;

@@ -1,4 +1,4 @@
-use crate::bytecode::Value;
+use polka::Value;
 
 #[derive(Clone, Debug)]
 pub enum BoxedValue {

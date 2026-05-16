@@ -2,7 +2,7 @@
 mod compiler_codegen_common;
 
 use compiler_codegen_common::*;
-use abrase::vm::Value;
+use myriad::Value;
 
 #[test]
 fn verify_compile_match_literal_int_with_wildcard() {

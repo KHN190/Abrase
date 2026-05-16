@@ -1,6 +1,6 @@
 // NaN-boxed Value: scalar equality and tag round-trips.
 use abrase::bytecode::{BytecodeChunk, Chunk, OpCode, Register};
-use abrase::vm::{Value, VirtualMachine};
+use myriad::{Value, VirtualMachine};
 
 #[test]
 fn test_value_int_eq() {

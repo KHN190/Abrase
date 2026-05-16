@@ -6,7 +6,7 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use abrase::myriad::{BoxedValue, Value, VirtualMachine};
+use myriad::{BoxedValue, Value, VirtualMachine};
 
 const USAGE: &str = "\
 Abrase compiler & Myriad VM

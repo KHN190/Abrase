@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::myriad::{Device, Value};
+use crate::{Device, Value};
 
 pub const RANDOM_ID: u8 = 0x70;
 pub const PORT_BYTE: u8 = 0x00;

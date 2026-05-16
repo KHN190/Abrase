@@ -185,7 +185,7 @@ fn closure_capturing_shared_from_region_rejected() {
 
 #[test]
 fn region_exit_force_frees_inner_alloc() {
-    use abrase::myriad::VirtualMachine;
+    use myriad::VirtualMachine;
     // Inside a region we alloc a heap cell; on region exit, force-free reclaims.
     // We assert heap_live_count == 0 after the program returns.
     let src = r#"
@@ -213,7 +213,7 @@ fn region_exit_force_frees_inner_alloc() {
 
 #[test]
 fn region_exit_force_frees_heap_cell_with_box_child() {
-    use abrase::myriad::VirtualMachine;
+    use myriad::VirtualMachine;
     let src = r#"
         type Wrap = { msg: String }
         fn main() -> Int {
@@ -255,7 +255,7 @@ fn nested_shared_in_record_field_rejected() {
 
 #[test]
 fn region_force_free_even_with_rc_above_one() {
-    use abrase::myriad::VirtualMachine;
+    use myriad::VirtualMachine;
     // Build a heap-allocated record whose ref-count would normally stay >0
     // through ordinary drop, then verify region exit force-frees it anyway.
     let src = r#"
@@ -339,7 +339,7 @@ fn nested_regions_get_distinct_labels() {
     // try to use one where the other is expected, typeck rejects.
     use abrase::compiler::Compiler;
     use abrase::ty::Type;
-    use abrase::myriad::VirtualMachine;
+    use myriad::VirtualMachine;
     // The simplest observable effect: a tail expression of type Shared @ inner
     // from inside an inner region won't satisfy an outer scope that doesn't
     // know that label. We rely on shared_returned_from_region_rejected above

@@ -1,4 +1,4 @@
-use crate::myriad::{BoxPool, BoxedValue, Value};
+use crate::{BoxPool, BoxedValue, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
 

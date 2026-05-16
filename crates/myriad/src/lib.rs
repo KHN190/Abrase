@@ -5,11 +5,10 @@ pub mod device;
 pub mod devices;
 pub mod interpreter;
 pub mod loader;
-pub mod host;
 pub mod region;
 pub mod builtins;
 
-pub use crate::bytecode::Value;
+pub use polka::Value;
 pub use value::{BoxPool, BoxedValue};
 pub use device::{Device, DeviceTable};
 pub use memory::Heap;

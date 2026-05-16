@@ -10,7 +10,7 @@ pub mod handlers;
 use crate::ast;
 use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module};
 use crate::error::{Error, ErrorCode};
-use crate::myriad::Value;
+use crate::bytecode::Value;
 use std::collections::HashMap;
 
 use self::hir::LayoutCtx;

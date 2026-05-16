@@ -1,8 +1,8 @@
 use super::{VirtualMachine, Value};
 use super::memory::HEAP_BYTES_PER_VALUE;
 use super::value::{BoxPool, BoxedValue};
-use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS};
-use crate::myriad::frame::Frame;
+use polka::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS};
+use crate::frame::Frame;
 
 const MAX_REGISTERS: usize = 1 << 16;
 const MAX_RECURSION_DEPTH: usize = 2048;
@@ -230,7 +230,7 @@ impl VirtualMachine {
             OpCode::Dei(d, port_reg) => {
                 let port_val = self.read_i64(*port_reg)?;
                 let (device_id, port) = split_port(port_val)?;
-                if device_id == crate::bytecode::DISPATCH_ID && port == crate::bytecode::DISPATCH_PORT_LOOKUP {
+                if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
                     let r = self.dispatch_last_result.take()
                         .ok_or("dispatch read without prior lookup (deo to dispatch.lookup port required first)")?;
                     return self.write(*d, Value::from_int(r as i64));
@@ -250,7 +250,7 @@ impl VirtualMachine {
                     }
                     self.halted = true;
                 }
-                if device_id == crate::bytecode::DISPATCH_ID && port == crate::bytecode::DISPATCH_PORT_LOOKUP {
+                if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
                     let key = match v.as_int() {
                         Some(n) if (0..=0xFFFF).contains(&n) => n as u16,
                         _ => return Err(format!("dispatch.lookup: bad key {:?}", v)),
@@ -258,10 +258,10 @@ impl VirtualMachine {
                     self.dispatch_last_result = Some(self.resolve_dispatch(key));
                     return Ok(());
                 }
-                if device_id == crate::bytecode::REGION_ID {
+                if device_id == polka::REGION_ID {
                     return match port {
-                        crate::bytecode::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
-                        crate::bytecode::REGION_PORT_POP  => self.region_pop(),
+                        polka::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
+                        polka::REGION_PORT_POP  => self.region_pop(),
                         _ => Err(format!("region: unknown port {:#x}", port)),
                     };
                 }
@@ -652,7 +652,7 @@ impl VirtualMachine {
     fn validate_module_devices(&self, module: &Module) -> Result<(), String> {
         for id in 0u16..=255 {
             let id = id as u8;
-            if id == crate::bytecode::DISPATCH_ID { continue; }
+            if id == polka::DISPATCH_ID { continue; }
             if module.requires_device(id) && !self.devices.has(id) {
                 return Err(format!("module requires device {:#04x} but it is not installed", id));
             }
@@ -677,7 +677,7 @@ impl VirtualMachine {
                 return h.handler_fn as u16;
             }
         }
-        crate::bytecode::DISPATCH_NO_MATCH
+        polka::DISPATCH_NO_MATCH
     }
 }
 

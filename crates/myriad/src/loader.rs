@@ -1,4 +1,4 @@
-use crate::bytecode::{Chunk, Module, FRAME_REGS};
+use polka::{Chunk, Module, FRAME_REGS};
 
 pub struct LoadedModule {
     pub module: Module,

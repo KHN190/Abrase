@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::rc::Rc;
-use crate::myriad::{Device, Value};
+use crate::{Device, Value};
 
 pub const CONSOLE_ID: u8 = 0x10;
 pub const PORT_STDIN: u8 = 0x00;

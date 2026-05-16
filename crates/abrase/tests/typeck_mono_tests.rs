@@ -1,6 +1,6 @@
 use abrase::ast::*;
 use abrase::compiler::Compiler;
-use abrase::vm::{Value, VirtualMachine};
+use myriad::{Value, VirtualMachine};
 
 fn compile_and_run(ast: &[Decl]) -> Result<Value, String> {
     let mut compiler = Compiler::new();

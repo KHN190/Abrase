@@ -1,0 +1,13 @@
+[package]
+name = "abrase-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "abrase"
+path = "src/main.rs"
+
+[dependencies]
+abrase = { path = "../abrase" }
+myriad = { path = "../myriad" }
+polka  = { path = "../polka" }
