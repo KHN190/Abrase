@@ -104,9 +104,8 @@ fn verify_compile_unsupported_literal_char_errors() {
 }
 
 #[test]
-fn verify_compile_unsupported_literal_string_interp_errors() {
-    let mut compiler = Compiler::new();
-    let ast = vec![Decl::Fn(FnDecl {
+fn verify_compile_string_interp_literal_only_runs() {
+    let result = compile_module_and_run(&vec![Decl::Fn(FnDecl {
         attrs: vec![],
         is_pub: false,
         name: "main".to_string(),
@@ -124,10 +123,50 @@ fn verify_compile_unsupported_literal_string_interp_errors() {
                 span: Span::new(0, 0),
             })),
         },
-    })];
+    })]);
 
-    let result = compiler.compile(&ast);
-    assert!(result.is_err(), "Expected error for unsupported StringInterp literal");
+    assert_eq!(result, Ok(Value::String("hello".to_string())));
+}
+
+#[test]
+fn verify_compile_string_interp_with_int_var_concat() {
+    let main = Decl::Fn(FnDecl {
+        attrs: vec![],
+        is_pub: false,
+        name: "main".to_string(),
+        generics: vec![],
+        params: vec![],
+        effects: vec![],
+        return_type: Some(Type::Named("String".to_string())),
+        where_clause: vec![],
+        body: Block {
+            stmts: vec![Spanned {
+                node: Stmt::Let {
+                    pattern: Spanned {
+                        node: Pattern::Bind("x".to_string()),
+                        span: Span::new(0, 0),
+                    },
+                    is_mut: false,
+                    ty: Some(Type::Named("Int".to_string())),
+                    value: Spanned {
+                        node: Expr::Literal(Literal::Int(5)),
+                        span: Span::new(0, 0),
+                    },
+                },
+                span: Span::new(0, 0),
+            }],
+            ret: Some(Box::new(Spanned {
+                node: Expr::Literal(Literal::StringInterp(vec![
+                    StringPart::Literal("n=".to_string()),
+                    StringPart::Interp(vec!["x".to_string()]),
+                ])),
+                span: Span::new(0, 0),
+            })),
+        },
+    });
+
+    let result = compile_module_and_run(&vec![main]);
+    assert_eq!(result, Ok(Value::String("n=5".to_string())));
 }
 
 #[test]

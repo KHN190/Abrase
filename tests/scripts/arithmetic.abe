@@ -1,3 +1,11 @@
+fn fib(n: Int) -> Int {
+  if n <= 1 {
+    n
+  } else {
+    fib(n - 1) + fib(n - 2)
+  }
+}
+
 fn sum_to(n: Int) -> Int {
   let mut sum = 0;
   let mut i = 1;
@@ -9,5 +17,5 @@ fn sum_to(n: Int) -> Int {
 }
 
 fn main() -> Int {
-  sum_to(10)
+  fib(10) + sum_to(10)
 }

@@ -921,7 +921,6 @@ fn verify_range_non_int_end() {
     assert!(checker.errors[0].message.contains("Range end must be Int"));
 }
 
-
 #[test]
 fn verify_region_expression() {
     let mut checker = Checker::new();
@@ -1690,13 +1689,13 @@ fn verify_type_does_not_implement_show() {
     let mut checker = Checker::new();
 
     checker.register_trait("Show".into(), vec!["to_string".into()]);
-    // Int NOT registered as implementing Show
+    // Widget NOT registered as implementing Show.
 
-    checker.insert_var("x".into(), Type::Int, false, d_span());
+    checker.insert_var("w".into(), Type::Named("Widget".into()), false, d_span());
 
     let parts = vec![
         StringPart::Literal("Value: ".into()),
-        StringPart::Interp(vec!["x".into()]),
+        StringPart::Interp(vec!["w".into()]),
     ];
 
     let result = checker.check_string_interpolation(&parts, d_span());
@@ -1708,25 +1707,25 @@ fn verify_type_does_not_implement_show() {
 
 #[test]
 fn verify_multiple_types_some_implement_show() {
+    // Mix one auto-Show primitive (Int) with a user type that lacks Show.
     let mut checker = Checker::new();
 
     checker.register_trait("Show".into(), vec!["to_string".into()]);
-    checker.register_impl("Int", "Show");
-    // String does NOT implement Show
+    // Widget intentionally NOT registered.
 
     checker.insert_var("x".into(), Type::Int, false, d_span());
-    checker.insert_var("s".into(), Type::String, false, d_span());
+    checker.insert_var("w".into(), Type::Named("Widget".into()), false, d_span());
 
     let parts = vec![
         StringPart::Interp(vec!["x".into()]),
-        StringPart::Interp(vec!["s".into()]),
+        StringPart::Interp(vec!["w".into()]),
     ];
 
     let result = checker.check_string_interpolation(&parts, d_span());
     assert!(!result);
     assert!(checker.errors.len() > 0);
-    // Should report error for s not implementing Show
-    assert!(checker.errors.iter().any(|e| e.message.contains("s") || e.message.contains("String")));
+    // Should report error for w not implementing Show
+    assert!(checker.errors.iter().any(|e| e.message.contains("w") || e.message.contains("Widget")));
 }
 
 #[test]
@@ -1963,19 +1962,20 @@ fn verify_complex_interpolation_string() {
 
 #[test]
 fn verify_mixed_errors_in_interpolation() {
+    // Primitives auto-Show; a user type without Show plus an undefined name
+    // give two independent errors that should both be reported.
     let mut checker = Checker::new();
 
     checker.register_trait("Show".into(), vec!["to_string".into()]);
-    checker.register_impl("Int", "Show");
-    // String does NOT implement Show
+    // Widget intentionally NOT registered.
 
     checker.insert_var("id".into(), Type::Int, false, d_span());
-    checker.insert_var("name".into(), Type::String, false, d_span());
+    checker.insert_var("w".into(), Type::Named("Widget".into()), false, d_span());
     // undefined is not in scope
 
     let parts = vec![
-        StringPart::Interp(vec!["id".into()]),           // OK
-        StringPart::Interp(vec!["name".into()]),         // ERROR: String doesn't implement Show
+        StringPart::Interp(vec!["id".into()]),           // OK (Int auto-Show)
+        StringPart::Interp(vec!["w".into()]),            // ERROR: Widget doesn't implement Show
         StringPart::Interp(vec!["undefined".into()]),    // ERROR: not in scope
     ];
 
@@ -2010,6 +2010,41 @@ fn verify_only_literal_parts() {
 
     // No interpolations, should be valid
     assert!(result);
+    assert_eq!(checker.errors.len(), 0);
+}
+
+#[test]
+fn verify_infer_expr_validates_string_interp_root() {
+    // The expression-level inference path (used for fn bodies) must report
+    // unknown roots in interpolations — not just the pattern-level inference.
+    let mut checker = Checker::new();
+    checker.register_trait("Show".into(), vec!["to_string".into()]);
+    checker.register_impl("Int", "Show");
+
+    let lit = ast::Literal::StringInterp(vec![
+        StringPart::Literal("v=".into()),
+        StringPart::Interp(vec!["missing".into()]),
+    ]);
+    let ty = checker.infer_expr(&sp(ast::Expr::Literal(lit)));
+
+    assert_eq!(ty, Type::String);
+    assert!(checker.errors.len() > 0, "expected error for undefined `missing`");
+}
+
+#[test]
+fn verify_infer_expr_accepts_string_interp_with_in_scope_var() {
+    let mut checker = Checker::new();
+    checker.register_trait("Show".into(), vec!["to_string".into()]);
+    checker.register_impl("Int", "Show");
+    checker.insert_var("x".into(), Type::Int, false, d_span());
+
+    let lit = ast::Literal::StringInterp(vec![
+        StringPart::Literal("x=".into()),
+        StringPart::Interp(vec!["x".into()]),
+    ]);
+    let ty = checker.infer_expr(&sp(ast::Expr::Literal(lit)));
+
+    assert_eq!(ty, Type::String);
     assert_eq!(checker.errors.len(), 0);
 }
 
@@ -2051,15 +2086,16 @@ fn verify_field_type_from_record_body() {
 
 #[test]
 fn verify_field_type_mismatch_no_show() {
+    // Path resolves to a user-defined field type that does not implement Show.
     let mut checker = Checker::new();
 
     checker.register_trait("Show".into(), vec!["to_string".into()]);
-    // Only register String as implementing Show, NOT Int
+    // Widget intentionally NOT registered.
 
     let person_type = TypeBody::Record(vec![
         RecordField {
-            name: "id".into(),
-            ty: AstType::Named("Int".into()),
+            name: "badge".into(),
+            ty: AstType::Named("Widget".into()),
             is_pub: false,
         },
     ]);
@@ -2067,14 +2103,14 @@ fn verify_field_type_mismatch_no_show() {
 
     checker.insert_var("person".into(), Type::Named("Person".into()), false, d_span());
 
-    // Access field {person.id} - resolves to Int which doesn't implement Show
-    let parts = vec![StringPart::Interp(vec!["person".into(), "id".into()])];
+    // Access field {person.badge} - resolves to Widget which doesn't implement Show
+    let parts = vec![StringPart::Interp(vec!["person".into(), "badge".into()])];
 
     let result = checker.check_string_interpolation(&parts, d_span());
-    assert!(!result, "Should fail because Int doesn't implement Show");
+    assert!(!result, "Should fail because Widget doesn't implement Show");
     assert!(checker.errors.len() > 0);
     assert!(checker.errors[0].message.contains("Show") ||
-            checker.errors[0].message.contains("Int"));
+            checker.errors[0].message.contains("Widget"));
 }
 
 #[test]
@@ -2369,21 +2405,22 @@ fn verify_mutable_reference_auto_deref() {
 
 #[test]
 fn verify_reference_to_type_without_show() {
+    // &Widget should fail (auto-deref still resolves to a non-Show user type).
     let mut checker = Checker::new();
 
     checker.register_trait("Show".into(), vec!["to_string".into()]);
-    // Int does NOT implement Show
+    // Widget intentionally NOT registered.
 
-    let ref_int = Type::Reference {
+    let ref_widget = Type::Reference {
         is_mut: false,
-        inner: Box::new(Type::Int),
+        inner: Box::new(Type::Named("Widget".into())),
     };
-    checker.insert_var("ref_x".into(), ref_int, false, d_span());
+    checker.insert_var("ref_w".into(), ref_widget, false, d_span());
 
-    let parts = vec![StringPart::Interp(vec!["ref_x".into()])];
+    let parts = vec![StringPart::Interp(vec!["ref_w".into()])];
 
     let result = checker.check_string_interpolation(&parts, d_span());
-    assert!(!result, "Should fail because Int doesn't implement Show");
+    assert!(!result, "Should fail because Widget doesn't implement Show");
     assert!(checker.errors.len() > 0);
 }
 
@@ -2507,7 +2544,6 @@ fn verify_scope_and_field_combined() {
 // --- typeck_scope_tests (typeck_expr_tests) ---
 
 
-
 #[test]
 fn verify_region_with_label() {
     let mut checker = Checker::new();
@@ -2629,7 +2665,6 @@ fn verify_handle_arm_type_mismatch() {
     assert!(checker.errors.iter().any(|e| e.message.contains("Handle arm types do not match")));
 }
 
-
 #[test]
 fn verify_region_with_statements() {
     let mut checker = Checker::new();
@@ -2667,7 +2702,6 @@ fn verify_handle_without_arms() {
     assert_eq!(ty, Type::Unknown);
     assert!(checker.errors.is_empty());
 }
-
 
 #[test]
 fn verify_region_effect_isolation() {
@@ -2743,9 +2777,6 @@ fn verify_question_on_non_result_errors() {
     assert_eq!(checker.errors.len(), 1);
     assert!(checker.errors[0].message.contains("'?' operator requires"));
 }
-
-
-
 
 #[test]
 fn verify_loop_break_with_value_returns_that_type() {
@@ -2975,8 +3006,6 @@ fn verify_generic_function_with_nested_generics() {
     assert_eq!(ty, Type::Tuple(vec![Type::Bool, Type::Bool]));
     assert!(checker.errors.is_empty());
 }
-
-// ── Gap tests ─────────────────────────────────────────────────────────────────
 
 #[test]
 fn verify_move_closure_is_valid() {

@@ -1,4 +1,7 @@
 use crate::vm::Value;
+use std::rc::Rc;
+
+pub type NativeFn = Rc<dyn Fn(&[Value]) -> Result<Value, String>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Register(pub u8);
@@ -65,11 +68,36 @@ pub enum OpCode {
 }
 
 #[derive(Clone)]
-pub struct Chunk {
+pub struct BytecodeChunk {
     pub code: Vec<OpCode>,
     pub constants: Vec<Value>,
     pub reg_count: usize,
     pub param_count: usize,
+}
+
+#[derive(Clone)]
+pub struct NativeChunk {
+    pub func: NativeFn,
+    pub param_count: usize,
+}
+
+#[derive(Clone)]
+pub enum Chunk {
+    Bytecode(BytecodeChunk),
+    Native(NativeChunk),
+}
+
+impl Chunk {
+    pub fn param_count(&self) -> usize {
+        match self {
+            Chunk::Bytecode(b) => b.param_count,
+            Chunk::Native(n) => n.param_count,
+        }
+    }
+
+    pub fn as_bytecode(&self) -> Option<&BytecodeChunk> {
+        if let Chunk::Bytecode(b) = self { Some(b) } else { None }
+    }
 }
 
 pub struct Module {

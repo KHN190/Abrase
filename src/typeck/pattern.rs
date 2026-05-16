@@ -163,14 +163,15 @@ impl Checker {
             t => t,
         };
 
+        if matches!(
+            check_type,
+            Type::Int | Type::Float | Type::Bool | Type::Char | Type::String | Type::Unit
+        ) {
+            return true;
+        }
+
         let type_name = match check_type {
             Type::Named(n) => n.clone(),
-            Type::Int => "Int".into(),
-            Type::Float => "Float".into(),
-            Type::Bool => "Bool".into(),
-            Type::Char => "Char".into(),
-            Type::String => "String".into(),
-            Type::Unit => "Unit".into(),
             _ => return false,
         };
 

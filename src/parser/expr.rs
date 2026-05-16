@@ -38,6 +38,7 @@ impl<'a> Parser<'a> {
             Token::Int(v) => Expr::Literal(Literal::Int(*v)),
             Token::Float(v) => Expr::Literal(Literal::Float(*v)),
             Token::String(v) => Expr::Literal(Literal::String(v.clone())),
+            Token::StringInterp(parts) => Expr::Literal(Literal::StringInterp(parts.clone())),
             Token::True => Expr::Literal(Literal::Bool(true)),
             Token::False => Expr::Literal(Literal::Bool(false)),
             Token::Bang | Token::Minus | Token::Ampersand | Token::Asterisk => {

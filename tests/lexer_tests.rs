@@ -1,3 +1,4 @@
+use abrase::ast::StringPart;
 use abrase::lexer::Lexer;
 use abrase::lexer::Token;
 
@@ -54,6 +55,43 @@ mod tests {
             let (token, _span) = lexer.next_token();
             assert_eq!(token, t);
         }
+    }
+
+    #[test]
+    fn test_lexer_string_interp_single_ident() {
+        // "answer: {x}" tokenises into a StringInterp with [Literal, Interp].
+        let mut lexer = Lexer::new("\"answer: {x}\"");
+        let (tok, _) = lexer.next_token();
+        assert_eq!(
+            tok,
+            Token::StringInterp(vec![
+                StringPart::Literal("answer: ".into()),
+                StringPart::Interp(vec!["x".into()]),
+            ]),
+        );
+    }
+
+    #[test]
+    fn test_lexer_string_interp_dotted_path() {
+        // `{user.name}` produces an Interp with a multi-segment path.
+        let mut lexer = Lexer::new("\"hi {user.name}!\"");
+        let (tok, _) = lexer.next_token();
+        assert_eq!(
+            tok,
+            Token::StringInterp(vec![
+                StringPart::Literal("hi ".into()),
+                StringPart::Interp(vec!["user".into(), "name".into()]),
+                StringPart::Literal("!".into()),
+            ]),
+        );
+    }
+
+    #[test]
+    fn test_lexer_plain_string_stays_string() {
+        // A literal with no `{...}` segments must NOT become a StringInterp.
+        let mut lexer = Lexer::new("\"plain\"");
+        let (tok, _) = lexer.next_token();
+        assert_eq!(tok, Token::String("plain".into()));
     }
 
     #[test]

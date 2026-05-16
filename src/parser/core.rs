@@ -99,7 +99,7 @@ impl<'a> Parser<'a> {
             | Token::Continue | Token::Throw | Token::LBrace
             | Token::Region | Token::Handle | Token::Resume
             | Token::Ident(_) | Token::Int(_) | Token::Float(_)
-            | Token::String(_) | Token::True | Token::False
+            | Token::String(_) | Token::StringInterp(_) | Token::True | Token::False
             | Token::Bang | Token::Minus | Token::Ampersand | Token::Asterisk | Token::LParen
         )
     }

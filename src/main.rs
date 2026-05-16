@@ -124,12 +124,19 @@ fn cmd_disasm(source: &str) -> ExitCode {
     };
     for (i, chunk) in module.functions.iter().enumerate() {
         let marker = if i == module.entry { " <entry>" } else { "" };
-        println!("fn #{}{} (regs={}, consts={})", i, marker, chunk.reg_count, chunk.constants.len());
-        for (j, c) in chunk.constants.iter().enumerate() {
-            println!("  const[{}] = {:?}", j, c);
-        }
-        for (pc, op) in chunk.code.iter().enumerate() {
-            println!("  {:>4}: {:?}", pc, op);
+        match chunk {
+            abrase::bytecode::Chunk::Bytecode(bc) => {
+                println!("fn #{}{} (regs={}, consts={})", i, marker, bc.reg_count, bc.constants.len());
+                for (j, c) in bc.constants.iter().enumerate() {
+                    println!("  const[{}] = {:?}", j, c);
+                }
+                for (pc, op) in bc.code.iter().enumerate() {
+                    println!("  {:>4}: {:?}", pc, op);
+                }
+            }
+            abrase::bytecode::Chunk::Native(n) => {
+                println!("fn #{}{} <native, params={}>", i, marker, n.param_count);
+            }
         }
     }
     ExitCode::SUCCESS

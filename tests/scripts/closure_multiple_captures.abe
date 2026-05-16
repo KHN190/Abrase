@@ -1,6 +1,0 @@
-fn main() -> Int {
-  let a = 1;
-  let b = 2;
-  let f = |c| a + b + c;
-  f(3)
-}

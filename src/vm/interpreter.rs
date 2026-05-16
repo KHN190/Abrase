@@ -1,5 +1,5 @@
 use super::{VirtualMachine, Value};
-use crate::bytecode::{Chunk, OpCode, Register, Module};
+use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module};
 use crate::vm::frame::Frame;
 
 const MAX_REGISTERS: usize = 1 << 16;
@@ -27,9 +27,14 @@ impl VirtualMachine {
         }
 
         loop {
-            let current_chunk = &module.functions[self.current_func];
+            let bc = match &module.functions[self.current_func] {
+                Chunk::Bytecode(b) => b,
+                Chunk::Native(_) => return Err(format!(
+                    "entry fn {} is native; cannot start execution there", self.current_func
+                )),
+            };
 
-            if self.pc >= current_chunk.code.len() {
+            if self.pc >= bc.code.len() {
                 if let Some(frame) = self.frames.pop() {
                     let return_val = self.registers[self.base_reg].clone()
                         .ok_or("Return register is empty")?;
@@ -44,7 +49,7 @@ impl VirtualMachine {
                 }
             }
 
-            let opcode = current_chunk.code[self.pc].clone();
+            let opcode = bc.code[self.pc].clone();
             self.pc += 1;
             self.exec(module, &opcode)?;
         }
@@ -100,12 +105,12 @@ impl VirtualMachine {
             OpCode::Ret(reg) => self.do_ret(*reg),
 
             OpCode::PushConst(reg, pool_idx) => {
-                let chunk = &module.functions[self.current_func];
+                let bc = expect_bytecode(module, self.current_func)?;
                 let idx = *pool_idx as usize;
-                if idx >= chunk.constants.len() {
+                if idx >= bc.constants.len() {
                     return Err("Constant index out of bounds".to_string());
                 }
-                self.write(*reg, chunk.constants[idx].clone())
+                self.write(*reg, bc.constants[idx].clone())
             }
             OpCode::Copy(d, s) => {
                 let v = self.read(*s)?;
@@ -167,10 +172,6 @@ impl VirtualMachine {
                 Err("device I/O not yet implemented".to_string())
             }
             OpCode::Handle(dest, fn_id) => {
-                // Install a handler frame pointing at the given function. The
-                // dispatch wiring (which effect operation goes to which arm) is
-                // handled by codegen via direct calls; this opcode just records
-                // that a handler is currently active so `Resume` can find it.
                 let _ = dest;
                 self.handlers.push(super::HandlerFrame {
                     handler_fn: *fn_id as usize,
@@ -180,9 +181,8 @@ impl VirtualMachine {
                 Ok(())
             }
             OpCode::Resume(reg) => {
-                // Single-shot for now: pop the most-recent handler and return
-                // its value as the handler-frame's result. The continuation
-                // value lives in `reg` (the operation's return value).
+                // TODO: Single-shot for now. pop the most-recent handler and return.
+                // The continuation value lives in `reg` (the operation's return value).
                 let frame = self.handlers.pop()
                     .ok_or("Resume outside an active handler frame")?;
                 let val = self.read(*reg)?;
@@ -198,8 +198,8 @@ impl VirtualMachine {
         if fn_id >= module.functions.len() {
             return Err(format!("call: unknown fn_id {}", fn_id));
         }
-        let caller_chunk = &module.functions[self.current_func];
-        let caller_reg_count = caller_chunk.reg_count;
+        let caller_bc = expect_bytecode(module, self.current_func)?;
+        let caller_reg_count = caller_bc.reg_count;
         let dest_abs = self.base_reg + dest.to_usize();
         let new_base = self.base_reg + caller_reg_count;
         let needed = new_base + 256;
@@ -212,6 +212,20 @@ impl VirtualMachine {
         if needed > self.registers.len() {
             self.registers.resize(needed, None);
         }
+
+        if let Chunk::Native(n) = &module.functions[fn_id] {
+            let mut args: Vec<Value> = Vec::with_capacity(n.param_count);
+            for i in 0..n.param_count {
+                let slot = new_base + i;
+                let v = self.registers[slot].clone()
+                    .ok_or_else(|| format!("native call: arg {} (r{}) is empty", i, i))?;
+                args.push(v);
+            }
+            let result = (n.func)(&args)?;
+            self.registers[dest_abs] = Some(result);
+            return Ok(());
+        }
+
         if self.frames.len() >= MAX_RECURSION_DEPTH {
             return Err(format!(
                 "Stack overflow: recursion depth {} exceeds limit {}",
@@ -327,5 +341,12 @@ fn is_falsy(val: &Value) -> bool {
         Value::Int(i) => *i == 0,
         Value::Unit => true,
         _ => false,
+    }
+}
+
+fn expect_bytecode(module: &Module, fn_id: usize) -> Result<&BytecodeChunk, String> {
+    match &module.functions[fn_id] {
+        Chunk::Bytecode(b) => Ok(b),
+        Chunk::Native(_) => Err(format!("expected bytecode chunk at fn {}, found native", fn_id)),
     }
 }

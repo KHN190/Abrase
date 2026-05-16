@@ -1,10 +1,31 @@
-// Leaf-ish expressions: literal, identifier, record literal, variant
-// constructor, array literal, indexing, and field access.
-
 use crate::ast;
+use crate::ast::{Span, Spanned};
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
 use crate::vm::Value;
+
+impl Compiler {
+    fn emit_builtin_call(
+        &mut self,
+        fn_id: usize,
+        arg_srcs: &[Register],
+    ) -> Result<Register, String> {
+        if fn_id > u16::MAX as usize {
+            return Err(format!("Function id {} exceeds u16 range", fn_id));
+        }
+        for (i, src) in arg_srcs.iter().enumerate() {
+            if i > u8::MAX as usize {
+                return Err("Too many arguments (>255)".to_string());
+            }
+            let pos = self.code.len();
+            self.emit(OpCode::Copy(Register(0), *src));
+            self.pending_arg_patches.push((pos, i as u8));
+        }
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Call(dest, fn_id as u16));
+        Ok(dest)
+    }
+}
 
 impl Compiler {
     pub(in crate::compiler) fn compile_literal(
@@ -23,6 +44,72 @@ impl Compiler {
         let idx = self.add_constant(val)?;
         self.emit(OpCode::PushConst(reg, idx));
         Ok(reg)
+    }
+
+    pub(in crate::compiler) fn compile_string_interp(
+        &mut self,
+        parts: &[ast::StringPart],
+        span: Span,
+    ) -> Result<Register, String> {
+        if parts.is_empty() {
+            let reg = self.alloc_register()?;
+            let idx = self.add_constant(Value::String(String::new()))?;
+            self.emit(OpCode::PushConst(reg, idx));
+            return Ok(reg);
+        }
+
+        let concat_id = self.concat_fn_id
+            .ok_or_else(|| "internal: __concat builtin not registered".to_string())?;
+
+        let mut acc: Option<Register> = None;
+        for part in parts {
+            let part_reg = self.compile_string_part(part, span)?;
+            acc = Some(match acc {
+                None => part_reg,
+                Some(prev) => self.emit_builtin_call(concat_id, &[prev, part_reg])?,
+            });
+        }
+        Ok(acc.unwrap())
+    }
+
+    fn compile_string_part(
+        &mut self,
+        part: &ast::StringPart,
+        span: Span,
+    ) -> Result<Register, String> {
+        match part {
+            ast::StringPart::Literal(s) => {
+                let reg = self.alloc_register()?;
+                let idx = self.add_constant(Value::String(s.clone()))?;
+                self.emit(OpCode::PushConst(reg, idx));
+                Ok(reg)
+            }
+            ast::StringPart::Interp(path) => {
+                if path.is_empty() {
+                    let reg = self.alloc_register()?;
+                    let idx = self.add_constant(Value::String(String::new()))?;
+                    self.emit(OpCode::PushConst(reg, idx));
+                    return Ok(reg);
+                }
+                let mut expr = Spanned {
+                    node: ast::Expr::Identifier(path[0].clone()),
+                    span,
+                };
+                for field in &path[1..] {
+                    expr = Spanned {
+                        node: ast::Expr::FieldAccess {
+                            base: Box::new(expr),
+                            field: field.clone(),
+                        },
+                        span,
+                    };
+                }
+                let val_reg = self.compile_expr(&expr)?;
+                let to_str_id = self.to_str_fn_id
+                    .ok_or_else(|| "internal: __to_str builtin not registered".to_string())?;
+                self.emit_builtin_call(to_str_id, &[val_reg])
+            }
+        }
     }
 
     pub(in crate::compiler) fn compile_identifier(

@@ -1,9 +1,0 @@
-fn use_string(s: String) -> Int {
-  1
-}
-
-fn main() -> Int {
-  let s = "hi";
-  let _ = use_string(s);
-  use_string(s)
-}

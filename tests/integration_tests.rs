@@ -41,17 +41,11 @@ fn typeck_file(path: &str) -> Vec<String> {
 }
 
 #[test]
-fn test_fibonacci() {
-    let v = run_file("tests/scripts/fibonacci.abe")
+fn arithmetic_recursion_and_loop() {
+    // fib(10) = 55 via recursion; sum_to(10) = 55 via mut + while; total = 110.
+    let v = run_file("tests/scripts/arithmetic.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(55));
-}
-
-#[test]
-fn test_sum_loop() {
-    let v = run_file("tests/scripts/sum_loop.abe")
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(55));
+    assert_eq!(v, Value::Int(110));
 }
 
 #[test]
@@ -78,57 +72,19 @@ fn test_memory() {
 }
 
 #[test]
-fn test_exn_ok_path() {
-    // <exn> Int return + `?` operator + match Ok/Err on the lowered Result
-    let v = run_file("tests/scripts/exn_div.abe")
+fn exceptions_ok_and_err_paths() {
+    // pipeline(20,4) hits `?` happy path -> Ok(6); pipeline(10,0) throws -> Err -> 1.
+    let v = run_file("tests/scripts/exceptions.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(6));
+    assert_eq!(v, Value::Int(7));
 }
 
 #[test]
-fn test_exn_err_path() {
-    // `throw` short-circuits up to the caller, who matches the Err branch
-    let v = run_file("tests/scripts/exn_div_zero.abe")
+fn closures_no_single_and_multi_capture() {
+    // no_cap(7)=14 + one_cap(3)=8 (captures x=5) + multi_cap(3)=6 (captures a=1,b=2)
+    let v = run_file("tests/scripts/closures.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(1));
-}
-
-#[test]
-fn neg_double_move_string_typeck_errors() {
-    let errs = typeck_file("tests/scripts/bad_double_move.abe");
-    assert!(errs.iter().any(|m| m.contains("moved")),
-        "expected 'moved' error from double-move on String, got: {:?}", errs);
-}
-
-#[test]
-fn neg_use_after_move_into_call_typeck_errors() {
-    let errs = typeck_file("tests/scripts/bad_move_then_use.abe");
-    assert!(errs.iter().any(|m| m.contains("moved")),
-        "expected 'moved' error from use-after-move into call, got: {:?}", errs);
-}
-
-#[test]
-fn neg_undefined_ident_typeck_errors() {
-    // Replaces an earlier test that asserted `DivByZero` (a real variant case)
-    // was undefined; with the get_var constructor fallback that is no longer
-    // an error. Use a truly undefined name instead.
-    let errs = typeck_file("tests/scripts/bad_bare_variant.abe");
-    assert!(errs.iter().any(|m| m.contains("Undefined variable") && m.contains("NoSuchName")),
-        "expected 'Undefined variable: NoSuchName', got: {:?}", errs);
-}
-
-#[test]
-fn neg_unknown_record_field_typeck_errors() {
-    let errs = typeck_file("tests/scripts/bad_unknown_field.abe");
-    assert!(!errs.is_empty(),
-        "expected error for unknown record field, got no errors");
-}
-
-#[test]
-fn neg_array_index_wrong_type_typeck_errors() {
-    let errs = typeck_file("tests/scripts/bad_array_index_type.abe");
-    assert!(!errs.is_empty(),
-        "expected error for non-Int array index, got no errors");
+    assert_eq!(v, Value::Int(28));
 }
 
 #[test]
@@ -139,17 +95,46 @@ fn effect_log_runs() {
 }
 
 #[test]
-fn generator_typechecks() {
-    let errs = typeck_file("tests/scripts/generator.abe");
+fn effect_handlers_typecheck() {
+    // generator (single-shot resume) and backtracking (multi-shot resume) handlers.
+    let errs = typeck_file("tests/scripts/effect_handlers.abe");
     assert!(errs.is_empty(),
-        "expected no typeck errors for generator pattern, got: {:?}", errs);
+        "expected no typeck errors for effect handler patterns, got: {:?}", errs);
 }
 
 #[test]
-fn backtracking_typechecks() {
-    let errs = typeck_file("tests/scripts/backtracking.abe");
-    assert!(errs.is_empty(),
-        "expected no typeck errors for backtracking pattern, got: {:?}", errs);
+fn traits_and_generics() {
+    // id<T> specialized at Bool and Int call sites; (5).double() via trait impl = 10.
+    // Result: 42 + 10 = 52.
+    let v = run_file("tests/scripts/traits_generics.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::Int(52));
+}
+
+#[test]
+fn neg_move_errors() {
+    // Asserts both double-move (let t=s; let u=s) and use-after-move-into-call
+    // produce "moved" errors. Expect at least 2 distinct errors.
+    let errs = typeck_file("tests/scripts/bad_moves.abe");
+    let moved_count = errs.iter().filter(|m| m.contains("moved")).count();
+    assert!(moved_count >= 2,
+        "expected >=2 'moved' errors (double-move and use-after-move), got {}: {:?}",
+        moved_count, errs);
+}
+
+#[test]
+fn neg_undefined_ident_typeck_errors() {
+    let errs = typeck_file("tests/scripts/bad_bare_variant.abe");
+    assert!(errs.iter().any(|m| m.contains("Undefined variable") && m.contains("NoSuchName")),
+        "expected 'Undefined variable: NoSuchName', got: {:?}", errs);
+}
+
+#[test]
+fn neg_record_and_array_errors() {
+    // Combines unknown record field (`p.z`) and non-Int array index (`arr[true]`).
+    let errs = typeck_file("tests/scripts/bad_records_arrays.abe");
+    assert!(errs.len() >= 2,
+        "expected >=2 errors (unknown field + bad index type), got: {:?}", errs);
 }
 
 #[test]
@@ -160,40 +145,8 @@ fn neg_borrow_across_effect_typeck_errors() {
 }
 
 #[test]
-fn closure_basic_capture_runs() {
-    // |y| x + y captures x from the surrounding fn. f(3) with x=5 returns 8.
-    let v = run_file("tests/scripts/closure_basic.abe")
+fn string_interp_with_records_recursion_and_closures() {
+    let v = run_file("tests/scripts/interp.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(8));
-}
-
-#[test]
-fn closure_multiple_captures_runs() {
-    // Captures a and b at env slots 0 and 1; f(3) returns 1 + 2 + 3 = 6.
-    let v = run_file("tests/scripts/closure_multiple_captures.abe")
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(6));
-}
-
-#[test]
-fn closure_no_capture_runs() {
-    // Closure with empty environment still pack-allocs (n=1 sentinel slot)
-    // and is called via the same direct-call path. f(7) returns 14.
-    let v = run_file("tests/scripts/closure_no_capture.abe")
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(14));
-}
-
-#[test]
-fn generic_inference_specializes_per_call_site() {
-    let v = run_file("tests/scripts/generic_inference.abe")
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(42));
-}
-
-#[test]
-fn trait_dispatch_static_compiles_and_runs() {
-    let v = run_file("tests/scripts/trait_dispatch.abe")
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::Int(10));
+    assert_eq!(v, Value::String("user=[Alice:30] total=10 next=11".to_string()));
 }

@@ -1,4 +1,17 @@
+effect gen { fn yield(v: Int) -> Unit }
 effect choose { fn pick() -> Bool }
+
+fn produce() -> <gen> Unit {
+  gen.yield(10);
+  gen.yield(20)
+}
+
+fn sum_yields() -> Int {
+  handle produce() {
+    return done   => 0,
+    gen.yield v   => v + resume(())
+  }
+}
 
 fn search() -> <choose> Int {
   let a = if choose.pick() { 1 } else { 2 };
@@ -14,5 +27,5 @@ fn count_match() -> Int {
 }
 
 fn main() -> Int {
-  count_match()
+  sum_yields() + count_match()
 }

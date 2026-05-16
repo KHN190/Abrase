@@ -1,5 +1,8 @@
-use abrase::bytecode::{Chunk, OpCode, Register};
+use abrase::bytecode::{BytecodeChunk, Chunk, OpCode, Register};
 use abrase::vm::Value;
+
+fn bc(b: BytecodeChunk) -> Chunk { Chunk::Bytecode(b) }
+fn as_bc(c: &Chunk) -> &BytecodeChunk { c.as_bytecode().expect("expected bytecode chunk") }
 
 #[test]
 fn test_register_roundtrip() {
@@ -21,7 +24,7 @@ fn test_register_max() {
 
 #[test]
 fn test_chunk_construction() {
-    let chunk = Chunk {
+    let chunk = bc(BytecodeChunk {
         code: vec![
             OpCode::PushConst(Register(0), 0),
             OpCode::Ret(Register(0)),
@@ -29,21 +32,23 @@ fn test_chunk_construction() {
         constants: vec![Value::Int(42)],
         reg_count: 1,
         param_count: 0,
-    };
-    assert_eq!(chunk.code.len(), 2);
-    assert_eq!(chunk.constants.len(), 1);
+    });
+    let b = as_bc(&chunk);
+    assert_eq!(b.code.len(), 2);
+    assert_eq!(b.constants.len(), 1);
 }
 
 #[test]
 fn test_chunk_empty() {
-    let chunk = Chunk {
+    let chunk = bc(BytecodeChunk {
         code: vec![],
         constants: vec![],
         reg_count: 0,
         param_count: 0,
-    };
-    assert!(chunk.code.is_empty());
-    assert!(chunk.constants.is_empty());
+    });
+    let b = as_bc(&chunk);
+    assert!(b.code.is_empty());
+    assert!(b.constants.is_empty());
 }
 
 #[test]
@@ -85,13 +90,13 @@ fn test_call_opcode() {
 
 #[test]
 fn test_chunk_reg_count() {
-    let chunk = Chunk {
+    let chunk = bc(BytecodeChunk {
         code: vec![OpCode::PushConst(Register(0), 0)],
         constants: vec![Value::Int(10)],
         reg_count: 42,
         param_count: 0,
-    };
-    assert_eq!(chunk.reg_count, 42);
+    });
+    assert_eq!(as_bc(&chunk).reg_count, 42);
 }
 
 #[test]
@@ -198,7 +203,7 @@ fn test_lea_opcode() {
 
 #[test]
 fn test_memory_opcodes_in_chunk() {
-    let chunk = Chunk {
+    let chunk = bc(BytecodeChunk {
         code: vec![
             OpCode::PushConst(Register(0), 0),
             OpCode::Alloc(Register(1), 16),
@@ -210,14 +215,15 @@ fn test_memory_opcodes_in_chunk() {
         constants: vec![Value::Int(42), Value::Int(100)],
         reg_count: 4,
         param_count: 0,
-    };
-    assert_eq!(chunk.code.len(), 6);
+    });
+    let b = as_bc(&chunk);
+    assert_eq!(b.code.len(), 6);
 
-    match &chunk.code[1] {
+    match &b.code[1] {
         OpCode::Alloc(_, size) => assert_eq!(*size, 16),
         _ => panic!("Expected Alloc opcode"),
     }
-    match &chunk.code[3] {
+    match &b.code[3] {
         OpCode::St(_, _, offset) => assert_eq!(*offset, 0),
         _ => panic!("Expected St opcode"),
     }

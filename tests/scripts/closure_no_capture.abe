@@ -1,4 +1,0 @@
-fn main() -> Int {
-  let f = |x| x + x;
-  f(7)
-}

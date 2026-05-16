@@ -25,6 +25,7 @@ impl Compiler {
                 "Compilation aborted: parser error was not recovered; fix parser errors first"
                     .to_string()
             ),
+            ast::Expr::Literal(ast::Literal::StringInterp(parts)) => self.compile_string_interp(parts, expr.span),
             ast::Expr::Literal(lit)            => self.compile_literal(lit),
             ast::Expr::Identifier(name)        => self.compile_identifier(name),
             ast::Expr::Unary { op, right }     => self.compile_unary(op, right),
@@ -78,9 +79,6 @@ impl Compiler {
                     if let Some(t) = inferred_ty {
                         self.var_types.insert(name.clone(), t);
                     }
-                    // If the RHS was a closure literal, remember which lifted
-                    // fn this binding refers to so call sites `name(args)`
-                    // can emit a direct call.
                     if let ast::Expr::Closure { .. } = &value.node {
                         if let Some(info) = self.closure_by_span.get(&value.span).cloned() {
                             self.closure_by_var.insert(name.clone(), info);

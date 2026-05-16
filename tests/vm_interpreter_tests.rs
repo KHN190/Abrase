@@ -1,11 +1,14 @@
-use abrase::bytecode::{Chunk, OpCode, Register, Module};
+use abrase::bytecode::{BytecodeChunk, Chunk, NativeChunk, OpCode, Register, Module};
 use abrase::vm::{Value, VirtualMachine};
+use std::rc::Rc;
 
 fn r(n: u8) -> Register { Register(n) }
 
 fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
     let reg_count = 256;
-    VirtualMachine::new().run(&Chunk { code: ops, constants, reg_count, param_count: 0 })
+    VirtualMachine::new().run(&Chunk::Bytecode(BytecodeChunk {
+        code: ops, constants, reg_count, param_count: 0,
+    }))
 }
 
 fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, usize)>) -> Result<Value, String> {
@@ -13,7 +16,7 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
     let chunks: Vec<Chunk> = functions
         .into_iter()
         .map(|(code, constants, reg_count, param_count)| {
-            Chunk { code, constants, reg_count, param_count }
+            Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count })
         })
         .collect();
     let module = Module { functions: chunks, entry: num_functions - 1 };
@@ -815,6 +818,65 @@ fn test_store_multiple_fields() {
         vec![Value::Int(10), Value::Int(20)],
     );
     assert_eq!(result, Ok(Value::Int(30)));
+}
+
+#[test]
+fn test_call_dispatches_to_native_chunk() {
+    let caller = BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Copy(r(3), r(0)),
+            OpCode::Copy(r(4), r(1)),
+            OpCode::Call(r(2), 1),
+            OpCode::Ret(r(2)),
+        ],
+        constants: vec![Value::Int(7), Value::Int(35)],
+        reg_count: 3,
+        param_count: 0,
+    };
+    let native = NativeChunk {
+        param_count: 2,
+        func: Rc::new(|args: &[Value]| {
+            let (a, b) = match (&args[0], &args[1]) {
+                (Value::Int(a), Value::Int(b)) => (*a, *b),
+                _ => return Err("expected ints".into()),
+            };
+            Ok(Value::Int(a + b))
+        }),
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
+        entry: 0,
+    };
+    let result = VirtualMachine::new().run_module(&module);
+    assert_eq!(result, Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_native_chunk_propagates_error() {
+    let caller = BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Copy(r(2), r(0)),
+            OpCode::Call(r(1), 1),
+            OpCode::Ret(r(1)),
+        ],
+        constants: vec![Value::Int(0)],
+        reg_count: 2,
+        param_count: 0,
+    };
+    let native = NativeChunk {
+        param_count: 1,
+        func: Rc::new(|_args: &[Value]| Err("boom".to_string())),
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
+        entry: 0,
+    };
+    let result = VirtualMachine::new().run_module(&module);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("boom"));
 }
 
 

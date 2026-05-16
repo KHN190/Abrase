@@ -8,10 +8,11 @@ pub mod effects;
 pub mod handlers;
 
 use crate::ast;
-use crate::bytecode::{Chunk, OpCode, Register, Module};
+use crate::bytecode::{BytecodeChunk, Chunk, NativeChunk, OpCode, Register, Module};
 use crate::error::{Error, ErrorCode};
 use crate::vm::Value;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use self::hir::LayoutCtx;
 
@@ -55,6 +56,8 @@ pub struct Compiler {
     /// register holds the env handle for a specific closure so call sites
     /// `f(args)` can emit a direct call to the lifted fn.
     pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
+    pub(super) concat_fn_id: Option<usize>,
+    pub(super) to_str_fn_id: Option<usize>,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -84,6 +87,8 @@ impl Compiler {
             method_dispatch: HashMap::new(),
             closure_by_span: HashMap::new(),
             closure_by_var: HashMap::new(),
+            concat_fn_id: None,
+            to_str_fn_id: None,
             errors: Vec::new(),
             source: String::new(),
         }
@@ -111,12 +116,12 @@ impl Compiler {
                 }
             }
         }
-        Ok(Chunk {
+        Ok(Chunk::Bytecode(BytecodeChunk {
             code: self.code.clone(),
             constants: self.constants.clone(),
             reg_count: self.next_reg as usize,
             param_count: 0,
-        })
+        }))
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
@@ -181,12 +186,12 @@ impl Compiler {
                 ast::Decl::Fn(fn_decl) => {
                     let idx = self.functions.len();
                     self.func_map.insert(fn_decl.name.clone(), idx);
-                    self.functions.push(Chunk {
+                    self.functions.push(Chunk::Bytecode(BytecodeChunk {
                         code: Vec::new(),
                         constants: Vec::new(),
                         reg_count: 0,
                         param_count: 0,
-                    });
+                    }));
                     fn_decls.push((idx, fn_decl.clone()));
                 }
                 ast::Decl::Type { name, body, .. } => {
@@ -200,14 +205,16 @@ impl Compiler {
         for arm_fn in handler_lowering.synthetic_fns {
             let idx = self.functions.len();
             self.func_map.insert(arm_fn.name.clone(), idx);
-            self.functions.push(Chunk {
+            self.functions.push(Chunk::Bytecode(BytecodeChunk {
                 code: Vec::new(),
                 constants: Vec::new(),
                 reg_count: 0,
                 param_count: 0,
-            });
+            }));
             fn_decls.push((idx, arm_fn));
         }
+
+        self.register_builtins();
 
         let entry = match self.func_map.get("main").copied() {
             Some(idx) => idx,
@@ -304,12 +311,12 @@ impl Compiler {
         }
 
         let reg_count = self.next_reg as usize;
-        let chunk = Chunk {
+        let chunk = Chunk::Bytecode(BytecodeChunk {
             code: std::mem::take(&mut self.code),
             constants: std::mem::take(&mut self.constants),
             reg_count,
             param_count,
-        };
+        });
 
         self.code = saved_code;
         self.constants = saved_constants;
@@ -319,5 +326,46 @@ impl Compiler {
         self.current_fn_fallible = saved_fallible;
 
         Ok(chunk)
+    }
+
+    fn register_builtins(&mut self) {
+        let concat = NativeChunk {
+            param_count: 2,
+            func: Rc::new(|args: &[Value]| {
+                match (&args[0], &args[1]) {
+                    (Value::String(a), Value::String(b)) => {
+                        let mut out = String::with_capacity(a.len() + b.len());
+                        out.push_str(a);
+                        out.push_str(b);
+                        Ok(Value::String(out))
+                    }
+                    (a, b) => Err(format!("__concat expects two Strings, got {:?} and {:?}", a, b)),
+                }
+            }),
+        };
+        let to_str = NativeChunk {
+            param_count: 1,
+            func: Rc::new(|args: &[Value]| {
+                let s = match &args[0] {
+                    Value::String(s) => s.clone(),
+                    Value::Int(n) => n.to_string(),
+                    Value::Float(f) => f.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Char(c) => c.to_string(),
+                    Value::Unit => "()".to_string(),
+                    other => return Err(format!("__to_str: cannot convert {:?}", other)),
+                };
+                Ok(Value::String(s))
+            }),
+        };
+        let cid = self.functions.len();
+        self.func_map.insert("__concat".into(), cid);
+        self.functions.push(Chunk::Native(concat));
+        self.concat_fn_id = Some(cid);
+
+        let tid = self.functions.len();
+        self.func_map.insert("__to_str".into(), tid);
+        self.functions.push(Chunk::Native(to_str));
+        self.to_str_fn_id = Some(tid);
     }
 }

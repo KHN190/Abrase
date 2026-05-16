@@ -13,7 +13,11 @@ impl Checker {
                 ast::Literal::Float(_) => Type::Float,
                 ast::Literal::Bool(_) => Type::Bool,
                 ast::Literal::Char(_) => Type::Char,
-                ast::Literal::String(_) | ast::Literal::StringInterp(_) => Type::String,
+                ast::Literal::String(_) => Type::String,
+                ast::Literal::StringInterp(parts) => {
+                    self.check_string_interpolation(parts, expr.span);
+                    Type::String
+                }
                 ast::Literal::Unit => Type::Unit,
             },
             ast::Expr::Identifier(name) => self.get_var(name, false, expr.span),

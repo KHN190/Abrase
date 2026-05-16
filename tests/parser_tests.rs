@@ -1432,3 +1432,42 @@ fn test_closure_with_typed_params() {
         assert!(params[1].ty.is_some());
     } else { panic!("expected Closure"); }
 }
+
+// ===== string interpolation =====
+
+#[test]
+fn test_expr_string_interp_single_ident() {
+    let mut p = Parser::new(Lexer::new("\"answer: {x}\""));
+    let expr = p.parse_expr(Precedence::Lowest);
+    let parts = match expr.node {
+        Expr::Literal(Literal::StringInterp(parts)) => parts,
+        other => panic!("expected StringInterp literal, got {:?}", other),
+    };
+    assert_eq!(parts, vec![
+        StringPart::Literal("answer: ".into()),
+        StringPart::Interp(vec!["x".into()]),
+    ]);
+}
+
+#[test]
+fn test_expr_string_interp_dotted_path() {
+    let mut p = Parser::new(Lexer::new("\"name={user.name}!\""));
+    let expr = p.parse_expr(Precedence::Lowest);
+    let parts = match expr.node {
+        Expr::Literal(Literal::StringInterp(parts)) => parts,
+        other => panic!("expected StringInterp literal, got {:?}", other),
+    };
+    assert_eq!(parts, vec![
+        StringPart::Literal("name=".into()),
+        StringPart::Interp(vec!["user".into(), "name".into()]),
+        StringPart::Literal("!".into()),
+    ]);
+}
+
+#[test]
+fn test_expr_string_no_interp_stays_plain() {
+    // A literal without `{...}` parses as Literal::String, not StringInterp.
+    let mut p = Parser::new(Lexer::new("\"plain\""));
+    let expr = p.parse_expr(Precedence::Lowest);
+    assert_eq!(expr.node, Expr::Literal(Literal::String("plain".into())));
+}

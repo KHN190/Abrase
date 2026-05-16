@@ -8,9 +8,15 @@ fn pipeline(a: Int, b: Int) -> <exn<Int>> Int {
 }
 
 fn main() -> Int {
-  match pipeline(20, 4) {
+  let ok = match pipeline(20, 4) {
     Ok(v) => v
     Err(_) => -1
     _ => 0
-  }
+  };
+  let err = match pipeline(10, 0) {
+    Ok(_) => 0
+    Err(_) => 1
+    _ => -1
+  };
+  ok + err
 }

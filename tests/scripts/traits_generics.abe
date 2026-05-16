@@ -8,6 +8,11 @@ impl Doubler for Int {
   }
 }
 
+fn id<T>(x: T) -> T { x }
+
 fn main() -> Int {
-  (5).double()
+  let flag = id(true);
+  let n = id(42);
+  let d = (5).double();
+  if flag { n + d } else { d }
 }
