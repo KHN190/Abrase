@@ -73,7 +73,8 @@ impl Compiler {
         self.arm_env_stack.push(envs);
 
         let body_reg = self.compile_expr(body)?;
-        let arm_envs = self.arm_env_stack.pop().expect("arm_env_stack mismatch");
+        let arm_envs = self.arm_env_stack.pop()
+            .ok_or_else(|| "internal: arm_env_stack underflow at compile_handle".to_string())?;
 
         let ret_arm_name = self.return_arm_by_handle.get(&handle_span).cloned()
             .ok_or_else(|| format!(

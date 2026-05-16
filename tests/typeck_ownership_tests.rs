@@ -1,6 +1,6 @@
 use abrase::ast::{self, Pattern, Span, Spanned};
 use abrase::ty::{Type, Ownership};
-use abrase::typeck::Checker;
+use abrase::typeck::{Checker, ownership::BorrowKind};
 
 fn d_span() -> Span { Span::new(0, 0) }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
@@ -976,8 +976,8 @@ fn verify_check_escape_analysis_none_regions() {
 fn verify_register_pattern_borrow() {
     let mut checker = Checker::new();
 
-    checker.register_pattern_borrow("x".into(), "immut".into());
-    checker.register_pattern_borrow("y".into(), "mut".into());
+    checker.register_pattern_borrow("x".into(), BorrowKind::Immut);
+    checker.register_pattern_borrow("y".into(), BorrowKind::Mut);
 
     let borrows_x = checker.get_pattern_borrows("x");
     let borrows_y = checker.get_pattern_borrows("y");
@@ -990,8 +990,8 @@ fn verify_register_pattern_borrow() {
 fn verify_check_pattern_borrow_exclusivity_compatible() {
     let mut checker = Checker::new();
 
-    checker.register_pattern_borrow("x".into(), "immut".into());
-    checker.register_pattern_borrow("y".into(), "immut".into());
+    checker.register_pattern_borrow("x".into(), BorrowKind::Immut);
+    checker.register_pattern_borrow("y".into(), BorrowKind::Immut);
 
     let exclusive = checker.check_pattern_borrow_exclusivity(&["x", "y"]);
     assert!(exclusive);
@@ -1001,19 +1001,28 @@ fn verify_check_pattern_borrow_exclusivity_compatible() {
 fn verify_check_pattern_borrow_exclusivity_conflict() {
     let mut checker = Checker::new();
 
-    checker.register_pattern_borrow("x".into(), "mut".into());
-    checker.register_pattern_borrow("y".into(), "mut".into());
+    checker.register_pattern_borrow("x".into(), BorrowKind::Mut);
+    checker.register_pattern_borrow("y".into(), BorrowKind::Mut);
 
     let exclusive = checker.check_pattern_borrow_exclusivity(&["x", "y"]);
     assert!(!exclusive);
 }
 
 #[test]
+fn verify_pattern_borrow_immut_and_move_compatible() {
+    // T7: Move is not a mutable borrow — exclusivity rule only cares about Mut.
+    let mut checker = Checker::new();
+    checker.register_pattern_borrow("x".into(), BorrowKind::Immut);
+    checker.register_pattern_borrow("y".into(), BorrowKind::Move);
+    assert!(checker.check_pattern_borrow_exclusivity(&["x", "y"]));
+}
+
+#[test]
 fn verify_check_pattern_borrow_exclusivity_immut_and_mut() {
     let mut checker = Checker::new();
 
-    checker.register_pattern_borrow("x".into(), "immut".into());
-    checker.register_pattern_borrow("y".into(), "mut".into());
+    checker.register_pattern_borrow("x".into(), BorrowKind::Immut);
+    checker.register_pattern_borrow("y".into(), BorrowKind::Mut);
 
     let exclusive = checker.check_pattern_borrow_exclusivity(&["x", "y"]);
     assert!(exclusive);
@@ -1051,7 +1060,7 @@ fn verify_clear_region_context() {
 
     checker.push_region("region_a".into());
     checker.bind_reference_lifetime("ref_x".into(), "region_a".into());
-    checker.register_pattern_borrow("x".into(), "immut".into());
+    checker.register_pattern_borrow("x".into(), BorrowKind::Immut);
 
     assert_eq!(checker.get_current_region(), Some("region_a"));
     assert!(checker.get_reference_lifetime("ref_x").is_some());
@@ -1153,3 +1162,28 @@ fn assign_to_unknown_var_does_not_emit_mut_error() {
     );
 }
 
+
+#[test]
+fn t2_immut_borrow_of_moved_var_errors() {
+    let mut checker = Checker::new();
+    checker.insert_var("s".into(), Type::String, false, d_span());
+    let _ = checker.infer_expr(&sp(ast::Expr::Identifier("s".into())));
+    let _ = checker.infer_expr(&sp(ast::Expr::Identifier("s".into())));
+    let result = checker.try_immut_borrow("s", d_span());
+    assert!(result.is_err(), "expected error borrowing a moved var, got {:?}", result);
+    assert!(result.unwrap_err().contains("already moved"));
+}
+
+#[test]
+fn t3_mut_borrow_does_not_consume_move_type() {
+    let mut checker = Checker::new();
+    checker.insert_var("s".into(), Type::String, true, d_span());
+    assert!(checker.try_mut_borrow("s", d_span()).is_ok());
+    checker.release_borrow("s");
+    let _ty = checker.infer_expr(&sp(ast::Expr::Identifier("s".into())));
+    assert!(
+        !checker.errors.iter().any(|e| e.message.contains("moved")),
+        "&mut x should not consume x; errors: {:?}", checker.errors
+    );
+    let _ = Ownership::Move;
+}

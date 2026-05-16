@@ -4,6 +4,7 @@ use crate::lexer::Token;
 pub enum Precedence {
     Lowest,
     Assign,
+    Range,
     Or,
     And,
     Equals,
@@ -19,6 +20,7 @@ impl Token {
     pub fn precedence(&self) -> Precedence {
         match self {
             Token::Assign | Token::PlusAssign | Token::MinusAssign => Precedence::Assign,
+            Token::Range | Token::RangeInclusive => Precedence::Range,
             Token::Or => Precedence::Or,
             Token::And => Precedence::And,
             Token::Eq | Token::NotEq => Precedence::Equals,

@@ -3,17 +3,25 @@ use crate::ast::Span;
 use crate::ty::{Ownership, Type};
 use super::*;
 
-impl Checker {
+// pattern-borrow constraints were stringly-typed; classify exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorrowKind {
+    Immut,
+    Mut,
+    Move,
+}
 
-    // Ownership & Borrowing
+impl Checker {
 
     pub fn try_immut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(var_name) {
+                if meta.is_moved {
+                    return Err(format!("Cannot borrow '{}': value already moved", var_name));
+                }
                 if meta.mut_borrow_active {
                     return Err(format!("Cannot immutably borrow '{}': mutable borrow already active", var_name));
                 }
-                // All ownership kinds can be immutably borrowed; Move types just can't be used by value again
                 meta.immut_borrow_count += 1;
                 self.borrow_stack.push((var_name.to_string(), false));
                 return Ok(());
@@ -22,35 +30,12 @@ impl Checker {
         Err(format!("Variable '{}' not found", var_name))
     }
     
-    pub fn try_mut_borrow(&mut self, var_name: &str, borrow_span: Span) -> Result<(), String> {
-        // First, check the type and ownership outside the loop
-        let mut var_type = None;
-        for scope in self.scopes.iter().rev() {
-            if let Some(meta) = scope.vars.get(var_name) {
-                var_type = Some(meta.ty.clone());
-                break;
-            }
-        }
-
-        let var_type = match var_type {
-            Some(ty) => ty,
-            None => return Err(format!("Variable '{}' not found", var_name)),
-        };
-
-        // Check ownership based on type
-        let type_ownership = match &var_type {
-            Type::String => Ownership::Share,  // String defaults to Share semantics for borrowing
-            Type::Named(name) => self.infer_type_ownership(name),
-            _ => var_type.ownership(),
-        };
-
-        // Now apply the borrow
+    pub fn try_mut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(var_name) {
-
-                // Strict writer/reader exclusivity enforcement
-                // Mutable references always require exclusive access
-
+                if meta.is_moved {
+                    return Err(format!("Cannot borrow '{}': value already moved", var_name));
+                }
                 if meta.immut_borrow_count > 0 {
                     return Err(format!("Cannot mutably borrow '{}': immutable borrow already active", var_name));
                 }
@@ -60,13 +45,6 @@ impl Checker {
                 if !meta.is_mut {
                     return Err(format!("Cannot mutably borrow immutable variable '{}'", var_name));
                 }
-
-                // Enforce move semantics: Move-semantics types move on mutable borrow
-                if type_ownership == Ownership::Move {
-                    meta.is_moved = true;
-                    meta.moved_at = Some(borrow_span);
-                }
-
                 meta.mut_borrow_active = true;
                 self.borrow_stack.push((var_name.to_string(), true));
                 return Ok(());
@@ -171,30 +149,25 @@ impl Checker {
         }
     }
     
-    pub fn register_pattern_borrow(&mut self, pattern_var: String, borrow_constraint: String) {
+    pub fn register_pattern_borrow(&mut self, pattern_var: String, kind: BorrowKind) {
         self.pattern_borrows.entry(pattern_var)
             .or_insert_with(Vec::new)
-            .push(borrow_constraint);
+            .push(kind);
     }
-    
-    pub fn get_pattern_borrows(&self, pattern_var: &str) -> Option<Vec<String>> {
+
+    pub fn get_pattern_borrows(&self, pattern_var: &str) -> Option<Vec<BorrowKind>> {
         self.pattern_borrows.get(pattern_var).cloned()
     }
-    
-    // Check that borrow constraints from pattern matching don't conflict
-    pub fn check_pattern_borrow_exclusivity(&self, patterns: &[&str]) -> bool {
-        let mut has_mut_borrow = false;
 
+    // No more than one Mut borrow may be active across the given patterns.
+    pub fn check_pattern_borrow_exclusivity(&self, patterns: &[&str]) -> bool {
+        let mut has_mut = false;
         for pattern in patterns {
             if let Some(borrows) = self.get_pattern_borrows(pattern) {
-                for borrow in borrows {
-                    // Check if it's exactly "mut" or starts with "mut_" (not "immut")
-                    if borrow == "mut" || (borrow.starts_with("mut") && !borrow.starts_with("immut")) {
-                        // Can't have multiple mutable borrows
-                        if has_mut_borrow {
-                            return false;
-                        }
-                        has_mut_borrow = true;
+                for kind in borrows {
+                    if matches!(kind, BorrowKind::Mut) {
+                        if has_mut { return false; }
+                        has_mut = true;
                     }
                 }
             }

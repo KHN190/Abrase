@@ -48,7 +48,14 @@ impl Compiler {
             ast::Expr::Resume(arg)             => self.compile_resume(arg.as_deref()),
             ast::Expr::Handle { expr: body, arms } => self.compile_handle(body, expr.span, arms),
             ast::Expr::Closure { .. }          => self.compile_closure(expr.span),
-            _ => Err(format!("Unsupported expression: {:?}", expr.node)),
+            ast::Expr::For { .. }     => Err(nyi(expr.span, "for loop")),
+            ast::Expr::Loop { .. }    => Err(nyi(expr.span, "loop expression")),
+            ast::Expr::Break(_)       => Err(nyi(expr.span, "break expression")),
+            ast::Expr::Continue       => Err(nyi(expr.span, "continue expression")),
+            ast::Expr::Tuple(_)       => Err(nyi(expr.span, "tuple expression")),
+            ast::Expr::ArrayRepeat { .. } => Err(nyi(expr.span, "array-repeat literal '[x; n]'")),
+            ast::Expr::Range { .. }   => Err(nyi(expr.span, "range expression")),
+            ast::Expr::Region { .. }  => Err(nyi(expr.span, "region block")),
         }
     }
 
@@ -89,7 +96,17 @@ impl Compiler {
                     Err("Only simple bindings supported".to_string())
                 }
             }
-            ast::Stmt::Expr(expr) => { self.compile_expr(expr)?; Ok(()) }
+            ast::Stmt::Expr(expr) => {
+                let reg = self.compile_expr(expr)?;
+                let needs_drop = self.infer_expr_type(expr)
+                    .as_ref()
+                    .map(is_move_type)
+                    .unwrap_or(false);
+                if needs_drop {
+                    self.emit(OpCode::Drop(reg));
+                }
+                Ok(())
+            }
             ast::Stmt::Empty => Ok(()),
         }
     }
@@ -134,10 +151,18 @@ impl Compiler {
                 return Err(format!("Arg-passing register index {} exceeds u8 range", dst_idx));
             }
             let dst = Register(dst_idx as u8);
-            if let OpCode::Copy(_, src) = self.code[pos] {
-                self.code[pos] = OpCode::Copy(dst, src);
+            match self.code[pos] {
+                OpCode::Copy(_, src) => { self.code[pos] = OpCode::Copy(dst, src); }
+                ref other => return Err(format!(
+                    "internal: arg-patch site at pc {} is not Copy (found {:?})",
+                    pos, other
+                )),
             }
         }
         Ok(())
     }
+}
+
+fn nyi(span: ast::Span, what: &str) -> String {
+    format!("{:?}: codegen not yet implemented for {}", span, what)
 }

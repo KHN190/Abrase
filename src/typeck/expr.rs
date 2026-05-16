@@ -8,18 +8,8 @@ impl Checker {
     pub fn infer_expr(&mut self, expr: &Spanned<ast::Expr>) -> Type {
         match &expr.node {
             ast::Expr::Error => Type::Unknown,
-            ast::Expr::Literal(lit) => match lit {
-                ast::Literal::Int(_) => Type::Int,
-                ast::Literal::Float(_) => Type::Float,
-                ast::Literal::Bool(_) => Type::Bool,
-                ast::Literal::Char(_) => Type::Char,
-                ast::Literal::String(_) => Type::String,
-                ast::Literal::StringInterp(parts) => {
-                    self.check_string_interpolation(parts, expr.span);
-                    Type::String
-                }
-                ast::Literal::Unit => Type::Unit,
-            },
+            // single source of truth for literal typing.
+            ast::Expr::Literal(lit) => self.infer_literal(lit, expr.span),
             ast::Expr::Identifier(name) => self.get_var(name, false, expr.span),
             ast::Expr::Unary { op, right } => {
                 self.context_stack.push(format!("In unary operation {:?}", op));
@@ -145,12 +135,9 @@ impl Checker {
                     self.report_error("Condition must be Bool".into(), condition.span);
                 }
 
-                // Branches are mutually exclusive at runtime. Snapshot the
-                // scope (move flags etc.) before each branch.
                 let snapshot = self.scopes.clone();
                 let cons_ty = self.infer_expr(consequence);
-                let mut result = cons_ty.clone();
-                if let Some(alt) = alternative {
+                let result = if let Some(alt) = alternative {
                     self.scopes = snapshot;
                     let alt_ty = self.infer_expr(alt);
                     let compatible = cons_ty == alt_ty
@@ -159,8 +146,16 @@ impl Checker {
                     if !compatible {
                         self.report_error("If branch types do not match".into(), alt.span);
                     }
-                    if cons_ty == Type::Never { result = alt_ty; }
-                }
+                    if cons_ty == Type::Never { alt_ty } else { cons_ty.clone() }
+                } else {
+                    if cons_ty != Type::Unit && cons_ty != Type::Never && cons_ty != Type::Unknown {
+                        self.report_error(
+                            format!("`if` without `else` must have () consequence, got {:?}", cons_ty),
+                            consequence.span,
+                        );
+                    }
+                    Type::Unit
+                };
                 result
             }
             ast::Expr::Match { scrutinee, arms } => {
@@ -202,14 +197,15 @@ impl Checker {
                 }
 
                 let mut arm_types = Vec::new();
-                // Arms are mutually exclusive — snapshot scope before each one
-                // and restore so a binding moved in arm A is not seen moved in
-                // arm B. Pattern bindings introduced by each arm live only for
-                // that arm's body.
+                // Arms are mutually exclusive — snapshot scope AND effects (T6)
+                // before each one so a binding moved or an effect raised in arm
+                // A is not visible in arm B; union per-arm effect deltas.
                 let pre_arm_snapshot = self.scopes.clone();
+                let pre_arm_effects = self.fn_required_effects.clone();
+                let mut arm_effects: Vec<crate::ty::Effect> = Vec::new();
                 for arm in arms {
                     self.scopes = pre_arm_snapshot.clone();
-                    // Re-install bindings introduced by this arm's pattern.
+                    self.fn_required_effects = pre_arm_effects.clone();
                     self.check_pattern(&arm.pattern, &scrutinee_ty, arm.pattern.span);
                     if let Some(guard) = &arm.guard {
                         let guard_ty = self.infer_expr(guard);
@@ -218,9 +214,22 @@ impl Checker {
                         }
                     }
                     let body_ty = self.infer_expr(&arm.body);
+                    for e in self.fn_required_effects.iter() {
+                        if !pre_arm_effects.iter().any(|p| self.effects_equal(p, e))
+                            && !arm_effects.iter().any(|x| self.effects_equal(x, e))
+                        {
+                            arm_effects.push(e.clone());
+                        }
+                    }
                     arm_types.push(body_ty);
                 }
                 self.scopes = pre_arm_snapshot;
+                self.fn_required_effects = pre_arm_effects;
+                for e in arm_effects {
+                    if !self.fn_required_effects.iter().any(|p| self.effects_equal(p, &e)) {
+                        self.fn_required_effects.push(e);
+                    }
+                }
 
                 // All arms must have same type
                 if !arm_types.is_empty() {

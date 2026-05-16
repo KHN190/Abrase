@@ -25,6 +25,19 @@ pub fn compile_module_and_run(ast: &[Decl]) -> Result<Value, String> {
     vm.run_module(&module)
 }
 
+pub fn compile_module_and_run_with_heap(ast: &[Decl]) -> Result<(Value, usize), String> {
+    let mut compiler = Compiler::new();
+    let module = compiler.compile_module(ast).map_err(|errs| {
+        errs.iter()
+            .map(|e| format!("{:?} at {}:{}: {}", e.code, e.span.line, e.span.col, e.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    let mut vm = VirtualMachine::new();
+    let v = vm.run_module(&module)?;
+    Ok((v, vm.heap_live_count()))
+}
+
 pub fn parse_literal_int(n: i64) -> Vec<Decl> {
     vec![Decl::Fn(FnDecl {
         attrs: vec![],

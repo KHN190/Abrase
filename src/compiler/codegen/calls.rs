@@ -16,6 +16,16 @@ impl Compiler {
         if let Some(r) = self.try_compile_effect_op_call(callee, args, call_span)? { return Ok(r); }
         if let Some(r) = self.try_compile_method_call(callee, args)? { return Ok(r); }
         if let Some(r) = self.try_compile_host_or_ctor(callee, args)? { return Ok(r); }
+        // A FieldAccess callee that survived to here is a method call we
+        // couldn't resolve
+        if let ast::Expr::FieldAccess { base, field } = &callee.node {
+            let recv = self.receiver_type_name(base)
+                .unwrap_or_else(|| "<unknown>".to_string());
+            return Err(format!(
+                "No method '{}' on type '{}' (or receiver type could not be inferred)",
+                field, recv
+            ));
+        }
         self.compile_plain_call(callee, args)
     }
 

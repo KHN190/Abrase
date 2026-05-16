@@ -11,6 +11,12 @@ impl<'a> Parser<'a> {
                 self.next_token();
                 let is_mut = if self.current_token == Token::Mut { self.next_token(); true } else { false };
                 let pattern = self.parse_pattern()?;
+                if !matches!(pattern.node, Pattern::Bind(_) | Pattern::Wildcard) {
+                    self.report_error(
+                        "destructuring let not yet supported; bind to a single name".to_string(),
+                        pattern.span,
+                    );
+                }
 
                 let mut ty = None;
                 if self.peek_token == Token::Colon {

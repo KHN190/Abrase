@@ -123,7 +123,7 @@ pub struct Checker {
     // Region Escape Analysis & Advanced Borrow Checking
     region_stack: Vec<String>,
     reference_lifetimes: HashMap<String, String>,
-    pattern_borrows: HashMap<String, Vec<String>>,
+    pattern_borrows: HashMap<String, Vec<ownership::BorrowKind>>,
     // true while type-checking the body of a non-return handler arm
     in_handler_arm: bool,
 

@@ -2,6 +2,8 @@ use crate::lexer::{Lexer, Token};
 use crate::error::{Error, ErrorCode};
 use crate::ast::Span;
 
+pub const MAX_PARSE_DEPTH: usize = 256;
+
 pub struct Parser<'a> {
     pub(crate) lexer: Lexer<'a>,
     pub(crate) current_token: Token,
@@ -11,6 +13,7 @@ pub struct Parser<'a> {
     pub errors: Vec<Error>,
     pub source: String,
     pub(crate) no_record_literal: bool,
+    pub(crate) depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -26,7 +29,23 @@ impl<'a> Parser<'a> {
             errors: Vec::new(),
             source: String::new(),
             no_record_literal: false,
+            depth: 0,
         }
+    }
+
+    // Returns true if a fresh frame fits within MAX_PARSE_DEPTH; bumps `depth`.
+    pub(crate) fn enter_depth(&mut self) -> bool {
+        if self.depth >= MAX_PARSE_DEPTH {
+            let span = self.current_span;
+            self.report_error("Expression nested too deeply".to_string(), span);
+            return false;
+        }
+        self.depth += 1;
+        true
+    }
+
+    pub(crate) fn exit_depth(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     pub fn with_source(mut self, source: String) -> Self {

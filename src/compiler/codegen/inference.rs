@@ -1,4 +1,4 @@
-// Compile-time type inference helpers used by codegen.
+// Compile-time type inference.
 //
 // These are best-effort and limited to what codegen needs to make local
 // decisions (move vs copy on let-binding, receiver-type resolution for
@@ -43,8 +43,8 @@ impl Compiler {
         }
     }
 
-    /// Pull a receiver type name out of a method-call base expression.
-    /// Handles literals, identifiers, and references (`&x`).
+    // Pull a receiver type name out of a method-call base expression.
+    // Handles literals, identifiers, and references (`&x`).
     pub(in crate::compiler) fn receiver_type_name(&self, base: &ast::Spanned<ast::Expr>) -> Option<String> {
         let ty = self.infer_expr_type(base)?;
         receiver_name_of(&ty)

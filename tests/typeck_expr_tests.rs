@@ -319,13 +319,39 @@ fn verify_if_condition_must_be_bool() {
     let mut checker = Checker::new();
     let if_expr = sp(ast::Expr::If {
         condition: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(42)))),
-        consequence: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
+        consequence: Box::new(sp(ast::Expr::Block(ast::Block { stmts: vec![], ret: None }))),
         alternative: None,
     });
     let result = checker.infer_expr(&if_expr);
-    assert_eq!(result, Type::Int);
+    assert_eq!(result, Type::Unit);
     assert_eq!(checker.errors.len(), 1);
     assert!(checker.errors[0].message.contains("Condition must be Bool"));
+}
+
+#[test]
+fn verify_if_without_else_must_have_unit_consequence() {
+    let mut checker = Checker::new();
+    let if_expr = sp(ast::Expr::If {
+        condition: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
+        consequence: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(5)))),
+        alternative: None,
+    });
+    let result = checker.infer_expr(&if_expr);
+    assert_eq!(result, Type::Unit);
+    assert!(checker.errors.iter().any(|e| e.message.contains("`if` without `else`")));
+}
+
+#[test]
+fn verify_if_without_else_unit_consequence_is_fine() {
+    let mut checker = Checker::new();
+    let if_expr = sp(ast::Expr::If {
+        condition: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
+        consequence: Box::new(sp(ast::Expr::Literal(ast::Literal::Unit))),
+        alternative: None,
+    });
+    let result = checker.infer_expr(&if_expr);
+    assert_eq!(result, Type::Unit);
+    assert_eq!(checker.errors.len(), 0);
 }
 
 #[test]
@@ -3005,6 +3031,22 @@ fn verify_generic_function_with_nested_generics() {
     let ty = checker.infer_expr(&expr);
     assert_eq!(ty, Type::Tuple(vec![Type::Bool, Type::Bool]));
     assert!(checker.errors.is_empty());
+}
+
+#[test]
+fn verify_string_interp_undefined_var_reports_once() {
+    // T8: undefined var inside StringInterp must produce exactly one error,
+    // regardless of which dispatch path (expr vs. pattern) ran first.
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Literal(ast::Literal::StringInterp(vec![
+        ast::StringPart::Literal("hi ".into()),
+        ast::StringPart::Interp(vec!["missing".into()]),
+    ])));
+    let _ = checker.infer_expr(&expr);
+    let undef: Vec<_> = checker.errors.iter()
+        .filter(|e| e.message.contains("Undefined variable") && e.message.contains("missing"))
+        .collect();
+    assert_eq!(undef.len(), 1, "expected exactly one undef error, got {:?}", checker.errors);
 }
 
 #[test]

@@ -7,6 +7,9 @@ use super::helpers::is_block_terminated;
 impl<'a> Parser<'a> {
     pub fn parse_expr(&mut self, precedence: Precedence) -> Spanned<Expr> {
         let span = self.current_span;
+        if !self.enter_depth() {
+            return Spanned { node: Expr::Error, span };
+        }
         let mut left = match self.parse_prefix() {
             Some(expr) => expr,
             None => {
@@ -14,11 +17,11 @@ impl<'a> Parser<'a> {
                 Spanned { node: Expr::Error, span }
             }
         };
-
         while self.peek_token != Token::Semicolon && precedence < self.peek_token.precedence() {
             self.next_token();
             left = self.parse_infix(left);
         }
+        self.exit_depth();
         left
     }
 
@@ -94,7 +97,9 @@ impl<'a> Parser<'a> {
         self.next_token();
         self.next_token();
         let mut fields = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+            let fname_span = self.current_span;
             let fname = if let Token::Ident(n) = &self.current_token { n.clone() } else {
                 self.report_error(format!("Expected field name, got {:?}", self.current_token), self.current_span);
                 break;
@@ -106,7 +111,12 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            fields.push(FieldInit { name: fname, value });
+            // P2: silently-overridden duplicate fields are a footgun.
+            if !seen.insert(fname.clone()) {
+                self.report_error(format!("Duplicate field '{}' in record literal", fname), fname_span);
+            } else {
+                fields.push(FieldInit { name: fname, value });
+            }
             if self.peek_token == Token::Comma {
                 self.next_token();
                 self.next_token();
@@ -505,6 +515,24 @@ impl<'a> Parser<'a> {
             }
             Token::Question => {
                 return Spanned { node: Expr::Question(Box::new(left)), span };
+            }
+            Token::Range | Token::RangeInclusive => {
+                let inclusive = self.current_token == Token::RangeInclusive;
+                let prec = self.current_token.precedence();
+                let end = if matches!(
+                    self.peek_token,
+                    Token::Semicolon | Token::RBrace | Token::RParen | Token::RBracket
+                        | Token::Comma | Token::LBrace | Token::Eof
+                ) {
+                    None
+                } else {
+                    self.next_token();
+                    Some(Box::new(self.parse_expr(prec)))
+                };
+                return Spanned {
+                    node: Expr::Range { start: Some(Box::new(left)), end, inclusive },
+                    span,
+                };
             }
             _ => return Spanned { node: Expr::Error, span: self.current_span },
         };

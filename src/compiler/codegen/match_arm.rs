@@ -58,8 +58,6 @@ impl Compiler {
                 ast::Pattern::Record { ty: rty, fields, .. } => {
                     self.compile_record_pattern_arm(
                         rty, fields, &arm.body, scrutinee_reg, result_reg)?;
-                    // Record patterns currently behave like a catch-all (no tag
-                    // test), so further arms are unreachable.
                     break;
                 }
                 _ => return Err("Unsupported pattern in match".to_string()),

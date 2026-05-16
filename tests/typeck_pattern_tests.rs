@@ -1,6 +1,6 @@
 use abrase::ast::{self, Pattern, Span, Spanned};
 use abrase::ty::Type;
-use abrase::typeck::Checker;
+use abrase::typeck::{Checker, ownership::BorrowKind};
 
 fn d_span() -> Span { Span::new(0, 0) }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
@@ -323,9 +323,9 @@ fn verify_pattern_analysis_tracking_coverage() {
 #[test]
 fn verify_pattern_borrows_multiple_constraints() {
     let mut checker = Checker::new();
-
-    checker.register_pattern_borrow("x".into(), "immut".into());
-    checker.register_pattern_borrow("x".into(), "noalias".into());
+    // T7: multiple registrations stack; only Mut affects exclusivity.
+    checker.register_pattern_borrow("x".into(), BorrowKind::Immut);
+    checker.register_pattern_borrow("x".into(), BorrowKind::Move);
 
     let borrows = checker.get_pattern_borrows("x");
     assert_eq!(borrows.unwrap().len(), 2);

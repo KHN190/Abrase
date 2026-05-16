@@ -8,6 +8,7 @@ impl<'a> Parser<'a> {
     pub fn parse_program(&mut self) -> Vec<Decl> {
         let mut decls = Vec::new();
         while self.current_token != Token::Eof {
+            let err_span = self.current_span;
             match self.parse_decl() {
                 Ok(decl) => {
                     decls.push(decl);
@@ -17,7 +18,10 @@ impl<'a> Parser<'a> {
                         self.synchronize();
                     }
                 }
-                Err(_) => self.synchronize(),
+                Err(msg) => {
+                    self.report_error(msg, err_span);
+                    self.synchronize();
+                }
             }
         }
         decls

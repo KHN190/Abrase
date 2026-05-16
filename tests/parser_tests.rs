@@ -1471,3 +1471,55 @@ fn test_expr_string_no_interp_stays_plain() {
     let expr = p.parse_expr(Precedence::Lowest);
     assert_eq!(expr.node, Expr::Literal(Literal::String("plain".into())));
 }
+
+#[test]
+fn test_record_literal_rejects_duplicate_field() {
+    let errs = parse_errs("fn f() -> Int { Pt { x: 1, x: 2 } }");
+    assert!(errs.iter().any(|e| e.contains("Duplicate field")),
+            "expected duplicate-field error, got: {:?}", errs);
+}
+
+#[test]
+fn test_record_literal_distinct_fields_ok() {
+    let errs = parse_errs("fn f() -> Int { Pt { x: 1, y: 2 } }");
+    assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
+}
+
+#[test]
+fn test_parser_traps_deeply_nested_input() {
+    // Build "((((( ... 5 ... )))))" with ~1000 nested parens — far beyond
+    // the depth budget. The parser should error gracefully, not SIGABRT.
+    let opens = "(".repeat(1000);
+    let closes = ")".repeat(1000);
+    let src = format!("fn f() -> Int {{ {}5{} }}", opens, closes);
+    let errs = parse_errs(&src);
+    assert!(errs.iter().any(|e| e.contains("nested too deeply")),
+            "expected depth-limit error, got: {:?}", errs);
+}
+
+#[test]
+fn test_p1_decl_error_surfaced_via_parser_errors() {
+    let errs = parse_errs("@");
+    assert!(!errs.is_empty(), "parser must record decl-level errors, got none");
+    assert!(errs.iter().any(|e| e.to_lowercase().contains("attribute") || e.contains("@")),
+            "expected attribute-related error, got: {:?}", errs);
+}
+
+#[test]
+fn test_p1_decl_error_does_not_swallow_message_silently() {
+    let errs = parse_errs("@foo(\n");
+    assert!(!errs.is_empty(), "malformed attribute decl must report an error");
+}
+
+#[test]
+fn test_p3_tuple_let_pattern_rejected_at_parser() {
+    let errs = parse_errs("fn f() -> Int { let (a, b) = (1, 2); 0 }");
+    assert!(errs.iter().any(|e| e.contains("destructuring let not yet supported")),
+            "expected destructuring-let parser error, got: {:?}", errs);
+}
+
+#[test]
+fn test_p3_simple_bind_let_still_ok() {
+    let errs = parse_errs("fn f() -> Int { let x = 1; x }");
+    assert!(errs.is_empty(), "simple bind must parse cleanly, got: {:?}", errs);
+}
