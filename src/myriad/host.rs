@@ -3,7 +3,7 @@ use crate::compiler::{Compiler, HostFnDecl};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::ty::Type;
-use crate::myriad::{BoxPool, BoxedValue, Value, VirtualMachine};
+use crate::myriad::{BoxPool, Value, VirtualMachine};
 use crate::myriad::devices::{
     HostFuncDevice, HostImpl, HOSTFUNC_ID,
     Console, BufferConsole, StdoutConsole, CONSOLE_ID,
@@ -57,18 +57,21 @@ impl Runtime {
     }
 
     fn register_default_hosts(&mut self) {
-        // typeck should guarantee args[0]: String.
-        self.register_host("println", vec![Type::String], Type::Unit, |pool, args| {
-            let s = host_arg_string(pool, args, "println")?;
-            println!("{}", s);
-            Ok(Value::UNIT)
+        // `device_in` and `device_out` are the language contract — Myriad
+        // MUST register them at startup. Codegen recognizes the names and
+        // emits Deo/Dei opcodes directly; the closures below are stubs that
+        // never run (they exist only to declare the signatures for typeck).
+        //
+        //   device_in(port: Int, data: Int) -> Unit   // write to device
+        //   device_out(port: Int) -> Int              // read from device
+        //
+        // Any other host fn (print, circle, dot, ...) is optional. User fns
+        // are NOT allowed to redefine names that are registered as host fns.
+        self.register_host("device_in", vec![Type::Int, Type::Int], Type::Unit, |_pool, _args| {
+            Err("device_in: must be lowered to Deo by codegen; closure should never run".into())
         });
-        // 不带换行;用户可定义自己的 fn print(...)(优先级高于内置),
-        // 或直接用 dei/deo 访问 CONSOLE_ID 自行实现输出。
-        self.register_host("print", vec![Type::String], Type::Unit, |pool, args| {
-            let s = host_arg_string(pool, args, "print")?;
-            print!("{}", s);
-            Ok(Value::UNIT)
+        self.register_host("device_out", vec![Type::Int], Type::Int, |_pool, _args| {
+            Err("device_out: must be lowered to Dei by codegen; closure should never run".into())
         });
     }
 
@@ -98,11 +101,3 @@ impl Runtime {
     }
 }
 
-fn host_arg_string<'a>(pool: &'a BoxPool, args: &[Value], who: &str) -> Result<&'a str, String> {
-    let idx = args[0].as_box()
-        .ok_or_else(|| format!("{}: internal: args[0] not a Box ({:?})", who, args[0]))?;
-    match pool.get(idx) {
-        Some(BoxedValue::String(s)) => Ok(s.as_str()),
-        other => Err(format!("{}: internal: box holds {:?}", who, other)),
-    }
-}

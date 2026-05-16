@@ -256,20 +256,20 @@ fn random_seeded_is_deterministic() {
     assert_eq!(v1, v2);
 }
 
+// Runtime ships only `device_in` / `device_out` by default. `println` and
+// friends are now optional — this test verifies that calling an unregistered
+// fn name surfaces a clean compile error rather than panicking.
 #[test]
-fn runtime_eval_with_default_println() {
+fn runtime_eval_unregistered_fn_errors_cleanly() {
     use abrase::host::Runtime;
-    let (mut rt, console) = Runtime::new_for_tests();
-    let (out_handle, _) = console.handles();
+    let (mut rt, _console) = Runtime::new_for_tests();
     let src = r#"
-        fn main() -> Int {
-            println("hi");
-            0
-        }
+        fn main() -> Int { println("hi"); 0 }
     "#;
-    let v = rt.eval(src).unwrap();
-    assert_eq!(v, Value::from_int(0));
-    let _ = out_handle;
+    let err = rt.eval(src).expect_err("println isn't registered");
+    assert!(err.to_lowercase().contains("println")
+            || err.to_lowercase().contains("undefined"),
+        "expected an undefined-fn diagnostic; got: {}", err);
 }
 
 #[test]

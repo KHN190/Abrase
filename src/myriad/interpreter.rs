@@ -10,6 +10,11 @@ const MAX_RECURSION_DEPTH: usize = 2048;
 // Hard cap on VM-managed memory (heap cells + boxed values).
 pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
+// VM exit_code when mem_charge cannot satisfy a request. The VM halts cleanly;
+// run_module surfaces an "out of memory" Err so the host sees it. Users cannot
+// catch this — runtime effect dispatch isn't wired yet.
+pub const OOM_EXIT_CODE: i64 = 137;
+
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
         let module = Module { functions: vec![chunk.clone()], entry: 0, device_mask: [0; 32] };
@@ -525,16 +530,18 @@ impl VirtualMachine {
         self.heap.bytes_used().saturating_add(self.box_pool.bytes_used())
     }
 
-    #[inline(always)]
-    fn mem_charge(&self, bytes: usize) -> Result<(), String> {
+    // On budget overflow: clean halt + Err. No user-level recovery — runtime
+    // effect dispatch isn't wired yet, so we always take the fallback path.
+    fn mem_charge(&mut self, bytes: usize) -> Result<(), String> {
         let projected = self.mem_used().saturating_add(bytes);
-        if projected > MAX_RAM {
-            return Err(format!(
-                "out of memory: requested {} bytes, {} / {} already in use",
-                bytes, self.mem_used(), MAX_RAM
-            ));
-        }
-        Ok(())
+        if projected <= MAX_RAM { return Ok(()); }
+        let msg = format!(
+            "out of memory: requested {} bytes, {} / {} already in use",
+            bytes, self.mem_used(), MAX_RAM
+        );
+        self.halted = true;
+        self.exit_code = Some(OOM_EXIT_CODE);
+        Err(msg)
     }
 
     #[inline(always)]
@@ -560,7 +567,9 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
+    fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F)
+        -> Result<(), String>
+    {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
         let v = self.checked_int_or_box(f(x, y))?;
@@ -568,7 +577,9 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    fn bin_i64_checked<F: Fn(i64, i64) -> Option<i64>>(&mut self, d: Register, a: Register, b: Register, msg: &str, f: F) -> Result<(), String> {
+    fn bin_i64_checked<F: Fn(i64, i64) -> Option<i64>>(
+        &mut self, d: Register, a: Register, b: Register, msg: &str, f: F,
+    ) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
         let r = f(x, y).ok_or_else(|| msg.to_string())?;
@@ -609,7 +620,17 @@ impl VirtualMachine {
                             let s = bc.string_constants.get(sidx as usize)
                                 .cloned().unwrap_or_default();
                             let pending = BoxedValue::String(s);
-                            self.mem_charge(BoxPool::pending_bytes(&pending))?;
+                            // Module load happens before user code can install
+                            // an OOM handler, so we just check the cap inline
+                            // and report a hard error if a giant string constant
+                            // wouldn't fit.
+                            let cost = BoxPool::pending_bytes(&pending);
+                            if self.mem_used().saturating_add(cost) > MAX_RAM {
+                                return Err(format!(
+                                    "out of memory at module load: string constant {} bytes, {} / {} in use",
+                                    cost, self.mem_used(), MAX_RAM
+                                ));
+                            }
                             let bidx = self.box_pool.intern(pending);
                             out.push(Value::from_box(bidx));
                         } else {

@@ -17,6 +17,14 @@ pub(in crate::compiler) enum CallTarget<'a> {
     HostFn { fn_id: u16 },
     VariantCtor { tag: u32 },
     UnresolvedMethod { receiver: String, field: String },
+    // Host-contract intrinsics. The runtime MUST register their signatures
+    // (see Runtime::register_default_hosts) — codegen emits Deo/Dei directly
+    // here rather than going through the hostfunc device, because they ARE
+    // the device interface. device_in(port, data) writes (Deo); device_out
+    // (port) reads (Dei). User fns cannot shadow them (host_fns wins, and
+    // compile_module rejects same-named user fn decls).
+    DeviceIn,
+    DeviceOut,
 }
 
 impl Compiler {
@@ -34,6 +42,8 @@ impl Compiler {
             CallTarget::VariantCtor { tag } => self.emit_variant_ctor(tag, args),
             CallTarget::Function { func_id, env } => self.emit_func_call(func_id, env, args),
             CallTarget::Method { func_id, receiver } => self.emit_method_call(func_id, receiver, args),
+            CallTarget::DeviceIn => self.emit_device_in(args),
+            CallTarget::DeviceOut => self.emit_device_out(args),
             CallTarget::UnresolvedMethod { receiver, field } => Err(format!(
                 "No method '{}' on type '{}' (or receiver type could not be inferred)",
                 field, receiver
@@ -47,6 +57,10 @@ impl Compiler {
         args: &'a [ast::Spanned<ast::Expr>],
         call_span: ast::Span,
     ) -> Result<CallTarget<'a>, String> {
+        // Language primitives win over everything else — including user
+        // shadowing. compile_module rejects user fns that try to redefine
+        // these names, but we double-gate here so the intrinsic always fires.
+        if let Some(t) = self.resolve_primitive(callee, args)? { return Ok(t); }
         if let Some(t) = self.resolve_env_load(callee, args)? { return Ok(t); }
         if let Some(t) = self.resolve_closure_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_effect_op_call(callee, call_span)? { return Ok(t); }
@@ -139,6 +153,37 @@ impl Compiler {
         Ok(Some(CallTarget::Method { func_id: fid, receiver: base }))
     }
 
+    // Recognize the host-contract intrinsics `device_in`/`device_out` by
+    // name. They look like normal host fns to the user (registered with
+    // signatures in register_default_hosts) but codegen emits Deo/Dei
+    // directly. Errors on arity mismatch instead of falling through.
+    fn resolve_primitive<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
+        args: &'a [ast::Spanned<ast::Expr>],
+    ) -> Result<Option<CallTarget<'a>>, String> {
+        let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
+        match name.as_str() {
+            "device_in" => {
+                if args.len() != 2 {
+                    return Err(format!(
+                        "device_in expects (port, data); got {} arg(s)", args.len()
+                    ));
+                }
+                Ok(Some(CallTarget::DeviceIn))
+            }
+            "device_out" => {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "device_out expects (port); got {} arg(s)", args.len()
+                    ));
+                }
+                Ok(Some(CallTarget::DeviceOut))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn resolve_host_or_ctor<'a>(
         &self,
         callee: &'a ast::Spanned<ast::Expr>,
@@ -146,11 +191,8 @@ impl Compiler {
     ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
         if name == "Shared" && args.len() == 1 { return Ok(Some(CallTarget::SharedCtor)); }
-        // 用户同名函数定义优先(shadowing):比如用户可以自己写
-        // `fn print(s: String) -> Unit { /* dei/deo */ }` 覆盖内置 print。
-        if self.func_map.contains_key(name) {
-            return Ok(None);
-        }
+        // Host fns are authoritative — compile_module already rejected user
+        // fns trying to shadow them. No `func_map` precedence check here.
         if let Some(host) = self.host_fns.get(name) {
             if host.params.len() != args.len() {
                 return Err(format!(
@@ -211,6 +253,25 @@ impl Compiler {
         self.emit(OpCode::Dei(result, result_port));
         self.device_mask[0xF0 / 8] |= 1 << (0xF0 % 8);
         Ok(result)
+    }
+
+    // device_in(port, data) → Deo(data, port). Returns Unit register.
+    fn emit_device_in(&mut self, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
+        let port = self.compile_expr(&args[0])?;
+        let data = self.compile_expr(&args[1])?;
+        self.emit(OpCode::Deo(data, port));
+        let unit = self.alloc_register()?;
+        let idx = self.add_constant(Value::UNIT)?;
+        self.emit(OpCode::PushConst(unit, idx));
+        Ok(unit)
+    }
+
+    // device_out(port) → Dei(dst, port). Returns the read value.
+    fn emit_device_out(&mut self, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
+        let port = self.compile_expr(&args[0])?;
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Dei(dest, port));
+        Ok(dest)
     }
 
     fn emit_variant_ctor(&mut self, tag: u32, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {

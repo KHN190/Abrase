@@ -122,6 +122,13 @@ impl Compiler {
         self.host_fns.insert(decl.name.clone(), decl);
     }
 
+    // Look up a user-defined fn by name. Used by the runtime to auto-install
+    // convention-named hooks (e.g. `oom_handler`).
+    pub fn lookup_fn_id(&self, name: &str) -> Option<u16> {
+        let id = *self.func_map.get(name)?;
+        u16::try_from(id).ok()
+    }
+
     pub fn pretty_print_errors(&self) -> String {
         self.errors
             .iter()
@@ -219,6 +226,20 @@ impl Compiler {
         for decl in ast {
             match decl {
                 ast::Decl::Fn(fn_decl) => {
+                    // Host-registered fns own their names. User code may NOT
+                    // shadow them — that path produces too much name-resolution
+                    // ambiguity for too little value (`fn my_print(...)` works).
+                    if self.host_fns.contains_key(&fn_decl.name) {
+                        self.errors.push(Error::new(
+                            ErrorCode::TypeError,
+                            ast::Span::new(0, 0),
+                            format!(
+                                "cannot redefine host-registered fn `{}` — pick a different name",
+                                fn_decl.name
+                            ),
+                        ));
+                        continue;
+                    }
                     let idx = self.functions.len();
                     self.func_map.insert(fn_decl.name.clone(), idx);
                     self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));

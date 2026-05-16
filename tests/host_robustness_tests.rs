@@ -46,25 +46,73 @@ fn hostimpl_signature_compatibility() {
     assert!(res.is_err()); // UNIT is not a Box
 }
 
+// print is no longer host-registered. A user fn named `print` is just a
+// regular user function — no collision, no shadow rule.
 #[test]
-fn user_defined_print_shadows_builtin() {
-    // 用户用同名 fn 覆盖内置 print:这里返回 42 而非内置的 Unit。
+fn user_can_define_print_when_host_does_not_register_it() {
     let src = r#"
         fn print(s: String) -> Int { 42 }
         fn main() -> Int { print("ignored") }
     "#;
     let mut rt = abrase::myriad::host::Runtime::new();
     let v = rt.eval(src).expect("eval should succeed");
-    assert_eq!(v, Value::from_int(42), "user-defined `print` must shadow built-in");
+    assert_eq!(v, Value::from_int(42));
+}
+
+// device_in and device_out are mandatory host fns. User fns cannot reuse
+// these names — compile_module rejects the decl.
+#[test]
+fn user_cannot_shadow_device_in() {
+    let src = r#"
+        fn device_in(port: Int, data: Int) -> Unit { () }
+        fn main() -> Int { 0 }
+    "#;
+    let mut rt = abrase::myriad::host::Runtime::new();
+    let err = rt.eval(src).expect_err("must reject user fn shadowing `device_in`");
+    assert!(err.contains("device_in"),
+        "error should mention device_in; got: {}", err);
+}
+
+// End-to-end: .abe source calling device_in / device_out lowers to Deo / Dei
+// against the Runtime's installed devices. Stdout = port 0x10_01 (4097).
+#[test]
+fn device_in_writes_byte_to_console() {
+    let src = r#"
+        fn main() -> Int {
+            device_in(4097, 65);  // 'A' to stdout
+            0
+        }
+    "#;
+    let (mut rt, console) = abrase::myriad::host::Runtime::new_for_tests();
+    let (out_handle, _) = console.handles();
+    let v = rt.eval(src).expect("device_in to console must succeed");
+    assert_eq!(v, Value::from_int(0));
+    let buf = out_handle.borrow();
+    assert_eq!(&buf[..], b"A", "stdout should contain 'A'; got {:?}", &buf[..]);
 }
 
 #[test]
-fn builtin_print_runs_when_not_shadowed() {
-    // 不定义同名 fn 时,调用内置 print(返回 Unit)。
+fn device_out_reads_back_dispatch_state() {
+    // 0xE0_00 is the dispatch device's lookup port. Without a prior write,
+    // device_out should surface an error — but not panic, and the Runtime
+    // should report it cleanly.
     let src = r#"
-        fn main() -> Int { print("hi"); 7 }
+        fn main() -> Int { device_out(57344) }
     "#;
     let mut rt = abrase::myriad::host::Runtime::new();
-    let v = rt.eval(src).expect("eval should succeed");
-    assert_eq!(v, Value::from_int(7));
+    let err = rt.eval(src).expect_err("dispatch read without prior lookup must err");
+    assert!(err.contains("dispatch"),
+        "error should reference dispatch device; got: {}", err);
+}
+
+#[test]
+fn user_cannot_shadow_device_out() {
+    let src = r#"
+        fn device_out(port: Int) -> Int { 0 }
+        fn main() -> Int { 0 }
+    "#;
+    let mut rt = abrase::myriad::host::Runtime::new();
+    let err = rt.eval(src).expect_err("must reject user fn shadowing `device_out`");
+    assert!(err.contains("device_out"),
+        "error should mention device_out; got: {}", err);
 }
