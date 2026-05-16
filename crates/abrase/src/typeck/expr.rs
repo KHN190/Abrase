@@ -345,7 +345,9 @@ impl Checker {
 
                 // Body value is discarded — implicit region.
                 self.push_region(format!("for_body_{}", self.region_stack.len()));
+                self.loop_body_region_depth.push(self.region_stack.len());
                 let _body_ty = self.infer_block(body);
+                self.loop_body_region_depth.pop();
                 self.pop_region();
 
                 self.loop_depth -= 1;
@@ -365,7 +367,9 @@ impl Checker {
                 self.loop_depth += 1;
                 self.loop_break_types.push(None);
                 self.push_region(format!("while_body_{}", self.region_stack.len()));
+                self.loop_body_region_depth.push(self.region_stack.len());
                 let _body_ty = self.infer_block(body);
+                self.loop_body_region_depth.pop();
                 self.pop_region();
                 self.loop_depth -= 1;
                 let break_ty = self.loop_break_types.pop().flatten();
@@ -377,7 +381,13 @@ impl Checker {
                 self.context_stack.push("In loop".into());
                 self.loop_depth += 1;
                 self.loop_break_types.push(None);
+                // Loop body is an implicit escape-barrier region (wiki §5):
+                // no reference may leave via break.
+                self.push_region(format!("loop_body_{}", self.region_stack.len()));
+                self.loop_body_region_depth.push(self.region_stack.len());
                 let _body_ty = self.infer_block(body);
+                self.loop_body_region_depth.pop();
+                self.pop_region();
                 self.loop_depth -= 1;
                 let break_ty = self.loop_break_types.pop().flatten();
                 self.context_stack.pop();
@@ -390,6 +400,14 @@ impl Checker {
                     return Type::Never;
                 }
                 if let Some(val) = break_val {
+                    if let Some((root, span)) = self.check_break_escape(val) {
+                        self.report_error(
+                            format!("borrow of '{}' cannot escape the loop body; \
+                                     it would dangle past loop exit",
+                                root),
+                            span,
+                        );
+                    }
                     let val_ty = self.infer_expr(val);
                     // Unify with the innermost loop's break type
                     let existing = self.loop_break_types.last().and_then(|s| s.clone());
@@ -1186,5 +1204,43 @@ impl Checker {
         };
         self.exit_scope();
         ty
+    }
+
+    // Escape-barrier check for `break val`.
+    fn check_break_escape(
+        &self,
+        val: &ast::Spanned<ast::Expr>,
+    ) -> Option<(String, ast::Span)> {
+        let loop_depth = *self.loop_body_region_depth.last()?;
+        let root = match &val.node {
+            ast::Expr::Unary { op: ast::UnaryOp::Ref, right }
+            | ast::Expr::Unary { op: ast::UnaryOp::RefMut, right } => {
+                Self::root_ident(right)?
+            }
+            ast::Expr::Identifier(n) => {
+                let ty = self.resolve_var_in_scopes(n)?;
+                if !matches!(ty, Type::Reference { .. }) { return None; }
+                n.clone()
+            }
+            _ => return None,
+        };
+        for scope in self.scopes.iter().rev() {
+            if let Some(meta) = scope.vars.get(&root) {
+                if meta.bound_at_region_depth >= loop_depth {
+                    return Some((root, val.span));
+                }
+                return None;
+            }
+        }
+        None
+    }
+
+    fn root_ident(expr: &ast::Spanned<ast::Expr>) -> Option<String> {
+        match &expr.node {
+            ast::Expr::Identifier(n) => Some(n.clone()),
+            ast::Expr::FieldAccess { base, .. } => Self::root_ident(base),
+            ast::Expr::Index { base, .. } => Self::root_ident(base),
+            _ => None,
+        }
     }
 }

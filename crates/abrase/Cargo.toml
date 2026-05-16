@@ -6,11 +6,5 @@ edition = "2024"
 [dependencies]
 polka = { path = "../polka" }
 
-# Transitional: many existing tests still drive the runtime directly via
-# `myriad::*`. They live in crates/abrase/tests/ until phase 5 splits them
-# into the right crate. Once that happens, this dev-dep goes away.
-# Transitional: many existing tests still drive the runtime directly via
-# `myriad::*` (compile-and-run tests). They live in crates/abrase/tests/
-# alongside frontend tests. Drop this once those tests are split too.
 [dev-dependencies]
 myriad = { path = "../myriad" }

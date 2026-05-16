@@ -73,6 +73,8 @@ pub struct Checker {
     context_stack: Vec<String>,
     loop_depth: usize,
     loop_break_types: Vec<Option<Type>>, // one entry per active loop; Some(T) if break T seen
+    // region_stack depth recorded at entry to each active loop's body. 
+    loop_body_region_depth: Vec<usize>,
     active_effects: Vec<String>,
     effect_stack: Vec<Vec<String>>,
 
@@ -176,6 +178,7 @@ impl Checker {
             context_stack: Vec::new(),
             loop_depth: 0,
             loop_break_types: Vec::new(),
+            loop_body_region_depth: Vec::new(),
             active_effects: Vec::new(),
             effect_stack: vec![Vec::new()],
             fn_registry: HashMap::new(),

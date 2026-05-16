@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/abrase", "crates/polka", "crates/myriad", "crates/abrase-cli"]
+members = [
+	"crates/abrase", 
+	"crates/polka", 
+	"crates/myriad", 
+	"crates/abrase-cli"
+]
 
 [profile.release]
 opt-level = 3
