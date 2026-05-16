@@ -91,11 +91,7 @@ impl Checker {
         if let Some(ownership) = self.get_type_ownership(type_name) {
             return ownership;
         }
-        // String defaults to Share
-        if type_name == "String" {
-            return Ownership::Share;
-        }
-        // Unknown types default to Move
+        // String is Move; no Share fallback.
         Ownership::Move
     }
     

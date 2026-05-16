@@ -322,10 +322,18 @@ fn verify_infer_ownership_primitive_unit() {
 
 #[test]
 fn verify_infer_ownership_string_default() {
+    // T5: String is Move (single classification across ty.rs and typeck).
     let checker = Checker::new();
     use abrase::ty::Ownership;
 
-    assert_eq!(checker.infer_type_ownership("String"), Ownership::Share);
+    assert_eq!(checker.infer_type_ownership("String"), Ownership::Move);
+}
+
+#[test]
+fn verify_t5_string_classification_consistent_with_ty_rs() {
+    // Type::String.ownership() and infer_type_ownership("String") must agree.
+    let checker = Checker::new();
+    assert_eq!(checker.infer_type_ownership("String"), Type::String.ownership());
 }
 
 #[test]
@@ -902,8 +910,8 @@ fn verify_infer_type_ownership_defaults() {
     assert_eq!(checker.infer_type_ownership("Int"), Ownership::Copy);
     assert_eq!(checker.infer_type_ownership("Bool"), Ownership::Copy);
 
-    // String defaults to Share
-    assert_eq!(checker.infer_type_ownership("String"), Ownership::Share);
+    // String is Move (T5).
+    assert_eq!(checker.infer_type_ownership("String"), Ownership::Move);
 
     // Unknown types default to Move
     assert_eq!(checker.infer_type_ownership("UnknownType"), Ownership::Move);

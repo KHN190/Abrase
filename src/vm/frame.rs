@@ -3,5 +3,4 @@ pub struct Frame {
     pub ip: usize,
     pub base_reg: usize,
     pub dest_reg: usize,
-    pub reg_count: usize,
 }

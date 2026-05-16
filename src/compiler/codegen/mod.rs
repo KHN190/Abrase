@@ -20,6 +20,7 @@ impl Compiler {
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
     ) -> Result<Register, String> {
+        self.current_span = expr.span;
         match &expr.node {
             ast::Expr::Error => Err(
                 "Compilation aborted: parser error was not recovered; fix parser errors first"
@@ -63,6 +64,7 @@ impl Compiler {
         &mut self,
         stmt: &ast::Spanned<ast::Stmt>,
     ) -> Result<(), String> {
+        self.current_span = stmt.span;
         match &stmt.node {
             ast::Stmt::Let { pattern, value, ty, .. } => {
                 if let ast::Pattern::Bind(name) = &pattern.node {

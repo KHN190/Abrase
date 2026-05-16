@@ -4,6 +4,16 @@ use crate::ast::Span;
 
 pub const MAX_PARSE_DEPTH: usize = 256;
 
+pub(crate) struct DepthGuard {
+    counter: *mut usize,
+}
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        unsafe { *self.counter = (*self.counter).saturating_sub(1); }
+    }
+}
+
 pub struct Parser<'a> {
     pub(crate) lexer: Lexer<'a>,
     pub(crate) current_token: Token,
@@ -33,19 +43,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // Returns true if a fresh frame fits within MAX_PARSE_DEPTH; bumps `depth`.
-    pub(crate) fn enter_depth(&mut self) -> bool {
+    pub(crate) fn enter_depth(&mut self) -> Option<DepthGuard> {
         if self.depth >= MAX_PARSE_DEPTH {
             let span = self.current_span;
             self.report_error("Expression nested too deeply".to_string(), span);
-            return false;
+            return None;
         }
         self.depth += 1;
-        true
-    }
-
-    pub(crate) fn exit_depth(&mut self) {
-        self.depth = self.depth.saturating_sub(1);
+        Some(DepthGuard { counter: &mut self.depth as *mut usize })
     }
 
     pub fn with_source(mut self, source: String) -> Self {

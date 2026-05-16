@@ -7,9 +7,10 @@ use super::helpers::is_block_terminated;
 impl<'a> Parser<'a> {
     pub fn parse_expr(&mut self, precedence: Precedence) -> Spanned<Expr> {
         let span = self.current_span;
-        if !self.enter_depth() {
-            return Spanned { node: Expr::Error, span };
-        }
+        let _guard = match self.enter_depth() {
+            Some(g) => g,
+            None => return Spanned { node: Expr::Error, span },
+        };
         let mut left = match self.parse_prefix() {
             Some(expr) => expr,
             None => {
@@ -21,7 +22,6 @@ impl<'a> Parser<'a> {
             self.next_token();
             left = self.parse_infix(left);
         }
-        self.exit_depth();
         left
     }
 

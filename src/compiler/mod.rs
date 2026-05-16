@@ -19,7 +19,7 @@ use self::hir::LayoutCtx;
 pub struct Compiler {
     pub(super) constants: Vec<Value>,
     pub(super) code: Vec<OpCode>,
-    /// Next register to allocate. u16 so the "exhausted" state (256) fits.
+    // Next register to allocate. u16 so the "exhausted" state (256) fits.
     pub(super) next_reg: u16,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
@@ -28,38 +28,36 @@ pub struct Compiler {
     pub(super) layouts: LayoutCtx,
     pub(super) pending_arg_patches: Vec<(usize, u8)>,
     pub(super) current_fn_fallible: bool,
-    /// Effect-handler lowering tables built by the pre-pass.
-    /// (effect_name, op_name) -> synthesised arm fn name. Acts as a global
-    /// last-write-wins fallback for cross-fn op-call sites.
+    // Effect-handler lowering tables built by the pre-pass.
+    // (effect_name, op_name) -> synthesised arm fn name.
     pub(super) effect_op_to_arm: HashMap<(String, String), String>,
-    /// Per-call-site dispatch table. Spans of `e.op(args)` call expressions
-    /// are mapped to the arm fn of the innermost lexically enclosing handle.
-    /// Codegen consults this *before* the global fallback so nested handlers
-    /// for the same effect dispatch correctly.
+    // Per-call-site dispatch table. Spans of `e.op(args)` call expressions
+    // are mapped to the arm fn of the innermost lexically enclosing handle.
+    // Codegen consults this *before* the global fallback so nested handlers
+    // for the same effect dispatch correctly.
     pub(super) op_call_to_arm: HashMap<ast::Span, String>,
-    /// Handle expression span -> synthesised return-arm fn name.
+    // Handle expression span -> synthesised return-arm fn name.
     pub(super) return_arm_by_handle: HashMap<ast::Span, String>,
-    /// Captures per synthesised arm fn (return arms and op arms alike), as
-    /// computed by the pre-pass. Codegen at the `handle` expression site reads
-    /// this to pack one env heap object per arm.
+    // Captures per synthesised arm fn (return arms and op arms alike), as
+    // computed by the pre-pass.
     pub(super) arm_captures: HashMap<String, Vec<closures::CaptureInfo>>,
-    /// Compile-time stack tracking `(arm fn name) -> env register` for each
-    /// active `handle` expression being compiled. Op-call sites look up the
-    /// env register by walking this stack top-down.
+    // Compile-time stack tracking `(arm fn name) -> env register` for each
+    // active `handle` expression being compiled.
     pub(super) arm_env_stack: Vec<HashMap<String, Register>>,
-    /// (receiver_type_name, method_name) -> synthesised mangled fn name produced
-    /// by the impl-lift pass. Used by codegen to rewrite `x.method(...)` calls.
+    // (receiver_type_name, method_name) -> synthesised mangled fn name produced
+    // by the impl-lift pass. Used by codegen to rewrite `x.method(...)` calls.
     pub method_dispatch: HashMap<(String, String), String>,
-    /// Closure expression spans -> the synthesised lifted fn name and capture
-    /// layout. Built by the closures pre-pass.
+    // Closure expression spans -> the synthesised lifted fn name and capture
+    // layout. Built by the closures pre-pass.
     pub(super) closure_by_span: HashMap<ast::Span, closures::ClosureInfo>,
-    /// Per-fn-body: when `let f = |...| ...;` runs, we remember that `f`'s
-    /// register holds the env handle for a specific closure so call sites
-    /// `f(args)` can emit a direct call to the lifted fn.
+    // Per-fn-body: when `let f = |...| ...;` runs, we remember that `f`'s
+    // register holds the env handle for a specific closure so call sites
+    // `f(args)` can emit a direct call to the lifted fn.
     pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
     pub(super) concat_fn_id: Option<usize>,
     pub(super) to_str_fn_id: Option<usize>,
     pub(super) device_mask: [u8; 32],
+    pub(super) current_span: ast::Span,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -92,6 +90,7 @@ impl Compiler {
             concat_fn_id: None,
             to_str_fn_id: None,
             device_mask: [0; 32],
+            current_span: ast::Span::new(0, 0),
             errors: Vec::new(),
             source: String::new(),
         }
@@ -163,8 +162,7 @@ impl Compiler {
         let ast: &[ast::Decl] = &owned;
 
         // Pre-pass: lift closure expressions to synthetic top-level FnDecls
-        // with an env-handle first parameter. Each Expr::Closure span is
-        // recorded so codegen can pack the env and direct-call the lifted fn.
+        // with an env-handle first parameter.
         let mut closure_lowering = closures::ClosureLowering::new();
         closure_lowering.lower(ast);
         self.closure_by_span = closure_lowering.by_span;
@@ -286,7 +284,7 @@ impl Compiler {
                     match self.wrap_ok(result_reg) {
                         Ok(r) => r,
                         Err(msg) => {
-                            self.errors.push(Error::new(ErrorCode::CodegenError, ast::Span::new(0, 0), msg));
+                            self.errors.push(Error::new(ErrorCode::CodegenError, self.current_span, msg));
                             return Err(self.errors.clone());
                         }
                     }
@@ -298,7 +296,7 @@ impl Compiler {
             Err(msg) => {
                 self.errors.push(Error::new(
                     ErrorCode::CodegenError,
-                    ast::Span::new(0, 0),
+                    self.current_span,
                     msg,
                 ));
                 return Err(self.errors.clone());
@@ -308,7 +306,7 @@ impl Compiler {
         if let Err(msg) = self.finalize_arg_patches() {
             self.errors.push(Error::new(
                 ErrorCode::CodegenError,
-                ast::Span::new(0, 0),
+                self.current_span,
                 msg,
             ));
             return Err(self.errors.clone());

@@ -1,8 +1,23 @@
-// `Expr::Call` dispatcher. 
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
 use crate::vm::Value;
+
+pub(in crate::compiler) enum CallEnv {
+    None,
+    Reg(Register),
+    EmptyAlloc,
+}
+
+pub(in crate::compiler) enum CallTarget<'a> {
+    Function { func_id: u16, env: CallEnv },
+    Method   { func_id: u16, receiver: &'a ast::Spanned<ast::Expr> },
+    EnvLoad  { env_reg: Register, idx: u16 },
+    SharedCtor,
+    HostPrintln,
+    VariantCtor { tag: u32 },
+    UnresolvedMethod { receiver: String, field: String },
+}
 
 impl Compiler {
     pub(in crate::compiler) fn compile_call(
@@ -11,29 +26,52 @@ impl Compiler {
         args: &[ast::Spanned<ast::Expr>],
         call_span: ast::Span,
     ) -> Result<Register, String> {
-        if let Some(r) = self.try_compile_env_load(callee, args)? { return Ok(r); }
-        if let Some(r) = self.try_compile_closure_call(callee, args)? { return Ok(r); }
-        if let Some(r) = self.try_compile_effect_op_call(callee, args, call_span)? { return Ok(r); }
-        if let Some(r) = self.try_compile_method_call(callee, args)? { return Ok(r); }
-        if let Some(r) = self.try_compile_host_or_ctor(callee, args)? { return Ok(r); }
-        // A FieldAccess callee that survived to here is a method call we
-        // couldn't resolve
-        if let ast::Expr::FieldAccess { base, field } = &callee.node {
-            let recv = self.receiver_type_name(base)
-                .unwrap_or_else(|| "<unknown>".to_string());
-            return Err(format!(
+        let target = self.resolve_call(callee, args, call_span)?;
+        match target {
+            CallTarget::EnvLoad { env_reg, idx } => self.emit_env_load(env_reg, idx),
+            CallTarget::SharedCtor => self.emit_shared_ctor(args),
+            CallTarget::HostPrintln => self.emit_host_println(args),
+            CallTarget::VariantCtor { tag } => self.emit_variant_ctor(tag, args),
+            CallTarget::Function { func_id, env } => self.emit_func_call(func_id, env, args),
+            CallTarget::Method { func_id, receiver } => self.emit_method_call(func_id, receiver, args),
+            CallTarget::UnresolvedMethod { receiver, field } => Err(format!(
                 "No method '{}' on type '{}' (or receiver type could not be inferred)",
-                field, recv
-            ));
+                field, receiver
+            )),
         }
-        self.compile_plain_call(callee, args)
     }
 
-    fn try_compile_env_load(
-        &mut self,
-        callee: &ast::Spanned<ast::Expr>,
-        args: &[ast::Spanned<ast::Expr>],
-    ) -> Result<Option<Register>, String> {
+    fn resolve_call<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
+        args: &'a [ast::Spanned<ast::Expr>],
+        call_span: ast::Span,
+    ) -> Result<CallTarget<'a>, String> {
+        if let Some(t) = self.resolve_env_load(callee, args)? { return Ok(t); }
+        if let Some(t) = self.resolve_closure_call(callee)? { return Ok(t); }
+        if let Some(t) = self.resolve_effect_op_call(callee, call_span)? { return Ok(t); }
+        if let Some(t) = self.resolve_method_call(callee)? { return Ok(t); }
+        if let Some(t) = self.resolve_host_or_ctor(callee, args)? { return Ok(t); }
+        if let ast::Expr::FieldAccess { base, field } = &callee.node {
+            let recv = self.receiver_type_name(base).unwrap_or_else(|| "<unknown>".to_string());
+            return Ok(CallTarget::UnresolvedMethod { receiver: recv, field: field.clone() });
+        }
+        let ast::Expr::Identifier(name) = &callee.node else {
+            return Err("Call target must be a function identifier".to_string());
+        };
+        let func_id = self.func_map.get(name).copied()
+            .ok_or_else(|| format!("Undefined function: {}", name))?;
+        if func_id > u16::MAX as usize {
+            return Err(format!("Function id {} exceeds u16 range", func_id));
+        }
+        Ok(CallTarget::Function { func_id: func_id as u16, env: CallEnv::None })
+    }
+
+    fn resolve_env_load<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
+        args: &'a [ast::Spanned<ast::Expr>],
+    ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
         if name != "__env_load" || args.len() != 2 { return Ok(None); }
         let (env_name, idx) = match (&args[0].node, &args[1].node) {
@@ -41,57 +79,28 @@ impl Compiler {
             _ => return Ok(None),
         };
         let env_reg = *self.var_to_reg.get(env_name)
-            .ok_or_else(|| format!(
-                "internal: env binding '{}' not in scope", env_name
-            ))?;
-        let dest = self.alloc_register()?;
-        self.emit(OpCode::Ld(dest, env_reg, *idx as u16));
-        Ok(Some(dest))
+            .ok_or_else(|| format!("internal: env binding '{}' not in scope", env_name))?;
+        Ok(Some(CallTarget::EnvLoad { env_reg, idx: *idx as u16 }))
     }
 
-    fn try_compile_closure_call(
-        &mut self,
-        callee: &ast::Spanned<ast::Expr>,
-        args: &[ast::Spanned<ast::Expr>],
-    ) -> Result<Option<Register>, String> {
+    fn resolve_closure_call<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
+    ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
-        let Some(info) = self.closure_by_var.get(name).cloned() else { return Ok(None) };
-
+        let Some(info) = self.closure_by_var.get(name) else { return Ok(None) };
         let func_id = *self.func_map.get(&info.lifted_fn)
-            .ok_or_else(|| format!(
-                "internal: lifted closure fn '{}' not in fn table",
-                info.lifted_fn
-            ))?;
+            .ok_or_else(|| format!("internal: lifted closure fn '{}' not in fn table", info.lifted_fn))?;
         let env_reg = *self.var_to_reg.get(name)
-            .ok_or_else(|| format!(
-                "internal: closure binding '{}' has no register", name
-            ))?;
-        let mut arg_srcs = Vec::with_capacity(args.len());
-        for arg in args {
-            arg_srcs.push(self.compile_expr(arg)?);
-        }
-        let pos = self.code.len();
-        self.emit(OpCode::Copy(Register(0), env_reg));
-        self.pending_arg_patches.push((pos, 0));
-        for (i, src) in arg_srcs.iter().enumerate() {
-            let pos = self.code.len();
-            self.emit(OpCode::Copy(Register(0), *src));
-            self.pending_arg_patches.push((pos, (i + 1) as u8));
-        }
-        let dest = self.alloc_register()?;
-        self.emit(OpCode::Call(dest, func_id as u16));
-        Ok(Some(dest))
+            .ok_or_else(|| format!("internal: closure binding '{}' has no register", name))?;
+        Ok(Some(CallTarget::Function { func_id: func_id as u16, env: CallEnv::Reg(env_reg) }))
     }
 
-    // Effect-op call: `Foo.op(args)`
-    //   1. Per-call-site map (`op_call_to_arm`)
-    //   2. Global `(effect, op) -> arm` map — last-write-wins 
-    fn try_compile_effect_op_call(
-        &mut self,
-        callee: &ast::Spanned<ast::Expr>,
-        args: &[ast::Spanned<ast::Expr>],
+    fn resolve_effect_op_call<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
         call_span: ast::Span,
-    ) -> Result<Option<Register>, String> {
+    ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::FieldAccess { base, field } = &callee.node else { return Ok(None) };
         let ast::Expr::Identifier(eff_name) = &base.node else { return Ok(None) };
         let arm_name = if let Some(name) = self.op_call_to_arm.get(&call_span).cloned() {
@@ -101,43 +110,42 @@ impl Compiler {
         } else {
             return Ok(None);
         };
-
         let func_id = *self.func_map.get(&arm_name)
-            .ok_or_else(|| format!(
-                "internal: arm '{}' missing from fn table", arm_name
-            ))?;
-
-        let env_reg = self.find_arm_env(&arm_name);
-        let mut arg_srcs = Vec::with_capacity(args.len());
-        for arg in args {
-            arg_srcs.push(self.compile_expr(arg)?);
-        }
-
-        let env_to_pass = match env_reg {
-            Some(r) => r,
-            None => {
-                let r = self.alloc_register()?;
-                self.emit(OpCode::Alloc(r, 1));
-                r
-            }
+            .ok_or_else(|| format!("internal: arm '{}' missing from fn table", arm_name))?;
+        let env = match self.find_arm_env(&arm_name) {
+            Some(r) => CallEnv::Reg(r),
+            None => CallEnv::EmptyAlloc,
         };
+        Ok(Some(CallTarget::Function { func_id: func_id as u16, env }))
+    }
 
-        // Call convention: (env, op_args...).
-        let pos = self.code.len();
-        self.emit(OpCode::Copy(Register(0), env_to_pass));
-        self.pending_arg_patches.push((pos, 0));
-        for (i, src) in arg_srcs.iter().enumerate() {
-            let slot = i + 1;
-            if slot > u8::MAX as usize {
-                return Err("Too many arguments (>255)".to_string());
-            }
-            let pos = self.code.len();
-            self.emit(OpCode::Copy(Register(0), *src));
-            self.pending_arg_patches.push((pos, slot as u8));
+    fn resolve_method_call<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
+    ) -> Result<Option<CallTarget<'a>>, String> {
+        let ast::Expr::FieldAccess { base, field } = &callee.node else { return Ok(None) };
+        let Some(rname) = self.receiver_type_name(base) else { return Ok(None) };
+        let Some(mangled) = self.method_dispatch.get(&(rname, field.clone())).cloned() else { return Ok(None) };
+        let func_id = *self.func_map.get(&mangled)
+            .ok_or_else(|| format!("internal: method '{}' missing from fn table", mangled))?;
+        if func_id > u16::MAX as usize {
+            return Err(format!("Function id {} exceeds u16 range", func_id));
         }
-        let dest = self.alloc_register()?;
-        self.emit(OpCode::Call(dest, func_id as u16));
-        Ok(Some(dest))
+        Ok(Some(CallTarget::Method { func_id: func_id as u16, receiver: base }))
+    }
+
+    fn resolve_host_or_ctor<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
+        args: &'a [ast::Spanned<ast::Expr>],
+    ) -> Result<Option<CallTarget<'a>>, String> {
+        let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
+        if name == "Shared" && args.len() == 1 { return Ok(Some(CallTarget::SharedCtor)); }
+        if name == "__host_println" && args.len() == 1 { return Ok(Some(CallTarget::HostPrintln)); }
+        if let Some(info) = self.layouts.variants.get(name) {
+            return Ok(Some(CallTarget::VariantCtor { tag: info.tag }));
+        }
+        Ok(None)
     }
 
     fn find_arm_env(&self, arm_name: &str) -> Option<Register> {
@@ -149,115 +157,93 @@ impl Compiler {
         None
     }
 
-    // Method-call dispatch: `base.method(args)` lowers to a direct call to
-    // the synthesised `Trait__Type__method` fn, with `base` as the first arg.
-    fn try_compile_method_call(
-        &mut self,
-        callee: &ast::Spanned<ast::Expr>,
-        args: &[ast::Spanned<ast::Expr>],
-    ) -> Result<Option<Register>, String> {
-        let ast::Expr::FieldAccess { base, field } = &callee.node else { return Ok(None) };
-        let Some(rname) = self.receiver_type_name(base) else { return Ok(None) };
-        let key = (rname, field.clone());
-        let Some(mangled) = self.method_dispatch.get(&key).cloned() else { return Ok(None) };
-
-        let func_id = *self.func_map.get(&mangled)
-            .ok_or_else(|| format!(
-                "internal: method '{}' missing from fn table", mangled
-            ))?;
-        if func_id > u16::MAX as usize {
-            return Err(format!("Function id {} exceeds u16 range", func_id));
-        }
-        let base_src = self.compile_expr(base)?;
-        let mut arg_srcs = Vec::with_capacity(args.len() + 1);
-        arg_srcs.push(base_src);
-        for arg in args {
-            arg_srcs.push(self.compile_expr(arg)?);
-        }
-        for (i, src) in arg_srcs.iter().enumerate() {
-            if i > u8::MAX as usize {
-                return Err("Too many arguments (>255)".to_string());
-            }
-            let pos = self.code.len();
-            self.emit(OpCode::Copy(Register(0), *src));
-            self.pending_arg_patches.push((pos, i as u8));
-        }
+    fn emit_env_load(&mut self, env_reg: Register, idx: u16) -> Result<Register, String> {
         let dest = self.alloc_register()?;
-        self.emit(OpCode::Call(dest, func_id as u16));
-        Ok(Some(dest))
+        self.emit(OpCode::Ld(dest, env_reg, idx));
+        Ok(dest)
     }
 
-    // Host built-in `Shared(x)` or a variant constructor call `Foo(a,b)`.
-    fn try_compile_host_or_ctor(
-        &mut self,
-        callee: &ast::Spanned<ast::Expr>,
-        args: &[ast::Spanned<ast::Expr>],
-    ) -> Result<Option<Register>, String> {
-        let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
-
-        if name == "Shared" && args.len() == 1 {
-            let src = self.compile_expr(&args[0])?;
-            let dest = self.alloc_register()?;
-            self.emit(OpCode::Alloc(dest, 1));
-            self.emit(OpCode::St(src, dest, 0));
-            return Ok(Some(dest));
-        }
-
-        if name == "__host_println" && args.len() == 1 {
-            let src = self.compile_expr(&args[0])?;
-            let port_reg = self.alloc_register()?;
-            let port_idx = self.add_constant(Value::Int(0x101A))?;
-            self.emit(OpCode::PushConst(port_reg, port_idx));
-            self.emit(OpCode::Deo(src, port_reg));
-            let nl_reg = self.alloc_register()?;
-            let nl_idx = self.add_constant(Value::Int(b'\n' as i64))?;
-            self.emit(OpCode::PushConst(nl_reg, nl_idx));
-            let byte_port = self.alloc_register()?;
-            let byte_port_idx = self.add_constant(Value::Int(0x1018))?;
-            self.emit(OpCode::PushConst(byte_port, byte_port_idx));
-            self.emit(OpCode::Deo(nl_reg, byte_port));
-            self.device_mask[0x10 / 8] |= 1 << (0x10 % 8);
-            let unit = self.alloc_register()?;
-            let unit_idx = self.add_constant(Value::Unit)?;
-            self.emit(OpCode::PushConst(unit, unit_idx));
-            return Ok(Some(unit));
-        }
-
-        let Some(info) = self.layouts.variants.get(name).cloned() else { return Ok(None) };
+    fn emit_shared_ctor(&mut self, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
+        let src = self.compile_expr(&args[0])?;
         let dest = self.alloc_register()?;
-        let payload = args.len();
-        self.emit(OpCode::Alloc(dest, (payload + 1) as u16));
+        self.emit(OpCode::Alloc(dest, 1));
+        self.emit(OpCode::St(src, dest, 0));
+        Ok(dest)
+    }
+
+    fn emit_host_println(&mut self, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
+        let src = self.compile_expr(&args[0])?;
+        let port_reg = self.alloc_register()?;
+        let port_idx = self.add_constant(Value::Int(0x101A))?;
+        self.emit(OpCode::PushConst(port_reg, port_idx));
+        self.emit(OpCode::Deo(src, port_reg));
+        let nl_reg = self.alloc_register()?;
+        let nl_idx = self.add_constant(Value::Int(b'\n' as i64))?;
+        self.emit(OpCode::PushConst(nl_reg, nl_idx));
+        let byte_port = self.alloc_register()?;
+        let byte_port_idx = self.add_constant(Value::Int(0x1018))?;
+        self.emit(OpCode::PushConst(byte_port, byte_port_idx));
+        self.emit(OpCode::Deo(nl_reg, byte_port));
+        self.device_mask[0x10 / 8] |= 1 << (0x10 % 8);
+        let unit = self.alloc_register()?;
+        let unit_idx = self.add_constant(Value::Unit)?;
+        self.emit(OpCode::PushConst(unit, unit_idx));
+        Ok(unit)
+    }
+
+    fn emit_variant_ctor(&mut self, tag: u32, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Alloc(dest, (args.len() + 1) as u16));
         let tag_reg = self.alloc_register()?;
-        let ti = self.add_constant(Value::Int(info.tag as i64))?;
+        let ti = self.add_constant(Value::Int(tag as i64))?;
         self.emit(OpCode::PushConst(tag_reg, ti));
         self.emit(OpCode::St(tag_reg, dest, 0));
         for (i, arg) in args.iter().enumerate() {
             let v = self.compile_expr(arg)?;
             self.emit(OpCode::St(v, dest, (i + 1) as u16));
         }
-        Ok(Some(dest))
+        Ok(dest)
     }
 
-    // Plain by-id call to a top-level fn.
-    fn compile_plain_call(
+    fn emit_func_call(
         &mut self,
-        callee: &ast::Spanned<ast::Expr>,
+        func_id: u16,
+        env: CallEnv,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
-        let ast::Expr::Identifier(name) = &callee.node else {
-            return Err("Call target must be a function identifier".to_string());
+        let env_to_pass = match env {
+            CallEnv::None => None,
+            CallEnv::Reg(r) => Some(r),
+            CallEnv::EmptyAlloc => {
+                let r = self.alloc_register()?;
+                self.emit(OpCode::Alloc(r, 1));
+                Some(r)
+            }
         };
-        let func_id = self.func_map.get(name).copied()
-            .ok_or_else(|| format!("Undefined function: {}", name))?;
-        if func_id > u16::MAX as usize {
-            return Err(format!("Function id {} exceeds u16 range", func_id));
-        }
+        let mut srcs: Vec<Register> = env_to_pass.into_iter().collect();
+        for arg in args { srcs.push(self.compile_expr(arg)?); }
+        self.stage_call_args(&srcs)?;
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Call(dest, func_id));
+        Ok(dest)
+    }
 
-        let mut arg_srcs = Vec::with_capacity(args.len());
-        for arg in args {
-            arg_srcs.push(self.compile_expr(arg)?);
-        }
-        for (i, src) in arg_srcs.iter().enumerate() {
+    fn emit_method_call(
+        &mut self,
+        func_id: u16,
+        receiver: &ast::Spanned<ast::Expr>,
+        args: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Register, String> {
+        let mut srcs = vec![self.compile_expr(receiver)?];
+        for arg in args { srcs.push(self.compile_expr(arg)?); }
+        self.stage_call_args(&srcs)?;
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Call(dest, func_id));
+        Ok(dest)
+    }
+
+    fn stage_call_args(&mut self, srcs: &[Register]) -> Result<(), String> {
+        for (i, src) in srcs.iter().enumerate() {
             if i > u8::MAX as usize {
                 return Err("Too many arguments (>255)".to_string());
             }
@@ -265,8 +251,6 @@ impl Compiler {
             self.emit(OpCode::Copy(Register(0), *src));
             self.pending_arg_patches.push((pos, i as u8));
         }
-        let dest = self.alloc_register()?;
-        self.emit(OpCode::Call(dest, func_id as u16));
-        Ok(dest)
+        Ok(())
     }
 }

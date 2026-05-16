@@ -345,7 +345,6 @@ impl VirtualMachine {
             ip: self.pc,
             base_reg: self.base_reg,
             dest_reg: dest_abs,
-            reg_count: caller_reg_count,
         });
         self.base_reg = new_base;
         self.current_func = fn_id;
