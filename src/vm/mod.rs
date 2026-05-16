@@ -16,16 +16,22 @@ pub struct VirtualMachine {
     pub(crate) base_reg: usize,
     pub(crate) current_func: usize,
     pub(crate) heap: Heap,
-    // Stack of installed handler frames (parallel to value frames).
-    // Each entry holds the function id of the handler so a `Resume` can
-    // unwind back to it. Empty when no handler is active.
     pub(crate) handlers: Vec<HandlerFrame>,
 }
 
+// `cell_*` point at the 4-slot heap continuation: [pc, base, dest_reg, alive].
 pub struct HandlerFrame {
     pub handler_fn: usize,
-    pub saved_pc: usize,
-    pub saved_base: usize,
+    pub cell_slot: u32,
+    pub cell_gen: u32,
+}
+
+pub(crate) mod cont_slot {
+    pub const SUSPEND_PC: usize = 0;
+    pub const SUSPEND_BASE: usize = 1;
+    pub const DEST_REG: usize = 2;
+    pub const ALIVE: usize = 3;
+    pub const SIZE: usize = 4;
 }
 
 impl VirtualMachine {
@@ -39,5 +45,9 @@ impl VirtualMachine {
             heap: Heap::new(),
             handlers: Vec::new(),
         }
+    }
+
+    pub fn heap_live_count(&self) -> usize {
+        self.heap.live_count()
     }
 }

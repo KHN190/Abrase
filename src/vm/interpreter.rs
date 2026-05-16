@@ -1,5 +1,5 @@
 use super::{VirtualMachine, Value};
-use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module};
+use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS};
 use crate::vm::frame::Frame;
 
 const MAX_REGISTERS: usize = 1 << 16;
@@ -17,11 +17,12 @@ impl VirtualMachine {
     }
 
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
+        validate_module_register_budget(module)?;
         self.pc = 0;
         self.base_reg = 0;
         self.current_func = module.entry;
         self.frames.clear();
-        let needed = 256;
+        let needed = FRAME_REGS;
         if needed > self.registers.len() {
             self.registers.resize(needed, None);
         }
@@ -90,16 +91,14 @@ impl VirtualMachine {
             OpCode::Shl(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_shl((y as u32) & 63)),
             OpCode::Shr(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_shr((y as u32) & 63)),
 
-            OpCode::Jmp(off) => { self.branch(*off); Ok(()) }
+            OpCode::Jmp(off) => self.branch(module, *off),
             OpCode::Jz(r, off) => {
                 let v = self.read(*r)?;
-                if is_falsy(&v) { self.branch(*off); }
-                Ok(())
+                if is_falsy(&v) { self.branch(module, *off) } else { Ok(()) }
             }
             OpCode::Jnz(r, off) => {
                 let v = self.read(*r)?;
-                if !is_falsy(&v) { self.branch(*off); }
-                Ok(())
+                if !is_falsy(&v) { self.branch(module, *off) } else { Ok(()) }
             }
             OpCode::Call(dest, fn_id) => self.do_call(module, *dest, *fn_id as usize),
             OpCode::Ret(reg) => self.do_ret(*reg),
@@ -114,6 +113,9 @@ impl VirtualMachine {
             }
             OpCode::Copy(d, s) => {
                 let v = self.read(*s)?;
+                if let Value::Handle { slot, generation } = v {
+                    self.heap.rc_inc(slot, generation)?;
+                }
                 self.write(*d, v)
             }
             OpCode::Move(d, s) => {
@@ -122,49 +124,76 @@ impl VirtualMachine {
             }
 
             OpCode::Ld(d, b, off) => {
-                let h = self.read_handle(*b)?;
-                let v = self.heap.ld(h, *off as usize)?;
+                let (slot, generation) = self.read_handle(*b)?;
+                let v = self.heap.ld(slot, generation, *off as usize)?;
+                if let Value::Handle { slot: s2, generation: g2 } = v {
+                    self.heap.rc_inc(s2, g2)?;
+                }
                 self.write(*d, v)
             }
-            OpCode::St(s, b, off) => {
-                let h = self.read_handle(*b)?;
-                let v = self.read(*s)?;
-                self.heap.st(h, *off as usize, v)
+            OpCode::St(src, b, off) => {
+                let (slot, generation) = self.read_handle(*b)?;
+                let v = self.take(*src)?;
+                let old = self.heap.st(slot, generation, *off as usize, v)?;
+                if let Value::Handle { slot: s2, generation: g2 } = old {
+                    self.heap.rc_dec(s2, g2)?;
+                }
+                Ok(())
             }
             OpCode::LdIdx(d, b, i) => {
-                let h = self.read_handle(*b)?;
-                let off = self.read_i64(*i)? as usize;
-                let v = self.heap.ld(h, off)?;
+                let (slot, generation) = self.read_handle(*b)?;
+                let off = self.read_i64(*i)?;
+                if off < 0 {
+                    return Err(format!("ldidx: negative index {}", off));
+                }
+                let v = self.heap.ld(slot, generation, off as usize)?;
+                if let Value::Handle { slot: s2, generation: g2 } = v {
+                    self.heap.rc_inc(s2, g2)?;
+                }
                 self.write(*d, v)
             }
-            OpCode::StIdx(s, b, i) => {
-                let h = self.read_handle(*b)?;
-                let off = self.read_i64(*i)? as usize;
-                let v = self.read(*s)?;
-                self.heap.st(h, off, v)
+            OpCode::StIdx(src, b, i) => {
+                let (slot, generation) = self.read_handle(*b)?;
+                let off = self.read_i64(*i)?;
+                if off < 0 {
+                    return Err(format!("stidx: negative index {}", off));
+                }
+                let v = self.take(*src)?;
+                let old = self.heap.st(slot, generation, off as usize, v)?;
+                if let Value::Handle { slot: s2, generation: g2 } = old {
+                    self.heap.rc_dec(s2, g2)?;
+                }
+                Ok(())
             }
-            OpCode::Lea(d, b, off) => {
-                let h = self.read_handle(*b)? as i64;
-                self.write(*d, Value::Int(h + *off as i64))
+            OpCode::Lea(_, _, _) => {
+                Err("lea: not supported under handle/generation model".to_string())
             }
             OpCode::Ref(d, s) => {
                 let v = self.read(*s)?;
-                let h = self.heap.alloc(1);
-                self.heap.st(h, 0, v)?;
-                self.write(*d, Value::Int(h as i64))
+                if let Value::Handle { slot: s2, generation: g2 } = v {
+                    self.heap.rc_inc(s2, g2)?;
+                }
+                let (slot, generation) = self.heap.alloc(1);
+                self.heap.st(slot, generation, 0, v)?;
+                self.write(*d, Value::Handle { slot, generation })
             }
 
             OpCode::Alloc(d, size) => {
-                let h = self.heap.alloc(*size as usize) as i64;
-                self.write(*d, Value::Int(h))
+                let (slot, generation) = self.heap.alloc(*size as usize);
+                self.write(*d, Value::Handle { slot, generation })
             }
             OpCode::Free(reg) => {
-                let h = self.read_handle(*reg)?;
-                self.heap.free(h)
+                let (slot, generation) = self.read_handle(*reg)?;
+                self.heap.force_free(slot, generation)
             }
             OpCode::Drop(reg) => {
                 let abs = self.base_reg + reg.to_usize();
-                self.registers[abs] = None;
+                if abs >= self.registers.len() {
+                    return Err(format!("drop: r{} out of window", reg.0));
+                }
+                if let Some(Value::Handle { slot, generation }) = self.registers[abs].take() {
+                    self.heap.rc_dec(slot, generation)?;
+                }
                 Ok(())
             }
 
@@ -172,23 +201,69 @@ impl VirtualMachine {
                 Err("device I/O not yet implemented".to_string())
             }
             OpCode::Handle(dest, fn_id) => {
-                let _ = dest;
+                // Heap-alloc continuation cell; `dest` is the suspended frame's result reg.
+                let (slot, generation) = self.heap.alloc(super::cont_slot::SIZE);
+                self.heap.st(slot, generation, super::cont_slot::SUSPEND_PC,
+                    Value::Int(self.pc as i64))?;
+                self.heap.st(slot, generation, super::cont_slot::SUSPEND_BASE,
+                    Value::Int(self.base_reg as i64))?;
+                self.heap.st(slot, generation, super::cont_slot::DEST_REG,
+                    Value::Int(dest.to_usize() as i64))?;
+                self.heap.st(slot, generation, super::cont_slot::ALIVE,
+                    Value::Int(1))?;
                 self.handlers.push(super::HandlerFrame {
                     handler_fn: *fn_id as usize,
-                    saved_pc: self.pc,
-                    saved_base: self.base_reg,
+                    cell_slot: slot,
+                    cell_gen: generation,
                 });
                 Ok(())
             }
             OpCode::Resume(reg) => {
-                // TODO: Single-shot for now. pop the most-recent handler and return.
-                // The continuation value lives in `reg` (the operation's return value).
+                // Single-shot: alive check, restore (pc, base, dest), mark dead, free cell.
                 let frame = self.handlers.pop()
                     .ok_or("Resume outside an active handler frame")?;
+                let alive = self.heap.ld(frame.cell_slot, frame.cell_gen,
+                    super::cont_slot::ALIVE)?;
+                match alive {
+                    Value::Int(1) => {}
+                    Value::Int(0) => return Err(
+                        "resume: continuation already consumed".to_string()),
+                    other => return Err(format!(
+                        "resume: continuation cell corrupted (alive slot = {:?})", other)),
+                }
+                let saved_pc = match self.heap.ld(frame.cell_slot, frame.cell_gen,
+                    super::cont_slot::SUSPEND_PC)? {
+                    Value::Int(n) if n >= 0 => n as usize,
+                    other => return Err(format!(
+                        "resume: continuation cell has invalid pc {:?}", other)),
+                };
+                let saved_base = match self.heap.ld(frame.cell_slot, frame.cell_gen,
+                    super::cont_slot::SUSPEND_BASE)? {
+                    Value::Int(n) if n >= 0 => n as usize,
+                    other => return Err(format!(
+                        "resume: continuation cell has invalid base {:?}", other)),
+                };
+                let dest_reg = match self.heap.ld(frame.cell_slot, frame.cell_gen,
+                    super::cont_slot::DEST_REG)? {
+                    Value::Int(n) if (0..256).contains(&n) => n as usize,
+                    other => return Err(format!(
+                        "resume: continuation cell has invalid dest_reg {:?}", other)),
+                };
                 let val = self.read(*reg)?;
-                self.pc = frame.saved_pc;
-                self.base_reg = frame.saved_base;
-                self.registers[self.base_reg] = Some(val);
+                self.heap.st(frame.cell_slot, frame.cell_gen,
+                    super::cont_slot::ALIVE, Value::Int(0))?;
+                self.pc = saved_pc;
+                self.base_reg = saved_base;
+                let abs = saved_base + dest_reg;
+                if abs >= self.registers.len() {
+                    return Err(format!(
+                        "resume: dest r{} (abs {}) out of register window (len {})",
+                        dest_reg, abs, self.registers.len()
+                    ));
+                }
+                self.registers[abs] = Some(val);
+                // Single-shot: reclaim the cell now.
+                self.heap.force_free(frame.cell_slot, frame.cell_gen)?;
                 Ok(())
             }
         }
@@ -200,9 +275,27 @@ impl VirtualMachine {
         }
         let caller_bc = expect_bytecode(module, self.current_func)?;
         let caller_reg_count = caller_bc.reg_count;
+        if caller_reg_count > FRAME_REGS {
+            return Err(format!(
+                "call: caller fn {} has reg_count {} > frame budget {}",
+                self.current_func, caller_reg_count, FRAME_REGS
+            ));
+        }
+        let callee_reg_count = match &module.functions[fn_id] {
+            Chunk::Bytecode(b) => b.reg_count,
+            Chunk::Native(_) => 0,
+        };
+        if callee_reg_count > FRAME_REGS {
+            return Err(format!(
+                "call: callee fn {} has reg_count {} > frame budget {}",
+                fn_id, callee_reg_count, FRAME_REGS
+            ));
+        }
         let dest_abs = self.base_reg + dest.to_usize();
         let new_base = self.base_reg + caller_reg_count;
-        let needed = new_base + 256;
+        // Reserve at least FRAME_REGS even if the callee declares fewer
+        let window = callee_reg_count.max(FRAME_REGS);
+        let needed = new_base + window;
         if needed > MAX_REGISTERS {
             return Err(format!(
                 "Stack overflow: register window {} exceeds limit {}",
@@ -262,9 +355,17 @@ impl VirtualMachine {
         }
     }
 
-    fn branch(&mut self, offset: i16) {
+    fn branch(&mut self, module: &Module, offset: i16) -> Result<(), String> {
+        let bc = expect_bytecode(module, self.current_func)?;
         let new_pc = (self.pc as isize) + (offset as isize);
+        if new_pc < 0 || (new_pc as usize) > bc.code.len() {
+            return Err(format!(
+                "branch: pc {} out of range [0, {}]",
+                new_pc, bc.code.len()
+            ));
+        }
         self.pc = new_pc as usize;
+        Ok(())
     }
 
     fn read(&self, r: Register) -> Result<Value, String> {
@@ -296,10 +397,10 @@ impl VirtualMachine {
         }
     }
 
-    fn read_handle(&self, r: Register) -> Result<usize, String> {
+    fn read_handle(&self, r: Register) -> Result<(u32, u32), String> {
         match self.read(r)? {
-            Value::Int(n) => Ok(n as usize),
-            v => Err(format!("expected pointer, got {:?}", v)),
+            Value::Handle { slot, generation } => Ok((slot, generation)),
+            v => Err(format!("expected handle, got {:?}", v)),
         }
     }
 
@@ -349,4 +450,28 @@ fn expect_bytecode(module: &Module, fn_id: usize) -> Result<&BytecodeChunk, Stri
         Chunk::Bytecode(b) => Ok(b),
         Chunk::Native(_) => Err(format!("expected bytecode chunk at fn {}, found native", fn_id)),
     }
+}
+
+// Reject modules whose bytecode chunks declare more registers than the
+// per-frame budget (appendix-bytecode-spec §2: 256 slots per frame).
+// Validating at load/start time defends against compilers that emit bad
+// chunks and against hand-written modules.
+fn validate_module_register_budget(module: &Module) -> Result<(), String> {
+    for (i, chunk) in module.functions.iter().enumerate() {
+        if let Chunk::Bytecode(b) = chunk {
+            if b.reg_count > FRAME_REGS {
+                return Err(format!(
+                    "module load: fn {} has reg_count {} > frame budget {}",
+                    i, b.reg_count, FRAME_REGS
+                ));
+            }
+            if b.param_count > b.reg_count {
+                return Err(format!(
+                    "module load: fn {} has param_count {} > reg_count {}",
+                    i, b.param_count, b.reg_count
+                ));
+            }
+        }
+    }
+    Ok(())
 }

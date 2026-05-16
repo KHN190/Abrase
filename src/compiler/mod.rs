@@ -19,7 +19,8 @@ use self::hir::LayoutCtx;
 pub struct Compiler {
     pub(super) constants: Vec<Value>,
     pub(super) code: Vec<OpCode>,
-    pub(super) next_reg: u8,
+    /// Next register to allocate. u16 so the "exhausted" state (256) fits.
+    pub(super) next_reg: u16,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
     pub(super) func_map: HashMap<String, usize>,

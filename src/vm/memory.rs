@@ -3,77 +3,114 @@ use super::Value;
 pub struct Heap {
     cells: Vec<Option<Vec<Value>>>,
     rc: Vec<u32>,
-    free_list: Vec<usize>,
+    generation: Vec<u32>,
+    free_list: Vec<u32>,
 }
 
 impl Heap {
     pub fn new() -> Self {
-        Self { cells: Vec::new(), rc: Vec::new(), free_list: Vec::new() }
+        Self { cells: Vec::new(), rc: Vec::new(), generation: Vec::new(), free_list: Vec::new() }
     }
 
-    pub fn alloc(&mut self, size: usize) -> usize {
+    pub fn alloc(&mut self, size: usize) -> (u32, u32) {
         let slot = vec![Value::Unit; size];
         if let Some(h) = self.free_list.pop() {
-            self.cells[h] = Some(slot);
-            self.rc[h] = 1;
-            h
+            let idx = h as usize;
+            self.cells[idx] = Some(slot);
+            self.rc[idx] = 1;
+            self.generation[idx] = self.generation[idx].wrapping_add(1);
+            (h, self.generation[idx])
         } else {
             self.cells.push(Some(slot));
             self.rc.push(1);
-            self.cells.len() - 1
+            self.generation.push(0);
+            let h = (self.cells.len() - 1) as u32;
+            (h, 0)
         }
     }
 
-    pub fn free(&mut self, handle: usize) -> Result<(), String> {
-        if handle >= self.cells.len() || self.cells[handle].is_none() {
-            return Err(format!("free: invalid handle {}", handle));
+    fn check(&self, slot: u32, generation: u32, op: &str) -> Result<usize, String> {
+        let idx = slot as usize;
+        if idx >= self.cells.len() {
+            return Err(format!("{}: invalid slot {}", op, slot));
         }
-        self.cells[handle] = None;
-        self.rc[handle] = 0;
-        self.free_list.push(handle);
-        Ok(())
+        if self.cells[idx].is_none() {
+            return Err(format!("{}: use-after-free of slot {}", op, slot));
+        }
+        if self.generation[idx] != generation {
+            return Err(format!(
+                "{}: stale handle for slot {} (have generation {}, live generation {})",
+                op, slot, generation, self.generation[idx]
+            ));
+        }
+        Ok(idx)
     }
 
-    pub fn ld(&self, handle: usize, offset: usize) -> Result<Value, String> {
-        let cell = self.cells.get(handle).and_then(|c| c.as_ref())
-            .ok_or_else(|| format!("ld: invalid handle {}", handle))?;
+    pub fn ld(&self, slot: u32, generation: u32, offset: usize) -> Result<Value, String> {
+        let idx = self.check(slot, generation, "ld")?;
+        let cell = self.cells[idx].as_ref().unwrap();
         cell.get(offset).cloned()
             .ok_or_else(|| format!("ld: offset {} out of bounds (size {})", offset, cell.len()))
     }
 
-    pub fn st(&mut self, handle: usize, offset: usize, val: Value) -> Result<(), String> {
-        let cell = self.cells.get_mut(handle).and_then(|c| c.as_mut())
-            .ok_or_else(|| format!("st: invalid handle {}", handle))?;
+    pub fn st(&mut self, slot: u32, generation: u32, offset: usize, val: Value) -> Result<Value, String> {
+        let idx = self.check(slot, generation, "st")?;
+        let cell = self.cells[idx].as_mut().unwrap();
         if offset >= cell.len() {
             return Err(format!("st: offset {} out of bounds (size {})", offset, cell.len()));
         }
-        cell[offset] = val;
+        let old = std::mem::replace(&mut cell[offset], val);
+        Ok(old)
+    }
+
+    pub fn size(&self, slot: u32, generation: u32) -> Result<usize, String> {
+        let idx = self.check(slot, generation, "size")?;
+        Ok(self.cells[idx].as_ref().unwrap().len())
+    }
+
+    pub fn rc_inc(&mut self, slot: u32, generation: u32) -> Result<(), String> {
+        let idx = self.check(slot, generation, "rc_inc")?;
+        self.rc[idx] = self.rc[idx]
+            .checked_add(1)
+            .ok_or_else(|| format!("rc_inc: refcount overflow on slot {}", slot))?;
         Ok(())
     }
 
-    pub fn size(&self, handle: usize) -> Result<usize, String> {
-        self.cells.get(handle).and_then(|c| c.as_ref().map(|v| v.len()))
-            .ok_or_else(|| format!("size: invalid handle {}", handle))
+    // At rc=0: recursively rc_dec child handles and reclaim. Returns whether reclaimed.
+    pub fn rc_dec(&mut self, slot: u32, generation: u32) -> Result<bool, String> {
+        let idx = self.check(slot, generation, "rc_dec")?;
+        if self.rc[idx] == 0 {
+            return Err(format!("rc_dec: refcount underflow on slot {}", slot));
+        }
+        self.rc[idx] -= 1;
+        if self.rc[idx] != 0 {
+            return Ok(false);
+        }
+        let cell = self.cells[idx].take().unwrap();
+        self.free_list.push(slot);
+        for v in cell {
+            if let Value::Handle { slot: s, generation: g } = v {
+                self.rc_dec(s, g)?;
+            }
+        }
+        Ok(true)
     }
 
-    pub fn rc_inc(&mut self, handle: usize) -> Result<(), String> {
-        if handle >= self.rc.len() || self.cells[handle].is_none() {
-            return Err(format!("rc_inc: invalid handle {}", handle));
+    // Reclaim regardless of rc; recursively rc_dec child handles. For `Free` opcode.
+    pub fn force_free(&mut self, slot: u32, generation: u32) -> Result<(), String> {
+        let idx = self.check(slot, generation, "free")?;
+        let cell = self.cells[idx].take().unwrap();
+        self.rc[idx] = 0;
+        self.free_list.push(slot);
+        for v in cell {
+            if let Value::Handle { slot: s, generation: g } = v {
+                let _ = self.rc_dec(s, g);
+            }
         }
-        self.rc[handle] = self.rc[handle].saturating_add(1);
         Ok(())
     }
 
-    pub fn rc_dec(&mut self, handle: usize) -> Result<bool, String> {
-        if handle >= self.rc.len() || self.cells[handle].is_none() {
-            return Err(format!("rc_dec: invalid handle {}", handle));
-        }
-        self.rc[handle] = self.rc[handle].saturating_sub(1);
-        if self.rc[handle] == 0 {
-            self.cells[handle] = None;
-            self.free_list.push(handle);
-            return Ok(true);
-        }
-        Ok(false)
+    pub fn live_count(&self) -> usize {
+        self.cells.iter().filter(|c| c.is_some()).count()
     }
 }

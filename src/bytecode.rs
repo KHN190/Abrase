@@ -1,6 +1,8 @@
 use crate::vm::Value;
 use std::rc::Rc;
 
+pub const FRAME_REGS: usize = 256;
+
 pub type NativeFn = Rc<dyn Fn(&[Value]) -> Result<Value, String>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

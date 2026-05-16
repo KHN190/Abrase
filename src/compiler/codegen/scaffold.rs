@@ -2,17 +2,20 @@
 // register allocation, opcode emission, constant interning, jump patching,
 // and the Result-tag wrapping used by the exn lowering.
 
-use crate::bytecode::{OpCode, Register};
+use crate::bytecode::{OpCode, Register, FRAME_REGS};
 use crate::compiler::Compiler;
 use crate::compiler::effects;
 use crate::vm::Value;
 
 impl Compiler {
     pub(in crate::compiler) fn alloc_register(&mut self) -> Result<Register, String> {
-        if self.next_reg >= 255 {
-            return Err("Register overflow".to_string());
+        if (self.next_reg as usize) >= FRAME_REGS {
+            return Err(format!(
+                "Register overflow (per-frame budget is {})",
+                FRAME_REGS
+            ));
         }
-        let reg = Register(self.next_reg);
+        let reg = Register(self.next_reg as u8);
         self.next_reg += 1;
         Ok(reg)
     }

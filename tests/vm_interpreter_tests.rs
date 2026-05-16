@@ -781,8 +781,8 @@ fn test_alloc_and_free() {
     );
 
     match result {
-        Ok(Value::Int(_)) => {},
-        _ => panic!("Expected Int pointer from Alloc"),
+        Ok(Value::Handle { .. }) => {},
+        _ => panic!("Expected Handle from Alloc, got {:?}", result),
     }
 }
 
@@ -818,6 +818,97 @@ fn test_store_multiple_fields() {
         vec![Value::Int(10), Value::Int(20)],
     );
     assert_eq!(result, Ok(Value::Int(30)));
+}
+
+#[test]
+fn test_drop_reclaims_heap_via_rc_dec() {
+    let mut vm = VirtualMachine::new();
+    let module = Module {
+        functions: vec![Chunk::Bytecode(BytecodeChunk {
+            code: vec![
+                OpCode::Alloc(r(0), 4),
+                OpCode::Alloc(r(1), 4),
+                OpCode::Drop(r(0)),
+                OpCode::Drop(r(1)),
+                OpCode::PushConst(r(2), 0),
+                OpCode::Ret(r(2)),
+            ],
+            constants: vec![Value::Int(0)],
+            reg_count: 3,
+            param_count: 0,
+        })],
+        entry: 0,
+    };
+    let result = vm.run_module(&module);
+    assert_eq!(result, Ok(Value::Int(0)));
+    assert_eq!(vm.heap_live_count(), 0, "all heap cells must be reclaimed");
+}
+
+#[test]
+fn test_handle_after_free_is_rejected_via_generation() {
+    let mut vm = VirtualMachine::new();
+    let module = Module {
+        functions: vec![Chunk::Bytecode(BytecodeChunk {
+            code: vec![
+                OpCode::Alloc(r(0), 1),
+                OpCode::Copy(r(1), r(0)),
+                OpCode::Drop(r(0)),
+                OpCode::Drop(r(1)),
+                OpCode::Alloc(r(2), 1),
+                OpCode::Copy(r(3), r(2)),
+                OpCode::Drop(r(2)),
+                OpCode::PushConst(r(4), 0),
+                OpCode::Ret(r(4)),
+            ],
+            constants: vec![Value::Int(0)],
+            reg_count: 5,
+            param_count: 0,
+        })],
+        entry: 0,
+    };
+    let result = vm.run_module(&module);
+    assert_eq!(result, Ok(Value::Int(0)));
+}
+
+#[test]
+fn test_heap_ld_rejects_stale_generation() {
+    use abrase::vm::memory::Heap;
+    let mut heap = Heap::new();
+    let (slot, gen0) = heap.alloc(2);
+    heap.rc_dec(slot, gen0).unwrap();
+    let (slot2, gen1) = heap.alloc(2);
+    assert_eq!(slot2, slot, "free_list should reuse the slot");
+    assert_ne!(gen0, gen1, "reused slot must bump its generation");
+
+    let err = heap.ld(slot, gen0, 0).unwrap_err();
+    assert!(err.contains("stale handle"), "got: {}", err);
+
+    heap.st(slot2, gen1, 0, Value::Int(7)).unwrap();
+    assert_eq!(heap.ld(slot2, gen1, 0).unwrap(), Value::Int(7));
+}
+
+#[test]
+fn test_rc_inc_keeps_cell_alive_until_balanced() {
+    use abrase::vm::memory::Heap;
+    let mut heap = Heap::new();
+    let (slot, g_) = heap.alloc(1);
+    heap.rc_inc(slot, g_).unwrap();
+    let freed1 = heap.rc_dec(slot, g_).unwrap();
+    assert!(!freed1, "still aliased; must not reclaim");
+    let freed2 = heap.rc_dec(slot, g_).unwrap();
+    assert!(freed2, "last alias dropped; must reclaim");
+    assert_eq!(heap.live_count(), 0);
+}
+
+#[test]
+fn test_recursive_drop_reclaims_nested_handles() {
+    use abrase::vm::memory::Heap;
+    let mut heap = Heap::new();
+    let (child, cgen) = heap.alloc(1);
+    let (parent, pgen) = heap.alloc(1);
+    heap.st(parent, pgen, 0, Value::Handle { slot: child, generation: cgen }).unwrap();
+    heap.rc_dec(parent, pgen).unwrap();
+    assert_eq!(heap.live_count(), 0, "child must be reclaimed transitively");
 }
 
 #[test]
@@ -879,4 +970,221 @@ fn test_native_chunk_propagates_error() {
     assert!(result.unwrap_err().contains("boom"));
 }
 
+#[test]
+fn test_jmp_negative_offset_underflow_traps() {
+    // pc 0: Jmp -10  — target would be pc = -9, must trap.
+    let result = run(
+        vec![
+            OpCode::Jmp(-10),
+            OpCode::PushConst(r(0), 0),
+            OpCode::Ret(r(0)),
+        ],
+        vec![Value::Int(42)],
+    );
+    assert!(result.is_err(), "negative PC must trap, got {:?}", result);
+    let err = result.unwrap_err();
+    assert!(err.contains("branch") || err.contains("out of range"),
+            "expected branch range error, got: {}", err);
+}
+
+#[test]
+fn test_jz_negative_offset_underflow_traps() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jz(r(0), -100),
+            OpCode::Ret(r(0)),
+        ],
+        vec![Value::Int(0)],
+    );
+    assert!(result.is_err(), "negative PC via Jz must trap, got {:?}", result);
+}
+
+#[test]
+fn test_jnz_negative_offset_underflow_traps() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jnz(r(0), -100),
+            OpCode::Ret(r(0)),
+        ],
+        vec![Value::Int(1)],
+    );
+    assert!(result.is_err(), "negative PC via Jnz must trap, got {:?}", result);
+}
+
+#[test]
+fn test_jz_not_taken_skips_validation() {
+    // Even with a wildly invalid offset, Jz when condition is false (non-zero
+    // operand here means !falsy → not taken) must not check the offset.
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Jz(r(0), -10000),  // not taken because r0 is non-zero
+            OpCode::Ret(r(0)),
+        ],
+        vec![Value::Int(7)],
+    );
+    assert_eq!(result, Ok(Value::Int(7)));
+}
+
+// S6 + W6: Handle allocates a 4-slot continuation cell on the heap with
+// [suspend_pc, suspend_base, dest_reg, alive]. Resume validates `alive`,
+// restores (pc, base), writes the resumption value into the suspended
+// frame's `dest_reg` slot — not slot 0 of `saved_base` (the S6 bug) — and
+// reclaims the cell.
+//
+// Note: codegen does not yet emit Handle/Resume; the "compiler thunks
+// using device 0xE0" path described in appendix-bytecode-spec §3.9 is
+// future work. These tests therefore drive the opcodes directly and
+// exercise the VM invariants, not realistic handler flows. In particular
+// Handle here stores `pc-after-Handle` in suspend_pc, so a Resume that
+// follows directly will re-execute itself — that's by design for the
+// "second resume traps" tests.
+#[test]
+fn test_resume_without_handler_traps() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Resume(r(0)),
+            OpCode::Ret(r(0)),
+        ],
+        vec![Value::Int(7)],
+    );
+    assert!(result.is_err(), "resume without handler must trap");
+}
+
+#[test]
+fn test_handle_allocates_cell_and_resume_frees_it() {
+    // Cell-lifecycle sanity check. The program ends in an error because the
+    // second Resume re-enters via the saved pc and finds no live handler
+    // — but the heap should be net-zero at exit either way (single-shot
+    // Resume must reclaim its cell).
+    let mut vm = VirtualMachine::new();
+    let chunk = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),    // r0 = 99 (resume value)
+            OpCode::Handle(r(3), 0),       // install w/ dest=r3
+            OpCode::Resume(r(0)),          // pops, writes 99 → r3, frees cell
+            OpCode::Ret(r(3)),
+        ],
+        constants: vec![Value::Int(99)],
+        reg_count: 256,
+        param_count: 0,
+    });
+    let _ = vm.run(&chunk);
+    assert_eq!(vm.heap_live_count(), 0,
+        "continuation cell should be reclaimed after single-shot resume");
+}
+
+#[test]
+fn test_double_resume_traps_after_single_shot() {
+    // First Resume succeeds and frees the cell. Because suspend_pc points
+    // back to the Resume instruction itself, the next loop iteration
+    // executes Resume again with an empty handler stack → error.
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Handle(r(3), 0),
+            OpCode::Resume(r(0)),
+            OpCode::Ret(r(3)),
+        ],
+        vec![Value::Int(99)],
+    );
+    assert!(result.is_err(), "second resume must trap, got {:?}", result);
+    let err = result.unwrap_err();
+    assert!(err.contains("Resume") || err.contains("resume"),
+            "expected resume-related error, got: {}", err);
+}
+
+#[test]
+fn test_handle_allocates_one_cell_per_install() {
+    // After a single Handle (and no Resume), exactly one 4-slot cell should
+    // be live on the heap — the continuation cell.
+    let mut vm = VirtualMachine::new();
+    let install = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::Handle(r(7), 0),       // dest = r7
+            OpCode::Ret(r(0)),
+        ],
+        constants: vec![Value::Int(0)],
+        reg_count: 256,
+        param_count: 0,
+    });
+    let _ = vm.run(&install);
+    assert_eq!(vm.heap_live_count(), 1,
+        "Handle must allocate exactly one continuation cell");
+}
+
+// W4/S7: per-frame register budget (FRAME_REGS = 256) must be enforced at
+// both module-load time and call time so a malformed reg_count cannot
+// overlap the caller's window.
+#[test]
+fn test_module_load_rejects_oversize_reg_count() {
+    let bad = BytecodeChunk {
+        code: vec![OpCode::Ret(r(0))],
+        constants: vec![],
+        reg_count: 257,
+        param_count: 0,
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(bad)],
+        entry: 0,
+    };
+    let result = VirtualMachine::new().run_module(&module);
+    assert!(result.is_err(), "oversize reg_count must be rejected");
+    let err = result.unwrap_err();
+    assert!(err.contains("reg_count") && err.contains("frame budget"),
+            "expected frame-budget error, got: {}", err);
+}
+
+#[test]
+fn test_module_load_rejects_param_count_exceeds_reg_count() {
+    let bad = BytecodeChunk {
+        code: vec![OpCode::Ret(r(0))],
+        constants: vec![],
+        reg_count: 2,
+        param_count: 5,
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(bad)],
+        entry: 0,
+    };
+    let result = VirtualMachine::new().run_module(&module);
+    assert!(result.is_err(), "param_count > reg_count must be rejected");
+}
+
+#[test]
+fn test_module_load_accepts_exact_frame_budget() {
+    // reg_count == FRAME_REGS (256) is OK.
+    let chunk = BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Ret(r(0)),
+        ],
+        constants: vec![Value::Int(7)],
+        reg_count: 256,
+        param_count: 0,
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(chunk)],
+        entry: 0,
+    };
+    let result = VirtualMachine::new().run_module(&module);
+    assert_eq!(result, Ok(Value::Int(7)));
+}
+
+#[test]
+fn test_jmp_past_end_traps() {
+    // Jumping to a PC strictly greater than code.len() is invalid.
+    // (pc == code.len() is allowed; that's "fall off the end" which Ret handles.)
+    let result = run(
+        vec![
+            OpCode::Jmp(10),
+            OpCode::Ret(r(0)),
+        ],
+        vec![],
+    );
+    assert!(result.is_err(), "branch past end must trap, got {:?}", result);
+}
 

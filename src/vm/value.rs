@@ -14,4 +14,5 @@ pub enum Value {
     Closure { func_id: usize, env: Vec<Value> },
     Reference(Box<Value>),
     Shared(Rc<Value>),
+    Handle { slot: u32, generation: u32 },
 }
