@@ -64,9 +64,16 @@ impl Compiler {
             ast::BinaryOp::Assign => {
                 if let ast::Expr::Identifier(name) = &left.node {
                     let rr = self.compile_expr(right)?;
-                    let dest_reg = self.var_to_reg.get(name).copied()
-                        .ok_or_else(|| format!("Undefined variable: {}", name))?;
-                    self.emit(OpCode::Copy(dest_reg, rr));
+                    let dest_reg = match self.var_to_reg.get(name).copied() {
+                        Some(r) => { self.emit(OpCode::Copy(r, rr)); r }
+                        None => {
+                            // Var was moved earlier; rebind into a fresh register.
+                            let r = self.alloc_register()?;
+                            self.emit(OpCode::Copy(r, rr));
+                            self.var_to_reg.insert(name.clone(), r);
+                            r
+                        }
+                    };
                     Ok(dest_reg)
                 } else {
                     Err("Assignment target must be a variable".to_string())

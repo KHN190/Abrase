@@ -109,3 +109,48 @@ fn move_string_only_once() {
     let src = r#"fn main() -> String { let s = "hello"; let t = s; t }"#;
     assert_eq!(run_str(src), Ok("hello".to_string()));
 }
+
+#[test]
+fn reassign_clears_moved_flag_simple() {
+    // `s` is moved into `t`, then reassigned. The new `s` must be usable.
+    let src = r#"
+        fn main() -> String {
+            let mut s = "a";
+            let t = s;
+            s = "b";
+            s
+        }
+    "#;
+    assert_eq!(run_str(src), Ok("b".to_string()));
+}
+
+#[test]
+fn reassign_with_self_in_rhs_works() {
+    // `s = "{s}y"` moves the old `s` into the interp call, then rebinds `s`
+    // to the result. Without the move-clear fix, typeck rejects this.
+    let src = r#"
+        fn main() -> String {
+            let mut s = "x";
+            s = "{s}y";
+            s
+        }
+    "#;
+    assert_eq!(run_str(src), Ok("xy".to_string()));
+}
+
+#[test]
+fn reassign_in_while_loop_builds_string() {
+    // The full bench-style pattern: mutate a moved value inside a while loop.
+    let src = r#"
+        fn main() -> String {
+            let mut s = "x";
+            let mut i = 0;
+            while i < 3 {
+                s = "{s}y";
+                i = i + 1
+            };
+            s
+        }
+    "#;
+    assert_eq!(run_str(src), Ok("xyyy".to_string()));
+}

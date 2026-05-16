@@ -4,7 +4,42 @@ use crate::ty::Type;
 use super::*;
 
 impl Checker {
-    
+
+    fn check_assignment(
+        &mut self,
+        _op: &ast::BinaryOp,
+        left: &Spanned<ast::Expr>,
+        right: &Spanned<ast::Expr>,
+    ) -> Type {
+        let lhs_name = if let ast::Expr::Identifier(n) = &left.node { Some(n.clone()) } else { None };
+        let l_ty = lhs_name.as_ref()
+            .and_then(|n| self.peek_var(n))
+            .unwrap_or_else(|| self.infer_expr(left));
+        let r_ty = self.infer_expr(right);
+        if l_ty != Type::Unknown && r_ty != Type::Unknown && l_ty != Type::Never && r_ty != Type::Never && l_ty != r_ty {
+            self.report_error(format!("Type mismatch: expected {:?}, found {:?}", l_ty, r_ty), right.span);
+        }
+        if let Some(name) = lhs_name {
+            let is_mut = self.scopes.iter().rev()
+                .find_map(|s| s.vars.get(&name).map(|m| m.is_mut));
+            if let Some(false) = is_mut {
+                self.report_error(
+                    format!("Cannot assign to immutable binding '{}'; \
+                             use `let mut {}` to allow mutation", name, name),
+                    left.span,
+                );
+            }
+            for scope in self.scopes.iter_mut().rev() {
+                if let Some(meta) = scope.vars.get_mut(&name) {
+                    meta.is_moved = false;
+                    meta.moved_at = None;
+                    break;
+                }
+            }
+        }
+        Type::Unit
+    }
+
     pub fn infer_expr(&mut self, expr: &Spanned<ast::Expr>) -> Type {
         match &expr.node {
             ast::Expr::Error => Type::Unknown,
@@ -68,6 +103,14 @@ impl Checker {
             }
             ast::Expr::Binary { op, left, right } => {
                 self.context_stack.push("In binary expression".into());
+                if matches!(op,
+                    ast::BinaryOp::Assign | ast::BinaryOp::AddAssign | ast::BinaryOp::SubAssign |
+                    ast::BinaryOp::MulAssign | ast::BinaryOp::DivAssign | ast::BinaryOp::ModAssign
+                ) {
+                    let ret = self.check_assignment(op, left, right);
+                    self.context_stack.pop();
+                    return ret;
+                }
                 let l_ty = self.infer_expr(left);
                 let r_ty = self.infer_expr(right);
 
@@ -91,23 +134,7 @@ impl Checker {
                         ast::BinaryOp::Assign
                         | ast::BinaryOp::AddAssign | ast::BinaryOp::SubAssign
                         | ast::BinaryOp::MulAssign | ast::BinaryOp::DivAssign
-                        | ast::BinaryOp::ModAssign => {
-                            if let ast::Expr::Identifier(name) = &left.node {
-                                let is_mut = self.scopes.iter().rev()
-                                    .find_map(|s| s.vars.get(name).map(|m| m.is_mut));
-                                if let Some(false) = is_mut {
-                                    self.report_error(
-                                        format!(
-                                            "Cannot assign to immutable binding '{}'; \
-                                             use `let mut {}` to allow mutation",
-                                            name, name
-                                        ),
-                                        left.span,
-                                    );
-                                }
-                            }
-                            Type::Unit
-                        }
+                        | ast::BinaryOp::ModAssign => unreachable!("handled by check_assignment"),
                     }
                 };
                 self.context_stack.pop();

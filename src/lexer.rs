@@ -300,22 +300,32 @@ impl<'a> Lexer<'a> {
                     }
                     let mut path: Vec<String> = Vec::new();
                     let mut seg = String::new();
-                    while let Some(ic) = self.current_char {
-                        match ic {
-                            '}' => {
+                    loop {
+                        match self.current_char {
+                            Some('}') => {
                                 self.read_char();
                                 if !seg.is_empty() { path.push(seg); }
                                 break;
                             }
-                            '.' => {
+                            Some('.') => {
                                 path.push(std::mem::take(&mut seg));
                                 self.read_char();
                             }
-                            c if c.is_alphanumeric() || c == '_' => {
+                            Some(c) if c.is_alphanumeric() || c == '_' => {
                                 seg.push(c);
                                 self.read_char();
                             }
-                            _ => { self.read_char(); break; } // malformed interpolation
+                            Some(c) => {
+                                return (Token::Illegal(format!(
+                                    "string interpolation only supports simple paths \
+                                     (e.g. {{x}} or {{a.b}}); unexpected '{}'", c
+                                )), span);
+                            }
+                            None => {
+                                return (Token::Illegal(
+                                    "unterminated string interpolation".into()
+                                ), span);
+                            }
                         }
                     }
                     if !path.is_empty() {

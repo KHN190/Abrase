@@ -416,6 +416,15 @@ impl Checker {
         }
     }
 
+    pub fn peek_var(&self, name: &str) -> Option<Type> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(meta) = scope.vars.get(name) {
+                return Some(meta.ty.clone());
+            }
+        }
+        None
+    }
+
     pub fn get_var(&mut self, name: &str, is_ref: bool, usage_span: Span) -> Type {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(name) {

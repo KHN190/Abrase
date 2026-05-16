@@ -87,6 +87,37 @@ mod tests {
     }
 
     #[test]
+    fn test_lexer_string_interp_rejects_function_call() {
+        // `{build(n)}` is not a simple path — must surface a lex error.
+        let mut lexer = Lexer::new("\"{build(n)}y\"");
+        let (tok, _) = lexer.next_token();
+        match tok {
+            Token::Illegal(msg) => assert!(msg.contains("simple paths"), "msg: {}", msg),
+            other => panic!("expected Illegal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lexer_string_interp_rejects_arithmetic() {
+        // `{a + b}` likewise must error, not silently truncate.
+        let mut lexer = Lexer::new("\"{a + b}\"");
+        let (tok, _) = lexer.next_token();
+        assert!(matches!(tok, Token::Illegal(_)),
+                "expected Illegal for arithmetic in interp, got {:?}", tok);
+    }
+
+    #[test]
+    fn test_lexer_string_interp_rejects_unterminated() {
+        // No closing `}` before EOF — must error rather than silently produce a string.
+        let mut lexer = Lexer::new("\"{x");
+        let (tok, _) = lexer.next_token();
+        match tok {
+            Token::Illegal(msg) => assert!(msg.contains("unterminated"), "msg: {}", msg),
+            other => panic!("expected Illegal, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_lexer_plain_string_stays_string() {
         // A literal with no `{...}` segments must NOT become a StringInterp.
         let mut lexer = Lexer::new("\"plain\"");
