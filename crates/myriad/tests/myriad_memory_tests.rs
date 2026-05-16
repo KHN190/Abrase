@@ -1,5 +1,5 @@
 // NaN-boxed Value: scalar equality and tag round-trips.
-use abrase::bytecode::{BytecodeChunk, Chunk, OpCode, Register};
+use polka::{BytecodeChunk, Chunk, OpCode, Register};
 use myriad::{Value, VirtualMachine};
 
 #[test]

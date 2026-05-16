@@ -1,4 +1,4 @@
-use abrase::bytecode::{BytecodeChunk, Chunk, NativeChunk, OpCode, Register, Module};
+use polka::{BytecodeChunk, Chunk, NativeChunk, OpCode, Register, Module};
 use myriad::{Value, VirtualMachine};
 use std::rc::Rc;
 
@@ -1306,7 +1306,7 @@ fn test_sub_imm() {
 // Region semantics — see wiki rfc-region-shared.md §3.3.
 
 fn region_port(port: u8) -> i64 {
-    ((abrase::bytecode::REGION_ID as i64) << 8) | port as i64
+    ((polka::REGION_ID as i64) << 8) | port as i64
 }
 
 #[test]
@@ -1327,8 +1327,8 @@ fn test_region_pop_force_frees_alloc_inside() {
         ],
         constants: vec![
             Value::from_int(0),
-            Value::from_int(region_port(abrase::bytecode::REGION_PORT_PUSH)),
-            Value::from_int(region_port(abrase::bytecode::REGION_PORT_POP)),
+            Value::from_int(region_port(polka::REGION_PORT_PUSH)),
+            Value::from_int(region_port(polka::REGION_PORT_POP)),
             Value::from_int(99),
         ],
         string_constants: vec![],
@@ -1358,8 +1358,8 @@ fn test_region_pop_frees_multiple_allocs() {
         ],
         constants: vec![
             Value::from_int(0),
-            Value::from_int(region_port(abrase::bytecode::REGION_PORT_PUSH)),
-            Value::from_int(region_port(abrase::bytecode::REGION_PORT_POP)),
+            Value::from_int(region_port(polka::REGION_PORT_PUSH)),
+            Value::from_int(region_port(polka::REGION_PORT_POP)),
             Value::from_int(7),
         ],
         string_constants: vec![],
@@ -1407,8 +1407,8 @@ fn test_nested_regions_pop_inner_only() {
         ],
         constants: vec![
             Value::from_int(0),
-            Value::from_int(region_port(abrase::bytecode::REGION_PORT_PUSH)),
-            Value::from_int(region_port(abrase::bytecode::REGION_PORT_POP)),
+            Value::from_int(region_port(polka::REGION_PORT_PUSH)),
+            Value::from_int(region_port(polka::REGION_PORT_POP)),
             Value::from_int(0),
         ],
         string_constants: vec![],
@@ -1432,7 +1432,7 @@ fn test_region_pop_without_push_errors() {
         ],
         constants: vec![
             Value::from_int(0),
-            Value::from_int(region_port(abrase::bytecode::REGION_PORT_POP)),
+            Value::from_int(region_port(polka::REGION_PORT_POP)),
         ],
         string_constants: vec![],
         reg_count: 4,
