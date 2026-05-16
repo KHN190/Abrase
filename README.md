@@ -122,16 +122,16 @@ fn build(n: Int) -> String {
 }
 
 fn main() -> String {
-  let s = build(300);
+  let s = build(10000);
   return s
 }
 ```
 
 | Runtime | Time | vs. |
 |---|---|---|
-| Abrase | _2.2 ms_ | 1× |
-| Python 3 (CPython) | _22 ms_ | _10x_ |
-| Node.js (V8) | _34.1 ms_ | _15x_ |
+| Abrase | _19.3 ms_ | 1× |
+| Python 3 (CPython) | _22.7 ms_ | _1.2x_ |
+| Node.js (V8) | _34.1 ms_ | _1.7x_ |
 
 * _The experimental version has zero compiler optimization._
 * _Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine)_.
