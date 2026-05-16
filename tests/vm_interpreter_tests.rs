@@ -997,7 +997,7 @@ fn test_jz_not_taken_skips_validation() {
     assert_eq!(result, Ok(Value::Int(7)));
 }
 
-// Handle/Resume cell-lifecycle — drive opcodes directly (no codegen yet).
+// Drive Handle/Resume opcodes directly; codegen lowers `handle` to arm-fn Calls.
 #[test]
 fn test_resume_without_handler_traps() {
     let result = run(
@@ -1065,6 +1065,99 @@ fn test_handle_allocates_one_cell_per_install() {
     let _ = vm.run(&install);
     assert_eq!(vm.heap_live_count(), 1,
         "Handle must allocate exactly one continuation cell");
+}
+
+// MakeClosure packs (func_id, env_handle) into Value::Closure;
+// CallIndirect dispatches through that value, auto-staging env in r0.
+#[test]
+fn test_call_indirect_invokes_closure() {
+    // Callee (params=1): receives env in r0, loads env[0], returns it.
+    let callee = (
+        vec![
+            OpCode::Ld(r(1), r(0), 0),
+            OpCode::Ret(r(1)),
+        ],
+        vec![],
+        2usize, 1usize,
+    );
+    // Caller reg_count=4 so r3 (dest) is inside the window; new_base = 4 → callee r0 lands at r4.
+    let caller = (
+        vec![
+            OpCode::Alloc(r(0), 1),
+            OpCode::PushConst(r(1), 0),
+            OpCode::St(r(1), r(0), 0),
+            OpCode::MakeClosure(r(2), 0, r(0)),
+            OpCode::CallIndirect(r(3), r(2)),
+            OpCode::Ret(r(3)),
+        ],
+        vec![Value::Int(99)],
+        4usize, 0usize,
+    );
+    let result = run_module_with_param_counts(vec![callee, caller]);
+    assert_eq!(result, Ok(Value::Int(99)));
+}
+
+#[test]
+fn test_call_indirect_passes_extra_args() {
+    // Callee (params=2): returns env[0] + x.
+    let callee = (
+        vec![
+            OpCode::Ld(r(2), r(0), 0),
+            OpCode::Add(r(3), r(2), r(1)),
+            OpCode::Ret(r(3)),
+        ],
+        vec![],
+        4, 2,
+    );
+    // Caller reg_count=5 → new_base = 5; env auto-lands at r5 (callee r0), x staged at r6 (callee r1).
+    let caller = (
+        vec![
+            OpCode::Alloc(r(0), 1),
+            OpCode::PushConst(r(1), 0),
+            OpCode::St(r(1), r(0), 0),
+            OpCode::MakeClosure(r(2), 0, r(0)),
+            OpCode::PushConst(r(3), 1),
+            OpCode::Copy(r(6), r(3)),
+            OpCode::CallIndirect(r(4), r(2)),
+            OpCode::Ret(r(4)),
+        ],
+        vec![Value::Int(10), Value::Int(7)],
+        5, 0,
+    );
+    let result = run_module_with_param_counts(vec![callee, caller]);
+    assert_eq!(result, Ok(Value::Int(17)));
+}
+
+#[test]
+fn test_call_indirect_on_non_closure_traps() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::CallIndirect(r(1), r(0)),
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(7)],
+    );
+    assert!(result.is_err(), "non-closure indirect must trap");
+    let err = result.unwrap_err();
+    assert!(err.contains("expected closure"),
+            "expected closure-type error, got: {}", err);
+}
+
+#[test]
+fn test_make_closure_rejects_non_handle() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::MakeClosure(r(1), 0, r(0)),
+            OpCode::Ret(r(1)),
+        ],
+        vec![Value::Int(7)],
+    );
+    assert!(result.is_err(), "make_closure on Int must trap");
+    let err = result.unwrap_err();
+    assert!(err.contains("env handle"),
+            "expected env-handle error, got: {}", err);
 }
 
 // Lea is meaningless under the handle/generation heap and must trap.

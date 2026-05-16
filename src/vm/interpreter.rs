@@ -119,9 +119,7 @@ impl VirtualMachine {
             }
             OpCode::Copy(d, s) => {
                 let v = self.read(*s)?;
-                if let Value::Handle { slot, generation } = v {
-                    self.heap.rc_inc(slot, generation)?;
-                }
+                self.value_rc_inc(&v)?;
                 self.write(*d, v)
             }
             OpCode::Move(d, s) => {
@@ -132,18 +130,14 @@ impl VirtualMachine {
             OpCode::Ld(d, b, off) => {
                 let (slot, generation) = self.read_handle(*b)?;
                 let v = self.heap.ld(slot, generation, *off as usize)?;
-                if let Value::Handle { slot: s2, generation: g2 } = v {
-                    self.heap.rc_inc(s2, g2)?;
-                }
+                self.value_rc_inc(&v)?;
                 self.write(*d, v)
             }
             OpCode::St(src, b, off) => {
                 let (slot, generation) = self.read_handle(*b)?;
                 let v = self.take(*src)?;
                 let old = self.heap.st(slot, generation, *off as usize, v)?;
-                if let Value::Handle { slot: s2, generation: g2 } = old {
-                    self.heap.rc_dec(s2, g2)?;
-                }
+                self.value_rc_dec(&old)?;
                 Ok(())
             }
             OpCode::LdIdx(d, b, i) => {
@@ -153,9 +147,7 @@ impl VirtualMachine {
                     return Err(format!("ldidx: negative index {}", off));
                 }
                 let v = self.heap.ld(slot, generation, off as usize)?;
-                if let Value::Handle { slot: s2, generation: g2 } = v {
-                    self.heap.rc_inc(s2, g2)?;
-                }
+                self.value_rc_inc(&v)?;
                 self.write(*d, v)
             }
             OpCode::StIdx(src, b, i) => {
@@ -166,9 +158,7 @@ impl VirtualMachine {
                 }
                 let v = self.take(*src)?;
                 let old = self.heap.st(slot, generation, off as usize, v)?;
-                if let Value::Handle { slot: s2, generation: g2 } = old {
-                    self.heap.rc_dec(s2, g2)?;
-                }
+                self.value_rc_dec(&old)?;
                 Ok(())
             }
             OpCode::Lea(_, _, _) => {
@@ -176,9 +166,7 @@ impl VirtualMachine {
             }
             OpCode::Ref(d, s) => {
                 let v = self.read(*s)?;
-                if let Value::Handle { slot: s2, generation: g2 } = v {
-                    self.heap.rc_inc(s2, g2)?;
-                }
+                self.value_rc_inc(&v)?;
                 let (slot, generation) = self.heap.alloc(1);
                 self.heap.st(slot, generation, 0, v)?;
                 self.write(*d, Value::Handle { slot, generation })
@@ -194,8 +182,8 @@ impl VirtualMachine {
             }
             OpCode::Drop(reg) => {
                 let abs = self.abs(*reg)?;
-                if let Some(Value::Handle { slot, generation }) = self.registers[abs].take() {
-                    self.heap.rc_dec(slot, generation)?;
+                if let Some(v) = self.registers[abs].take() {
+                    self.value_rc_dec(&v)?;
                 }
                 Ok(())
             }
@@ -220,6 +208,28 @@ impl VirtualMachine {
                     cell_gen: generation,
                 });
                 Ok(())
+            }
+            OpCode::MakeClosure(dest, func_id, env_reg) => {
+                // Move the env Handle from env_reg into a new Value::Closure
+                // (single owner — no rc_inc).
+                let v = self.take(*env_reg)?;
+                let (env_slot, env_gen) = match v {
+                    Value::Handle { slot, generation } => (slot, generation),
+                    other => return Err(format!(
+                        "make_closure: expected env handle, got {:?}", other)),
+                };
+                self.write(*dest, Value::Closure {
+                    func_id: *func_id as usize,
+                    env_slot,
+                    env_gen,
+                })
+            }
+            OpCode::CallIndirect(dest, closure_reg) => {
+                let (func_id, env_slot, env_gen) = match self.read(*closure_reg)? {
+                    Value::Closure { func_id, env_slot, env_gen } => (func_id, env_slot, env_gen),
+                    v => return Err(format!("call_indirect: expected closure, got {:?}", v)),
+                };
+                self.do_indirect_call(module, *dest, func_id, env_slot, env_gen)
             }
             OpCode::Resume(reg) => {
                 // Single-shot: alive check, restore (pc, base, dest), mark dead, free cell.
@@ -348,6 +358,90 @@ impl VirtualMachine {
         Ok(())
     }
 
+    // Indirect call dispatched from a Value::Closure. Caller stages args at
+    // r1.. in the new window; we write the closure's env handle to r0 so
+    // the callee's first param receives it.
+    fn do_indirect_call(
+        &mut self,
+        module: &Module,
+        dest: Register,
+        fn_id: usize,
+        env_slot: u32,
+        env_gen: u32,
+    ) -> Result<(), String> {
+        if fn_id >= module.functions.len() {
+            return Err(format!("call_indirect: unknown fn_id {}", fn_id));
+        }
+        let caller_bc = expect_bytecode(module, self.current_func)?;
+        let caller_reg_count = caller_bc.reg_count;
+        if dest.to_usize() >= caller_reg_count {
+            return Err(format!(
+                "call_indirect: dest r{} out of caller window (reg_count {})",
+                dest.0, caller_reg_count
+            ));
+        }
+        let dest_abs = self.base_reg + dest.to_usize();
+        let new_base = self.base_reg + caller_reg_count;
+        let callee_reg_count = match &module.functions[fn_id] {
+            Chunk::Bytecode(b) => b.reg_count,
+            Chunk::Native(_) => 0,
+        };
+        if callee_reg_count > FRAME_REGS {
+            return Err(format!(
+                "call_indirect: callee fn {} has reg_count {} > frame budget {}",
+                fn_id, callee_reg_count, FRAME_REGS
+            ));
+        }
+        let window = callee_reg_count.max(FRAME_REGS);
+        let needed = new_base + window;
+        if needed > MAX_REGISTERS {
+            return Err(format!(
+                "Stack overflow: register window {} exceeds limit {}",
+                needed, MAX_REGISTERS
+            ));
+        }
+        if needed > self.registers.len() {
+            self.registers.resize(needed, None);
+        }
+        // Place env handle in callee r0; rc-inc because we keep our copy
+        // in the Value::Closure too.
+        self.heap.rc_inc(env_slot, env_gen)?;
+        self.registers[new_base] = Some(Value::Handle { slot: env_slot, generation: env_gen });
+
+        if let Chunk::Native(n) = &module.functions[fn_id] {
+            // Native expects (env, args...) in r0..
+            let mut args: Vec<Value> = Vec::with_capacity(n.param_count);
+            for i in 0..n.param_count {
+                let slot = new_base + i;
+                let v = self.registers[slot].clone()
+                    .ok_or_else(|| format!("native call: arg {} (r{}) is empty", i, i))?;
+                args.push(v);
+            }
+            let result = (n.func)(&args)?;
+            self.registers[dest_abs] = Some(result);
+            return Ok(());
+        }
+
+        if self.frames.len() >= MAX_RECURSION_DEPTH {
+            return Err(format!(
+                "Stack overflow: recursion depth {} exceeds limit {}",
+                self.frames.len(),
+                MAX_RECURSION_DEPTH
+            ));
+        }
+        self.frames.push(Frame {
+            func_id: self.current_func,
+            ip: self.pc,
+            base_reg: self.base_reg,
+            dest_reg: dest_abs,
+            reg_count: caller_reg_count,
+        });
+        self.base_reg = new_base;
+        self.current_func = fn_id;
+        self.pc = 0;
+        Ok(())
+    }
+
     fn do_ret(&mut self, reg: Register) -> Result<(), String> {
         let abs = self.abs(reg)?;
         let return_val = self.registers[abs].clone()
@@ -408,6 +502,24 @@ impl VirtualMachine {
         let abs = self.abs(r)?;
         self.registers[abs] = Some(v);
         Ok(())
+    }
+
+    // rc-track any heap-referencing Value variants. Both Value::Handle and
+    // Value::Closure (which carries an env handle) own a refcount edge.
+    fn value_rc_inc(&mut self, v: &Value) -> Result<(), String> {
+        match v {
+            Value::Handle { slot, generation } => self.heap.rc_inc(*slot, *generation),
+            Value::Closure { env_slot, env_gen, .. } => self.heap.rc_inc(*env_slot, *env_gen),
+            _ => Ok(()),
+        }
+    }
+
+    fn value_rc_dec(&mut self, v: &Value) -> Result<(), String> {
+        match v {
+            Value::Handle { slot, generation } => self.heap.rc_dec(*slot, *generation).map(|_| ()),
+            Value::Closure { env_slot, env_gen, .. } => self.heap.rc_dec(*env_slot, *env_gen).map(|_| ()),
+            _ => Ok(()),
+        }
     }
 
     fn read_i64(&self, r: Register) -> Result<i64, String> {

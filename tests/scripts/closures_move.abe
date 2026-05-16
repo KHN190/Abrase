@@ -1,0 +1,8 @@
+// Non-move captures clone the outer binding; the outer variable remains
+// usable after the closure is constructed and can still be read directly.
+fn main() -> Int {
+  let n = 10;
+  let add_n = |x| x + n;
+  // n is still in scope (not moved) — use it both inside and outside the closure.
+  add_n(3) + n
+}

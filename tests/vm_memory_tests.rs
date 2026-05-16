@@ -101,40 +101,29 @@ fn test_value_array_different_length() {
 
 #[test]
 fn test_value_closure_eq() {
-    let a = Value::Closure {
-        func_id: 0,
-        env: vec![Value::Int(42)],
-    };
-    let b = Value::Closure {
-        func_id: 0,
-        env: vec![Value::Int(42)],
-    };
+    let a = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
+    let b = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
     assert_eq!(a, b);
 }
 
 #[test]
 fn test_value_closure_ne_different_func_id() {
-    let a = Value::Closure {
-        func_id: 0,
-        env: vec![Value::Int(42)],
-    };
-    let b = Value::Closure {
-        func_id: 1,
-        env: vec![Value::Int(42)],
-    };
+    let a = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
+    let b = Value::Closure { func_id: 1, env_slot: 7, env_gen: 0 };
     assert_ne!(a, b);
 }
 
 #[test]
 fn test_value_closure_ne_different_env() {
-    let a = Value::Closure {
-        func_id: 0,
-        env: vec![Value::Int(42)],
-    };
-    let b = Value::Closure {
-        func_id: 0,
-        env: vec![Value::Int(99)],
-    };
+    let a = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
+    let b = Value::Closure { func_id: 0, env_slot: 8, env_gen: 0 };
+    assert_ne!(a, b);
+}
+
+#[test]
+fn test_value_closure_ne_different_generation() {
+    let a = Value::Closure { func_id: 0, env_slot: 7, env_gen: 0 };
+    let b = Value::Closure { func_id: 0, env_slot: 7, env_gen: 1 };
     assert_ne!(a, b);
 }
 
@@ -163,6 +152,6 @@ fn test_value_reference_nested() {
 fn test_value_mixed_types_inequality() {
     assert_ne!(Value::Char('a'), Value::Int(97));
     assert_ne!(Value::Array(vec![Value::Int(1)]), Value::Tuple(vec![Value::Int(1)]));
-    assert_ne!(Value::Closure { func_id: 0, env: vec![] }, Value::Int(0));
+    assert_ne!(Value::Closure { func_id: 0, env_slot: 0, env_gen: 0 }, Value::Int(0));
     assert_ne!(Value::Reference(Box::new(Value::Int(1))), Value::Int(1));
 }

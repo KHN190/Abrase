@@ -67,6 +67,13 @@ pub enum OpCode {
 
     Handle(Register, u16),
     Resume(Register),
+
+    // Pack a Value::Closure { func_id, env_slot, env_gen } into r_a.
+    // r_b must hold the env heap handle.
+    MakeClosure(Register, u16, Register),
+    // Indirect call: r_b holds a Value::Closure; the VM passes its env
+    // handle as r0 in the new frame, args are staged at r1.. by the caller.
+    CallIndirect(Register, Register),
 }
 
 #[derive(Clone)]

@@ -89,8 +89,10 @@ impl Heap {
         let cell = self.cells[idx].take().unwrap();
         self.free_list.push(slot);
         for v in cell {
-            if let Value::Handle { slot: s, generation: g } = v {
-                self.rc_dec(s, g)?;
+            match v {
+                Value::Handle { slot: s, generation: g } => { self.rc_dec(s, g)?; }
+                Value::Closure { env_slot: s, env_gen: g, .. } => { self.rc_dec(s, g)?; }
+                _ => {}
             }
         }
         Ok(true)
@@ -103,8 +105,10 @@ impl Heap {
         self.rc[idx] = 0;
         self.free_list.push(slot);
         for v in cell {
-            if let Value::Handle { slot: s, generation: g } = v {
-                let _ = self.rc_dec(s, g);
+            match v {
+                Value::Handle { slot: s, generation: g } => { let _ = self.rc_dec(s, g); }
+                Value::Closure { env_slot: s, env_gen: g, .. } => { let _ = self.rc_dec(s, g); }
+                _ => {}
             }
         }
         Ok(())

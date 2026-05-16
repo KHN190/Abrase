@@ -28,8 +28,31 @@ impl Compiler {
                     "internal: closure capture '{}' not in scope at closure site",
                     cap.name
                 ))?;
-            self.emit(OpCode::St(src, env_reg, i as u16));
+            // `move |...|`: St takes the value out of src (ownership
+            // transfer); also unbind the var so any later use errors.
+            // Default capture-by-copy: Copy into a tmp first, then St takes
+            // the tmp, leaving the outer binding intact.
+            if info.is_move {
+                self.emit(OpCode::St(src, env_reg, i as u16));
+                self.var_to_reg.remove(&cap.name);
+                self.var_types.remove(&cap.name);
+            } else {
+                let tmp = self.alloc_register()?;
+                self.emit(OpCode::Copy(tmp, src));
+                self.emit(OpCode::St(tmp, env_reg, i as u16));
+            }
         }
-        Ok(env_reg)
+        // Pack (lifted_fn_id, env handle) into a Value::Closure so the
+        // closure is a first-class callable value, not just an env handle.
+        let func_id = *self.func_map.get(&info.lifted_fn)
+            .ok_or_else(|| format!(
+                "internal: lifted closure fn '{}' not in fn table", info.lifted_fn
+            ))?;
+        if func_id > u16::MAX as usize {
+            return Err(format!("Function id {} exceeds u16 range", func_id));
+        }
+        let closure_reg = self.alloc_register()?;
+        self.emit(OpCode::MakeClosure(closure_reg, func_id as u16, env_reg));
+        Ok(closure_reg)
     }
 }

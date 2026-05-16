@@ -9,7 +9,8 @@ pub enum Value {
     Tuple(Vec<Value>),
     Array(Vec<Value>),
     Record { tag: u32, fields: Vec<Value> },
-    Closure { func_id: usize, env: Vec<Value> },
+    // First-class callable: lifted-fn id + handle to env heap object.
+    Closure { func_id: usize, env_slot: u32, env_gen: u32 },
     Reference(Box<Value>),
     Handle { slot: u32, generation: u32 },
 }

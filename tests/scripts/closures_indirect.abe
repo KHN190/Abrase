@@ -1,0 +1,9 @@
+fn apply(f: (Int) -> Int, x: Int) -> Int {
+  f(x)
+}
+
+fn main() -> Int {
+  let bump = 5;
+  let add_bump = |n: Int| n + bump;
+  apply(add_bump, 7)
+}

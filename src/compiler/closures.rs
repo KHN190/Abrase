@@ -1,28 +1,4 @@
 // Lambda lifting and closure environment packing.
-//
-// Pre-pass: for every Expr::Closure in the program, synthesise a top-level
-// FnDecl that takes the captured environment as its first parameter (a heap
-// handle) followed by the closure's declared parameters. Inside the lifted
-// function body, every captured-variable reference is rewritten to a heap
-// load from the env handle at the variable's slot.
-//
-// The output is consumed by codegen, which:
-//   - at the closure expression site: allocates an env heap object, stores
-//     each captured value at the matching slot, and binds the resulting
-//     env-handle to the closure variable's register.
-//   - at the call site `f(args)`: emits a direct `call` to the lifted fn
-//     with `(env_handle, args...)`.
-//
-// MVP scope:
-//   - Captures are by value (copy or move-on-creation per ownership). No
-//     borrow-cell indirection yet; for @copy types this matches semantics.
-//   - `move` keyword is parsed but doesn't change behaviour today — every
-//     capture is value-flavoured. A later pass refines this.
-//   - The compiler can resolve `f(args)` to a specific lifted fn only when
-//     `f` is a local binding produced by a literal closure expression in
-//     the same fn body. Closures passed across function boundaries (e.g.
-//     `xs.map(|n| n)`) require indirect call and are deferred.
-
 use crate::ast::*;
 use std::collections::{HashMap, HashSet};
 
@@ -36,6 +12,9 @@ pub struct CaptureInfo {
 pub struct ClosureInfo {
     pub lifted_fn: String,
     pub captures: Vec<CaptureInfo>,
+    /// If true, the closure was declared with `move |...|` — captures are
+    /// moved out of the surrounding scope. Otherwise captures are by-copy.
+    pub is_move: bool,
 }
 
 pub struct ClosureLowering {
@@ -82,7 +61,6 @@ impl ClosureLowering {
                 _ => {}
             }
         }
-        // Built-in host constructors that resolve at expression position.
         self.globals.insert("Shared".into());
 
         // Second pass: walk fn bodies and lift closures.
@@ -126,15 +104,13 @@ impl ClosureLowering {
 
     fn walk_expr(&mut self, expr: &Spanned<Expr>, env: &mut ParamEnv) {
         match &expr.node {
-            Expr::Closure { is_move: _, params, return_type, body, .. } => {
+            Expr::Closure { is_move, params, return_type, body, .. } => {
                 // Recurse FIRST so any nested closures get their own lifts;
                 // the outer closure captures whatever the inner one captures
                 // from the outer scope.
                 let mut inner_env = env.shadow_with_params(params);
                 self.walk_expr(body, &mut inner_env);
-                // Collect free variables of this closure: idents referenced
-                // inside the body that resolve to a binding in `env` (i.e.
-                // outer scope), not a param of this closure and not a global.
+                // Collect free variables of this closure
                 let mut frees: Vec<String> = Vec::new();
                 let mut seen: HashSet<String> = HashSet::new();
                 collect_free_vars(body, &param_names(params), &mut seen, &mut frees);
@@ -187,9 +163,9 @@ impl ClosureLowering {
                 self.by_span.insert(expr.span, ClosureInfo {
                     lifted_fn: lifted_name,
                     captures,
+                    is_move: *is_move,
                 });
             }
-            // Recursive cases.
             Expr::Binary { left, right, .. } => {
                 self.walk_expr(left, env);
                 self.walk_expr(right, env);
