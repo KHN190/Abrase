@@ -352,10 +352,18 @@ impl<'a> Lexer<'a> {
         }
 
         if !has_interp {
-            let s = parts.into_iter().map(|p| match p {
-                StringPart::Literal(s) => s,
-                StringPart::Interp(_) => unreachable!(),
-            }).collect();
+            // `has_interp` is set the only place an Interp variant is pushed,
+            // so when false every part is a Literal — fall back to Illegal if
+            // a future StringPart variant ever slips through.
+            let mut s = String::new();
+            for p in parts {
+                match p {
+                    StringPart::Literal(lit) => s.push_str(&lit),
+                    other => return (Token::Illegal(format!(
+                        "internal: non-literal StringPart in plain-string path: {:?}", other
+                    )), span),
+                }
+            }
             return (Token::String(s), span);
         }
 

@@ -53,7 +53,12 @@ impl Compiler {
         if let Some(t) = self.resolve_method_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_host_or_ctor(callee, args)? { return Ok(t); }
         if let ast::Expr::FieldAccess { base, field } = &callee.node {
-            let recv = self.receiver_type_name(base).unwrap_or_else(|| "<unknown>".to_string());
+            let Some(recv) = self.receiver_type_name(base) else {
+                return Err(format!(
+                    "Cannot infer receiver type for method call '.{}'; annotate the base expression",
+                    field
+                ));
+            };
             return Ok(CallTarget::UnresolvedMethod { receiver: recv, field: field.clone() });
         }
         let ast::Expr::Identifier(name) = &callee.node else {

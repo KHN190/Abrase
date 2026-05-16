@@ -37,8 +37,17 @@ impl VirtualMachine {
                 if let Some(code) = self.exit_code {
                     return Ok(Value::from_int(code));
                 }
-                let v = self.registers[self.base_reg];
+                let v = self.read_abs(self.base_reg)?;
                 return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
+            }
+            debug_assert!(self.current_func < module.functions.len(),
+                "current_func {} out of bounds (functions.len {})",
+                self.current_func, module.functions.len());
+            if self.current_func >= module.functions.len() {
+                return Err(format!(
+                    "current_func {} out of bounds (functions.len {})",
+                    self.current_func, module.functions.len()
+                ));
             }
             let bc = match &module.functions[self.current_func] {
                 Chunk::Bytecode(b) => b,
@@ -50,15 +59,15 @@ impl VirtualMachine {
             loop {
                 if self.pc >= bc.code.len() {
                     if let Some(frame) = self.frames.pop() {
-                        let return_val = self.registers[self.base_reg];
+                        let return_val = self.read_abs(self.base_reg)?;
                         if return_val.is_none() { return Err("Return register is empty".to_string()); }
                         self.pc = frame.ip;
                         self.base_reg = frame.base_reg;
                         self.current_func = frame.func_id;
-                        self.registers[frame.dest_reg] = return_val;
+                        self.write_abs(frame.dest_reg, return_val)?;
                         continue 'outer;
                     } else {
-                        let v = self.registers[self.base_reg];
+                        let v = self.read_abs(self.base_reg)?;
                         return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
                     }
                 }
@@ -206,7 +215,7 @@ impl VirtualMachine {
             }
             OpCode::Drop(reg) => {
                 let abs = self.abs(*reg)?;
-                let v = std::mem::replace(&mut self.registers[abs], Value::NONE);
+                let v = self.take_abs(abs)?;
                 if !v.is_none() { self.value_rc_dec(&v)?; }
                 Ok(())
             }
@@ -215,7 +224,8 @@ impl VirtualMachine {
                 let port_val = self.read_i64(*port_reg)?;
                 let (device_id, port) = split_port(port_val)?;
                 if device_id == super::DISPATCH_ID && port == super::DISPATCH_PORT_LOOKUP {
-                    let r = self.dispatch_last_result.unwrap_or(super::DISPATCH_NO_MATCH);
+                    let r = self.dispatch_last_result.take()
+                        .ok_or("dispatch read without prior lookup (deo to dispatch.lookup port required first)")?;
                     return self.write(*d, Value::from_int(r as i64));
                 }
                 let dev = self.devices.get_mut(device_id)
@@ -298,13 +308,7 @@ impl VirtualMachine {
                 self.pc = saved_pc;
                 self.base_reg = saved_base;
                 let abs = saved_base + dest_reg;
-                if abs >= self.registers.len() {
-                    return Err(format!(
-                        "resume: dest r{} (abs {}) out of register window (len {})",
-                        dest_reg, abs, self.registers.len()
-                    ));
-                }
-                self.registers[abs] = val;
+                self.write_abs(abs, val)?;
                 self.heap.force_free(frame.cell_slot, frame.cell_gen)?;
                 Ok(())
             }
@@ -344,15 +348,14 @@ impl VirtualMachine {
         if let Chunk::Native(n) = &module.functions[fn_id] {
             let mut args: Vec<Value> = Vec::with_capacity(n.param_count);
             for i in 0..n.param_count {
-                let slot = new_base + i;
-                let v = self.registers[slot];
+                let v = self.read_abs(new_base + i)?;
                 if v.is_none() {
                     return Err(format!("native call: arg {} (r{}) is empty", i, i));
                 }
                 args.push(v);
             }
             let result = (n.func)(&mut self.box_pool, &args)?;
-            self.registers[dest_abs] = result;
+            self.write_abs(dest_abs, result)?;
             return Ok(());
         }
 
@@ -378,16 +381,16 @@ impl VirtualMachine {
     #[inline]
     fn do_ret(&mut self, reg: Register) -> Result<(), String> {
         let abs = self.abs(reg)?;
-        let return_val = std::mem::replace(&mut self.registers[abs], Value::NONE);
+        let return_val = self.take_abs(abs)?;
         if return_val.is_none() { return Err("Return register is empty".to_string()); }
         if let Some(frame) = self.frames.pop() {
             self.pc = frame.ip;
             self.base_reg = frame.base_reg;
             self.current_func = frame.func_id;
-            self.registers[frame.dest_reg] = return_val;
+            self.write_abs(frame.dest_reg, return_val)?;
             Ok(())
         } else {
-            self.registers[self.base_reg] = return_val;
+            self.write_abs(self.base_reg, return_val)?;
             self.halted = true;
             Ok(())
         }
@@ -418,6 +421,32 @@ impl VirtualMachine {
             ));
         }
         Ok(abs)
+    }
+
+    #[inline(always)]
+    fn read_abs(&self, abs: usize) -> Result<Value, String> {
+        self.registers.get(abs).copied().ok_or_else(|| format!(
+            "register abs {} out of bounds (len {})", abs, self.registers.len()
+        ))
+    }
+
+    #[inline(always)]
+    fn write_abs(&mut self, abs: usize, v: Value) -> Result<(), String> {
+        let len = self.registers.len();
+        let slot = self.registers.get_mut(abs).ok_or_else(|| format!(
+            "register abs {} out of bounds (len {})", abs, len
+        ))?;
+        *slot = v;
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn take_abs(&mut self, abs: usize) -> Result<Value, String> {
+        let len = self.registers.len();
+        let slot = self.registers.get_mut(abs).ok_or_else(|| format!(
+            "register abs {} out of bounds (len {})", abs, len
+        ))?;
+        Ok(std::mem::replace(slot, Value::NONE))
     }
 
     #[inline(always)]

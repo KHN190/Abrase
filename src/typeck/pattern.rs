@@ -394,7 +394,13 @@ impl Checker {
                 // bound `Int` field like `v` in `Node(v, l, r)` would be marked
                 // moved on first read.
                 debug_assert!(!ty.is_empty(), "variant pattern with empty type path");
-                let case_name = ty.last().cloned().unwrap_or_default();
+                let case_name = match ty.last().cloned() {
+                    Some(n) => n,
+                    None => {
+                        self.report_error("variant pattern has empty type path".into(), pattern.span);
+                        return;
+                    }
+                };
                 let lookup = self.lookup_variant_constructor(&case_name);
                 let was_resolved = lookup.is_some();
                 let payload_tys: Vec<Type> = match lookup {

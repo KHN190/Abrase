@@ -18,12 +18,17 @@ impl Device for ClockDevice {
     fn read(&mut self, port: u8) -> Result<Value, String> {
         match port {
             PORT_WALL_MS => {
-                let ms = SystemTime::now().duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0);
+                let d = SystemTime::now().duration_since(UNIX_EPOCH)
+                    .map_err(|e| format!("clock.wall_ms: system clock before UNIX epoch: {}", e))?;
+                let ms = i64::try_from(d.as_millis())
+                    .map_err(|_| "clock.wall_ms: timestamp overflows i64".to_string())?;
                 Ok(Value::from_int(ms))
             }
-            PORT_MONO_NS => Ok(Value::from_int(self.epoch.elapsed().as_nanos() as i64)),
+            PORT_MONO_NS => {
+                let ns = i64::try_from(self.epoch.elapsed().as_nanos())
+                    .map_err(|_| "clock.mono_ns: elapsed overflows i64".to_string())?;
+                Ok(Value::from_int(ns))
+            }
             _ => Ok(Value::from_int(0)),
         }
     }

@@ -172,9 +172,16 @@ impl Checker {
         for bound in where_clause {
             if let crate::ast::Type::Named(var) = &bound.ty {
                 for trait_path in &bound.bounds {
-                    let trait_name = trait_path.last().cloned().unwrap_or_default();
-                    if !trait_name.is_empty() {
-                        self.register_trait_bound(var.clone(), trait_name);
+                    match trait_path.last().cloned() {
+                        Some(trait_name) if !trait_name.is_empty() => {
+                            self.register_trait_bound(var.clone(), trait_name);
+                        }
+                        _ => {
+                            self.report_error(
+                                format!("where-clause bound on '{}' has empty trait path", var),
+                                span,
+                            );
+                        }
                     }
                 }
             }

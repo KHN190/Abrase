@@ -65,9 +65,13 @@ impl Device for HostFuncDevice {
             return Err(format!("hostfunc.trigger: unknown fn_id {}", fn_id));
         }
         let f = self.table[fn_id].clone();
+        // arg_buf entries are borrowed views — caller's source registers keep the rc.
         let args = std::mem::take(&mut *self.arg_buf.borrow_mut());
         let result = f(pool, &args)?;
-        *self.last_result.borrow_mut() = Some(result);
+        let prev = self.last_result.borrow_mut().replace(result);
+        if let Some(p) = prev {
+            if let Some(idx) = p.as_box() { pool.dec(idx); }
+        }
         Ok(())
     }
 }
