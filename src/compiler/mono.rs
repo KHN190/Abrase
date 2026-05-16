@@ -386,9 +386,7 @@ impl Mono {
         Some(out)
     }
 
-    /// If `expr` is a `base.method(args)` call whose receiver type is in the
-    /// method dispatch table, rewrite the AST in place to a direct
-    /// `mangled(base, args)` call.
+    /// Rewrite method calls to mangled direct calls if receiver is in dispatch table.
     fn try_rewrite_method_call(
         &mut self,
         expr: &mut Spanned<Expr>,
@@ -511,9 +509,7 @@ fn mangle(base: &str, args: &[Type]) -> String {
     s
 }
 
-/// Non-mutating peek at the type of `expr` for use during the method-call
-/// rewrite. Mirrors the subset of `rewrite_expr` we need but doesn't mutate
-/// env or AST.
+/// Non-mutating type peek for method-call rewriting (no env/AST mutations).
 fn peek_type(
     expr: &Spanned<Expr>,
     env: &HashMap<String, Type>,

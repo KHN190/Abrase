@@ -38,9 +38,7 @@ impl Value {
     #[inline(always)]
     pub fn fits_i48(n: i64) -> bool { (I48_MIN..=I48_MAX).contains(&n) }
 
-    // Inline-only Int constructor. Caller must pre-check range; outside i48 the
-    // bits are masked (sandbox-safe but value-lossy). Use `from_int_or_box` for
-    // correct overflow handling.
+    // Inline Int constructor; caller must pre-check range (masked outside i48). Use from_int_or_box for overflow.
     #[inline(always)]
     pub fn from_int(n: i64) -> Value {
         debug_assert!(Self::fits_i48(n), "from_int: {} outside i48; use from_int_or_box", n);

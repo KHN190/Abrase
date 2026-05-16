@@ -57,9 +57,7 @@ pub struct Compiler {
     // Closure expression spans -> the synthesised lifted fn name and capture
     // layout. Built by the closures pre-pass.
     pub(super) closure_by_span: HashMap<ast::Span, closures::ClosureInfo>,
-    // Per-fn-body: when `let f = |...| ...;` runs, we remember that `f`'s
-    // register holds the env handle for a specific closure so call sites
-    // `f(args)` can emit a direct call to the lifted fn.
+    // Per-fn-body closure env mapping: enables direct calls to lifted fns.
     pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
     pub(super) concat_fn_id: Option<usize>,
     pub(super) to_str_fn_id: Option<usize>,
@@ -162,9 +160,7 @@ impl Compiler {
             return Err(self.errors.clone());
         }
 
-        // Impl-lift pass: synthesise concrete top-level FnDecls for each
-        // `impl Trait for Type { ... }` method, and build the dispatch table
-        // used to rewrite `x.method(...)` calls.
+        // Impl-lift pass: synthesise concrete FnDecls and build method dispatch table.
         let mut impl_lowering = impls::ImplLowering::new();
         impl_lowering.lower(ast);
         if !impl_lowering.errors.is_empty() {

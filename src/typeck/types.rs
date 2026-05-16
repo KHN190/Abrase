@@ -421,10 +421,7 @@ impl Checker {
                     }
                     val_ty = expected_ty;
                 }
-                // Register the binding directly so the let-stmt's `is_mut` flag
-                // reaches VarMeta. check_pattern's Bind arm always uses
-                // is_mut=false (it's also called from match/for/etc., none of
-                // which carry a mut flag in the surface syntax).
+                // Register binding directly to preserve let-stmt's is_mut flag in VarMeta.
                 if let ast::Pattern::Bind(n) = &pattern.node {
                     self.insert_var(n.clone(), val_ty.clone(), *is_mut, pattern.span);
                 } else {

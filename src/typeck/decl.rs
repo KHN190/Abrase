@@ -149,9 +149,7 @@ impl Checker {
             },
 
             ast::Decl::Effect { name, is_pub, ops } => {
-                // Register the effect name AND store per-op Function types in
-                // effect_ops_registry so call-site arg-count and type checking
-                // can resolve them.
+                // Register effect name and per-op Function types for call-site resolution.
                 let module_path = self.current_module.clone();
                 self.register_module_item(&module_path, name.clone(), Type::Named(name.clone()));
                 self.check_effect_decl(name, ops, *is_pub);

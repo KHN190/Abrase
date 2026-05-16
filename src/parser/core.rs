@@ -4,16 +4,8 @@ use crate::ast::Span;
 
 pub const MAX_PARSE_DEPTH: usize = 256;
 
-// RAII guard that decrements `Parser::depth` on drop. The raw pointer avoids a
-// lifetime parameter that would otherwise force `enter_depth` to consume a
-// long-lived `&mut Parser`.
-//
-// SAFETY contract: `counter` must point to a `usize` whose owning value
-// (`Parser::depth`) outlives every DepthGuard issued from it. `enter_depth` is
-// the only producer; it returns the guard so it is dropped within the same
-// recursive call frame, and `Parser` itself is never moved or dropped while a
-// guard is live (the recursive descent owns it on the stack). Do not store a
-// guard beyond the parser's lifetime or move the parser while one exists.
+// RAII guard decrements `Parser::depth` on drop (raw ptr avoids lifetime parameter).
+// SAFETY: `counter` points to `Parser::depth` and outlives every issued guard.
 pub(crate) struct DepthGuard {
     counter: *mut usize,
 }

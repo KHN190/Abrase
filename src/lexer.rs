@@ -352,9 +352,7 @@ impl<'a> Lexer<'a> {
         }
 
         if !has_interp {
-            // `has_interp` is set the only place an Interp variant is pushed,
-            // so when false every part is a Literal — fall back to Illegal if
-            // a future StringPart variant ever slips through.
+            // No interpolation: all parts must be Literals. Illegal if a new StringPart variant appears.
             let mut s = String::new();
             for p in parts {
                 match p {

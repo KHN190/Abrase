@@ -293,16 +293,9 @@ impl Checker {
     pub fn check_pattern(&mut self, pattern: &Spanned<ast::Pattern>, value_ty: &Type, _pattern_span: Span) {
         match &pattern.node {
             ast::Pattern::Bind(name) => {
-                // The parser produces Pattern::Bind for any unparenthesised
-                // ident in pattern position. If the name matches a registered
-                // variant case (e.g. `Leaf` for `type Tree = Leaf | Node(...)`),
-                // treat it as a nullary variant pattern rather than a fresh
-                // binding — otherwise it would shadow the case name and cause
-                // spurious move/use-after-move errors.
+                // Ident in pattern position: if it matches a variant case, treat as nullary variant, not binding.
                 if self.lookup_variant_constructor(name).is_some() {
-                    // Nullary variant pattern: no binding to install. Type
-                    // compatibility against the scrutinee is up to the
-                    // exhaustiveness pass.
+                    // Nullary variant: no binding, type compatibility checked in exhaustiveness pass.
                     return;
                 }
                 self.insert_var(name.clone(), value_ty.clone(), false, pattern.span);
@@ -388,11 +381,7 @@ impl Checker {
                 }
             }
             ast::Pattern::Variant { ty, args } => {
-                // Look up the case's payload types from the variant registry
-                // and use them as the value type for each arg pattern. Without
-                // this, args were typed Unknown, which behaves as Move — so a
-                // bound `Int` field like `v` in `Node(v, l, r)` would be marked
-                // moved on first read.
+                // Look up payload types and use as arg pattern types to avoid Unknown-as-Move.
                 debug_assert!(!ty.is_empty(), "variant pattern with empty type path");
                 let case_name = match ty.last().cloned() {
                     Some(n) => n,
@@ -488,10 +477,7 @@ impl Checker {
     }
 
     pub(super) fn lookup_variant_constructor(&self, case_name: &str) -> Option<Type> {
-        // Host-provided builtin: `Shared(v)` constructs `Shared<T>` from any
-        // value. The codegen recognises the call site directly (see
-        // src/compiler/codegen.rs), but the typeck needs an entry too so the
-        // identifier `Shared` resolves at expression position.
+        // Host builtin `Shared(v)`: codegen recognises call, typeck needs entry for identifier resolution.
         if case_name == "Shared" {
             return Some(Type::Function {
                 params: vec![Type::Unknown],

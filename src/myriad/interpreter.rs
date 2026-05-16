@@ -419,9 +419,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    // Frame-local r → absolute slot. The calling convention stages outbound
-    // args at r{caller_reg_count..}, so the upper bound is FRAME_REGS, not
-    // the chunk's own reg_count (S8).
+    // Frame-local r → absolute slot (upper bound is FRAME_REGS for outbound args).
     #[inline(always)]
     fn abs(&self, r: Register) -> Result<usize, String> {
         let abs = self.base_reg + r.to_usize();

@@ -285,9 +285,7 @@ impl Checker {
                 }
 
                 let mut arm_types = Vec::new();
-                // Arms are mutually exclusive — snapshot scope AND effects (T6)
-                // before each one so a binding moved or an effect raised in arm
-                // A is not visible in arm B; union per-arm effect deltas.
+                // Mutually exclusive arms: snapshot scope/effects before each, union deltas.
                 let pre_arm_snapshot = self.scopes.clone();
                 let pre_arm_effects = self.fn_required_effects.clone();
                 let mut arm_effects: Vec<crate::ty::Effect> = Vec::new();
@@ -659,9 +657,7 @@ impl Checker {
                         }
                     }
 
-                    // Borrow barrier: if this call produces an effect, it is a
-                    // potential suspension point. Reject if any borrow from an
-                    // outer region is live in the calling frame.
+                    // Borrow barrier: effect calls are suspension points, reject live outer-region borrows.
                     if !effects.is_empty() {
                         let op_name = match &callee.node {
                             ast::Expr::Identifier(n) => n.clone(),
@@ -830,9 +826,7 @@ impl Checker {
                     }
                 }
                 self.context_stack.push(format!("In field access '{}'", field));
-                // Field access borrows the base rather than consuming it, so
-                // expressions like `p.x + p.y` (where `p` is @move) don't trip
-                // the move checker on the second read.
+                // Field access borrows base; `p.x + p.y` doesn't trip move checker.
                 let base_ty = if let ast::Expr::Identifier(name) = &base.node {
                     self.get_var(name, true, base.span)
                 } else {
@@ -925,9 +919,7 @@ impl Checker {
 
                 self.exit_scope();
 
-                // Return function type with inferred effects. Param types
-                // come from the closure params; missing annotations become
-                // Unknown so call-site arg-count checks still pass.
+                // Return function type with inferred effects; missing annotations become Unknown.
                 let param_tys: Vec<Type> = params.iter()
                     .map(|p| p.ty.as_ref().map(|t| self.convert_type(t)).unwrap_or(Type::Unknown))
                     .collect();

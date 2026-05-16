@@ -40,10 +40,7 @@ pub const REGION_ID: u8 = 0xE1;
 pub const REGION_PORT_PUSH: u8 = 0x00;
 pub const REGION_PORT_POP: u8 = 0x01;
 
-// `cell_*` point at the 4-slot heap continuation: [pc, base, dest_reg, alive].
-// `dispatch_table_*` point at a heap array of arm fn_ids (one per op), used by
-// Dispatch device (0xE0) lookup. `handler_fn` is the fallback for single-op
-// handlers built by the current codegen path.
+// Heap continuation slots [pc, base, dest_reg, alive]; dispatch table for arm fns; fallback handler_fn.
 pub struct HandlerFrame {
     pub effect_id: u16,
     pub handler_fn: usize,
