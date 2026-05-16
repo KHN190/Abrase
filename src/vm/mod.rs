@@ -21,6 +21,7 @@ pub struct VirtualMachine {
     pub(crate) heap: Heap,
     pub(crate) handlers: Vec<HandlerFrame>,
     pub(crate) halted: bool,
+    pub(crate) exit_code: Option<i64>,
     pub(crate) devices: DeviceTable,
 }
 
@@ -50,6 +51,7 @@ impl VirtualMachine {
             heap: Heap::new(),
             handlers: Vec::new(),
             halted: false,
+            exit_code: None,
             devices: DeviceTable::new(),
         }
     }

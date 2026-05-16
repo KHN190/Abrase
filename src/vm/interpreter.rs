@@ -25,6 +25,7 @@ impl VirtualMachine {
         self.frames.clear();
         self.handlers.clear();
         self.halted = false;
+        self.exit_code = None;
         let needed = FRAME_REGS;
         if needed > self.registers.len() {
             self.registers.resize(needed, None);
@@ -32,6 +33,9 @@ impl VirtualMachine {
 
         loop {
             if self.halted {
+                if let Some(code) = self.exit_code {
+                    return Ok(Value::Int(code));
+                }
                 return self.registers[self.base_reg].clone()
                     .ok_or("Return register is empty".to_string());
             }
@@ -201,7 +205,10 @@ impl VirtualMachine {
                 let v = self.read(*src)?;
                 let port_val = self.read_i64(*port_reg)?;
                 let (device_id, port) = split_port(port_val)?;
-                if device_id == 0x00 && port == 0x00 {
+                if device_id == 0x00 && port == 0x01 {
+                    if let Value::Int(n) = v {
+                        self.exit_code = Some(n & 0xFFFF_FFFF);
+                    }
                     self.halted = true;
                 }
                 let dev = self.devices.get_mut(device_id)

@@ -15,6 +15,15 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use self::hir::LayoutCtx;
+use crate::ty::Type as TyType;
+
+#[derive(Clone)]
+pub struct HostFnDecl {
+    pub name: String,
+    pub params: Vec<TyType>,
+    pub ret: TyType,
+    pub fn_id: u16,
+}
 
 pub struct Compiler {
     pub(super) constants: Vec<Value>,
@@ -56,6 +65,7 @@ pub struct Compiler {
     pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
     pub(super) concat_fn_id: Option<usize>,
     pub(super) to_str_fn_id: Option<usize>,
+    pub(super) host_fns: HashMap<String, HostFnDecl>,
     pub(super) device_mask: [u8; 32],
     pub(super) current_span: ast::Span,
     pub errors: Vec<Error>,
@@ -89,6 +99,7 @@ impl Compiler {
             closure_by_var: HashMap::new(),
             concat_fn_id: None,
             to_str_fn_id: None,
+            host_fns: HashMap::new(),
             device_mask: [0; 32],
             current_span: ast::Span::new(0, 0),
             errors: Vec::new(),
@@ -99,6 +110,10 @@ impl Compiler {
     pub fn with_source(mut self, source: String) -> Self {
         self.source = source;
         self
+    }
+
+    pub fn register_host_fn(&mut self, decl: HostFnDecl) {
+        self.host_fns.insert(decl.name.clone(), decl);
     }
 
     pub fn pretty_print_errors(&self) -> String {
@@ -129,6 +144,14 @@ impl Compiler {
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
         // Enforce typeck before codegen. Refuses to compile with type errors
         let mut checker = crate::typeck::Checker::new();
+        for decl in self.host_fns.values() {
+            let fn_ty = TyType::Function {
+                params: decl.params.clone(),
+                effects: vec![],
+                ret: Box::new(decl.ret.clone()),
+            };
+            checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+        }
         checker.check_program(ast);
         if !checker.errors.is_empty() {
             self.errors.extend(checker.errors.iter().map(|te| Error::new(

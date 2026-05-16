@@ -14,7 +14,7 @@ pub(in crate::compiler) enum CallTarget<'a> {
     Method   { func_id: u16, receiver: &'a ast::Spanned<ast::Expr> },
     EnvLoad  { env_reg: Register, idx: u16 },
     SharedCtor,
-    HostPrintln,
+    HostFn { fn_id: u16 },
     VariantCtor { tag: u32 },
     UnresolvedMethod { receiver: String, field: String },
 }
@@ -30,7 +30,7 @@ impl Compiler {
         match target {
             CallTarget::EnvLoad { env_reg, idx } => self.emit_env_load(env_reg, idx),
             CallTarget::SharedCtor => self.emit_shared_ctor(args),
-            CallTarget::HostPrintln => self.emit_host_println(args),
+            CallTarget::HostFn { fn_id } => self.emit_host_fn_call(fn_id, args),
             CallTarget::VariantCtor { tag } => self.emit_variant_ctor(tag, args),
             CallTarget::Function { func_id, env } => self.emit_func_call(func_id, env, args),
             CallTarget::Method { func_id, receiver } => self.emit_method_call(func_id, receiver, args),
@@ -141,7 +141,15 @@ impl Compiler {
     ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
         if name == "Shared" && args.len() == 1 { return Ok(Some(CallTarget::SharedCtor)); }
-        if name == "__host_println" && args.len() == 1 { return Ok(Some(CallTarget::HostPrintln)); }
+        if let Some(host) = self.host_fns.get(name) {
+            if host.params.len() != args.len() {
+                return Err(format!(
+                    "host fn '{}' expects {} arg(s), got {}",
+                    name, host.params.len(), args.len()
+                ));
+            }
+            return Ok(Some(CallTarget::HostFn { fn_id: host.fn_id }));
+        }
         if let Some(info) = self.layouts.variants.get(name) {
             return Ok(Some(CallTarget::VariantCtor { tag: info.tag }));
         }
@@ -171,24 +179,28 @@ impl Compiler {
         Ok(dest)
     }
 
-    fn emit_host_println(&mut self, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
-        let src = self.compile_expr(&args[0])?;
-        let port_reg = self.alloc_register()?;
-        let port_idx = self.add_constant(Value::Int(0x101A))?;
-        self.emit(OpCode::PushConst(port_reg, port_idx));
-        self.emit(OpCode::Deo(src, port_reg));
-        let nl_reg = self.alloc_register()?;
-        let nl_idx = self.add_constant(Value::Int(b'\n' as i64))?;
-        self.emit(OpCode::PushConst(nl_reg, nl_idx));
-        let byte_port = self.alloc_register()?;
-        let byte_port_idx = self.add_constant(Value::Int(0x1018))?;
-        self.emit(OpCode::PushConst(byte_port, byte_port_idx));
-        self.emit(OpCode::Deo(nl_reg, byte_port));
-        self.device_mask[0x10 / 8] |= 1 << (0x10 % 8);
-        let unit = self.alloc_register()?;
-        let unit_idx = self.add_constant(Value::Unit)?;
-        self.emit(OpCode::PushConst(unit, unit_idx));
-        Ok(unit)
+    fn emit_host_fn_call(&mut self, fn_id: u16, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
+        let arg_port = self.alloc_register()?;
+        let arg_port_idx = self.add_constant(Value::Int(0xF018))?;
+        self.emit(OpCode::PushConst(arg_port, arg_port_idx));
+        for a in args {
+            let v = self.compile_expr(a)?;
+            self.emit(OpCode::Deo(v, arg_port));
+        }
+        let trigger_reg = self.alloc_register()?;
+        let trigger_val_idx = self.add_constant(Value::Int(fn_id as i64))?;
+        self.emit(OpCode::PushConst(trigger_reg, trigger_val_idx));
+        let trigger_port = self.alloc_register()?;
+        let trigger_port_idx = self.add_constant(Value::Int(0xF01F))?;
+        self.emit(OpCode::PushConst(trigger_port, trigger_port_idx));
+        self.emit(OpCode::Deo(trigger_reg, trigger_port));
+        let result_port = self.alloc_register()?;
+        let result_port_idx = self.add_constant(Value::Int(0xF01E))?;
+        self.emit(OpCode::PushConst(result_port, result_port_idx));
+        let result = self.alloc_register()?;
+        self.emit(OpCode::Dei(result, result_port));
+        self.device_mask[0xF0 / 8] |= 1 << (0xF0 % 8);
+        Ok(result)
     }
 
     fn emit_variant_ctor(&mut self, tag: u32, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {

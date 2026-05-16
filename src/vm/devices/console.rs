@@ -1,46 +1,43 @@
 use std::cell::RefCell;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::rc::Rc;
 use crate::vm::{Device, Value};
 
 pub const CONSOLE_ID: u8 = 0x10;
-pub const PORT_WRITE_BYTE: u8 = 0x18;
-pub const PORT_ERROR_BYTE: u8 = 0x19;
-pub const PORT_WRITE_STRING: u8 = 0x1A;
-pub const PORT_ERROR_STRING: u8 = 0x1B;
+pub const PORT_STDIN: u8 = 0x00;
+pub const PORT_STDOUT: u8 = 0x01;
+pub const PORT_STDERR: u8 = 0x02;
+pub const PORT_FLUSH: u8 = 0x03;
 
 pub trait Console {
-    fn out(&mut self, bytes: &[u8]) -> Result<(), String>;
-    fn err(&mut self, bytes: &[u8]) -> Result<(), String>;
+    fn read_byte(&mut self) -> Result<Option<u8>, String>;
+    fn write_stdout(&mut self, byte: u8) -> Result<(), String>;
+    fn write_stderr(&mut self, byte: u8) -> Result<(), String>;
+    fn flush(&mut self) -> Result<(), String>;
 }
 
 impl Device for Box<dyn Console> {
     fn read(&mut self, port: u8) -> Result<Value, String> {
-        Err(format!("console: port {:#x} not readable", port))
+        match port {
+            PORT_STDIN => match self.read_byte()? {
+                Some(b) => Ok(Value::Int(b as i64)),
+                None => Ok(Value::Int(-1)),
+            },
+            _ => Ok(Value::Int(0)),
+        }
     }
 
     fn write(&mut self, port: u8, val: Value) -> Result<(), String> {
+        let n = match val {
+            Value::Int(n) => n,
+            _ => return Ok(()),
+        };
         match port {
-            PORT_WRITE_BYTE => self.out(&[byte_of(val)?]),
-            PORT_ERROR_BYTE => self.err(&[byte_of(val)?]),
-            PORT_WRITE_STRING => self.out(bytes_of_string(val)?.as_ref()),
-            PORT_ERROR_STRING => self.err(bytes_of_string(val)?.as_ref()),
-            _ => Err(format!("console: port {:#x} not writable", port)),
+            PORT_STDOUT => self.write_stdout((n & 0xFF) as u8),
+            PORT_STDERR => self.write_stderr((n & 0xFF) as u8),
+            PORT_FLUSH => self.flush(),
+            _ => Ok(()),
         }
-    }
-}
-
-fn byte_of(val: Value) -> Result<u8, String> {
-    match val {
-        Value::Int(n) => Ok((n & 0xFF) as u8),
-        v => Err(format!("console: expected Int for byte port, got {:?}", v)),
-    }
-}
-
-fn bytes_of_string(val: Value) -> Result<Vec<u8>, String> {
-    match val {
-        Value::String(s) => Ok(s.into_bytes()),
-        v => Err(format!("console: expected String for string port, got {:?}", v)),
     }
 }
 
@@ -49,6 +46,7 @@ pub type SharedBuf = Rc<RefCell<Vec<u8>>>;
 pub struct BufferConsole {
     pub out_buf: SharedBuf,
     pub err_buf: SharedBuf,
+    pub stdin_buf: SharedBuf,
 }
 
 impl BufferConsole {
@@ -56,33 +54,52 @@ impl BufferConsole {
         Self {
             out_buf: Rc::new(RefCell::new(Vec::new())),
             err_buf: Rc::new(RefCell::new(Vec::new())),
+            stdin_buf: Rc::new(RefCell::new(Vec::new())),
         }
     }
     pub fn handles(&self) -> (SharedBuf, SharedBuf) {
         (self.out_buf.clone(), self.err_buf.clone())
     }
+    pub fn stdin_handle(&self) -> SharedBuf {
+        self.stdin_buf.clone()
+    }
 }
 
 impl Console for BufferConsole {
-    fn out(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.out_buf.borrow_mut().extend_from_slice(bytes);
-        Ok(())
+    fn read_byte(&mut self) -> Result<Option<u8>, String> {
+        let mut buf = self.stdin_buf.borrow_mut();
+        if buf.is_empty() { Ok(None) } else { Ok(Some(buf.remove(0))) }
     }
-    fn err(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.err_buf.borrow_mut().extend_from_slice(bytes);
-        Ok(())
+    fn write_stdout(&mut self, byte: u8) -> Result<(), String> {
+        self.out_buf.borrow_mut().push(byte); Ok(())
     }
+    fn write_stderr(&mut self, byte: u8) -> Result<(), String> {
+        self.err_buf.borrow_mut().push(byte); Ok(())
+    }
+    fn flush(&mut self) -> Result<(), String> { Ok(()) }
 }
 
 pub struct StdoutConsole;
 
 impl Console for StdoutConsole {
-    fn out(&mut self, bytes: &[u8]) -> Result<(), String> {
-        std::io::stdout().write_all(bytes)
-            .map_err(|e| format!("console.out: {}", e))
+    fn read_byte(&mut self) -> Result<Option<u8>, String> {
+        let mut byte = [0u8];
+        match std::io::stdin().read(&mut byte) {
+            Ok(0) => Ok(None),
+            Ok(_) => Ok(Some(byte[0])),
+            Err(e) => Err(format!("console.stdin: {}", e)),
+        }
     }
-    fn err(&mut self, bytes: &[u8]) -> Result<(), String> {
-        std::io::stderr().write_all(bytes)
-            .map_err(|e| format!("console.err: {}", e))
+    fn write_stdout(&mut self, byte: u8) -> Result<(), String> {
+        std::io::stdout().write_all(&[byte])
+            .map_err(|e| format!("console.stdout: {}", e))
+    }
+    fn write_stderr(&mut self, byte: u8) -> Result<(), String> {
+        std::io::stderr().write_all(&[byte])
+            .map_err(|e| format!("console.stderr: {}", e))
+    }
+    fn flush(&mut self) -> Result<(), String> {
+        std::io::stdout().flush().map_err(|e| format!("flush: {}", e))?;
+        std::io::stderr().flush().map_err(|e| format!("flush: {}", e))
     }
 }

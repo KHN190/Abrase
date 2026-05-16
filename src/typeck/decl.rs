@@ -7,22 +7,12 @@ use super::*;
 impl Checker {
 
     pub fn check_program(&mut self, decls: &[ast::Decl]) {
-        self.register_host_builtins();
         for decl in decls {
             self.check_decl_signature(decl);
         }
         for decl in decls {
             self.check_decl_body(decl);
         }
-    }
-
-    fn register_host_builtins(&mut self) {
-        let println_ty = Type::Function {
-            params: vec![Type::String],
-            effects: vec![],
-            ret: Box::new(Type::Unit),
-        };
-        self.insert_var("__host_println".into(), println_ty, false, ast::Span { line: 0, col: 0 });
     }
 
     fn check_decl_signature(&mut self, decl: &ast::Decl) {
