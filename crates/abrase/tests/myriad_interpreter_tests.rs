@@ -906,17 +906,19 @@ fn test_call_dispatches_to_native_chunk() {
     };
     let native = NativeChunk {
         param_count: 2,
-        func: Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
-            let a = args[0].as_int().ok_or("expected int")?;
-            let b = args[1].as_int().ok_or("expected int")?;
-            Ok(Value::from_int(a + b))
-        }),
+        name: "test_add".into(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
         entry: 0, device_mask: [0; 32]
     };
-    let result = VirtualMachine::new().run_module(&module);
+    let mut vm = VirtualMachine::new();
+    vm.register_native("test_add", Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
+        let a = args[0].as_int().ok_or("expected int")?;
+        let b = args[1].as_int().ok_or("expected int")?;
+        Ok(Value::from_int(a + b))
+    }));
+    let result = vm.run_module(&module);
     assert_eq!(result, Ok(Value::from_int(42)));
 }
 
@@ -935,13 +937,15 @@ fn test_native_chunk_propagates_error() {
     };
     let native = NativeChunk {
         param_count: 1,
-        func: Rc::new(|_pool: &mut abrase::vm::BoxPool, _args: &[Value]| Err("boom".to_string())),
+        name: "test_boom".into(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
         entry: 0, device_mask: [0; 32]
     };
-    let result = VirtualMachine::new().run_module(&module);
+    let mut vm = VirtualMachine::new();
+    vm.register_native("test_boom", Rc::new(|_pool: &mut abrase::vm::BoxPool, _args: &[Value]| Err("boom".to_string())));
+    let result = vm.run_module(&module);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("boom"));
 }
@@ -1192,10 +1196,7 @@ fn test_call_reg_dispatches_to_bytecode() {
 fn test_call_reg_dispatches_to_native() {
     let native = NativeChunk {
         param_count: 1,
-        func: Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
-            let n = args[0].as_int().ok_or("expected int")?;
-            Ok(Value::from_int(n * 2))
-        }),
+        name: "test_double".into(),
     };
     let caller = BytecodeChunk {
         code: vec![
@@ -1213,7 +1214,12 @@ fn test_call_reg_dispatches_to_native() {
         functions: vec![Chunk::Native(native), Chunk::Bytecode(caller)],
         entry: 1, device_mask: [0; 32],
     };
-    assert_eq!(VirtualMachine::new().run_module(&module), Ok(Value::from_int(42)));
+    let mut vm = VirtualMachine::new();
+    vm.register_native("test_double", Rc::new(|_pool: &mut abrase::vm::BoxPool, args: &[Value]| {
+        let n = args[0].as_int().ok_or("expected int")?;
+        Ok(Value::from_int(n * 2))
+    }));
+    assert_eq!(vm.run_module(&module), Ok(Value::from_int(42)));
 }
 
 #[test]
@@ -1300,7 +1306,7 @@ fn test_sub_imm() {
 // Region semantics — see wiki rfc-region-shared.md §3.3.
 
 fn region_port(port: u8) -> i64 {
-    ((abrase::vm::REGION_ID as i64) << 8) | port as i64
+    ((abrase::bytecode::REGION_ID as i64) << 8) | port as i64
 }
 
 #[test]
@@ -1321,8 +1327,8 @@ fn test_region_pop_force_frees_alloc_inside() {
         ],
         constants: vec![
             Value::from_int(0),
-            Value::from_int(region_port(abrase::vm::REGION_PORT_PUSH)),
-            Value::from_int(region_port(abrase::vm::REGION_PORT_POP)),
+            Value::from_int(region_port(abrase::bytecode::REGION_PORT_PUSH)),
+            Value::from_int(region_port(abrase::bytecode::REGION_PORT_POP)),
             Value::from_int(99),
         ],
         string_constants: vec![],
@@ -1352,8 +1358,8 @@ fn test_region_pop_frees_multiple_allocs() {
         ],
         constants: vec![
             Value::from_int(0),
-            Value::from_int(region_port(abrase::vm::REGION_PORT_PUSH)),
-            Value::from_int(region_port(abrase::vm::REGION_PORT_POP)),
+            Value::from_int(region_port(abrase::bytecode::REGION_PORT_PUSH)),
+            Value::from_int(region_port(abrase::bytecode::REGION_PORT_POP)),
             Value::from_int(7),
         ],
         string_constants: vec![],
@@ -1401,8 +1407,8 @@ fn test_nested_regions_pop_inner_only() {
         ],
         constants: vec![
             Value::from_int(0),
-            Value::from_int(region_port(abrase::vm::REGION_PORT_PUSH)),
-            Value::from_int(region_port(abrase::vm::REGION_PORT_POP)),
+            Value::from_int(region_port(abrase::bytecode::REGION_PORT_PUSH)),
+            Value::from_int(region_port(abrase::bytecode::REGION_PORT_POP)),
             Value::from_int(0),
         ],
         string_constants: vec![],
@@ -1426,7 +1432,7 @@ fn test_region_pop_without_push_errors() {
         ],
         constants: vec![
             Value::from_int(0),
-            Value::from_int(region_port(abrase::vm::REGION_PORT_POP)),
+            Value::from_int(region_port(abrase::bytecode::REGION_PORT_POP)),
         ],
         string_constants: vec![],
         reg_count: 4,
@@ -1457,5 +1463,5 @@ fn test_sub_imm_boxes_overflow_below_i48() {
     });
     let result = vm.run(&chunk).expect("vm should not panic on i48 underflow");
     let expected = start.wrapping_sub(5);
-    assert_eq!(result.as_int_full(vm.box_pool()), Some(expected));
+    assert_eq!(vm.box_pool().read_int(result), Some(expected));
 }

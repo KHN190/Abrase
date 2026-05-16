@@ -1,9 +1,17 @@
-use crate::myriad::{Value, BoxPool};
-use std::rc::Rc;
+pub mod value;
+pub mod cartridge;
+
+pub use value::Value;
 
 pub const FRAME_REGS: usize = 256;
 
-pub type NativeFn = Rc<dyn Fn(&mut BoxPool, &[Value]) -> Result<Value, String>>;
+pub const DISPATCH_ID: u8 = 0xE0;
+pub const DISPATCH_PORT_LOOKUP: u8 = 0x00;
+pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
+
+pub const REGION_ID: u8 = 0xE1;
+pub const REGION_PORT_PUSH: u8 = 0x00;
+pub const REGION_PORT_POP: u8 = 0x01;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Register(pub u8);
@@ -80,9 +88,12 @@ pub struct BytecodeChunk {
     pub param_count: usize,
 }
 
-#[derive(Clone)]
+// Declaration of a native (host-implemented) function slot in the module's
+// function table. The function body itself lives in the runtime — polka only
+// records the name and arity so the wire format stays pure data.
+#[derive(Clone, Debug)]
 pub struct NativeChunk {
-    pub func: NativeFn,
+    pub name: String,
     pub param_count: usize,
 }
 

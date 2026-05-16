@@ -8,11 +8,10 @@ pub mod effects;
 pub mod handlers;
 
 use crate::ast;
-use crate::bytecode::{BytecodeChunk, Chunk, NativeChunk, OpCode, Register, Module};
+use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module};
 use crate::error::{Error, ErrorCode};
 use crate::myriad::Value;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use self::hir::LayoutCtx;
 use crate::ty::Type as TyType;
@@ -379,49 +378,22 @@ impl Compiler {
     }
 
     fn register_builtins(&mut self) {
-        let concat = NativeChunk {
-            param_count: 2,
-            func: Rc::new(|pool: &mut crate::myriad::BoxPool, args: &[Value]| {
-                let a = extract_string(pool, &args[0]).ok_or_else(|| format!("__concat: arg0 not a String: {:?}", args[0]))?;
-                let b = extract_string(pool, &args[1]).ok_or_else(|| format!("__concat: arg1 not a String: {:?}", args[1]))?;
-                let mut out = String::with_capacity(a.len() + b.len());
-                out.push_str(&a);
-                out.push_str(&b);
-                let idx = pool.intern(crate::myriad::BoxedValue::String(out));
-                Ok(Value::from_box(idx))
-            }),
-        };
-        let to_str = NativeChunk {
-            param_count: 1,
-            func: Rc::new(|pool: &mut crate::myriad::BoxPool, args: &[Value]| {
-                let v = &args[0];
-                let s = if let Some(n) = v.as_int() { n.to_string() }
-                    else if let Some(f) = v.as_float() { f.to_string() }
-                    else if let Some(b) = v.as_bool() { b.to_string() }
-                    else if let Some(c) = v.as_char() { c.to_string() }
-                    else if v.is_unit() { "()".to_string() }
-                    else if let Some(s) = extract_string(pool, v) { s }
-                    else { return Err(format!("__to_str: cannot convert {:?}", v)); };
-                let idx = pool.intern(crate::myriad::BoxedValue::String(s));
-                Ok(Value::from_box(idx))
-            }),
-        };
+        use crate::bytecode::NativeChunk;
+
         let cid = self.functions.len();
         self.func_map.insert("__concat".into(), cid);
-        self.functions.push(Chunk::Native(concat));
+        self.functions.push(Chunk::Native(NativeChunk {
+            name: "__concat".into(),
+            param_count: 2,
+        }));
         self.concat_fn_id = Some(cid);
 
         let tid = self.functions.len();
         self.func_map.insert("__to_str".into(), tid);
-        self.functions.push(Chunk::Native(to_str));
+        self.functions.push(Chunk::Native(NativeChunk {
+            name: "__to_str".into(),
+            param_count: 1,
+        }));
         self.to_str_fn_id = Some(tid);
-    }
-}
-
-fn extract_string(pool: &crate::myriad::BoxPool, v: &Value) -> Option<String> {
-    let idx = v.as_box()?;
-    match pool.get(idx)? {
-        crate::myriad::BoxedValue::String(s) => Some(s.clone()),
-        _ => None,
     }
 }

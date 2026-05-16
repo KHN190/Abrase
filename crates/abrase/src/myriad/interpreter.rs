@@ -230,7 +230,7 @@ impl VirtualMachine {
             OpCode::Dei(d, port_reg) => {
                 let port_val = self.read_i64(*port_reg)?;
                 let (device_id, port) = split_port(port_val)?;
-                if device_id == super::DISPATCH_ID && port == super::DISPATCH_PORT_LOOKUP {
+                if device_id == crate::bytecode::DISPATCH_ID && port == crate::bytecode::DISPATCH_PORT_LOOKUP {
                     let r = self.dispatch_last_result.take()
                         .ok_or("dispatch read without prior lookup (deo to dispatch.lookup port required first)")?;
                     return self.write(*d, Value::from_int(r as i64));
@@ -250,7 +250,7 @@ impl VirtualMachine {
                     }
                     self.halted = true;
                 }
-                if device_id == super::DISPATCH_ID && port == super::DISPATCH_PORT_LOOKUP {
+                if device_id == crate::bytecode::DISPATCH_ID && port == crate::bytecode::DISPATCH_PORT_LOOKUP {
                     let key = match v.as_int() {
                         Some(n) if (0..=0xFFFF).contains(&n) => n as u16,
                         _ => return Err(format!("dispatch.lookup: bad key {:?}", v)),
@@ -258,10 +258,10 @@ impl VirtualMachine {
                     self.dispatch_last_result = Some(self.resolve_dispatch(key));
                     return Ok(());
                 }
-                if device_id == super::REGION_ID {
+                if device_id == crate::bytecode::REGION_ID {
                     return match port {
-                        super::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
-                        super::REGION_PORT_POP  => self.region_pop(),
+                        crate::bytecode::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
+                        crate::bytecode::REGION_PORT_POP  => self.region_pop(),
                         _ => Err(format!("region: unknown port {:#x}", port)),
                     };
                 }
@@ -369,6 +369,9 @@ impl VirtualMachine {
         }
 
         if let Chunk::Native(n) = &module.functions[fn_id] {
+            let func = self.natives.get(&n.name)
+                .ok_or_else(|| format!("native call: '{}' not registered", n.name))?
+                .clone();
             let mut args: Vec<Value> = Vec::with_capacity(n.param_count);
             for i in 0..n.param_count {
                 let v = self.read_abs(new_base + i);
@@ -377,7 +380,7 @@ impl VirtualMachine {
                 }
                 args.push(v);
             }
-            let result = (n.func)(&mut self.box_pool, &args)?;
+            let result = func(&mut self.box_pool, &args)?;
             self.write_abs(dest_abs, result);
             return Ok(());
         }
@@ -515,7 +518,7 @@ impl VirtualMachine {
     fn read_i64(&self, r: Register) -> Result<i64, String> {
         let v = self.read_abs(self.abs(r));
         if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
-        v.as_int_full(&self.box_pool).ok_or_else(|| format!("expected i64, got {:?}", v))
+        self.box_pool.read_int(v).ok_or_else(|| format!("expected i64, got {:?}", v))
     }
 
     #[inline(always)]
@@ -556,7 +559,7 @@ impl VirtualMachine {
             return Ok(Value::from_int(n));
         }
         self.mem_charge(BoxPool::pending_bytes(&BoxedValue::Int(n)))?;
-        Ok(Value::from_int_or_box(&mut self.box_pool, n))
+        Ok(self.box_pool.intern_int(n))
     }
 
     #[inline(always)]
@@ -649,7 +652,7 @@ impl VirtualMachine {
     fn validate_module_devices(&self, module: &Module) -> Result<(), String> {
         for id in 0u16..=255 {
             let id = id as u8;
-            if id == super::DISPATCH_ID { continue; }
+            if id == crate::bytecode::DISPATCH_ID { continue; }
             if module.requires_device(id) && !self.devices.has(id) {
                 return Err(format!("module requires device {:#04x} but it is not installed", id));
             }
@@ -674,7 +677,7 @@ impl VirtualMachine {
                 return h.handler_fn as u16;
             }
         }
-        super::DISPATCH_NO_MATCH
+        crate::bytecode::DISPATCH_NO_MATCH
     }
 }
 

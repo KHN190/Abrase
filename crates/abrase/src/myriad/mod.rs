@@ -7,11 +7,14 @@ pub mod interpreter;
 pub mod loader;
 pub mod host;
 pub mod region;
+pub mod builtins;
 
-pub use value::{Value, BoxPool, BoxedValue};
+pub use crate::bytecode::Value;
+pub use value::{BoxPool, BoxedValue};
 pub use device::{Device, DeviceTable};
 pub use memory::Heap;
 pub use region::RegionTable;
+pub use builtins::{NativeFn, NativeRegistry};
 
 use frame::Frame;
 
@@ -30,15 +33,8 @@ pub struct VirtualMachine {
     pub(crate) box_pool: BoxPool,
     pub(crate) resolved_constants: Vec<Vec<Value>>,
     pub(crate) region_table: RegionTable,
+    pub(crate) natives: NativeRegistry,
 }
-
-pub const DISPATCH_ID: u8 = 0xE0;
-pub const DISPATCH_PORT_LOOKUP: u8 = 0x00;
-pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
-
-pub const REGION_ID: u8 = 0xE1;
-pub const REGION_PORT_PUSH: u8 = 0x00;
-pub const REGION_PORT_POP: u8 = 0x01;
 
 // Heap continuation slots [pc, base, dest_reg, alive]; dispatch table for arm fns; fallback handler_fn.
 pub struct HandlerFrame {
@@ -60,6 +56,8 @@ pub mod cont_slot {
 
 impl VirtualMachine {
     pub fn new() -> Self {
+        let mut natives = NativeRegistry::new();
+        builtins::register_default_builtins(&mut natives);
         Self {
             registers: Vec::new(),
             frames: Vec::new(),
@@ -75,6 +73,7 @@ impl VirtualMachine {
             box_pool: BoxPool::new(),
             resolved_constants: Vec::new(),
             region_table: RegionTable::new(),
+            natives,
         }
     }
 
@@ -104,6 +103,10 @@ impl VirtualMachine {
 
     pub fn install_device(&mut self, id: u8, dev: Box<dyn Device>) {
         self.devices.install(id, dev);
+    }
+
+    pub fn register_native<S: Into<String>>(&mut self, name: S, func: NativeFn) {
+        self.natives.register(name, func);
     }
 
     pub fn take_device(&mut self, id: u8) -> Option<Box<dyn Device>> {

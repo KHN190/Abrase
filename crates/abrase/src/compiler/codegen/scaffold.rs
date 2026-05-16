@@ -85,15 +85,15 @@ impl Compiler {
     }
 
     pub(in crate::compiler) fn emit_region_push(&mut self) -> Result<(), String> {
-        self.emit_region_marker(crate::myriad::REGION_PORT_PUSH)
+        self.emit_region_marker(crate::bytecode::REGION_PORT_PUSH)
     }
 
     pub(in crate::compiler) fn emit_region_pop(&mut self) -> Result<(), String> {
-        self.emit_region_marker(crate::myriad::REGION_PORT_POP)
+        self.emit_region_marker(crate::bytecode::REGION_PORT_POP)
     }
 
     fn emit_region_marker(&mut self, port: u8) -> Result<(), String> {
-        let port_val = ((crate::myriad::REGION_ID as i64) << 8) | (port as i64);
+        let port_val = ((crate::bytecode::REGION_ID as i64) << 8) | (port as i64);
         let val_idx = self.add_constant(Value::from_int(0))?;
         let port_idx = self.add_constant(Value::from_int(port_val))?;
         let val_reg = self.alloc_register()?;

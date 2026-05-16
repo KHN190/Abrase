@@ -1,11 +1,8 @@
-[package]
-name = "abrase"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = ["crates/abrase", "crates/polka"]
 
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-
-[dependencies]
