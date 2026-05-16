@@ -17,6 +17,7 @@ pub struct VirtualMachine {
     pub(crate) current_func: usize,
     pub(crate) heap: Heap,
     pub(crate) handlers: Vec<HandlerFrame>,
+    pub(crate) halted: bool,
 }
 
 // `cell_*` point at the 4-slot heap continuation: [pc, base, dest_reg, alive].
@@ -44,6 +45,7 @@ impl VirtualMachine {
             current_func: 0,
             heap: Heap::new(),
             handlers: Vec::new(),
+            halted: false,
         }
     }
 

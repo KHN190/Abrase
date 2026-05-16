@@ -189,9 +189,7 @@ fn verify_compile_recursive_function() {
 
 #[test]
 fn verify_impl_method_lifted_to_synthetic_fn() {
-    // The impl-lift pass should produce `Doubler__Int__double` as a real
-    // entry in the function table — that is the synthetic fn codegen will
-    // dispatch to. (Uses `Doubler` rather than a reserved built-in name.)
+    // impl-lift pass synthesizes Doubler__Int__double in the fn table for dispatch.
     let src = r#"
         trait Doubler {
             fn double(self) -> Int { 0 }

@@ -727,13 +727,7 @@ fn verify_path_case_sensitive() {
 fn verify_complex_path_resolution_scenario() {
     let mut checker = Checker::new();
 
-    // Create complex module hierarchy
-    // company/
-    //   backend/
-    //     auth/
-    //       jwt.rs: Token (public), decode (public)
-    //       crypto/ (private)
-    //         hash (private)
+    // Build nested module hierarchy: company.backend.auth.jwt (pub) + .crypto (private).
 
     checker.push_module("company".into());
     checker.mark_public("company".into());

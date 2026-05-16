@@ -9,11 +9,8 @@ fn path(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| s.to_string()).collect()
 }
 
-// Register a three-level hierarchy and mark each item public so cross-module
-// traversal (which checks is_accessible per segment) can resolve it.
+// Set up root → std → io → File with each level marked pub for cross-module resolution.
 fn setup_std_io(c: &mut Checker) {
-    // root  →  std  →  io  →  File
-    // "std" is in root module — same-module access is always allowed, no need to mark public.
     c.register_module_item(&path(&["root"]), "std".into(), Type::Named("module".into()));
 
     // "io" is in root::std — mark public so it's reachable from root.

@@ -97,8 +97,7 @@ impl Compiler {
         Ok(dest)
     }
 
-    // Gather the arm fn names belonging to a particular `handle` expression:
-    // the return arm (from `return_arm_by_handle`) plus one entry per op arm.
+    // Gather the arm fn names belonging to a particular `handle` expression
     fn collect_handle_arm_names(
         &self,
         handle_span: ast::Span,
@@ -111,10 +110,11 @@ impl Compiler {
         for arm in arms {
             if let ast::HandleArmKind::Effect(path) = &arm.kind {
                 if path.len() >= 2 {
-                    let eff = path[..path.len()-1].join(".");
-                    let op = path.last().unwrap().clone();
-                    if let Some(name) = self.effect_op_to_arm.get(&(eff, op)) {
-                        out.push(name.clone());
+                    if let Some(op) = path.last().cloned() {
+                        let eff = path[..path.len()-1].join(".");
+                        if let Some(name) = self.effect_op_to_arm.get(&(eff, op)) {
+                            out.push(name.clone());
+                        }
                     }
                 }
             }
@@ -133,8 +133,7 @@ impl Compiler {
             let captures = self.arm_captures.get(name).cloned().unwrap_or_default();
             let env_reg = self.alloc_register()?;
             let n = captures.len();
-            // alloc at least one slot; the env handle is then just an Int
-            // pointer the arm fn treats as opaque.
+            // alloc at least one slot
             self.emit(OpCode::Alloc(env_reg, n.max(1) as u16));
             for (i, cap) in captures.iter().enumerate() {
                 let src = *self.var_to_reg.get(&cap.name)

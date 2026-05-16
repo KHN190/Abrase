@@ -22,12 +22,18 @@ impl VirtualMachine {
         self.base_reg = 0;
         self.current_func = module.entry;
         self.frames.clear();
+        self.handlers.clear();
+        self.halted = false;
         let needed = FRAME_REGS;
         if needed > self.registers.len() {
             self.registers.resize(needed, None);
         }
 
         loop {
+            if self.halted {
+                return self.registers[self.base_reg].clone()
+                    .ok_or("Return register is empty".to_string());
+            }
             let bc = match &module.functions[self.current_func] {
                 Chunk::Bytecode(b) => b,
                 Chunk::Native(_) => return Err(format!(
@@ -187,10 +193,7 @@ impl VirtualMachine {
                 self.heap.force_free(slot, generation)
             }
             OpCode::Drop(reg) => {
-                let abs = self.base_reg + reg.to_usize();
-                if abs >= self.registers.len() {
-                    return Err(format!("drop: r{} out of window", reg.0));
-                }
+                let abs = self.abs(*reg)?;
                 if let Some(Value::Handle { slot, generation }) = self.registers[abs].take() {
                     self.heap.rc_dec(slot, generation)?;
                 }
@@ -262,7 +265,6 @@ impl VirtualMachine {
                     ));
                 }
                 self.registers[abs] = Some(val);
-                // Single-shot: reclaim the cell now.
                 self.heap.force_free(frame.cell_slot, frame.cell_gen)?;
                 Ok(())
             }
@@ -289,6 +291,13 @@ impl VirtualMachine {
             return Err(format!(
                 "call: callee fn {} has reg_count {} > frame budget {}",
                 fn_id, callee_reg_count, FRAME_REGS
+            ));
+        }
+        // dest must land within the caller's window
+        if dest.to_usize() >= caller_reg_count {
+            return Err(format!(
+                "call: dest r{} out of caller window (reg_count {})",
+                dest.0, caller_reg_count
             ));
         }
         let dest_abs = self.base_reg + dest.to_usize();
@@ -331,6 +340,7 @@ impl VirtualMachine {
             ip: self.pc,
             base_reg: self.base_reg,
             dest_reg: dest_abs,
+            reg_count: caller_reg_count,
         });
         self.base_reg = new_base;
         self.current_func = fn_id;
@@ -339,7 +349,7 @@ impl VirtualMachine {
     }
 
     fn do_ret(&mut self, reg: Register) -> Result<(), String> {
-        let abs = self.base_reg + reg.to_usize();
+        let abs = self.abs(reg)?;
         let return_val = self.registers[abs].clone()
             .ok_or("Return register is empty")?;
         if let Some(frame) = self.frames.pop() {
@@ -350,7 +360,7 @@ impl VirtualMachine {
             Ok(())
         } else {
             self.registers[self.base_reg] = Some(return_val);
-            self.pc = usize::MAX;
+            self.halted = true;
             Ok(())
         }
     }
@@ -368,18 +378,35 @@ impl VirtualMachine {
         Ok(())
     }
 
+    // Frame-local r → absolute slot. The calling convention stages outbound
+    // args at r{caller_reg_count..}, so the upper bound is FRAME_REGS, not
+    // the chunk's own reg_count (S8).
+    fn abs(&self, r: Register) -> Result<usize, String> {
+        let abs = self.base_reg + r.to_usize();
+        if abs >= self.registers.len() {
+            return Err(format!(
+                "r{} (abs {}) out of register window (len {})",
+                r.0, abs, self.registers.len()
+            ));
+        }
+        Ok(abs)
+    }
+
     fn read(&self, r: Register) -> Result<Value, String> {
-        self.registers[self.base_reg + r.to_usize()].clone()
+        let abs = self.abs(r)?;
+        self.registers[abs].clone()
             .ok_or_else(|| format!("read: r{} is empty", r.0))
     }
 
     fn take(&mut self, r: Register) -> Result<Value, String> {
-        self.registers[self.base_reg + r.to_usize()].take()
+        let abs = self.abs(r)?;
+        self.registers[abs].take()
             .ok_or_else(|| format!("move: r{} is empty (already moved?)", r.0))
     }
 
     fn write(&mut self, r: Register, v: Value) -> Result<(), String> {
-        self.registers[self.base_reg + r.to_usize()] = Some(v);
+        let abs = self.abs(r)?;
+        self.registers[abs] = Some(v);
         Ok(())
     }
 
@@ -452,10 +479,7 @@ fn expect_bytecode(module: &Module, fn_id: usize) -> Result<&BytecodeChunk, Stri
     }
 }
 
-// Reject modules whose bytecode chunks declare more registers than the
-// per-frame budget (appendix-bytecode-spec §2: 256 slots per frame).
-// Validating at load/start time defends against compilers that emit bad
-// chunks and against hand-written modules.
+// Reject chunks declaring more than FRAME_REGS registers (spec §2).
 fn validate_module_register_budget(module: &Module) -> Result<(), String> {
     for (i, chunk) in module.functions.iter().enumerate() {
         if let Chunk::Bytecode(b) = chunk {

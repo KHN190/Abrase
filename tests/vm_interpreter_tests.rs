@@ -310,12 +310,7 @@ fn test_gte_false() {
 
 #[test]
 fn test_jz_takes_jump_when_zero() {
-    // Layout:
-    //   pc 0: PushConst r0
-    //   pc 1: Jz r0, +1 (skip pc 2, land on pc 3)
-    //   pc 2: PushConst r1 (skipped)
-    //   pc 3: PushConst r1
-    //   pc 4: Ret r1
+    // Jz on 0 skips one PushConst and lands on the final r1=42 store.
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -331,8 +326,7 @@ fn test_jz_takes_jump_when_zero() {
 
 #[test]
 fn test_jz_skips_jump_when_nonzero() {
-    // pc 0: PushConst, pc 1: Jz (offset 2 to past Ret, not taken), 
-    // pc 2: PushConst, pc 3: Ret
+    // Jz on non-zero falls through to the next PushConst.
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -405,15 +399,7 @@ fn test_jz_with_bool_false_takes_jump() {
 
 #[test]
 fn test_loop_counter() {
-    // Layout:
-    //   pc 0: PushConst r0, 0  ; i = 0
-    //   pc 1: PushConst r1, 1  ; limit = 3
-    //   pc 2: Lt r2, r0, r1
-    //   pc 3: Jz r2, +3        ; if !(i<limit), jump past loop body to pc 7
-    //   pc 4: PushConst r3, 2  ; one
-    //   pc 5: Add r0, r0, r3
-    //   pc 6: Jmp -5           ; back to pc 2
-    //   pc 7: Ret r0
+    // while i<3 { i += 1 } returns 3.
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -650,9 +636,7 @@ fn test_mul_empty_right_register_errors() {
 
 #[test]
 fn test_call_simple() {
-    // Callee adds r0 and r1.
-    // Main has reg_count=1 (just dest r0); 
-    // args land at r1, r2 = caller_reg_count + 0, +1.
+    // Callee adds its two params (passed via caller_reg_count + 0..n).
     let result = run_module_with_param_counts(vec![
         (
             vec![
@@ -725,21 +709,7 @@ fn test_call_return_value_in_dest() {
 
 #[test]
 fn test_recursion_simple() {
-    // countdown(n): if n<=0 return 0 else countdown(n-1)
-    // Locals: r0=n, r1=tmp, r2=cmp, r3=call_dest. reg_count=4, param_count=1.
-    // Recursive arg lives at r4 (caller_reg_count + 0).
-    //
-    // pc 0: PushConst r1, 0   ; r1 = 0
-    // pc 1: Lte r2, r0, r1
-    // pc 2: Jz r2, +3         ; if !(n<=0), jump to pc 6
-    // pc 3: PushConst r0, 1   ; r0 = 0 (return value)
-    // pc 4: Ret r0
-    // pc 5: (unreachable)
-    // pc 6: PushConst r1, 2   ; r1 = 1
-    // pc 7: Sub r0, r0, r1    ; r0 = n - 1
-    // pc 8: Copy r4, r0       ; outbound arg
-    // pc 9: Call r3, 0
-    // pc 10: Ret r3
+    // countdown(n) recursively bottoms out at 0; verifies frame stacking on Call.
     let result = run_module_with_param_counts(vec![
         (
             vec![
@@ -1015,8 +985,7 @@ fn test_jnz_negative_offset_underflow_traps() {
 
 #[test]
 fn test_jz_not_taken_skips_validation() {
-    // Even with a wildly invalid offset, Jz when condition is false (non-zero
-    // operand here means !falsy → not taken) must not check the offset.
+    // Untaken Jz must not validate its offset, even if it's wildly invalid.
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -1028,19 +997,7 @@ fn test_jz_not_taken_skips_validation() {
     assert_eq!(result, Ok(Value::Int(7)));
 }
 
-// S6 + W6: Handle allocates a 4-slot continuation cell on the heap with
-// [suspend_pc, suspend_base, dest_reg, alive]. Resume validates `alive`,
-// restores (pc, base), writes the resumption value into the suspended
-// frame's `dest_reg` slot — not slot 0 of `saved_base` (the S6 bug) — and
-// reclaims the cell.
-//
-// Note: codegen does not yet emit Handle/Resume; the "compiler thunks
-// using device 0xE0" path described in appendix-bytecode-spec §3.9 is
-// future work. These tests therefore drive the opcodes directly and
-// exercise the VM invariants, not realistic handler flows. In particular
-// Handle here stores `pc-after-Handle` in suspend_pc, so a Resume that
-// follows directly will re-execute itself — that's by design for the
-// "second resume traps" tests.
+// Handle/Resume cell-lifecycle — drive opcodes directly (no codegen yet).
 #[test]
 fn test_resume_without_handler_traps() {
     let result = run(
@@ -1056,10 +1013,7 @@ fn test_resume_without_handler_traps() {
 
 #[test]
 fn test_handle_allocates_cell_and_resume_frees_it() {
-    // Cell-lifecycle sanity check. The program ends in an error because the
-    // second Resume re-enters via the saved pc and finds no live handler
-    // — but the heap should be net-zero at exit either way (single-shot
-    // Resume must reclaim its cell).
+    // Single-shot Resume must reclaim its cell; heap net-zero at exit.
     let mut vm = VirtualMachine::new();
     let chunk = Chunk::Bytecode(BytecodeChunk {
         code: vec![
@@ -1079,9 +1033,7 @@ fn test_handle_allocates_cell_and_resume_frees_it() {
 
 #[test]
 fn test_double_resume_traps_after_single_shot() {
-    // First Resume succeeds and frees the cell. Because suspend_pc points
-    // back to the Resume instruction itself, the next loop iteration
-    // executes Resume again with an empty handler stack → error.
+    // After first Resume frees the cell, re-entry hits an empty handler stack → trap.
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -1099,8 +1051,7 @@ fn test_double_resume_traps_after_single_shot() {
 
 #[test]
 fn test_handle_allocates_one_cell_per_install() {
-    // After a single Handle (and no Resume), exactly one 4-slot cell should
-    // be live on the heap — the continuation cell.
+    // One Handle (no Resume) leaves exactly one live continuation cell.
     let mut vm = VirtualMachine::new();
     let install = Chunk::Bytecode(BytecodeChunk {
         code: vec![
@@ -1116,9 +1067,37 @@ fn test_handle_allocates_one_cell_per_install() {
         "Handle must allocate exactly one continuation cell");
 }
 
-// W4/S7: per-frame register budget (FRAME_REGS = 256) must be enforced at
-// both module-load time and call time so a malformed reg_count cannot
-// overlap the caller's window.
+// Lea is meaningless under the handle/generation heap and must trap.
+#[test]
+fn test_lea_traps() {
+    let result = run(
+        vec![
+            OpCode::Alloc(r(0), 4),
+            OpCode::Lea(r(1), r(0), 1),
+            OpCode::Ret(r(1)),
+        ],
+        vec![],
+    );
+    assert!(result.is_err(), "lea must trap");
+    let err = result.unwrap_err();
+    assert!(err.contains("lea"), "expected lea error, got: {}", err);
+}
+
+//  Call whose `dest` is outside the caller's reg_count must trap.
+#[test]
+fn test_call_dest_out_of_caller_window_traps() {
+    let result = run_module_with_param_counts(vec![
+        (vec![OpCode::Ret(r(0))], vec![Value::Int(1)], 1, 0),
+        // Caller has reg_count=2 but Call writes to r9 — out of window.
+        (vec![OpCode::Call(r(9), 0), OpCode::Ret(r(0))], vec![], 2, 0),
+    ]);
+    assert!(result.is_err(), "call with out-of-window dest must trap");
+    let err = result.unwrap_err();
+    assert!(err.contains("out of caller window") || err.contains("register window"),
+            "expected window error, got: {}", err);
+}
+
+// FRAME_REGS=256 enforcement at module-load and call time.
 #[test]
 fn test_module_load_rejects_oversize_reg_count() {
     let bad = BytecodeChunk {
@@ -1176,8 +1155,7 @@ fn test_module_load_accepts_exact_frame_budget() {
 
 #[test]
 fn test_jmp_past_end_traps() {
-    // Jumping to a PC strictly greater than code.len() is invalid.
-    // (pc == code.len() is allowed; that's "fall off the end" which Ret handles.)
+    // pc > code.len() is invalid (pc == code.len() is the legal fall-off-end).
     let result = run(
         vec![
             OpCode::Jmp(10),

@@ -188,11 +188,11 @@ impl HandleLowering {
                     self.return_arm_by_handle.insert(handle_span, fn_name);
                 }
                 HandleArmKind::Effect(path) => {
+                    let Some(op_name) = path.last().cloned() else { continue };
                     if path.len() < 2 {
                         continue;
                     }
                     let effect_name = path[..path.len()-1].join(".");
-                    let op_name = path.last().unwrap().clone();
                     let fn_name = format!("__handle_op_{}_{}_{}", effect_name, op_name, self.next_id);
                     self.next_id += 1;
 

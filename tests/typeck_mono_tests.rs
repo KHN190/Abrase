@@ -44,8 +44,7 @@ fn compile_module_errors(ast: &[Decl]) -> Vec<String> {
 mod tests {
     use super::*;
 
-    // fn id<T>(x: T) -> T { x }
-    // fn main() -> Int { id(5) }
+    // id<T>(x) specialized at Int: main returns id(5).
     #[test]
     fn generic_identity_function_int() {
         let ast = vec![
@@ -110,9 +109,7 @@ mod tests {
         assert_eq!(compile_and_run(&ast), Ok(Value::Int(10)));
     }
 
-    // fn outer<T>(x: T) -> T { inner(x) }
-    // fn inner<T>(x: T) -> T { x }
-    // fn main() -> Int { outer(7) }
+    // outer<T>(x) calls inner<T>(x); main inference through transitive generic call.
     #[test]
     fn generic_infers_through_transitive_calls() {
         let inner_fn = Decl::Fn(FnDecl {
@@ -160,10 +157,7 @@ mod tests {
         assert_eq!(compile_and_run(&ast), Ok(Value::Int(7)));
     }
 
-    // fn cnt<T>(x: T, n: Int) -> Int { if n <= 0 { 0 } else { 1 + cnt(x, n - 1) } }
-    // fn main() -> Int { cnt(42, 3) }
-    // Exercises recursion through a generic specialization (cnt__Int) — the
-    // recursive call gets rewritten to the mangled name.
+    // Recursion through a generic specialization: cnt<T>__Int rewrites its recursive call.
     #[test]
     fn generic_function_recurses_with_specialization() {
         let cnt = Decl::Fn(FnDecl {
@@ -222,8 +216,7 @@ mod tests {
         assert_eq!(compile_and_run(&ast), Ok(Value::Int(3)));
     }
 
-    // fn make<T>(x: Int) -> Int { x }  -- T is unused, so id type-arg cannot be inferred
-    // fn main() -> Int { make(5) }
+    // make<T>(x: Int) — unused T means type-arg cannot be inferred.
     #[test]
     fn generic_type_inference_fails_when_unused() {
         let make_fn = Decl::Fn(FnDecl {
@@ -258,10 +251,7 @@ mod tests {
         );
     }
 
-    // Feature 22: trait dispatch via static monomorphisation.
-    //
-    // Uses a `Doubler` trait so the tests do not collide with the four
-    // reserved trait names (`Show`/`Eq`/`Ord`/`Clone`).
+    // Feature 22: trait dispatch via static monomorphisation (using non-reserved `Doubler`).
 
     fn doubler_trait(return_ty: Type) -> Decl {
         Decl::Trait {
@@ -372,10 +362,7 @@ mod tests {
 
     #[test]
     fn feature_22_two_impl_types_dispatch_separately() {
-        // trait Doubler { fn double(self) -> Int }
-        // impl Doubler for Int  { fn double(self) -> Int { self * 10 } }
-        // impl Doubler for Bool { fn double(self) -> Int { if self { 1 } else { 0 } } }
-        // fn main() -> Int { (5).double() + (true).double() }   // 50 + 1 = 51
+        // Two `impl Doubler` on Int and Bool dispatch separately: (5).double()+(true).double() = 51.
         let trait_decl = doubler_trait(Type::Named("Int".into()));
         let int_body = Block {
             stmts: vec![],

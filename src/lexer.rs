@@ -234,8 +234,8 @@ impl<'a> Lexer<'a> {
                 is_float = true;
                 number.push(c);
                 self.read_char();
-                if matches!(self.current_char, Some('+') | Some('-')) {
-                    number.push(self.current_char.unwrap());
+                if let Some(sign @ ('+' | '-')) = self.current_char {
+                    number.push(sign);
                     self.read_char();
                 }
             } else {
@@ -250,8 +250,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Reads a `\` escape sequence, advancing past all consumed characters.
-    /// Assumes current_char is `\` on entry.
     fn read_escape(&mut self) -> char {
         self.read_char(); // skip '\'
         match self.current_char {
@@ -272,14 +270,16 @@ impl<'a> Lexer<'a> {
                         hex.push(c);
                         self.read_char();
                     }
-                    let codepoint = u32::from_str_radix(&hex, 16).unwrap_or(0);
-                    char::from_u32(codepoint).unwrap_or('\0')
+                    u32::from_str_radix(&hex, 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                        .unwrap_or(char::REPLACEMENT_CHARACTER)
                 } else {
-                    '\0'
+                    char::REPLACEMENT_CHARACTER
                 }
             }
             Some(c) => { self.read_char(); c } // unknown escape: keep literal char
-            None => '\0',
+            None => char::REPLACEMENT_CHARACTER,
         }
     }
 

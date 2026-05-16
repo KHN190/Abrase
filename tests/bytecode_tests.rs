@@ -106,11 +106,13 @@ fn test_frame_dest_reg() {
         ip: 10,
         base_reg: 64,
         dest_reg: 5,
+        reg_count: 8,
     };
     assert_eq!(frame.func_id, 1);
     assert_eq!(frame.ip, 10);
     assert_eq!(frame.base_reg, 64);
     assert_eq!(frame.dest_reg, 5);
+    assert_eq!(frame.reg_count, 8);
 }
 
 #[test]

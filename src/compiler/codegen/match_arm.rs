@@ -1,6 +1,3 @@
-// `match` expression lowering. Pattern sub-cases are separate helpers so the
-// dispatching switch stays readable.
-
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
@@ -39,7 +36,11 @@ impl Compiler {
                 }
                 ast::Pattern::Bind(name) => {
                     if self.layouts.variants.contains_key(name) {
-                        let info = self.layouts.variants.get(name).cloned().unwrap();
+                        let info = self.layouts.variants.get(name).cloned()
+                            .ok_or_else(|| format!(
+                                "internal: variant '{}' lost between contains_key and get",
+                                name
+                            ))?;
                         self.compile_variant_tag_arm(
                             info.tag, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps)?;
                     } else {

@@ -69,7 +69,7 @@ impl Compiler {
                 Some(prev) => self.emit_builtin_call(concat_id, &[prev, part_reg])?,
             });
         }
-        Ok(acc.unwrap())
+        acc.ok_or_else(|| "internal: string interp produced no parts".to_string())
     }
 
     fn compile_string_part(

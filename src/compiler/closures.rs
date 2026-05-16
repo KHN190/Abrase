@@ -28,29 +28,23 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct CaptureInfo {
-    /// Name of the captured outer variable, in slot order.
     pub name: String,
-    /// AST type of the captured variable as it was at the closure site.
     pub ty: Type,
 }
 
 #[derive(Debug, Clone)]
 pub struct ClosureInfo {
-    /// Name of the synthesised top-level fn for this closure.
     pub lifted_fn: String,
-    /// Captures (in env-slot order).
     pub captures: Vec<CaptureInfo>,
 }
 
 pub struct ClosureLowering {
-    /// Span of the original Expr::Closure -> info needed at codegen.
     pub by_span: HashMap<Span, ClosureInfo>,
-    /// Synthetic FnDecls to append to the module.
     pub synthetic_fns: Vec<FnDecl>,
     next_id: usize,
-    /// Names that are always considered "in scope" globally (top-level fns,
-    /// types, effect names, variant constructors). Free-variable analysis
-    /// treats these as non-captures.
+    // Names that are always considered "in scope" globally (top-level fns,
+    // types, effect names, variant constructors). Free-variable analysis
+    // treats these as non-captures.
     globals: HashSet<String>,
 }
 
@@ -253,7 +247,7 @@ impl ClosureLowering {
     }
 }
 
-/// Bookkeeping for tracking which names are in scope at a given point.
+// Bookkeeping for tracking which names are in scope at a given point.
 struct ParamEnv {
     scopes: Vec<HashMap<String, Type>>,
 }
@@ -302,9 +296,9 @@ fn param_names(params: &[ClosureParam]) -> HashSet<String> {
     }).collect()
 }
 
-/// Walk an expr collecting identifiers that are NOT bound by `bound`. Visit
-/// order is left-to-right so the resulting Vec is deterministic; `seen`
-/// dedups across the walk.
+// Walk an expr collecting identifiers that are NOT bound by `bound`. Visit
+// order is left-to-right so the resulting Vec is deterministic; `seen`
+// dedups across the walk.
 pub(in crate::compiler) fn collect_free_vars(
     expr: &Spanned<Expr>,
     bound: &HashSet<String>,
@@ -400,8 +394,8 @@ pub(in crate::compiler) fn collect_free_vars(
     }
 }
 
-/// Rewrite occurrences of captured names in `expr` to a load from the env
-/// handle. Treats `params` as locals that shadow captures.
+// Rewrite occurrences of captured names in `expr` to a load from the env
+// handle. Treats `params` as locals that shadow captures.
 pub(in crate::compiler) fn rewrite_captures(
     expr: &Spanned<Expr>,
     layout: &HashMap<String, usize>,
@@ -418,12 +412,13 @@ fn rewrite_node(
 ) -> Expr {
     match node {
         Expr::Identifier(name) => {
-            if params.contains(name) || !layout.contains_key(name) {
+            if params.contains(name) {
                 return Expr::Identifier(name.clone());
             }
-            // Captured: rewrite to `__env_load(__env, idx)` — a synthetic
-            // pseudo-call that codegen turns into an Ld opcode.
-            let idx = *layout.get(name).unwrap();
+            // Captured idx (or pass through if not captured).
+            let Some(&idx) = layout.get(name) else {
+                return Expr::Identifier(name.clone());
+            };
             Expr::Call {
                 callee: Box::new(Spanned {
                     node: Expr::Identifier("__env_load".into()),

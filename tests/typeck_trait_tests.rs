@@ -483,11 +483,7 @@ fn verify_check_all_bounds_named_type_uses_name() {
     assert!(c.check_all_trait_bounds("foo", &[("T".into(), Type::Named("MyStruct".into()))]));
 }
 
-// Feature 22: trait method call resolution.
-//
-// Uses a `Doubler` trait rather than `Show` to avoid colliding with the
-// reserved built-in trait names (`Show`/`Eq`/`Ord`/`Clone` — see
-// wiki §11). A separate test below proves that those names are rejected.
+// Feature 22: trait method call resolution (uses non-reserved `Doubler` trait).
 
 fn s2() -> ast::Span { ast::Span { line: 1, col: 1 } }
 fn sp_pat(p: ast::Pattern) -> ast::Spanned<ast::Pattern> { ast::Spanned { node: p, span: s2() } }
