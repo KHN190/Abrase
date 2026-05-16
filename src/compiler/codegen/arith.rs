@@ -4,6 +4,7 @@ use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
 use crate::myriad::Value;
+use super::is_move_type;
 
 impl Compiler {
     pub(in crate::compiler) fn compile_unary(
@@ -64,8 +65,13 @@ impl Compiler {
             ast::BinaryOp::Assign => {
                 if let ast::Expr::Identifier(name) = &left.node {
                     let rr = self.compile_expr(right)?;
+                    let is_heap = self.var_types.get(name).map(is_move_type).unwrap_or(false);
                     let dest_reg = match self.var_to_reg.get(name).copied() {
-                        Some(r) => { self.emit(OpCode::Copy(r, rr)); r }
+                        Some(r) => {
+                            if is_heap { self.emit(OpCode::Drop(r)); }
+                            self.emit(OpCode::Copy(r, rr));
+                            r
+                        }
                         None => {
                             // Var was moved earlier; rebind into a fresh register.
                             let r = self.alloc_register()?;

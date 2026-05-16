@@ -133,6 +133,7 @@ impl VirtualMachine {
                     return Err("Constant index out of bounds".to_string());
                 }
                 let v = resolved[idx];
+                self.value_rc_inc(&v)?;
                 self.write(*reg, v)
             }
             OpCode::Copy(d, s) => {
@@ -440,6 +441,9 @@ impl VirtualMachine {
     fn value_rc_inc(&mut self, v: &Value) -> Result<(), String> {
         if let Some((slot, generation)) = v.as_handle() {
             self.heap.rc_inc(slot, generation)
+        } else if let Some(idx) = v.as_box() {
+            self.box_pool.inc(idx);
+            Ok(())
         } else {
             Ok(())
         }
@@ -449,6 +453,9 @@ impl VirtualMachine {
     fn value_rc_dec(&mut self, v: &Value) -> Result<(), String> {
         if let Some((slot, generation)) = v.as_handle() {
             self.heap.rc_dec(slot, generation).map(|_| ())
+        } else if let Some(idx) = v.as_box() {
+            self.box_pool.dec(idx);
+            Ok(())
         } else {
             Ok(())
         }

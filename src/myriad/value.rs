@@ -155,19 +155,22 @@ pub enum BoxedValue {
 // Design: per-VM pool (option A). B/C (module-owned / process-shared) still on the table — revisit when cartridge serialize lands.
 pub struct BoxPool {
     slots: Vec<Option<BoxedValue>>,
+    rc: Vec<u32>,
     free_list: Vec<u32>,
 }
 
 impl BoxPool {
-    pub fn new() -> Self { Self { slots: Vec::new(), free_list: Vec::new() } }
+    pub fn new() -> Self { Self { slots: Vec::new(), rc: Vec::new(), free_list: Vec::new() } }
 
     pub fn intern(&mut self, b: BoxedValue) -> u32 {
         if let Some(idx) = self.free_list.pop() {
             self.slots[idx as usize] = Some(b);
+            self.rc[idx as usize] = 1;
             idx
         } else {
             let idx = self.slots.len() as u32;
             self.slots.push(Some(b));
+            self.rc.push(1);
             idx
         }
     }
@@ -180,9 +183,32 @@ impl BoxPool {
         self.slots.get_mut(idx as usize).and_then(|s| s.as_mut())
     }
 
+    #[inline]
+    pub fn inc(&mut self, idx: u32) {
+        let i = idx as usize;
+        if i < self.rc.len() {
+            self.rc[i] = self.rc[i].saturating_add(1);
+        }
+    }
+
+    #[inline]
+    pub fn dec(&mut self, idx: u32) -> bool {
+        let i = idx as usize;
+        if i >= self.rc.len() || self.rc[i] == 0 { return false; }
+        self.rc[i] -= 1;
+        if self.rc[i] == 0 {
+            self.slots[i] = None;
+            self.free_list.push(idx);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn free(&mut self, idx: u32) {
         if (idx as usize) < self.slots.len() && self.slots[idx as usize].is_some() {
             self.slots[idx as usize] = None;
+            if (idx as usize) < self.rc.len() { self.rc[idx as usize] = 0; }
             self.free_list.push(idx);
         }
     }
@@ -255,5 +281,28 @@ mod tests {
         assert!(pool.get(idx).is_none());
         let idx2 = pool.intern(BoxedValue::String("re".into()));
         assert_eq!(idx2, idx);
+    }
+
+    #[test]
+    fn box_pool_rc_reclaims_at_zero() {
+        let mut pool = BoxPool::new();
+        let idx = pool.intern(BoxedValue::String("a".into()));   // rc=1
+        pool.inc(idx);                                            // rc=2
+        assert_eq!(pool.live_count(), 1);
+        assert!(!pool.dec(idx));                                  // rc=1, not freed
+        assert!(pool.get(idx).is_some());
+        assert!(pool.dec(idx));                                   // rc=0, freed
+        assert!(pool.get(idx).is_none());
+        assert_eq!(pool.live_count(), 0);
+    }
+
+    #[test]
+    fn box_pool_reuses_slot_after_dec() {
+        let mut pool = BoxPool::new();
+        let a = pool.intern(BoxedValue::String("a".into()));
+        pool.dec(a);
+        let b = pool.intern(BoxedValue::String("b".into()));
+        assert_eq!(a, b);
+        assert_eq!(pool.live_count(), 1);
     }
 }
