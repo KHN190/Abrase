@@ -58,9 +58,7 @@ impl Runtime {
 
     fn register_default_hosts(&mut self) {
         // `device_in` and `device_out` are the language contract — Myriad
-        // MUST register them at startup. Codegen recognizes the names and
-        // emits Deo/Dei opcodes directly; the closures below are stubs that
-        // never run (they exist only to declare the signatures for typeck).
+        // MUST register them at startup. 
         //
         //   device_in(port: Int, data: Int) -> Unit   // write to device
         //   device_out(port: Int) -> Int              // read from device

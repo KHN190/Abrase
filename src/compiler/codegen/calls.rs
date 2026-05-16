@@ -17,12 +17,7 @@ pub(in crate::compiler) enum CallTarget<'a> {
     HostFn { fn_id: u16 },
     VariantCtor { tag: u32 },
     UnresolvedMethod { receiver: String, field: String },
-    // Host-contract intrinsics. The runtime MUST register their signatures
-    // (see Runtime::register_default_hosts) — codegen emits Deo/Dei directly
-    // here rather than going through the hostfunc device, because they ARE
-    // the device interface. device_in(port, data) writes (Deo); device_out
-    // (port) reads (Dei). User fns cannot shadow them (host_fns wins, and
-    // compile_module rejects same-named user fn decls).
+    // Host-contract intrinsics.
     DeviceIn,
     DeviceOut,
 }
