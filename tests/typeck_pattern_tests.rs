@@ -5,8 +5,6 @@ use abrase::typeck::{Checker, ownership::BorrowKind};
 fn d_span() -> Span { Span::new(0, 0) }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
 
-// Pattern Matching Analysis (Exhaustiveness & Unreachability)
-
 #[test]
 fn verify_add_covered_pattern_single() {
     let mut checker = Checker::new();

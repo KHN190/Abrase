@@ -13,8 +13,6 @@ pub enum Effect {
     Exn(Box<Type>),
     Alloc,
     Nondet,
-    /// User-declared effects, keyed by their declared name. Distinct names
-    /// remain distinct (no collapse into a single sink variant).
     UserEffect(String),
 }
 
@@ -39,6 +37,7 @@ pub enum Type {
     Tuple(Vec<Type>),
     Reference { is_mut: bool, inner: Box<Type> },
     Function { params: Vec<Type>, effects: Vec<Effect>, ret: Box<Type> },
+    Shared { inner: Box<Type>, region: Option<String> },
     Unknown,
 }
 
@@ -66,6 +65,7 @@ impl Type {
                     Ownership::Move
                 }
             }
+            Type::Shared { .. } => Ownership::Share,
             Type::Function { .. } => Ownership::Copy,
             Type::Named(name) if name == "Share" => Ownership::Copy,
             Type::Named(_) => Ownership::Move,

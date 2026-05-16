@@ -3,7 +3,67 @@ use crate::ast::Spanned;
 use crate::ty::Type;
 use super::*;
 
+fn types_assignable(expected: &Type, actual: &Type) -> bool {
+    if expected == &Type::Unknown || actual == &Type::Unknown { return true; }
+    if expected == &Type::Never || actual == &Type::Never { return true; }
+    match (expected, actual) {
+        (Type::Shared { inner: ei, region: er }, Type::Shared { inner: ai, region: ar }) => {
+            if !types_assignable(ei, ai) { return false; }
+            match (er, ar) {
+                (None, _) | (_, None) => false,
+                (Some(a), Some(b)) => a == b,
+            }
+        }
+        _ => expected == actual,
+    }
+}
+
 impl Checker {
+
+    pub(super) fn type_contains_shared(&self, ty: &Type) -> bool {
+        let mut visited = std::collections::HashSet::new();
+        self.type_contains_shared_inner(ty, &mut visited)
+    }
+
+    fn type_contains_shared_inner(
+        &self,
+        ty: &Type,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> bool {
+        match ty {
+            Type::Shared { .. } => true,
+            Type::Generic { name, .. } if name == "Shared" => true,
+            Type::Generic { args, .. } => args.iter().any(|t| self.type_contains_shared_inner(t, visited)),
+            Type::Tuple(elems) => elems.iter().any(|t| self.type_contains_shared_inner(t, visited)),
+            Type::Reference { inner, .. } => self.type_contains_shared_inner(inner, visited),
+            Type::Function { params, ret, .. } => {
+                params.iter().any(|t| self.type_contains_shared_inner(t, visited))
+                    || self.type_contains_shared_inner(ret, visited)
+            }
+            Type::Named(name) => {
+                if !visited.insert(name.clone()) { return false; } // cycle guard
+                match self.type_registry.get(name) {
+                    Some(ast::TypeBody::Record(fields)) => fields.iter().any(|f| {
+                        let ft = self.convert_type(&f.ty);
+                        self.type_contains_shared_inner(&ft, visited)
+                    }),
+                    Some(ast::TypeBody::Variant(cases)) => cases.iter().any(|c| match c {
+                        ast::VariantCase::Unit(_) => false,
+                        ast::VariantCase::Tuple(_, tys) => tys.iter().any(|t| {
+                            let tt = self.convert_type(t);
+                            self.type_contains_shared_inner(&tt, visited)
+                        }),
+                        ast::VariantCase::Record(_, fields) => fields.iter().any(|f| {
+                            let ft = self.convert_type(&f.ty);
+                            self.type_contains_shared_inner(&ft, visited)
+                        }),
+                    }),
+                    None => false,
+                }
+            }
+            _ => false,
+        }
+    }
 
     fn check_assignment(
         &mut self,
@@ -90,6 +150,7 @@ impl Checker {
                             Type::Reference { inner, .. } => *inner,
                             // `Shared<T>` is a host-provided reference cell:
                             // `*cell` reads the inner T.
+                            Type::Shared { inner, .. } => *inner,
                             Type::Generic { name, args } if name == "Shared" => {
                                 args.into_iter().next().unwrap_or(Type::Unknown)
                             }
@@ -284,7 +345,10 @@ impl Checker {
                     self.insert_var(name.clone(), element_ty, false, pattern.span);
                 }
 
+                // Body value is discarded — implicit region.
+                self.push_region(format!("for_body_{}", self.region_stack.len()));
                 let _body_ty = self.infer_block(body);
+                self.pop_region();
 
                 self.loop_depth -= 1;
                 let break_ty = self.loop_break_types.pop().flatten();
@@ -302,7 +366,9 @@ impl Checker {
 
                 self.loop_depth += 1;
                 self.loop_break_types.push(None);
+                self.push_region(format!("while_body_{}", self.region_stack.len()));
                 let _body_ty = self.infer_block(body);
+                self.pop_region();
                 self.loop_depth -= 1;
                 let break_ty = self.loop_break_types.pop().flatten();
 
@@ -366,6 +432,22 @@ impl Checker {
             }
             ast::Expr::Call { callee, args } => {
                 self.context_stack.push(format!("In function call"));
+
+                // `Shared(x)` must be inside a region
+                if let ast::Expr::Identifier(name) = &callee.node {
+                    if name == "Shared" && args.len() == 1 {
+                        let inner_ty = self.infer_expr(&args[0]);
+                        let region = self.region_stack.last().cloned();
+                        if region.is_none() {
+                            self.report_error(
+                                "`Shared(...)` must be constructed inside a region expression".into(),
+                                expr.span,
+                            );
+                        }
+                        self.context_stack.pop();
+                        return Type::Shared { inner: Box::new(inner_ty), region };
+                    }
+                }
 
                 if let ast::Expr::FieldAccess { base, field } = &callee.node {
                     if let ast::Expr::Identifier(eff_name) = &base.node {
@@ -654,6 +736,10 @@ impl Checker {
                                 name: name.clone(),
                                 args: args.iter().map(|a| subst_named(a, subst)).collect(),
                             },
+                            Type::Shared { inner, region } => Type::Shared {
+                                inner: Box::new(subst_named(inner, subst)),
+                                region: region.clone(),
+                            },
                             Type::Tuple(ts) => Type::Tuple(
                                 ts.iter().map(|t| subst_named(t, subst)).collect()),
                             Type::Reference { is_mut, inner } => Type::Reference {
@@ -759,6 +845,42 @@ impl Checker {
             }
             ast::Expr::Closure { is_move: _, params, effects, return_type, body } => {
                 self.context_stack.push("In closure expression".into());
+
+                // closure captures must be Move/Copy.
+                {
+                    use std::collections::HashSet;
+                    let mut bound: HashSet<String> = HashSet::new();
+                    for p in params {
+                        if let ast::Pattern::Bind(n) = &p.pattern.node {
+                            bound.insert(n.clone());
+                        }
+                    }
+                    let mut seen = HashSet::new();
+                    let mut frees = Vec::new();
+                    crate::compiler::closures::collect_free_vars(body, &bound, &mut seen, &mut frees);
+                    for name in &frees {
+                        if let Some(ty) = self.peek_var(name) {
+                            if matches!(ty, Type::Reference { .. }) {
+                                self.report_error(
+                                    format!(
+                                        "closure cannot capture reference '{}'", name
+                                    ),
+                                    body.span,
+                                );
+                            }
+                            if self.type_contains_shared(&ty) {
+                                self.report_error(
+                                    format!(
+                                        "closure cannot capture Shared binding '{}' \
+                                         from an enclosing region", name
+                                    ),
+                                    body.span,
+                                );
+                            }
+                        }
+                    }
+                }
+
                 self.enter_scope();
 
                 // Set declared effects for the closure
@@ -821,12 +943,28 @@ impl Checker {
             ast::Expr::Record { ty, fields } => {
                 let type_name = ty.join(".");
                 self.context_stack.push(format!("In record construction of '{}'", type_name));
-                for field in fields {
-                    if let Some(value) = &field.value {
-                        let _field_ty = self.infer_expr(value);
+                let declared_opt = self.type_registry.get(&type_name).cloned();
+                let mut declared_tys: std::collections::HashMap<String, Type> = std::collections::HashMap::new();
+                if let Some(ast::TypeBody::Record(declared)) = &declared_opt {
+                    for f in declared {
+                        declared_tys.insert(f.name.clone(), self.convert_type(&f.ty));
                     }
                 }
-                if let Some(ast::TypeBody::Record(declared)) = self.type_registry.get(&type_name).cloned() {
+                for field in fields {
+                    if let Some(value) = &field.value {
+                        let v_ty = self.infer_expr(value);
+                        if let Some(expected) = declared_tys.get(&field.name) {
+                            if !types_assignable(expected, &v_ty) {
+                                self.report_error(
+                                    format!("Record '{}' field '{}': expected {:?}, got {:?}",
+                                            type_name, field.name, expected, v_ty),
+                                    value.span,
+                                );
+                            }
+                        }
+                    }
+                }
+                if let Some(ast::TypeBody::Record(declared)) = &declared_opt {
                     let known: Vec<String> = declared.iter().map(|f| f.name.clone()).collect();
                     for field in fields {
                         if !known.iter().any(|n| n == &field.name) {
@@ -850,9 +988,23 @@ impl Checker {
                 Type::Named(type_name)
             }
             ast::Expr::Variant { ty, args } => {
+                let case_name = ty.last().cloned().unwrap_or_default();
                 self.context_stack.push(format!("In variant construction of '{}'", ty.join(".")));
-                for arg in args {
-                    let _arg_ty = self.infer_expr(arg);
+                let payload_tys: Vec<Type> = match self.lookup_variant_constructor(&case_name) {
+                    Some(Type::Function { params, .. }) => params,
+                    _ => Vec::new(),
+                };
+                for (i, arg) in args.iter().enumerate() {
+                    let arg_ty = self.infer_expr(arg);
+                    if let Some(expected) = payload_tys.get(i) {
+                        if !types_assignable(expected, &arg_ty) {
+                            self.report_error(
+                                format!("Variant '{}' payload {}: expected {:?}, got {:?}",
+                                        case_name, i, expected, arg_ty),
+                                arg.span,
+                            );
+                        }
+                    }
                 }
                 self.context_stack.pop();
                 Type::Named(ty.join("."))
@@ -916,20 +1068,29 @@ impl Checker {
                 self.context_stack.push(format!("In region{}",
                     label.as_ref().map(|l| format!(" '{}'", l)).unwrap_or_default()));
 
-                // Push region for escape analysis
                 let region_name = label.as_ref()
                     .map(|l| l.clone())
                     .unwrap_or_else(|| format!("region_{}", self.region_stack.len()));
                 self.push_region(region_name.clone());
 
-                // Push new region effect context
                 self.effect_stack.push(self.active_effects.clone());
                 let body_ty = self.infer_block(body);
                 self.effect_stack.pop();
 
-                // Pop region and validate no escapes
                 self.pop_region();
                 self.context_stack.pop();
+
+                // A region's result type must not contain a Shared cell
+                if self.type_contains_shared(&body_ty) {
+                    self.report_error(
+                        format!(
+                            "region '{}' result type {:?} contains `Shared<T>` — \
+                             a Shared cell cannot escape its enclosing region",
+                            region_name, body_ty
+                        ),
+                        expr.span,
+                    );
+                }
 
                 body_ty
             }

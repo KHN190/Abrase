@@ -1,0 +1,37 @@
+use super::memory::Heap;
+use super::value::BoxPool;
+
+pub struct RegionTable {
+    stack: Vec<Vec<(u32, u32)>>,
+}
+
+impl RegionTable {
+    pub fn new() -> Self {
+        Self { stack: Vec::new() }
+    }
+
+    pub fn push(&mut self) {
+        self.stack.push(Vec::new());
+    }
+
+    pub fn record_alloc(&mut self, slot: u32, generation: u32) {
+        if let Some(top) = self.stack.last_mut() {
+            top.push((slot, generation));
+        }
+    }
+
+    pub fn depth(&self) -> usize {
+        self.stack.len()
+    }
+
+    pub fn pop_and_release(&mut self, heap: &mut Heap, pool: &mut BoxPool) -> Result<(), String> {
+        let allocs = self.stack.pop()
+            .ok_or_else(|| "region_pop: no active region".to_string())?;
+        for (slot, generation) in allocs {
+            if let Err(e) = heap.force_free(slot, generation, pool) {
+                debug_assert!(false, "region pop force_free failed: {}", e);
+            }
+        }
+        Ok(())
+    }
+}

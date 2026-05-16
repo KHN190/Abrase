@@ -1,0 +1,49 @@
+// Integration test for `region { }` — all currently-allowed shapes.
+
+fn use_inner(x: Int) -> Int { x + 1 }
+
+fn main() -> Int {
+  // Anonymous region with a single Shared.
+  let a = region {
+    let s = Shared(10);
+    use_inner(*s)
+  };
+
+  // Labeled region — same shape, different label.
+  let b = region cache {
+    let s = Shared(20);
+    *s
+  };
+
+  // Nested regions: inner Shared dies at inner pop; outer Shared at outer pop.
+  let c = region outer {
+    let so = Shared(100);
+    let inner_val = region inner {
+      let si = Shared(200);
+      *si
+    };
+    *so + inner_val
+  };
+
+  // Region whose body uses only inner computations (no Shared) — still
+  // exercises the push/pop opcode pair to verify it's a no-op when empty.
+  let d = region {
+    let x = 5;
+    let y = 6;
+    x * y
+  };
+
+  // Multiple Shareds inside one region: all must be freed together.
+  let e = region {
+    let s1 = Shared(1);
+    let s2 = Shared(2);
+    let s3 = Shared(3);
+    *s1 + *s2 + *s3
+  };
+
+  // Sequence of sibling regions in one fn — each is independent.
+  let f = region { let s = Shared(7); *s };
+  let g = region { let s = Shared(8); *s };
+
+  a + b + c + d + e + f + g
+}

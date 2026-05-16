@@ -56,7 +56,12 @@ impl Compiler {
             ast::Expr::Tuple(_)       => Err(nyi(expr.span, "tuple expression")),
             ast::Expr::ArrayRepeat { .. } => Err(nyi(expr.span, "array-repeat literal '[x; n]'")),
             ast::Expr::Range { .. }   => Err(nyi(expr.span, "range expression")),
-            ast::Expr::Region { .. }  => Err(nyi(expr.span, "region block")),
+            ast::Expr::Region { body, .. } => {
+                self.emit_region_push()?;
+                let result = self.compile_block(body);
+                self.emit_region_pop()?;
+                result
+            }
         }
     }
 

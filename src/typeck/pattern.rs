@@ -487,7 +487,7 @@ impl Checker {
         self.report_error(format!("Undefined variable: {}", name), usage_span)
     }
 
-    fn lookup_variant_constructor(&self, case_name: &str) -> Option<Type> {
+    pub(super) fn lookup_variant_constructor(&self, case_name: &str) -> Option<Type> {
         // Host-provided builtin: `Shared(v)` constructs `Shared<T>` from any
         // value. The codegen recognises the call site directly (see
         // src/compiler/codegen.rs), but the typeck needs an entry too so the
@@ -496,9 +496,9 @@ impl Checker {
             return Some(Type::Function {
                 params: vec![Type::Unknown],
                 effects: vec![],
-                ret: Box::new(Type::Generic {
-                    name: "Shared".into(),
-                    args: vec![Type::Unknown],
+                ret: Box::new(Type::Shared {
+                    inner: Box::new(Type::Unknown),
+                    region: None,
                 }),
             });
         }
@@ -550,6 +550,12 @@ impl Checker {
             },
             ast::Type::Qualified(parts) => Type::Named(parts.join(".")),
             ast::Type::Generic { name, args } => {
+                if name == "Shared" && args.len() == 1 {
+                    return Type::Shared {
+                        inner: Box::new(self.convert_type(&args[0])),
+                        region: None,
+                    };
+                }
                 Type::Generic {
                     name: name.clone(),
                     args: args.iter().map(|arg| self.convert_type(arg)).collect(),

@@ -58,7 +58,16 @@ impl Checker {
                     let ownership = match own_attr {
                         ast::OwnershipAttr::Copy => Ownership::Copy,
                         ast::OwnershipAttr::Move => Ownership::Move,
-                        ast::OwnershipAttr::Share => Ownership::Share,
+                        ast::OwnershipAttr::Share => {
+                            self.report_error(
+                                format!(
+                                    "type '{}' cannot be declared `@share`; \
+                                     wrap it in `Shared<T>` instead", name
+                                ),
+                                ast::Span { line: 0, col: 0 },
+                            );
+                            Ownership::Move
+                        }
                     };
                     self.register_ownership(name.clone(), ownership);
                 }
@@ -78,9 +87,6 @@ impl Checker {
             },
 
             ast::Decl::Trait { name, is_pub, items, .. } => {
-                // Reject shadowing of the four built-in `@derive` trait names
-                // (wiki §11). These are reserved for the language's auto-derive
-                // machinery and may not be redefined.
                 if is_reserved_trait_name(name) {
                     self.report_error(
                         format!("Cannot redefine built-in trait '{}'; \
@@ -312,7 +318,16 @@ impl Checker {
             let own = match own_attr {
                 ast::OwnershipAttr::Copy => Ownership::Copy,
                 ast::OwnershipAttr::Move => Ownership::Move,
-                ast::OwnershipAttr::Share => Ownership::Share,
+                ast::OwnershipAttr::Share => {
+                    self.report_error(
+                        format!(
+                            "type '{}' cannot be declared `@share`; \
+                             wrap it in `Shared<T>` instead", name
+                        ),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                    Ownership::Move
+                }
             };
             self.register_ownership(name.into(), own);
         }
@@ -650,7 +665,7 @@ impl Checker {
     }
 }
 
-/// Built-in trait names reserved by `@derive` (wiki §11).
+/// Built-in trait names reserved by `@derive`
 pub(crate) const RESERVED_TRAIT_NAMES: &[&str] = &["Show", "Eq", "Ord", "Clone"];
 
 pub(crate) fn is_reserved_trait_name(name: &str) -> bool {

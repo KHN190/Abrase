@@ -86,6 +86,26 @@ impl Compiler {
         self.add_constant(Value::from_str_const(str_idx))
     }
 
+    pub(in crate::compiler) fn emit_region_push(&mut self) -> Result<(), String> {
+        self.emit_region_marker(crate::myriad::REGION_PORT_PUSH)
+    }
+
+    pub(in crate::compiler) fn emit_region_pop(&mut self) -> Result<(), String> {
+        self.emit_region_marker(crate::myriad::REGION_PORT_POP)
+    }
+
+    fn emit_region_marker(&mut self, port: u8) -> Result<(), String> {
+        let port_val = ((crate::myriad::REGION_ID as i64) << 8) | (port as i64);
+        let val_idx = self.add_constant(Value::from_int(0))?;
+        let port_idx = self.add_constant(Value::from_int(port_val))?;
+        let val_reg = self.alloc_register()?;
+        let port_reg = self.alloc_register()?;
+        self.emit(OpCode::PushConst(val_reg, val_idx));
+        self.emit(OpCode::PushConst(port_reg, port_idx));
+        self.emit(OpCode::Deo(val_reg, port_reg));
+        Ok(())
+    }
+
     pub(in crate::compiler) fn rel_offset(&self, target_pc: usize, branch_pc: usize) -> Result<i16, String> {
         let off = target_pc as isize - (branch_pc as isize + 1);
         i16::try_from(off).map_err(|_| format!("Branch offset {} exceeds 16-bit range", off))

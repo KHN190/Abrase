@@ -845,9 +845,11 @@ fn test_handle_after_free_is_rejected_via_generation() {
 #[test]
 fn test_heap_ld_rejects_stale_generation() {
     use abrase::vm::memory::Heap;
+    use abrase::myriad::BoxPool;
     let mut heap = Heap::new();
+    let mut pool = BoxPool::new();
     let (slot, gen0) = heap.alloc(2);
-    heap.rc_dec(slot, gen0).unwrap();
+    heap.rc_dec(slot, gen0, &mut pool).unwrap();
     let (slot2, gen1) = heap.alloc(2);
     assert_eq!(slot2, slot, "free_list should reuse the slot");
     assert_ne!(gen0, gen1, "reused slot must bump its generation");
@@ -862,12 +864,14 @@ fn test_heap_ld_rejects_stale_generation() {
 #[test]
 fn test_rc_inc_keeps_cell_alive_until_balanced() {
     use abrase::vm::memory::Heap;
+    use abrase::myriad::BoxPool;
     let mut heap = Heap::new();
+    let mut pool = BoxPool::new();
     let (slot, g_) = heap.alloc(1);
     heap.rc_inc(slot, g_).unwrap();
-    let freed1 = heap.rc_dec(slot, g_).unwrap();
+    let freed1 = heap.rc_dec(slot, g_, &mut pool).unwrap();
     assert!(!freed1, "still aliased; must not reclaim");
-    let freed2 = heap.rc_dec(slot, g_).unwrap();
+    let freed2 = heap.rc_dec(slot, g_, &mut pool).unwrap();
     assert!(freed2, "last alias dropped; must reclaim");
     assert_eq!(heap.live_count(), 0);
 }
@@ -875,11 +879,13 @@ fn test_rc_inc_keeps_cell_alive_until_balanced() {
 #[test]
 fn test_recursive_drop_reclaims_nested_handles() {
     use abrase::vm::memory::Heap;
+    use abrase::myriad::BoxPool;
     let mut heap = Heap::new();
+    let mut pool = BoxPool::new();
     let (child, cgen) = heap.alloc(1);
     let (parent, pgen) = heap.alloc(1);
     heap.st(parent, pgen, 0, Value::from_handle(child, cgen)).unwrap();
-    heap.rc_dec(parent, pgen).unwrap();
+    heap.rc_dec(parent, pgen, &mut pool).unwrap();
     assert_eq!(heap.live_count(), 0, "child must be reclaimed transitively");
 }
 
@@ -1289,6 +1295,145 @@ fn test_sub_imm() {
         vec![Value::from_int(20)],
     );
     assert_eq!(result, Ok(Value::from_int(16)));
+}
+
+// Region semantics — see wiki rfc-region-shared.md §3.3.
+
+fn region_port(port: u8) -> i64 {
+    ((abrase::vm::REGION_ID as i64) << 8) | port as i64
+}
+
+#[test]
+fn test_region_pop_force_frees_alloc_inside() {
+    // region push; alloc(4); region pop → heap_live_count should drop to 0
+    // even though the binding still has rc=1.
+    let mut vm = VirtualMachine::new();
+    let chunk = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),                  // r0 = 0 (deo value)
+            OpCode::PushConst(r(1), 1),                  // r1 = push port
+            OpCode::Deo(r(0), r(1)),                     // region push
+            OpCode::Alloc(r(2), 4),                      // r2 = handle (rc=1)
+            OpCode::PushConst(r(3), 2),                  // r3 = pop port
+            OpCode::Deo(r(0), r(3)),                     // region pop → force free r2
+            OpCode::PushConst(r(4), 3),                  // r4 = return value 99
+            OpCode::Ret(r(4)),
+        ],
+        constants: vec![
+            Value::from_int(0),
+            Value::from_int(region_port(abrase::vm::REGION_PORT_PUSH)),
+            Value::from_int(region_port(abrase::vm::REGION_PORT_POP)),
+            Value::from_int(99),
+        ],
+        string_constants: vec![],
+        reg_count: 8,
+        param_count: 0,
+    });
+    let result = vm.run(&chunk).expect("region push/pop should not error");
+    assert_eq!(result, Value::from_int(99));
+    assert_eq!(vm.heap_live_count(), 0, "alloc inside region must be force-freed at pop");
+}
+
+#[test]
+fn test_region_pop_frees_multiple_allocs() {
+    let mut vm = VirtualMachine::new();
+    let chunk = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Deo(r(0), r(1)),       // push
+            OpCode::Alloc(r(2), 2),
+            OpCode::Alloc(r(3), 2),
+            OpCode::Alloc(r(4), 2),
+            OpCode::PushConst(r(5), 2),
+            OpCode::Deo(r(0), r(5)),       // pop
+            OpCode::PushConst(r(6), 3),
+            OpCode::Ret(r(6)),
+        ],
+        constants: vec![
+            Value::from_int(0),
+            Value::from_int(region_port(abrase::vm::REGION_PORT_PUSH)),
+            Value::from_int(region_port(abrase::vm::REGION_PORT_POP)),
+            Value::from_int(7),
+        ],
+        string_constants: vec![],
+        reg_count: 8,
+        param_count: 0,
+    });
+    vm.run(&chunk).unwrap();
+    assert_eq!(vm.heap_live_count(), 0, "all allocs in region must be freed");
+}
+
+#[test]
+fn test_alloc_outside_region_is_not_force_freed() {
+    let mut vm = VirtualMachine::new();
+    let chunk = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::Alloc(r(0), 2),  // no region active → not tracked
+            OpCode::PushConst(r(1), 0),
+            OpCode::Ret(r(1)),
+        ],
+        constants: vec![Value::from_int(5)],
+        string_constants: vec![],
+        reg_count: 4,
+        param_count: 0,
+    });
+    vm.run(&chunk).unwrap();
+    // Handle still has rc=1, never dropped → still live.
+    assert_eq!(vm.heap_live_count(), 1, "alloc outside region survives end of execution");
+}
+
+#[test]
+fn test_nested_regions_pop_inner_only() {
+    let mut vm = VirtualMachine::new();
+    let chunk = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Deo(r(0), r(1)),       // outer push
+            OpCode::Alloc(r(2), 2),        // belongs to outer
+            OpCode::Deo(r(0), r(1)),       // inner push
+            OpCode::Alloc(r(3), 2),        // belongs to inner
+            OpCode::PushConst(r(4), 2),
+            OpCode::Deo(r(0), r(4)),       // inner pop → frees only r3
+            OpCode::PushConst(r(5), 3),
+            OpCode::Ret(r(5)),
+        ],
+        constants: vec![
+            Value::from_int(0),
+            Value::from_int(region_port(abrase::vm::REGION_PORT_PUSH)),
+            Value::from_int(region_port(abrase::vm::REGION_PORT_POP)),
+            Value::from_int(0),
+        ],
+        string_constants: vec![],
+        reg_count: 8,
+        param_count: 0,
+    });
+    vm.run(&chunk).unwrap();
+    assert_eq!(vm.region_depth(), 1, "outer region remains after inner pop");
+    assert_eq!(vm.heap_live_count(), 1, "outer alloc survives; only inner alloc was freed");
+}
+
+#[test]
+fn test_region_pop_without_push_errors() {
+    let mut vm = VirtualMachine::new();
+    let chunk = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),    // pop port
+            OpCode::Deo(r(0), r(1)),       // pop without push
+            OpCode::Ret(r(0)),
+        ],
+        constants: vec![
+            Value::from_int(0),
+            Value::from_int(region_port(abrase::vm::REGION_PORT_POP)),
+        ],
+        string_constants: vec![],
+        reg_count: 4,
+        param_count: 0,
+    });
+    let err = vm.run(&chunk).expect_err("region pop with empty stack must error");
+    assert!(err.contains("no active region"), "got error: {}", err);
 }
 
 #[test]

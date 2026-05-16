@@ -265,7 +265,7 @@ impl HandleLowering {
             .enumerate()
             .map(|(i, c)| (c.name.clone(), i))
             .collect();
-        let rewritten_body = rewrite_captures(body, &layout, &param_names);
+        let rewritten_body = rewrite_captures(body, &layout, &param_names, None, "");
 
         // Build the param list: __env first, then the arm pattern (if any).
         let mut params: Vec<Param> = Vec::new();

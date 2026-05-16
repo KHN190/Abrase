@@ -89,6 +89,10 @@ impl Checker {
                 e1.len() == e2.len()
                     && e1.iter().zip(e2.iter()).all(|(s, p)| self.is_subtype(s, p))
             }
+            (Type::Shared { inner: i1, region: r1 },
+             Type::Shared { inner: i2, region: r2 }) => {
+                r1 == r2 && self.is_subtype(i1, i2)
+            }
             _ => false,
         }
     }
@@ -218,6 +222,10 @@ impl Checker {
             (Type::Reference { is_mut: e_mut, inner: e_inner },
              Type::Reference { is_mut: a_mut, inner: a_inner }) => {
                 e_mut == a_mut && self.types_compatible(e_inner, a_inner)
+            },
+            (Type::Shared { inner: e_inner, region: e_r },
+             Type::Shared { inner: a_inner, region: a_r }) => {
+                e_r == a_r && self.types_compatible(e_inner, a_inner)
             },
             (Type::Function { params: e_params, ret: e_ret, .. },
              Type::Function { params: a_params, ret: a_ret, .. }) => {
@@ -424,7 +432,16 @@ impl Checker {
                 }
                 self.context_stack.pop();
             }
-            ast::Stmt::Expr(expr) => { self.infer_expr(expr); }
+            ast::Stmt::Expr(expr) => {
+                // Statement-position block: value is discarded, so it is an
+                // implicit region.
+                let is_block = matches!(&expr.node, ast::Expr::Block(_));
+                if is_block {
+                    self.push_region(format!("stmt_block_{}", self.region_stack.len()));
+                }
+                self.infer_expr(expr);
+                if is_block { self.pop_region(); }
+            }
             ast::Stmt::Empty => {}
         }
     }

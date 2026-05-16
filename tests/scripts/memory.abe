@@ -5,8 +5,10 @@ fn through_ref(x: &Int) -> Int {
 fn main() -> Int {
   let n = 10;
   let doubled = through_ref(&n);
-  let cell = Shared(doubled);
-  let val = *cell;
+  let val = region {
+    let cell = Shared(doubled);
+    *cell
+  };
   let s = "moved";
   let t = s;
   {

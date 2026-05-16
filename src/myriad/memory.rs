@@ -1,4 +1,4 @@
-use super::Value;
+use super::{Value, BoxPool};
 
 pub struct Heap {
     cells: Vec<Option<Vec<Value>>>,
@@ -76,8 +76,9 @@ impl Heap {
         Ok(())
     }
 
-    // At rc=0: recursively rc_dec child handles and reclaim. Returns whether reclaimed.
-    pub fn rc_dec(&mut self, slot: u32, generation: u32) -> Result<bool, String> {
+    // At rc=0: recursively rc_dec child handles AND box_pool.dec child boxes,
+    // then reclaim. Returns whether reclaimed.
+    pub fn rc_dec(&mut self, slot: u32, generation: u32, pool: &mut BoxPool) -> Result<bool, String> {
         let idx = self.check(slot, generation, "rc_dec")?;
         if self.rc[idx] == 0 {
             return Err(format!("rc_dec: refcount underflow on slot {}", slot));
@@ -90,22 +91,30 @@ impl Heap {
         self.free_list.push(slot);
         for v in cell {
             if let Some((s, g)) = v.as_handle() {
-                self.rc_dec(s, g)?;
+                self.rc_dec(s, g, pool)?;
+            } else if let Some(box_idx) = v.as_box() {
+                pool.dec(box_idx);
             }
         }
         Ok(true)
     }
 
-    pub fn force_free(&mut self, slot: u32, generation: u32) -> Result<(), String> {
-        let idx = self.check(slot, generation, "free")?;
+    // Idempotent against ordinary rc=0 reclaim. Used by region_pop.
+    pub fn force_free(&mut self, slot: u32, generation: u32, pool: &mut BoxPool) -> Result<(), String> {
+        let idx = slot as usize;
+        if idx >= self.cells.len() { return Ok(()); }
+        if self.cells[idx].is_none() { return Ok(()); }
+        if self.generation[idx] != generation { return Ok(()); }
         let cell = self.cells[idx].take().unwrap();
         self.rc[idx] = 0;
         self.free_list.push(slot);
         for v in cell {
             if let Some((s, g)) = v.as_handle() {
-                if let Err(e) = self.rc_dec(s, g) {
+                if let Err(e) = self.rc_dec(s, g, pool) {
                     debug_assert!(false, "force_free cascade rc_dec failed: {}", e);
                 }
+            } else if let Some(box_idx) = v.as_box() {
+                pool.dec(box_idx);
             }
         }
         Ok(())

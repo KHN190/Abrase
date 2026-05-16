@@ -211,6 +211,7 @@ impl VirtualMachine {
 
             OpCode::Alloc(d, size) => {
                 let (slot, generation) = self.heap.alloc(*size as usize);
+                self.region_record_alloc(slot, generation);
                 self.write(*d, Value::from_handle(slot, generation))
             }
             OpCode::Drop(reg) => {
@@ -251,6 +252,13 @@ impl VirtualMachine {
                     self.dispatch_last_result = Some(self.resolve_dispatch(key));
                     return Ok(());
                 }
+                if device_id == super::REGION_ID {
+                    return match port {
+                        super::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
+                        super::REGION_PORT_POP  => self.region_pop(),
+                        _ => Err(format!("region: unknown port {:#x}", port)),
+                    };
+                }
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
                 dev.write_with_pool(port, v, &mut self.box_pool)
@@ -258,6 +266,9 @@ impl VirtualMachine {
             OpCode::Handle(dest, fn_id) => {
                 // Heap-alloc continuation cell; `dest` is the suspended frame's result reg.
                 let (slot, generation) = self.heap.alloc(super::cont_slot::SIZE);
+                // Region gap (3): record the cell so an enclosing region's
+                // force-free reclaims it if the handler doesn't fire resume.
+                self.region_record_alloc(slot, generation);
                 self.heap.st(slot, generation, super::cont_slot::SUSPEND_PC,
                     Value::from_int(self.pc as i64))?;
                 self.heap.st(slot, generation, super::cont_slot::SUSPEND_BASE,
@@ -309,7 +320,7 @@ impl VirtualMachine {
                 self.base_reg = saved_base;
                 let abs = saved_base + dest_reg;
                 self.write_abs(abs, val)?;
-                self.heap.force_free(frame.cell_slot, frame.cell_gen)?;
+                self.heap.force_free(frame.cell_slot, frame.cell_gen, &mut self.box_pool)?;
                 Ok(())
             }
         }
@@ -486,7 +497,7 @@ impl VirtualMachine {
     #[inline(always)]
     fn value_rc_dec(&mut self, v: &Value) -> Result<(), String> {
         if let Some((slot, generation)) = v.as_handle() {
-            self.heap.rc_dec(slot, generation).map(|_| ())
+            self.heap.rc_dec(slot, generation, &mut self.box_pool).map(|_| ())
         } else if let Some(idx) = v.as_box() {
             self.box_pool.dec(idx);
             Ok(())
@@ -622,7 +633,7 @@ fn expect_bytecode(module: &Module, fn_id: usize) -> Result<&BytecodeChunk, Stri
     }
 }
 
-// 16-bit port = (device_id << 8) | port_offset (spec §3.8).
+// 16-bit port = (device_id << 8) | port_offset
 fn split_port(port_val: i64) -> Result<(u8, u8), String> {
     if !(0..=0xFFFF).contains(&port_val) {
         return Err(format!("device port {:#x} out of 16-bit range", port_val));
@@ -632,7 +643,7 @@ fn split_port(port_val: i64) -> Result<(u8, u8), String> {
     Ok((device_id, port))
 }
 
-// Reject chunks declaring more than FRAME_REGS registers (spec §2).
+// Reject chunks declaring more than FRAME_REGS registers.
 fn validate_module_register_budget(module: &Module) -> Result<(), String> {
     for (i, chunk) in module.functions.iter().enumerate() {
         if let Chunk::Bytecode(b) = chunk {
