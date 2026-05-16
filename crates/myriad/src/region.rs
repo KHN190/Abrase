@@ -34,4 +34,11 @@ impl RegionTable {
         }
         Ok(())
     }
+
+    // Drop all bookkeeping without force-freeing. Called by run_module_inner
+    // at entry so leftover frames from a prior (aborted or buggy) run don't
+    // see slots reused by the new run as their own.
+    pub fn clear(&mut self) {
+        self.stack.clear();
+    }
 }

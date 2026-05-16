@@ -348,6 +348,8 @@ impl Checker {
                 self.loop_body_region_depth.push(self.region_stack.len());
                 let _body_ty = self.infer_block(body);
                 self.loop_body_region_depth.pop();
+
+                self.check_borrow_barrier("for loop exit", expr.span);
                 self.pop_region();
 
                 self.loop_depth -= 1;
@@ -370,6 +372,8 @@ impl Checker {
                 self.loop_body_region_depth.push(self.region_stack.len());
                 let _body_ty = self.infer_block(body);
                 self.loop_body_region_depth.pop();
+
+                self.check_borrow_barrier("while loop exit", expr.span);
                 self.pop_region();
                 self.loop_depth -= 1;
                 let break_ty = self.loop_break_types.pop().flatten();
@@ -387,6 +391,8 @@ impl Checker {
                 self.loop_body_region_depth.push(self.region_stack.len());
                 let _body_ty = self.infer_block(body);
                 self.loop_body_region_depth.pop();
+
+                self.check_borrow_barrier("loop exit", expr.span);
                 self.pop_region();
                 self.loop_depth -= 1;
                 let break_ty = self.loop_break_types.pop().flatten();
@@ -437,11 +443,27 @@ impl Checker {
             }
             ast::Expr::Return(ret_val) => {
                 if let Some(val) = ret_val {
+                    if let Some((root, span)) = self.check_return_escape(val) {
+                        self.report_error(
+                            format!("borrow of '{}' cannot escape via return; \
+                                     it would dangle past loop / function exit",
+                                root),
+                            span,
+                        );
+                    }
                     let _val_ty = self.infer_expr(val);
                 }
                 Type::Never
             }
             ast::Expr::Throw(expr_val) => {
+                if let Some((root, span)) = self.check_return_escape(expr_val) {
+                    self.report_error(
+                        format!("borrow of '{}' cannot escape via throw; \
+                                 it would dangle past loop / function exit",
+                            root),
+                        span,
+                    );
+                }
                 let ex_ty = self.infer_expr(expr_val);
                 self.add_required_effect(crate::ty::Effect::Exn(Box::new(ex_ty)));
                 Type::Never
@@ -1087,6 +1109,9 @@ impl Checker {
                 let body_ty = self.infer_block(body);
                 self.effect_stack.pop();
 
+                // Enforce borrow barrier at region exit: no outer-region references should be live
+                self.check_borrow_barrier("region exit", expr.span);
+
                 self.pop_region();
                 self.context_stack.pop();
 
@@ -1206,12 +1231,15 @@ impl Checker {
         ty
     }
 
-    // Escape-barrier check for `break val`.
-    fn check_break_escape(
+    // Escape-barrier check: returns the (root, span) of a binding whose
+    // borrow would dangle past `barrier_depth`. `break` uses the innermost
+    // loop's depth; `return`/`throw` use the outermost loop's depth (they
+    // unwind every enclosing loop on the way out of the function).
+    fn check_escape_past(
         &self,
         val: &ast::Spanned<ast::Expr>,
+        barrier_depth: usize,
     ) -> Option<(String, ast::Span)> {
-        let loop_depth = *self.loop_body_region_depth.last()?;
         let root = match &val.node {
             ast::Expr::Unary { op: ast::UnaryOp::Ref, right }
             | ast::Expr::Unary { op: ast::UnaryOp::RefMut, right } => {
@@ -1226,13 +1254,31 @@ impl Checker {
         };
         for scope in self.scopes.iter().rev() {
             if let Some(meta) = scope.vars.get(&root) {
-                if meta.bound_at_region_depth >= loop_depth {
+                if meta.bound_at_region_depth >= barrier_depth {
                     return Some((root, val.span));
                 }
                 return None;
             }
         }
         None
+    }
+
+    fn check_break_escape(
+        &self,
+        val: &ast::Spanned<ast::Expr>,
+    ) -> Option<(String, ast::Span)> {
+        let loop_depth = *self.loop_body_region_depth.last()?;
+        self.check_escape_past(val, loop_depth)
+    }
+
+    // Return/throw unwind every enclosing loop; the barrier is the outermost
+    // loop body region currently in scope.
+    fn check_return_escape(
+        &self,
+        val: &ast::Spanned<ast::Expr>,
+    ) -> Option<(String, ast::Span)> {
+        let outer_loop_depth = *self.loop_body_region_depth.first()?;
+        self.check_escape_past(val, outer_loop_depth)
     }
 
     fn root_ident(expr: &ast::Spanned<ast::Expr>) -> Option<String> {

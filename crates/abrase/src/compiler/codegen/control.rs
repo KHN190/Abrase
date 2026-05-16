@@ -55,23 +55,46 @@ impl Compiler {
         condition: &ast::Spanned<ast::Expr>,
         body: &ast::Block,
     ) -> Result<Register, String> {
-        let loop_addr = self.code.len();
+        // Per-iteration region: cond check sits before the push so each iter
+        // gets a fresh region. break/continue emit their own pop before Jmp
+        // (see compile_break / compile_continue) — that keeps push/pop balanced.
+        let result_reg = self.alloc_register()?;
+        let unit_idx = self.add_constant(Value::UNIT)?;
+        self.emit(OpCode::PushConst(result_reg, unit_idx));
+
+        let loop_top = self.code.len();
         let cond_reg = self.compile_expr(condition)?;
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(cond_reg, 0));
 
+        self.emit_region_push()?;
+
+        self.loop_stack.push(LoopCtx {
+            result_reg,
+            continue_target: loop_top,
+            break_patches: Vec::new(),
+            continue_patches: Vec::new(),
+        });
+
         self.compile_block(body)?;
+
+        // Normal iter end: pop the region, jump back to cond check.
+        self.emit_region_pop()?;
         let back_idx = self.code.len();
-        let back_off = self.rel_offset(loop_addr, back_idx)?;
+        let back_off = self.rel_offset(loop_top, back_idx)?;
         self.emit(OpCode::Jmp(back_off));
 
+        let ctx = self.loop_stack.pop().expect("loop_stack");
+        // continue: already popped in compile_continue, just route to cond check.
+        for pidx in ctx.continue_patches {
+            self.patch_jmp_at(pidx, loop_top)?;
+        }
         let exit_addr = self.code.len();
         self.patch_jz_at(jz_idx, exit_addr)?;
-
-        let r = self.alloc_register()?;
-        let idx = self.add_constant(Value::UNIT)?;
-        self.emit(OpCode::PushConst(r, idx));
-        Ok(r)
+        for pidx in ctx.break_patches {
+            self.patch_jmp_at(pidx, exit_addr)?;
+        }
+        Ok(result_reg)
     }
 
     pub(in crate::compiler) fn compile_loop(
@@ -82,23 +105,29 @@ impl Compiler {
         let unit_idx = self.add_constant(Value::UNIT)?;
         self.emit(OpCode::PushConst(result_reg, unit_idx));
 
-        let continue_target = self.code.len();
+        // Per-iteration region: back-jump lands BEFORE the push so each iter
+        // gets a fresh region. break/continue emit their own pop before Jmp.
+        let loop_top = self.code.len();
+        self.emit_region_push()?;
+
         self.loop_stack.push(LoopCtx {
             result_reg,
-            continue_target,
+            continue_target: loop_top,
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
         });
 
         self.compile_block(body)?;
 
+        // Normal iter end: pop, then back-jump to top (which re-pushes).
+        self.emit_region_pop()?;
         let back_idx = self.code.len();
-        let back_off = self.rel_offset(continue_target, back_idx)?;
+        let back_off = self.rel_offset(loop_top, back_idx)?;
         self.emit(OpCode::Jmp(back_off));
 
         let ctx = self.loop_stack.pop().expect("loop_stack");
         for pidx in ctx.continue_patches {
-            self.patch_jmp_at(pidx, continue_target)?;
+            self.patch_jmp_at(pidx, loop_top)?;
         }
         let exit_addr = self.code.len();
         for pidx in ctx.break_patches {
@@ -119,6 +148,10 @@ impl Compiler {
             let dest = self.loop_stack.last().unwrap().result_reg;
             self.emit(OpCode::Copy(dest, r));
         }
+        // Pop the current iteration's region before jumping out: each iter
+        // pushes one region (see compile_loop/while/for), and break bypasses
+        // the normal end-of-iter pop.
+        self.emit_region_pop()?;
         let pidx = self.code.len();
         self.emit(OpCode::Jmp(0));
         self.loop_stack.last_mut().unwrap().break_patches.push(pidx);
@@ -133,6 +166,10 @@ impl Compiler {
         if self.loop_stack.is_empty() {
             return Err("`continue` outside of loop".to_string());
         }
+        // Pop the current iteration's region before jumping. The patch target
+        // (set by compile_loop/while/for) routes back to the loop top (which
+        // re-pushes) or to the for-increment block.
+        self.emit_region_pop()?;
         let pidx = self.code.len();
         self.emit(OpCode::Jmp(0));
         self.loop_stack
@@ -193,6 +230,9 @@ impl Compiler {
         let unit_idx = self.add_constant(Value::UNIT)?;
         self.emit(OpCode::PushConst(result_reg, unit_idx));
 
+        // Per-iteration region: cond check + Jz live BEFORE the push so the
+        // exit path on a false cond doesn't owe a pop. break/continue emit
+        // their own pop before Jmp.
         let cond_addr = self.code.len();
         let cmp_reg = self.alloc_register()?;
         match inclusive_kind {
@@ -208,6 +248,8 @@ impl Compiler {
         }
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(cmp_reg, 0));
+
+        self.emit_region_push()?;
 
         self.loop_stack.push(LoopCtx {
             result_reg,
@@ -230,7 +272,10 @@ impl Compiler {
             self.var_types.remove(name);
         }
 
-        // `continue` 跳到自增步起点 —— 跳过 body 剩余部分,但仍执行 +1
+        // Normal iter end: pop, then run the increment step, then back-jump.
+        // `continue` jumps to `continue_addr` (the increment step) — it has
+        // already emitted its own pop in compile_continue.
+        self.emit_region_pop()?;
         let continue_addr = self.code.len();
 
         let one_reg = self.alloc_register()?;
@@ -270,8 +315,22 @@ impl Compiler {
             reg
         };
         let ret_reg = if self.current_fn_fallible { self.wrap_ok(r)? } else { r };
+        // Return unwinds every enclosing loop's per-iteration region. break
+        // only escapes one loop (single pop, handled in compile_break), but
+        // return jumps clear out of the function, so it must pop them all.
+        self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(ret_reg));
         Ok(r)
+    }
+
+    // Emit one region_pop per enclosing loop currently active in the codegen
+    // state. Used by `return` and `throw`, which leave the function and so
+    // bypass every loop's normal end-of-iter pop.
+    pub(in crate::compiler) fn emit_pops_to_exit_fn(&mut self) -> Result<(), String> {
+        for _ in 0..self.loop_stack.len() {
+            self.emit_region_pop()?;
+        }
+        Ok(())
     }
 }
 

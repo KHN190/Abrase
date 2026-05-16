@@ -15,6 +15,9 @@ impl Compiler {
         }
         let err_val = self.compile_expr(inner)?;
         let wrapped = self.wrap_err(err_val)?;
+        // Throw unwinds the function like return — pop every enclosing loop's
+        // per-iteration region.
+        self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(wrapped));
         Ok(wrapped)
     }
@@ -36,6 +39,8 @@ impl Compiler {
         self.emit(OpCode::Eq(is_err, tag, err_tag));
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(is_err, 0));
+        // Err path returns out of the function — pop every enclosing loop region.
+        self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(res));
         let after = self.code.len();
         self.patch_jz_at(jz_idx, after)?;

@@ -35,6 +35,7 @@ impl VirtualMachine {
         self.current_func = module.entry;
         self.frames.clear();
         self.handlers.clear();
+        self.region_table.clear();
         self.halted = false;
         self.exit_code = None;
         let needed = FRAME_REGS;
