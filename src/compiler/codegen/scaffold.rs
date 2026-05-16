@@ -24,7 +24,39 @@ impl Compiler {
         self.code.push(op);
     }
 
+    // Peephole: if the last emitted op writes to `old`, retarget it to `new`.
+    pub(in crate::compiler) fn try_redirect_last_dest(&mut self, old: Register, new: Register) -> bool {
+        if old == new { return true; }
+        let Some(last) = self.code.last_mut() else { return false; };
+        let d: &mut Register = match last {
+            OpCode::Add(d, _, _) | OpCode::Sub(d, _, _) | OpCode::Mul(d, _, _) |
+            OpCode::Div(d, _, _) | OpCode::Mod(d, _, _) | OpCode::Neg(d, _) |
+            OpCode::FAdd(d, _, _) | OpCode::FSub(d, _, _) | OpCode::FMul(d, _, _) | OpCode::FDiv(d, _, _) |
+            OpCode::Eq(d, _, _) | OpCode::Neq(d, _, _) |
+            OpCode::Lt(d, _, _) | OpCode::Gt(d, _, _) | OpCode::Lte(d, _, _) | OpCode::Gte(d, _, _) |
+            OpCode::FLt(d, _, _) |
+            OpCode::And(d, _, _) | OpCode::Or(d, _, _) | OpCode::Xor(d, _, _) |
+            OpCode::Shl(d, _, _) | OpCode::Shr(d, _, _) |
+            OpCode::PushConst(d, _) |
+            OpCode::Copy(d, _) | OpCode::Move(d, _) |
+            OpCode::Ld(d, _, _) | OpCode::LdIdx(d, _, _) |
+            OpCode::Lea(d, _, _) | OpCode::Ref(d, _) |
+            OpCode::Alloc(d, _) |
+            OpCode::Call(d, _) | OpCode::CallReg(d, _) => d,
+            _ => return false,
+        };
+        if *d == old {
+            *d = new;
+            true
+        } else {
+            false
+        }
+    }
+
     pub(in crate::compiler) fn add_constant(&mut self, val: Value) -> Result<u16, String> {
+        if let Some(i) = self.constants.iter().position(|c| *c == val) {
+            return Ok(i as u16);
+        }
         if self.constants.len() >= u16::MAX as usize {
             return Err("Constant pool overflow (max 65535 entries)".to_string());
         }

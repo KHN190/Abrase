@@ -40,7 +40,7 @@ impl Device for SystemDevice {
                 let idx = as_int(val, "system.panic")? as usize;
                 let msg = self.constants.as_ref()
                     .and_then(|c| c.get(idx))
-                    .and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None })
+                    .and_then(|v| if let Value::String(s) = v { Some((**s).clone()) } else { None })
                     .unwrap_or_else(|| format!("panic (pool idx {})", idx));
                 Err(format!("panic: {}", msg))
             }

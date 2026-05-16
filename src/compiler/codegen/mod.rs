@@ -155,8 +155,9 @@ impl Compiler {
             let dst = Register(dst_idx as u8);
             match self.code[pos] {
                 OpCode::Copy(_, src) => { self.code[pos] = OpCode::Copy(dst, src); }
+                OpCode::Move(_, src) => { self.code[pos] = OpCode::Move(dst, src); }
                 ref other => return Err(format!(
-                    "internal: arg-patch site at pc {} is not Copy (found {:?})",
+                    "internal: arg-patch site at pc {} is not Copy/Move (found {:?})",
                     pos, other
                 )),
             }

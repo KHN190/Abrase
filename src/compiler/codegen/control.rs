@@ -16,9 +16,17 @@ impl Compiler {
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(cond_reg, 0));
 
-        let cons_reg = self.compile_expr(consequence)?;
         let result_reg = self.alloc_register()?;
-        self.emit(OpCode::Copy(result_reg, cons_reg));
+
+        let cons_reg = self.compile_expr(consequence)?;
+        // Peephole only on leaf expressions: phi-joining forms (Match, If,
+        // Block-with-control-tail) write the same reg from multiple sites
+        // and can't be redirected by a single last-emit rewrite.
+        if !is_leaf_for_peephole(&consequence.node)
+            || !self.try_redirect_last_dest(cons_reg, result_reg)
+        {
+            self.emit(OpCode::Copy(result_reg, cons_reg));
+        }
 
         let jmp_idx = self.code.len();
         self.emit(OpCode::Jmp(0));
@@ -26,15 +34,17 @@ impl Compiler {
         let else_addr = self.code.len();
         self.patch_jz_at(jz_idx, else_addr)?;
 
-        let alt_reg = if let Some(alt) = alternative {
-            self.compile_expr(alt)?
+        let (alt_reg, alt_leaf) = if let Some(alt) = alternative {
+            (self.compile_expr(alt)?, is_leaf_for_peephole(&alt.node))
         } else {
             let r = self.alloc_register()?;
             let idx = self.add_constant(Value::Unit)?;
             self.emit(OpCode::PushConst(r, idx));
-            r
+            (r, true)
         };
-        self.emit(OpCode::Copy(result_reg, alt_reg));
+        if !alt_leaf || !self.try_redirect_last_dest(alt_reg, result_reg) {
+            self.emit(OpCode::Copy(result_reg, alt_reg));
+        }
 
         let end_addr = self.code.len();
         self.patch_jmp_at(jmp_idx, end_addr)?;
@@ -82,4 +92,23 @@ impl Compiler {
         self.emit(OpCode::Ret(ret_reg));
         Ok(r)
     }
+}
+
+// Phi-joining forms (Match, If, Block, Handle, While) write the result reg
+// from multiple sites and can't be redirected by a single last-emit rewrite.
+fn is_leaf_for_peephole(expr: &ast::Expr) -> bool {
+    matches!(
+        expr,
+        ast::Expr::Literal(_)
+        | ast::Expr::Identifier(_)
+        | ast::Expr::Binary { .. }
+        | ast::Expr::Unary { .. }
+        | ast::Expr::Call { .. }
+        | ast::Expr::FieldAccess { .. }
+        | ast::Expr::Index { .. }
+        | ast::Expr::Record { .. }
+        | ast::Expr::Variant { .. }
+        | ast::Expr::Array(_)
+        | ast::Expr::Closure { .. }
+    )
 }

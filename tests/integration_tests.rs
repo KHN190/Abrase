@@ -157,5 +157,5 @@ fn neg_borrow_across_effect_typeck_errors() {
 fn string_interp_with_records_recursion_and_closures() {
     let v = run_file("tests/scripts/interp.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::String("user=[Alice:30] total=10 next=11".to_string()));
+    assert_eq!(v, Value::String(Box::new("user=[Alice:30] total=10 next=11".to_string())));
 }

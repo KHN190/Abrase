@@ -15,21 +15,21 @@ fn test_value_bool_variants() {
 
 #[test]
 fn test_value_tuple_eq() {
-    let a = Value::Tuple(vec![Value::Int(1), Value::Bool(true)]);
-    let b = Value::Tuple(vec![Value::Int(1), Value::Bool(true)]);
+    let a = Value::Tuple(Box::new(vec![Value::Int(1), Value::Bool(true)]));
+    let b = Value::Tuple(Box::new(vec![Value::Int(1), Value::Bool(true)]));
     assert_eq!(a, b);
 }
 
 #[test]
 fn test_value_clone() {
-    let v = Value::String("hello".into());
+    let v = Value::String(Box::new("hello".into()));
     assert_eq!(v.clone(), v);
 }
 
 #[test]
 fn test_value_record_tag_distinguishes_variants() {
-    let a = Value::Record { tag: 0, fields: vec![Value::Int(1)] };
-    let b = Value::Record { tag: 1, fields: vec![Value::Int(1)] };
+    let a = Value::Record { tag: 0, fields: Box::new(vec![Value::Int(1)]) };
+    let b = Value::Record { tag: 1, fields: Box::new(vec![Value::Int(1)]) };
     assert_ne!(a, b);
 }
 
@@ -46,8 +46,8 @@ fn test_value_unit_eq() {
 
 #[test]
 fn test_value_string_eq() {
-    assert_eq!(Value::String("hello".into()), Value::String("hello".into()));
-    assert_ne!(Value::String("hello".into()), Value::String("world".into()));
+    assert_eq!(Value::String(Box::new("hello".into())), Value::String(Box::new("hello".into())));
+    assert_ne!(Value::String(Box::new("hello".into())), Value::String(Box::new("world".into())));
 }
 
 #[test]
@@ -55,20 +55,20 @@ fn test_value_cross_type_inequality() {
     assert_ne!(Value::Int(1), Value::Bool(true));
     assert_ne!(Value::Int(1), Value::Float(1.0));
     assert_ne!(Value::Bool(false), Value::Unit);
-    assert_ne!(Value::String("1".into()), Value::Int(1));
+    assert_ne!(Value::String(Box::new("1".into())), Value::Int(1));
 }
 
 #[test]
 fn test_value_tuple_inequality() {
-    let a = Value::Tuple(vec![Value::Int(1), Value::Bool(true)]);
-    let b = Value::Tuple(vec![Value::Int(1), Value::Bool(false)]);
+    let a = Value::Tuple(Box::new(vec![Value::Int(1), Value::Bool(true)]));
+    let b = Value::Tuple(Box::new(vec![Value::Int(1), Value::Bool(false)]));
     assert_ne!(a, b);
 }
 
 #[test]
 fn test_value_record_fields_distinguish() {
-    let a = Value::Record { tag: 0, fields: vec![Value::Int(1)] };
-    let b = Value::Record { tag: 0, fields: vec![Value::Int(2)] };
+    let a = Value::Record { tag: 0, fields: Box::new(vec![Value::Int(1)]) };
+    let b = Value::Record { tag: 0, fields: Box::new(vec![Value::Int(2)]) };
     assert_ne!(a, b);
 }
 
@@ -80,22 +80,22 @@ fn test_value_char_eq() {
 
 #[test]
 fn test_value_array_eq() {
-    let a = Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
-    let b = Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+    let a = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
+    let b = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
     assert_eq!(a, b);
 }
 
 #[test]
 fn test_value_array_ne() {
-    let a = Value::Array(vec![Value::Int(1), Value::Int(2)]);
-    let b = Value::Array(vec![Value::Int(1), Value::Int(3)]);
+    let a = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2)]));
+    let b = Value::Array(Box::new(vec![Value::Int(1), Value::Int(3)]));
     assert_ne!(a, b);
 }
 
 #[test]
 fn test_value_array_different_length() {
-    let a = Value::Array(vec![Value::Int(1), Value::Int(2)]);
-    let b = Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+    let a = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2)]));
+    let b = Value::Array(Box::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
     assert_ne!(a, b);
 }
 
@@ -151,7 +151,7 @@ fn test_value_reference_nested() {
 #[test]
 fn test_value_mixed_types_inequality() {
     assert_ne!(Value::Char('a'), Value::Int(97));
-    assert_ne!(Value::Array(vec![Value::Int(1)]), Value::Tuple(vec![Value::Int(1)]));
+    assert_ne!(Value::Array(Box::new(vec![Value::Int(1)])), Value::Tuple(Box::new(vec![Value::Int(1)])));
     assert_ne!(Value::Closure { func_id: 0, env_slot: 0, env_gen: 0 }, Value::Int(0));
     assert_ne!(Value::Reference(Box::new(Value::Int(1))), Value::Int(1));
 }

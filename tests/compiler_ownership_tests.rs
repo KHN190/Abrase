@@ -30,7 +30,7 @@ fn copy_preserves_original_when_y_is_used() {
 #[test]
 fn move_string_into_new_binding() {
     let src = r#"fn main() -> String { let s = "hi"; let t = s; t }"#;
-    assert_eq!(run(src), Ok(Value::String("hi".to_string())));
+    assert_eq!(run(src), Ok(Value::String(Box::new("hi".to_string()))));
 }
 
 #[test]
@@ -90,5 +90,5 @@ fn drop_at_scope_exit() {
 #[test]
 fn move_string_only_once() {
     let src = r#"fn main() -> String { let s = "hello"; let t = s; t }"#;
-    assert_eq!(run(src), Ok(Value::String("hello".to_string())));
+    assert_eq!(run(src), Ok(Value::String(Box::new("hello".to_string()))));
 }

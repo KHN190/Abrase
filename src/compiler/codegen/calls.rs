@@ -232,9 +232,12 @@ impl Compiler {
                 Some(r)
             }
         };
-        let mut srcs: Vec<Register> = env_to_pass.into_iter().collect();
-        for arg in args { srcs.push(self.compile_expr(arg)?); }
-        self.stage_call_args(&srcs)?;
+        let mut staged: Vec<(Register, bool)> = env_to_pass.into_iter().map(|r| (r, true)).collect();
+        for arg in args {
+            let r = self.compile_expr(arg)?;
+            staged.push((r, self.arg_should_move(arg)));
+        }
+        self.stage_call_args(&staged)?;
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id));
         Ok(dest)
@@ -246,21 +249,41 @@ impl Compiler {
         receiver: &ast::Spanned<ast::Expr>,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
-        let mut srcs = vec![self.compile_expr(receiver)?];
-        for arg in args { srcs.push(self.compile_expr(arg)?); }
-        self.stage_call_args(&srcs)?;
+        let r = self.compile_expr(receiver)?;
+        let mut staged = vec![(r, self.arg_should_move(receiver))];
+        for arg in args {
+            let r = self.compile_expr(arg)?;
+            staged.push((r, self.arg_should_move(arg)));
+        }
+        self.stage_call_args(&staged)?;
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id));
         Ok(dest)
     }
 
-    fn stage_call_args(&mut self, srcs: &[Register]) -> Result<(), String> {
-        for (i, src) in srcs.iter().enumerate() {
+    fn arg_should_move(&self, arg: &ast::Spanned<ast::Expr>) -> bool {
+        match &arg.node {
+            ast::Expr::Identifier(name) => {
+                match self.var_types.get(name) {
+                    Some(ty) => super::is_move_type(ty),
+                    None => false,
+                }
+            }
+            _ => true,
+        }
+    }
+
+    fn stage_call_args(&mut self, staged: &[(Register, bool)]) -> Result<(), String> {
+        for (i, (src, want_move)) in staged.iter().enumerate() {
             if i > u8::MAX as usize {
                 return Err("Too many arguments (>255)".to_string());
             }
             let pos = self.code.len();
-            self.emit(OpCode::Copy(Register(0), *src));
+            if *want_move {
+                self.emit(OpCode::Move(Register(0), *src));
+            } else {
+                self.emit(OpCode::Copy(Register(0), *src));
+            }
             self.pending_arg_patches.push((pos, i as u8));
         }
         Ok(())

@@ -37,7 +37,7 @@ impl Compiler {
             ast::Literal::Int(n)    => Value::Int(*n),
             ast::Literal::Float(f)  => Value::Float(*f),
             ast::Literal::Bool(b)   => Value::Bool(*b),
-            ast::Literal::String(s) => Value::String(s.clone()),
+            ast::Literal::String(s) => Value::String(Box::new(s.clone())),
             ast::Literal::Unit      => Value::Unit,
             _ => return Err("Unsupported literal".to_string()),
         };
@@ -53,7 +53,7 @@ impl Compiler {
     ) -> Result<Register, String> {
         if parts.is_empty() {
             let reg = self.alloc_register()?;
-            let idx = self.add_constant(Value::String(String::new()))?;
+            let idx = self.add_constant(Value::String(Box::new(String::new())))?;
             self.emit(OpCode::PushConst(reg, idx));
             return Ok(reg);
         }
@@ -80,14 +80,14 @@ impl Compiler {
         match part {
             ast::StringPart::Literal(s) => {
                 let reg = self.alloc_register()?;
-                let idx = self.add_constant(Value::String(s.clone()))?;
+                let idx = self.add_constant(Value::String(Box::new(s.clone())))?;
                 self.emit(OpCode::PushConst(reg, idx));
                 Ok(reg)
             }
             ast::StringPart::Interp(path) => {
                 if path.is_empty() {
                     let reg = self.alloc_register()?;
-                    let idx = self.add_constant(Value::String(String::new()))?;
+                    let idx = self.add_constant(Value::String(Box::new(String::new())))?;
                     self.emit(OpCode::PushConst(reg, idx));
                     return Ok(reg);
                 }

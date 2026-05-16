@@ -56,7 +56,7 @@ fn verify_compile_literal_string() {
     })];
 
     let result = compile_and_run(&ast).expect("Execution failed");
-    assert_eq!(result, Value::String("hello".to_string()));
+    assert_eq!(result, Value::String(Box::new("hello".to_string())));
 }
 
 #[test]

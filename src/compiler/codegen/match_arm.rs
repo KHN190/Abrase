@@ -84,7 +84,7 @@ impl Compiler {
             ast::Literal::Int(n)    => Value::Int(*n),
             ast::Literal::Float(f)  => Value::Float(*f),
             ast::Literal::Bool(b)   => Value::Bool(*b),
-            ast::Literal::String(s) => Value::String(s.clone()),
+            ast::Literal::String(s) => Value::String(Box::new(s.clone())),
             ast::Literal::Unit      => Value::Unit,
             _ => return Err("Unsupported literal in pattern".to_string()),
         };

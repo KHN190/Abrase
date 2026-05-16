@@ -31,7 +31,7 @@ impl VirtualMachine {
             self.registers.resize(needed, None);
         }
 
-        loop {
+        'outer: loop {
             if self.halted {
                 if let Some(code) = self.exit_code {
                     return Ok(Value::Int(code));
@@ -45,29 +45,33 @@ impl VirtualMachine {
                     "entry fn {} is native; cannot start execution there", self.current_func
                 )),
             };
-
-            if self.pc >= bc.code.len() {
-                if let Some(frame) = self.frames.pop() {
-                    let return_val = self.registers[self.base_reg].clone()
-                        .ok_or("Return register is empty")?;
-                    self.pc = frame.ip;
-                    self.base_reg = frame.base_reg;
-                    self.current_func = frame.func_id;
-                    self.registers[frame.dest_reg] = Some(return_val);
-                    continue;
-                } else {
-                    return self.registers[self.base_reg].clone()
-                        .ok_or("Return register is empty".to_string());
+            let entry_func = self.current_func;
+            loop {
+                if self.pc >= bc.code.len() {
+                    if let Some(frame) = self.frames.pop() {
+                        let return_val = self.registers[self.base_reg].clone()
+                            .ok_or("Return register is empty")?;
+                        self.pc = frame.ip;
+                        self.base_reg = frame.base_reg;
+                        self.current_func = frame.func_id;
+                        self.registers[frame.dest_reg] = Some(return_val);
+                        continue 'outer;
+                    } else {
+                        return self.registers[self.base_reg].clone()
+                            .ok_or("Return register is empty".to_string());
+                    }
+                }
+                let opcode = &bc.code[self.pc];
+                self.pc += 1;
+                self.exec(module, bc, opcode)?;
+                if self.halted || self.current_func != entry_func {
+                    continue 'outer;
                 }
             }
-
-            let opcode = bc.code[self.pc].clone();
-            self.pc += 1;
-            self.exec(module, &opcode)?;
         }
     }
 
-    fn exec(&mut self, module: &Module, op: &OpCode) -> Result<(), String> {
+    fn exec(&mut self, module: &Module, bc: &BytecodeChunk, op: &OpCode) -> Result<(), String> {
         match op {
             OpCode::Add(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_add(y)),
             OpCode::Sub(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_sub(y)),
@@ -102,27 +106,26 @@ impl VirtualMachine {
             OpCode::Shl(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_shl((y as u32) & 63)),
             OpCode::Shr(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_shr((y as u32) & 63)),
 
-            OpCode::Jmp(off) => self.branch(module, *off),
+            OpCode::Jmp(off) => self.branch(bc, *off),
             OpCode::Jz(r, off) => {
                 let v = self.read(*r)?;
-                if is_falsy(&v) { self.branch(module, *off) } else { Ok(()) }
+                if is_falsy(&v) { self.branch(bc, *off) } else { Ok(()) }
             }
             OpCode::Jnz(r, off) => {
                 let v = self.read(*r)?;
-                if !is_falsy(&v) { self.branch(module, *off) } else { Ok(()) }
+                if !is_falsy(&v) { self.branch(bc, *off) } else { Ok(()) }
             }
-            OpCode::Call(dest, fn_id) => self.do_call(module, *dest, *fn_id as usize),
+            OpCode::Call(dest, fn_id) => self.do_call(module, bc, *dest, *fn_id as usize),
             OpCode::CallReg(dest, fn_id_reg) => {
                 let fn_id = self.read_i64(*fn_id_reg)?;
                 if !(0..=0xFFFF).contains(&fn_id) {
                     return Err(format!("call_reg: fn_id {} out of u16 range", fn_id));
                 }
-                self.do_call(module, *dest, fn_id as usize)
+                self.do_call(module, bc, *dest, fn_id as usize)
             }
             OpCode::Ret(reg) => self.do_ret(*reg),
 
             OpCode::PushConst(reg, pool_idx) => {
-                let bc = expect_bytecode(module, self.current_func)?;
                 let idx = *pool_idx as usize;
                 if idx >= bc.constants.len() {
                     return Err("Constant index out of bounds".to_string());
@@ -305,29 +308,15 @@ impl VirtualMachine {
         }
     }
 
-    fn do_call(&mut self, module: &Module, dest: Register, fn_id: usize) -> Result<(), String> {
+    fn do_call(&mut self, module: &Module, caller_bc: &BytecodeChunk, dest: Register, fn_id: usize) -> Result<(), String> {
         if fn_id >= module.functions.len() {
             return Err(format!("call: unknown fn_id {}", fn_id));
         }
-        let caller_bc = expect_bytecode(module, self.current_func)?;
         let caller_reg_count = caller_bc.reg_count;
-        if caller_reg_count > FRAME_REGS {
-            return Err(format!(
-                "call: caller fn {} has reg_count {} > frame budget {}",
-                self.current_func, caller_reg_count, FRAME_REGS
-            ));
-        }
         let callee_reg_count = match &module.functions[fn_id] {
             Chunk::Bytecode(b) => b.reg_count,
             Chunk::Native(_) => 0,
         };
-        if callee_reg_count > FRAME_REGS {
-            return Err(format!(
-                "call: callee fn {} has reg_count {} > frame budget {}",
-                fn_id, callee_reg_count, FRAME_REGS
-            ));
-        }
-        // dest must land within the caller's window
         if dest.to_usize() >= caller_reg_count {
             return Err(format!(
                 "call: dest r{} out of caller window (reg_count {})",
@@ -381,9 +370,10 @@ impl VirtualMachine {
         Ok(())
     }
 
+    #[inline]
     fn do_ret(&mut self, reg: Register) -> Result<(), String> {
         let abs = self.abs(reg)?;
-        let return_val = self.registers[abs].clone()
+        let return_val = self.registers[abs].take()
             .ok_or("Return register is empty")?;
         if let Some(frame) = self.frames.pop() {
             self.pc = frame.ip;
@@ -398,8 +388,7 @@ impl VirtualMachine {
         }
     }
 
-    fn branch(&mut self, module: &Module, offset: i16) -> Result<(), String> {
-        let bc = expect_bytecode(module, self.current_func)?;
+    fn branch(&mut self, bc: &BytecodeChunk, offset: i16) -> Result<(), String> {
         let new_pc = (self.pc as isize) + (offset as isize);
         if new_pc < 0 || (new_pc as usize) > bc.code.len() {
             return Err(format!(
@@ -414,6 +403,7 @@ impl VirtualMachine {
     // Frame-local r → absolute slot. The calling convention stages outbound
     // args at r{caller_reg_count..}, so the upper bound is FRAME_REGS, not
     // the chunk's own reg_count (S8).
+    #[inline(always)]
     fn abs(&self, r: Register) -> Result<usize, String> {
         let abs = self.base_reg + r.to_usize();
         if abs >= self.registers.len() {
@@ -425,27 +415,38 @@ impl VirtualMachine {
         Ok(abs)
     }
 
+    #[inline(always)]
     fn read(&self, r: Register) -> Result<Value, String> {
         let abs = self.abs(r)?;
         self.registers[abs].clone()
             .ok_or_else(|| format!("read: r{} is empty", r.0))
     }
 
+    #[inline(always)]
     fn take(&mut self, r: Register) -> Result<Value, String> {
         let abs = self.abs(r)?;
         self.registers[abs].take()
             .ok_or_else(|| format!("move: r{} is empty (already moved?)", r.0))
     }
 
+    #[inline(always)]
     fn write(&mut self, r: Register, v: Value) -> Result<(), String> {
         let abs = self.abs(r)?;
         self.registers[abs] = Some(v);
         Ok(())
     }
 
-    // rc-track any heap-referencing Value variants. Both Value::Handle and
-    // Value::Closure (which carries an env handle) own a refcount edge.
+    // Hot fast path: scalars take zero refcount edges.
+    #[inline(always)]
     fn value_rc_inc(&mut self, v: &Value) -> Result<(), String> {
+        match v {
+            Value::Int(_) | Value::Float(_) | Value::Bool(_)
+            | Value::Char(_) | Value::Unit => Ok(()),
+            _ => self.value_rc_inc_slow(v),
+        }
+    }
+
+    fn value_rc_inc_slow(&mut self, v: &Value) -> Result<(), String> {
         match v {
             Value::Handle { slot, generation } => self.heap.rc_inc(*slot, *generation),
             Value::Closure { env_slot, env_gen, .. } => self.heap.rc_inc(*env_slot, *env_gen),
@@ -453,7 +454,16 @@ impl VirtualMachine {
         }
     }
 
+    #[inline(always)]
     fn value_rc_dec(&mut self, v: &Value) -> Result<(), String> {
+        match v {
+            Value::Int(_) | Value::Float(_) | Value::Bool(_)
+            | Value::Char(_) | Value::Unit => Ok(()),
+            _ => self.value_rc_dec_slow(v),
+        }
+    }
+
+    fn value_rc_dec_slow(&mut self, v: &Value) -> Result<(), String> {
         match v {
             Value::Handle { slot, generation } => self.heap.rc_dec(*slot, *generation).map(|_| ()),
             Value::Closure { env_slot, env_gen, .. } => self.heap.rc_dec(*env_slot, *env_gen).map(|_| ()),
@@ -461,33 +471,44 @@ impl VirtualMachine {
         }
     }
 
+    #[inline(always)]
     fn read_i64(&self, r: Register) -> Result<i64, String> {
-        match self.read(r)? {
-            Value::Int(n) => Ok(n),
-            v => Err(format!("expected i64, got {:?}", v)),
+        let abs = self.abs(r)?;
+        match &self.registers[abs] {
+            Some(Value::Int(n)) => Ok(*n),
+            Some(v) => Err(format!("expected i64, got {:?}", v)),
+            None => Err(format!("read: r{} is empty", r.0)),
         }
     }
 
+    #[inline(always)]
     fn read_f64(&self, r: Register) -> Result<f64, String> {
-        match self.read(r)? {
-            Value::Float(n) => Ok(n),
-            v => Err(format!("expected f64, got {:?}", v)),
+        let abs = self.abs(r)?;
+        match &self.registers[abs] {
+            Some(Value::Float(n)) => Ok(*n),
+            Some(v) => Err(format!("expected f64, got {:?}", v)),
+            None => Err(format!("read: r{} is empty", r.0)),
         }
     }
 
+    #[inline(always)]
     fn read_handle(&self, r: Register) -> Result<(u32, u32), String> {
-        match self.read(r)? {
-            Value::Handle { slot, generation } => Ok((slot, generation)),
-            v => Err(format!("expected handle, got {:?}", v)),
+        let abs = self.abs(r)?;
+        match &self.registers[abs] {
+            Some(Value::Handle { slot, generation }) => Ok((*slot, *generation)),
+            Some(v) => Err(format!("expected handle, got {:?}", v)),
+            None => Err(format!("read: r{} is empty", r.0)),
         }
     }
 
+    #[inline(always)]
     fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
         self.write(d, Value::Int(f(x, y)))
     }
 
+    #[inline(always)]
     fn bin_i64_checked<F: Fn(i64, i64) -> Option<i64>>(&mut self, d: Register, a: Register, b: Register, msg: &str, f: F) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
@@ -495,18 +516,21 @@ impl VirtualMachine {
         self.write(d, Value::Int(r))
     }
 
+    #[inline(always)]
     fn bin_f64<F: Fn(f64, f64) -> f64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_f64(a)?;
         let y = self.read_f64(b)?;
         self.write(d, Value::Float(f(x, y)))
     }
 
+    #[inline(always)]
     fn bin_cmp<F: Fn(&Value, &Value) -> bool>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read(a)?;
         let y = self.read(b)?;
         self.write(d, Value::Bool(f(&x, &y)))
     }
 
+    #[inline(always)]
     fn bin_i64_cmp<F: Fn(i64, i64) -> bool>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
@@ -524,10 +548,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    // Dispatch device 0xE0 lookup: walk handlers top-down, find one matching
-    // effect_id (= key >> 8); look up op_id (= key & 0xFF) in its dispatch
-    // table. Falls back to single-fn handler_fn when no table present. Returns
-    // DISPATCH_NO_MATCH if nothing matches.
+    // Dispatch device 0xE0 lookup
     fn resolve_dispatch(&self, key: u16) -> u16 {
         let effect_id = (key >> 8) as u16;
         let op_id = (key & 0xFF) as usize;
@@ -557,6 +578,7 @@ fn is_falsy(val: &Value) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn expect_bytecode(module: &Module, fn_id: usize) -> Result<&BytecodeChunk, String> {
     match &module.functions[fn_id] {
         Chunk::Bytecode(b) => Ok(b),

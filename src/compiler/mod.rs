@@ -362,7 +362,7 @@ impl Compiler {
                         let mut out = String::with_capacity(a.len() + b.len());
                         out.push_str(a);
                         out.push_str(b);
-                        Ok(Value::String(out))
+                        Ok(Value::String(Box::new(out)))
                     }
                     (a, b) => Err(format!("__concat expects two Strings, got {:?} and {:?}", a, b)),
                 }
@@ -371,8 +371,8 @@ impl Compiler {
         let to_str = NativeChunk {
             param_count: 1,
             func: Rc::new(|args: &[Value]| {
-                let s = match &args[0] {
-                    Value::String(s) => s.clone(),
+                let s: String = match &args[0] {
+                    Value::String(s) => (**s).clone(),
                     Value::Int(n) => n.to_string(),
                     Value::Float(f) => f.to_string(),
                     Value::Bool(b) => b.to_string(),
@@ -380,7 +380,7 @@ impl Compiler {
                     Value::Unit => "()".to_string(),
                     other => return Err(format!("__to_str: cannot convert {:?}", other)),
                 };
-                Ok(Value::String(s))
+                Ok(Value::String(Box::new(s)))
             }),
         };
         let cid = self.functions.len();

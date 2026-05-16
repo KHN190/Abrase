@@ -125,7 +125,7 @@ fn verify_compile_string_interp_literal_only_runs() {
         },
     })]);
 
-    assert_eq!(result, Ok(Value::String("hello".to_string())));
+    assert_eq!(result, Ok(Value::String(Box::new("hello".to_string()))));
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn verify_compile_string_interp_with_int_var_concat() {
     });
 
     let result = compile_module_and_run(&vec![main]);
-    assert_eq!(result, Ok(Value::String("n=5".to_string())));
+    assert_eq!(result, Ok(Value::String(Box::new("n=5".to_string()))));
 }
 
 #[test]
