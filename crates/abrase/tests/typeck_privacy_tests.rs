@@ -407,7 +407,6 @@ fn verify_privacy_enforcement_on_qualified_path() {
     checker.pop_module();
 }
 
-// --- typeck_scope_tests (typeck_privacy_tests) ---
 
 // Visibility & Module Scoping
 

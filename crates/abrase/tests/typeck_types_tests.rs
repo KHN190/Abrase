@@ -419,7 +419,6 @@ fn verify_tuple_field_different_element_types_not_equivalent() {
     assert!(!checker.are_types_equivalent("Pair1", "Pair2"));
 }
 
-// --- typeck_conversion_tests ---
 
 #[test]
 fn verify_convert_primitive_types() {
@@ -691,7 +690,6 @@ fn verify_is_assignable() {
     assert!(!checker.is_assignable(&Type::Int, &Type::Bool));
 }
 
-// --- typeck_generic_type_tests ---
 
 #[test]
 fn verify_generic_type_construction() {
@@ -1117,7 +1115,6 @@ fn verify_generic_in_reference() {
     assert!(checker.types_compatible(&ref_to_list, &same_ref));
 }
 
-// --- typeck_generic_propagation_tests ---
 
 #[test]
 fn verify_for_loop_list_int_binds_element_type() {
@@ -1545,7 +1542,6 @@ fn verify_extract_iterable_element_type_unknown_generic() {
     assert_eq!(elem_ty, Type::Unknown);
 }
 
-// --- typeck_recursive_types_tests ---
 
 #[test]
 fn verify_direct_self_reference_rejected() {

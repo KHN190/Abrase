@@ -476,7 +476,6 @@ fn verify_field_access_on_generic_pair_returns_substituted_type() {
     assert!(checker.errors.is_empty());
 }
 
-// --- typeck_record_completeness_tests ---
 
 #[test]
 fn verify_record_all_fields_present() {

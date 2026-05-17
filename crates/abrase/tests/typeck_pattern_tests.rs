@@ -340,7 +340,6 @@ fn verify_reference_lifetime_overwrite() {
     assert_eq!(checker.get_reference_lifetime("ref_x"), Some("region_b".into()));
 }
 
-// --- typeck_scope_tests (typeck_pattern_tests) ---
 
 #[test]
 fn verify_pattern_bind() {

@@ -282,7 +282,6 @@ fn let_pattern_destructure_length_mismatch() {
             "expected arg-count error, got: {}", err);
 }
 
-// --- Typeck rejection: for / loop / break / continue / tuple / array-repeat / range ---
 
 #[test]
 fn for_over_non_iterable_rejected() {

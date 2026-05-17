@@ -833,7 +833,6 @@ fn verify_partial_public_path() {
     checker.pop_module();
 }
 
-// --- typeck_import_collision_tests ---
 
 #[test]
 fn verify_import_collision_with_existing_var() {
@@ -910,7 +909,6 @@ fn verify_multiple_import_collisions_tracked() {
     assert_eq!(checker.get_import_collisions(), 2);
 }
 
-// --- typeck_scope_tests (typeck_import_tests) ---
 
 // Qualified Name Resolution
 

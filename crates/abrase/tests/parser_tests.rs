@@ -1401,7 +1401,6 @@ fn test_array_list_trailing_comma() {
     } else { panic!("expected Array"); }
 }
 
-// ===== closures =====
 
 #[test]
 fn test_closure_implicit_borrow_default() {
@@ -1433,7 +1432,6 @@ fn test_closure_with_typed_params() {
     } else { panic!("expected Closure"); }
 }
 
-// ===== string interpolation =====
 
 #[test]
 fn test_expr_string_interp_single_ident() {

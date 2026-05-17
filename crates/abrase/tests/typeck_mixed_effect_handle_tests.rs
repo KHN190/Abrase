@@ -13,8 +13,6 @@ fn check(expr: &Spanned<Expr>) -> Vec<String> {
     checker.errors.into_iter().map(|e| e.message).collect()
 }
 
-// === Mixed effect validation ===
-
 #[test]
 fn single_effect_arm_accepted() {
     // `handle 1 { logger.log msg => 0 }`

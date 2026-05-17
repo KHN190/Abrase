@@ -27,7 +27,6 @@ fn expect_no_escape_err(src: &str) {
     );
 }
 
-// === Accepted: `&primitive_local` escaping a loop is safe ===
 //
 // The Ref cell stores a snapshot of the bits (an i48 Int, in these cases).
 // Codegen emits region_forget on the break/return value before the region
@@ -120,7 +119,6 @@ fn while_return_with_inner_int_ref_permitted() {
     expect_no_escape_err(src);
 }
 
-// === Rejected: ref-typed binding declared inside the loop ===
 
 #[test]
 fn loop_break_with_inner_ref_binding_rejected() {
@@ -137,7 +135,6 @@ fn loop_break_with_inner_ref_binding_rejected() {
     expect_escape_err(src);
 }
 
-// === Rejected: &x.field where x is loop-body-local ===
 
 #[test]
 fn loop_break_with_field_root_inside_rejected() {
@@ -153,7 +150,6 @@ fn loop_break_with_field_root_inside_rejected() {
     expect_escape_err(src);
 }
 
-// === Accepted: outer binding outlives the loop ===
 
 #[test]
 fn loop_break_with_outer_ref_accepted() {
@@ -167,7 +163,6 @@ fn loop_break_with_outer_ref_accepted() {
     expect_no_escape_err(src);
 }
 
-// === Accepted: nested loop, inner break references outer-loop-body local ===
 
 #[test]
 fn nested_loop_inner_break_with_outer_body_local_accepted() {

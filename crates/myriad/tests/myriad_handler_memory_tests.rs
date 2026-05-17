@@ -1,4 +1,3 @@
-use polka::{BytecodeChunk, Chunk, Module, OpCode, Register};
 use myriad::{Value, VirtualMachine, HandlerFrame};
 
 #[test]

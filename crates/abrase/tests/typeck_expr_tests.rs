@@ -1651,7 +1651,6 @@ fn verify_interpolation_multiple_fields() {
     assert_eq!(identifiers.len(), 2);
 }
 
-// --- typeck_interpolation_tests ---
 
 #[test]
 fn verify_interpolation_identifier_in_scope() {
@@ -2595,7 +2594,6 @@ fn verify_scope_and_field_combined() {
     checker.exit_scope();
 }
 
-// --- typeck_scope_tests (typeck_expr_tests) ---
 
 
 #[test]

@@ -1085,7 +1085,6 @@ fn verify_empty_declared_empty_inferred() {
     assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
 }
 
-// --- typeck_const_effect_tests ---
 
 #[test]
 fn verify_const_with_pure_literal() {

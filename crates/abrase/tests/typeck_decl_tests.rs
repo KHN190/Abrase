@@ -998,7 +998,6 @@ fn verify_check_fn_decl_allows_correct_return_type() {
     assert!(!has_mismatch, "Correct return type should not cause error");
 }
 
-// --- typeck_scope_tests (typeck_decl_tests) ---
 
 // Infrastructure & Context Management
 

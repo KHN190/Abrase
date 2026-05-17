@@ -43,7 +43,6 @@ fn expect_no_missing_resume(expr: &Spanned<Expr>) {
     );
 }
 
-// === Accepted: tail-position resume / return / throw ===
 
 #[test]
 fn arm_with_tail_resume_accepted() {
@@ -80,7 +79,6 @@ fn arm_with_throw_accepted() {
     expect_no_missing_resume(&handle_with_effect_arm(body));
 }
 
-// === Accepted: every if branch resumes ===
 
 #[test]
 fn arm_if_both_branches_resume_accepted() {
@@ -92,7 +90,6 @@ fn arm_if_both_branches_resume_accepted() {
     expect_no_missing_resume(&handle_with_effect_arm(body));
 }
 
-// === Accepted: every match arm resumes ===
 
 #[test]
 fn arm_match_all_branches_resume_accepted() {
@@ -109,7 +106,6 @@ fn arm_match_all_branches_resume_accepted() {
     expect_no_missing_resume(&handle_with_effect_arm(body));
 }
 
-// === Rejected: bare value, no resume anywhere ===
 
 #[test]
 fn arm_with_no_resume_rejected() {
@@ -117,7 +113,6 @@ fn arm_with_no_resume_rejected() {
     expect_missing_resume(&handle_with_effect_arm(body));
 }
 
-// === Rejected: if without else ===
 
 #[test]
 fn arm_if_without_else_rejected() {
@@ -129,7 +124,6 @@ fn arm_if_without_else_rejected() {
     expect_missing_resume(&handle_with_effect_arm(body));
 }
 
-// === Rejected: only one branch of if resumes ===
 
 #[test]
 fn arm_if_only_one_branch_resumes_rejected() {
@@ -141,7 +135,6 @@ fn arm_if_only_one_branch_resumes_rejected() {
     expect_missing_resume(&handle_with_effect_arm(body));
 }
 
-// === Rejected: block with no resume anywhere ===
 
 #[test]
 fn arm_block_with_no_resume_anywhere_rejected() {
@@ -160,7 +153,6 @@ fn arm_block_with_no_resume_anywhere_rejected() {
     expect_missing_resume(&handle_with_effect_arm(body));
 }
 
-// === Accepted: resume reached in non-tail (stmt or operand) position ===
 // Under the current codegen, `resume(_)` lowers to a tail `Ret`, so anything
 // after it is dead code — the arm still diverges via the resume call.
 
@@ -176,7 +168,6 @@ fn arm_with_resume_in_binary_operand_accepted() {
     expect_no_missing_resume(&handle_with_effect_arm(body));
 }
 
-// === Return / Exn arms are exempt ===
 
 #[test]
 fn return_arm_without_resume_accepted() {
