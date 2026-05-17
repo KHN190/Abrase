@@ -242,199 +242,37 @@ impl VirtualMachine {
                 Ok(())
             }
 
-            OpCode::Dei(d, port_reg) => {
-                let port_val = self.read_i64(*port_reg)?;
-                let (device_id, port) = split_port(port_val)?;
-                if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
-                    let fn_id = if let Some(frame) = self.handlers.last() {
-                        let fn_id_val = self.heap.ld(frame.cell_slot, frame.cell_gen,
-                            super::cont_slot::DISPATCH_FN_ID)?;
-                        fn_id_val
-                    } else {
-                        // No active handler: return cached result or DISPATCH_NO_MATCH
-                        Value::from_int(self.dispatch_last_result.take().unwrap_or(0xFFFF) as i64)
-                    };
-                    return self.write(*d, fn_id);
-                }
-                if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_ENV {
-                    let env_val = if let Some(frame) = self.handlers.last() {
-                        self.heap.ld(frame.cell_slot, frame.cell_gen,
-                            super::cont_slot::DISPATCH_ENV)?
-                    } else {
-                        // No active handler: return cached result or NONE
-                        self.dispatch_last_env.take().unwrap_or(Value::NONE)
-                    };
-                    // Value::NONE is the VM's "uninitialized register" sentinel
-                    // , Ret rejects it as "Return register is empty". Thus we 
-                    // decode NONE to 0 by hand.
-                    let env_val = if env_val.is_none() { Value::from_int(0) } else { env_val };
-                    return self.write(*d, env_val);
-                }
-                let dev = self.devices.get_mut(device_id)
-                    .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
-                let v = dev.read(port)?;
-                self.write(*d, v)
-            }
-            OpCode::Deo(src, port_reg) => {
-                let v = self.read(*src)?;
-                let port_val = self.read_i64(*port_reg)?;
-                let (device_id, port) = split_port(port_val)?;
-                if device_id == 0x00 && port == 0x01 {
-                    if let Some(n) = v.as_int() {
-                        self.exit_code = Some(n & 0xFFFF_FFFF);
-                    }
-                    self.halted = true;
-                }
-                if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
-                    let key = match v.as_int() {
-                        Some(n) if (0..=0xFFFF).contains(&n) => n as u16,
-                        _ => return Err(format!("dispatch.lookup: bad key {:?}", v)),
-                    };
-
-                    let (cell_slot, cell_gen) = self.checked_heap_alloc(super::cont_slot::SIZE)?;
-                    self.region_record_alloc(cell_slot, cell_gen);
-                    self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_PC,
-                        Value::from_int((self.pc - 1) as i64))?;
-                    self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_BASE,
-                        Value::from_int(self.base_reg as i64))?;
-                    self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_FUNC,
-                        Value::from_int(self.current_func as i64))?;
-                    self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE,
-                        Value::from_int(1))?;
-
-                    if let Some(handler_frame) = self.handlers.last_mut() {
-                        handler_frame.cells_allocated.push((cell_slot, cell_gen));
-                        handler_frame.cell_slot = cell_slot;
-                        handler_frame.cell_gen = cell_gen;
-                    }
-
-                    let (fn_id, env) = self.resolve_dispatch(key);
-                    self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_FN_ID,
-                        Value::from_int(fn_id as i64))?;
-                    self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV,
-                        env.unwrap_or(Value::NONE))?;
-                    self.dispatch_last_result = Some(fn_id);
-                    self.dispatch_last_env = env;
-                    return Ok(());
-                }
-                if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_POP_HANDLER {
-                    let frame = self.handlers.pop()
-                        .ok_or("dispatch.pop_handler: no active handler frame")?;
-                    for (slot, generation) in frame.cells_allocated.iter() {
-                        self.region_table.forget(*slot, *generation);
-                    }
-                    return Ok(());
-                }
-                if device_id == polka::REGION_ID {
-                    return match port {
-                        polka::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
-                        polka::REGION_PORT_POP  => self.region_pop(),
-                        polka::REGION_PORT_FORGET => {
-                            // No-op for non-handle values: callers may emit
-                            // forget unconditionally for the break/return value.
-                            if let Some((slot, gen_)) = v.as_handle() {
-                                self.region_table.forget(slot, gen_);
-                            }
-                            Ok(())
-                        }
-                        _ => Err(format!("region: unknown port {:#x}", port)),
-                    };
-                }
-                let dev = self.devices.get_mut(device_id)
-                    .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
-                dev.write_with_pool(port, v, &mut self.box_pool)
-            }
+            // Read from a device port. Virtual DISPATCH ports are served from the active handler
+            // cell instead of the device registry; falls through to the real device otherwise.
+            OpCode::Dei(d, port_reg) => self.do_dei(*d, *port_reg),
+            // Write to a device port. Handles system exit, effect dispatch (snapshot + cell
+            // allocation + handler resolution), handler pop, and region management. All other
+            // ports delegate to the device registry.
+            OpCode::Deo(src, port_reg) => self.do_deo(*src, *port_reg),
+            // Push a handler frame bound to effect_id. The dispatch table is a heap array of
+            // (fn_id, env) pairs indexed by operation. Continuation cells are allocated lazily
+            // on the first DEO dispatch, not here.
             OpCode::Handle(_dest, table_reg, effect_id) => {
                 let table_val = self.read_abs(self.abs(*table_reg));
                 let (table_slot, table_gen) = match table_val.as_handle() {
                     Some((s, g)) => (Some(s), g),
                     None => (None, 0),
                 };
-                // only create cells on dispatch, use dummy on init
                 self.handlers.push(super::HandlerFrame {
                     effect_id: *effect_id,
                     handler_fn: 0,
                     dispatch_table_slot: table_slot,
                     dispatch_table_gen: table_gen,
-                    cell_slot: 0,  // dummy, to be overwritten by dispatch
+                    cell_slot: 0,
                     cell_gen: 0,
-                    cells_allocated: Vec::new(),  // empty for now
+                    cells_allocated: Vec::new(),
                 });
                 Ok(())
             }
-            OpCode::Resume(dest_reg, val_reg) => {
-                let frame = self.handlers.last_mut()
-                    .ok_or("Resume outside an active handler frame")?;
-                let alive = self.heap.ld(frame.cell_slot, frame.cell_gen,
-                    super::cont_slot::ALIVE)?;
-                match alive.as_int() {
-                    Some(1) => {}
-                    Some(0) => return Err("resume: continuation already consumed".to_string()),
-                    _ => return Err(format!(
-                        "resume: continuation cell corrupted (alive slot = {:?})", alive)),
-                }
-                let saved_pc = match self.heap.ld(frame.cell_slot, frame.cell_gen,
-                    super::cont_slot::SUSPEND_PC)?.as_int() {
-                    Some(n) if n >= 0 => n as usize,
-                    _ => return Err("resume: continuation cell has invalid pc".to_string()),
-                };
-                let saved_base = match self.heap.ld(frame.cell_slot, frame.cell_gen,
-                    super::cont_slot::SUSPEND_BASE)?.as_int() {
-                    Some(n) if n >= 0 => n as usize,
-                    _ => return Err("resume: continuation cell has invalid base".to_string()),
-                };
-                let saved_func = match self.heap.ld(frame.cell_slot, frame.cell_gen,
-                    super::cont_slot::SUSPEND_FUNC)?.as_int() {
-                    Some(n) if n >= 0 => n as usize,
-                    _ => return Err("resume: continuation cell has invalid func".to_string()),
-                };
-
-                // Set dest_reg in cell (where effect result goes in work)
-                self.heap.st(frame.cell_slot, frame.cell_gen, super::cont_slot::DEST_REG,
-                    Value::from_int(dest_reg.to_usize() as i64))?;
-                let cell_dest_reg = dest_reg.to_usize();
-
-                let val = self.read(*val_reg)?;
-
-                if let Some(top_frame) = self.frames.last() {
-                    let work_dest = saved_base + cell_dest_reg;
-                    if top_frame.dest_reg == work_dest && top_frame.base_reg == saved_base {
-                        let _ = self.frames.pop();
-                    }
-                }
-
-                let handler_dest_abs = self.base_reg + dest_reg.to_usize();
-                self.frames.push(super::Frame {
-                    ip: self.pc,
-                    base_reg: self.base_reg,
-                    dest_reg: handler_dest_abs,
-                    func_id: self.current_func,
-                });
-
-                self.pc = saved_pc + 2;
-                self.base_reg = saved_base;
-                self.current_func = saved_func;
-                let abs = saved_base + cell_dest_reg;
-                if abs >= self.registers.len() {
-                    return Err(format!(
-                        "resume: dest abs {} out of registers (len {})",
-                        abs, self.registers.len()));
-                }
-                self.write_abs(abs, val);
-                if self.debug_sink.is_some() {
-                    let event = DebugEvent::Resume {
-                        saved_pc,
-                        saved_base,
-                        cell_dest: cell_dest_reg,
-                        val,
-                        handler_dest: dest_reg.to_usize(),
-                        alive,
-                        depth: self.handlers.len(),
-                    };
-                    self.emit_debug(&event);
-                }
-                Ok(())
-            }
+            // Restore a continuation: write the resume value into the work frame's dest register,
+            // push the current (handler) frame so it returns after the work completes, then jump
+            // to saved_pc + 2 (the instruction after the suspending DEO).
+            OpCode::Resume(dest_reg, val_reg) => self.do_resume(*dest_reg, *val_reg),
         }
     }
 
@@ -520,6 +358,164 @@ impl VirtualMachine {
             self.halted = true;
             Ok(())
         }
+    }
+
+    fn do_dei(&mut self, d: Register, port_reg: Register) -> Result<(), String> {
+        let port_val = self.read_i64(port_reg)?;
+        let (device_id, port) = split_port(port_val)?;
+        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
+            let fn_id = if let Some(frame) = self.handlers.last() {
+                self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::DISPATCH_FN_ID)?
+            } else {
+                // No active handler: return cached result or DISPATCH_NO_MATCH.
+                Value::from_int(self.dispatch_last_result.take().unwrap_or(0xFFFF) as i64)
+            };
+            return self.write(d, fn_id);
+        }
+        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_ENV {
+            let env_val = if let Some(frame) = self.handlers.last() {
+                self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::DISPATCH_ENV)?
+            } else {
+                // No active handler: return cached env or NONE.
+                self.dispatch_last_env.take().unwrap_or(Value::NONE)
+            };
+            // NONE is the VM's uninitialized sentinel; Ret rejects it, so decode to 0.
+            let env_val = if env_val.is_none() { Value::from_int(0) } else { env_val };
+            return self.write(d, env_val);
+        }
+        let dev = self.devices.get_mut(device_id)
+            .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
+        let v = dev.read(port)?;
+        self.write(d, v)
+    }
+
+    fn do_deo(&mut self, src: Register, port_reg: Register) -> Result<(), String> {
+        let v = self.read(src)?;
+        let port_val = self.read_i64(port_reg)?;
+        let (device_id, port) = split_port(port_val)?;
+        if device_id == 0x00 && port == 0x01 {
+            if let Some(n) = v.as_int() {
+                self.exit_code = Some(n & 0xFFFF_FFFF);
+            }
+            self.halted = true;
+        }
+        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
+            let key = decode_dispatch_key(v)?;
+            let (cell_slot, cell_gen) = self.checked_heap_alloc(super::cont_slot::SIZE)?;
+            self.region_record_alloc(cell_slot, cell_gen);
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_PC,
+                Value::from_int((self.pc - 1) as i64))?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_BASE,
+                Value::from_int(self.base_reg as i64))?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_FUNC,
+                Value::from_int(self.current_func as i64))?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE,
+                Value::from_int(1))?;
+            if let Some(handler_frame) = self.handlers.last_mut() {
+                handler_frame.cells_allocated.push((cell_slot, cell_gen));
+                handler_frame.cell_slot = cell_slot;
+                handler_frame.cell_gen = cell_gen;
+            }
+            let (fn_id, env) = self.resolve_dispatch(key);
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_FN_ID,
+                Value::from_int(fn_id as i64))?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV,
+                env.unwrap_or(Value::NONE))?;
+            self.dispatch_last_result = Some(fn_id);
+            self.dispatch_last_env = env;
+            return Ok(());
+        }
+        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_POP_HANDLER {
+            let frame = self.handlers.pop()
+                .ok_or("dispatch.pop_handler: no active handler frame")?;
+            for (slot, generation) in frame.cells_allocated.iter() {
+                self.region_table.forget(*slot, *generation);
+            }
+            return Ok(());
+        }
+        if device_id == polka::REGION_ID {
+            return match port {
+                polka::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
+                polka::REGION_PORT_POP  => self.region_pop(),
+                polka::REGION_PORT_FORGET => {
+                    // Callers may emit forget unconditionally; skip non-handle values.
+                    if let Some((slot, gen_)) = v.as_handle() {
+                        self.region_table.forget(slot, gen_);
+                    }
+                    Ok(())
+                }
+                _ => Err(format!("region: unknown port {:#x}", port)),
+            };
+        }
+        let dev = self.devices.get_mut(device_id)
+            .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
+        dev.write_with_pool(port, v, &mut self.box_pool)
+    }
+
+    fn do_resume(&mut self, dest_reg: Register, val_reg: Register) -> Result<(), String> {
+        let frame = self.handlers.last_mut()
+            .ok_or("Resume outside an active handler frame")?;
+        let alive = self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::ALIVE)?;
+        match alive.as_int() {
+            Some(1) => {}
+            Some(0) => return Err("resume: continuation already consumed".to_string()),
+            _ => return Err(format!(
+                "resume: continuation cell corrupted (alive slot = {:?})", alive)),
+        }
+        let saved_pc = match self.heap.ld(frame.cell_slot, frame.cell_gen,
+            super::cont_slot::SUSPEND_PC)?.as_int() {
+            Some(n) if n >= 0 => n as usize,
+            _ => return Err("resume: continuation cell has invalid pc".to_string()),
+        };
+        let saved_base = match self.heap.ld(frame.cell_slot, frame.cell_gen,
+            super::cont_slot::SUSPEND_BASE)?.as_int() {
+            Some(n) if n >= 0 => n as usize,
+            _ => return Err("resume: continuation cell has invalid base".to_string()),
+        };
+        let saved_func = match self.heap.ld(frame.cell_slot, frame.cell_gen,
+            super::cont_slot::SUSPEND_FUNC)?.as_int() {
+            Some(n) if n >= 0 => n as usize,
+            _ => return Err("resume: continuation cell has invalid func".to_string()),
+        };
+        self.heap.st(frame.cell_slot, frame.cell_gen, super::cont_slot::DEST_REG,
+            Value::from_int(dest_reg.to_usize() as i64))?;
+        let cell_dest_reg = dest_reg.to_usize();
+        let val = self.read(val_reg)?;
+        if let Some(top_frame) = self.frames.last() {
+            let work_dest = saved_base + cell_dest_reg;
+            if top_frame.dest_reg == work_dest && top_frame.base_reg == saved_base {
+                let _ = self.frames.pop();
+            }
+        }
+        let handler_dest_abs = self.base_reg + dest_reg.to_usize();
+        self.frames.push(super::Frame {
+            ip: self.pc,
+            base_reg: self.base_reg,
+            dest_reg: handler_dest_abs,
+            func_id: self.current_func,
+        });
+        self.pc = saved_pc + 2;
+        self.base_reg = saved_base;
+        self.current_func = saved_func;
+        let abs = saved_base + cell_dest_reg;
+        if abs >= self.registers.len() {
+            return Err(format!(
+                "resume: dest abs {} out of registers (len {})", abs, self.registers.len()));
+        }
+        self.write_abs(abs, val);
+        if self.debug_sink.is_some() {
+            let event = DebugEvent::Resume {
+                saved_pc,
+                saved_base,
+                cell_dest: cell_dest_reg,
+                val,
+                handler_dest: dest_reg.to_usize(),
+                alive,
+                depth: self.handlers.len(),
+            };
+            self.emit_debug(&event);
+        }
+        Ok(())
     }
 
     fn branch(&mut self, bc: &BytecodeChunk, offset: i16) -> Result<(), String> {
@@ -775,6 +771,14 @@ impl VirtualMachine {
             }
         }
         (polka::DISPATCH_NO_MATCH, None)
+    }
+}
+
+// Validate and extract a dispatch key (effect_id << 8 | op_id) from a Value.
+fn decode_dispatch_key(v: Value) -> Result<u16, String> {
+    match v.as_int() {
+        Some(n) if (0..=0xFFFF).contains(&n) => Ok(n as u16),
+        _ => Err(format!("dispatch.lookup: bad key {:?}", v)),
     }
 }
 
