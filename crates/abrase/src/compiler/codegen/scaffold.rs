@@ -122,6 +122,30 @@ impl Compiler {
         Ok(())
     }
 
+    pub(in crate::compiler) fn emit_handler_pop_one(&mut self, table_reg: Register) -> Result<(), String> {
+        let unit_reg = self.alloc_register()?;
+        let unit_idx = self.add_constant(Value::UNIT)?;
+        self.emit(OpCode::PushConst(unit_reg, unit_idx));
+        let port_reg = self.alloc_register()?;
+        let port_val = ((crate::bytecode::DISPATCH_ID as i64) << 8)
+            | (crate::bytecode::DISPATCH_PORT_POP_HANDLER as i64);
+        let port_idx = self.add_constant(Value::from_int(port_val))?;
+        self.emit(OpCode::PushConst(port_reg, port_idx));
+        self.emit(OpCode::Deo(unit_reg, port_reg));
+        self.emit(OpCode::Drop(table_reg));
+        Ok(())
+    }
+
+    pub(in crate::compiler) fn emit_handler_pops_for_exit(&mut self, n: usize) -> Result<(), String> {
+        let total = self.handler_table_stack.len();
+        for i in 0..n {
+            let idx = total - 1 - i;
+            let reg = self.handler_table_stack[idx];
+            self.emit_handler_pop_one(reg)?;
+        }
+        Ok(())
+    }
+
     // Emit a region_forget for `reg`: if at runtime `reg` holds a heap handle,
     // strip it from every active region's record list so the subsequent
     // region_pop force-frees don't reclaim it. No-op for non-handle values.

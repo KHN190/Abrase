@@ -131,9 +131,9 @@ fn test_handle_allocates_cell_and_resume_frees_it() {
     let mut vm = VirtualMachine::new();
     let chunk = Chunk::Bytecode(BytecodeChunk {
         code: vec![
-            OpCode::PushConst(r(0), 0),    // r0 = 99 (resume value)
-            OpCode::Handle(r(3), 0),       // install w/ dest=r3
-            OpCode::Resume(r(0)),          // pops, writes 99 → r3, frees cell
+            OpCode::PushConst(r(0), 0),
+            OpCode::Handle(r(3), r(1), 0),
+            OpCode::Resume(r(0)),
             OpCode::Ret(r(3)),
         ],
         constants: vec![Value::from_int(99)],
@@ -151,7 +151,7 @@ fn test_handle_allocates_one_cell_per_install() {
     let mut vm = VirtualMachine::new();
     let install = Chunk::Bytecode(BytecodeChunk {
         code: vec![
-            OpCode::Handle(r(7), 0),       // dest = r7
+            OpCode::Handle(r(7), r(1), 0),
             OpCode::Ret(r(0)),
         ],
         constants: vec![Value::from_int(0)],
@@ -169,7 +169,7 @@ fn test_double_resume_traps_after_single_shot() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
-            OpCode::Handle(r(3), 0),
+            OpCode::Handle(r(3), r(1), 0),
             OpCode::Resume(r(0)),
             OpCode::Ret(r(3)),
         ],

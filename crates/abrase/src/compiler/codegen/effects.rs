@@ -20,6 +20,7 @@ impl Compiler {
         // Named types is the policy (see emit_region_forget_typed).
         self.emit_region_forget(wrapped)?;
         self.emit_drops_to_exit_fn(Some(wrapped))?;
+        self.emit_handler_pops_to_exit_fn()?;
         self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(wrapped));
         Ok(wrapped)
@@ -46,6 +47,7 @@ impl Compiler {
         // every binder above fn baseline, pop every region, Ret.
         self.emit_region_forget(res)?;
         self.emit_drops_to_exit_fn(Some(res))?;
+        self.emit_handler_pops_to_exit_fn()?;
         self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(res));
         let after = self.code.len();
@@ -78,6 +80,7 @@ impl Compiler {
             self.emit_region_forget(reg)?;
         }
         self.emit_drops_to_exit_fn(Some(reg))?;
+        self.emit_handler_pops_to_exit_fn()?;
         self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(reg));
         Ok(reg)
@@ -175,21 +178,16 @@ impl Compiler {
             }
         }
         let eid_u16 = effect_id;
-        self.emit(OpCode::Handle(table_reg, eid_u16));
+        let dest_reg = self.alloc_register()?;
+        self.emit(OpCode::Handle(dest_reg, table_reg, eid_u16));
+        self.handler_table_stack.push(table_reg);
         Ok(true)
     }
 
     fn emit_handle_pop(&mut self) -> Result<(), String> {
-        let unit_reg = self.alloc_register()?;
-        let unit_idx = self.add_constant(crate::bytecode::Value::UNIT)?;
-        self.emit(OpCode::PushConst(unit_reg, unit_idx));
-        let port_reg = self.alloc_register()?;
-        let port_val = ((crate::bytecode::DISPATCH_ID as i64) << 8)
-            | (crate::bytecode::DISPATCH_PORT_POP_HANDLER as i64);
-        let port_idx = self.add_constant(crate::bytecode::Value::from_int(port_val))?;
-        self.emit(OpCode::PushConst(port_reg, port_idx));
-        self.emit(OpCode::Deo(unit_reg, port_reg));
-        Ok(())
+        let table_reg = self.handler_table_stack.pop()
+            .ok_or_else(|| "internal: emit_handle_pop without matching install".to_string())?;
+        self.emit_handler_pop_one(table_reg)
     }
 
     // Gather the arm fn names belonging to a particular `handle` expression

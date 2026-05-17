@@ -79,7 +79,7 @@ pub enum OpCode {
     Dei(Register, Register),
     Deo(Register, Register),
 
-    Handle(Register, u16),
+    Handle(Register, Register, u16),
     Resume(Register),
 }
 

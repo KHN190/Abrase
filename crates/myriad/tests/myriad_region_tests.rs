@@ -8,9 +8,41 @@ mod tests {
     use super::*;
 
     fn r(n: u8) -> Register { Register(n) }
+    fn vm() -> VirtualMachine { VirtualMachine::new() }
 
     fn region_port(port: u8) -> i64 {
         ((polka::REGION_ID as i64) << 8) | port as i64
+    }
+
+    #[test]
+    fn region_depth_starts_at_zero() {
+        assert_eq!(vm().region_depth(), 0);
+    }
+
+    #[test]
+    fn region_push_increments_depth() {
+        let mut v = vm();
+        v.region_push();
+        assert_eq!(v.region_depth(), 1);
+        v.region_push();
+        assert_eq!(v.region_depth(), 2);
+    }
+
+    #[test]
+    fn region_pop_without_push_errors() {
+        let mut v = vm();
+        assert!(v.region_pop().is_err());
+    }
+
+    #[test]
+    fn region_pop_ignores_alloc_not_recorded() {
+        let mut v = vm();
+        v.region_push();
+        let _ = v.heap_alloc(2);
+         // recorded by VM only when going through OpCode::Alloc
+        v.region_pop().expect("pop ok");
+        // direct heap_alloc isn't recorded — alloc survives.
+        assert_eq!(v.heap_live_count(), 1);
     }
 
     #[test]

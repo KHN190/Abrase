@@ -293,8 +293,8 @@ impl VirtualMachine {
                     .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
                 dev.write_with_pool(port, v, &mut self.box_pool)
             }
-            OpCode::Handle(r_a, imm) => {
-                let r_a_val = self.read_abs(self.abs(*r_a));
+            OpCode::Handle(dest, table_reg, effect_id) => {
+                let table_val = self.read_abs(self.abs(*table_reg));
                 let (slot, generation) = self.checked_heap_alloc(super::cont_slot::SIZE)?;
                 self.region_record_alloc(slot, generation);
                 self.heap.st(slot, generation, super::cont_slot::SUSPEND_PC,
@@ -302,16 +302,16 @@ impl VirtualMachine {
                 self.heap.st(slot, generation, super::cont_slot::SUSPEND_BASE,
                     Value::from_int(self.base_reg as i64))?;
                 self.heap.st(slot, generation, super::cont_slot::DEST_REG,
-                    Value::from_int(r_a.to_usize() as i64))?;
+                    Value::from_int(dest.to_usize() as i64))?;
                 self.heap.st(slot, generation, super::cont_slot::ALIVE,
                     Value::from_int(1))?;
-                let (table_slot, table_gen, effect_id, fallback_fn) = match r_a_val.as_handle() {
-                    Some((s, g)) => (Some(s), g, *imm, 0usize),
-                    None => (None, 0, 0u16, *imm as usize),
+                let (table_slot, table_gen) = match table_val.as_handle() {
+                    Some((s, g)) => (Some(s), g),
+                    None => (None, 0),
                 };
                 self.handlers.push(super::HandlerFrame {
-                    effect_id,
-                    handler_fn: fallback_fn,
+                    effect_id: *effect_id,
+                    handler_fn: 0,
                     dispatch_table_slot: table_slot,
                     dispatch_table_gen: table_gen,
                     cell_slot: slot,

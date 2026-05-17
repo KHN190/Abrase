@@ -211,11 +211,12 @@ fn test_memory_opcodes_in_chunk() {
 
 #[test]
 fn test_handle_opcode() {
-    let h = OpCode::Handle(Register(0), 5);
+    let h = OpCode::Handle(Register(0), Register(1), 5);
     match h {
-        OpCode::Handle(dest, fn_id) => {
+        OpCode::Handle(dest, table, effect_id) => {
             assert_eq!(dest.to_usize(), 0);
-            assert_eq!(fn_id, 5);
+            assert_eq!(table.to_usize(), 1);
+            assert_eq!(effect_id, 5);
         }
         _ => panic!("Not a Handle opcode"),
     }

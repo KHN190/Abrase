@@ -7,6 +7,9 @@ edition = "2024"
 name = "abrase"
 path = "src/main.rs"
 
+[lib]
+doctest = false
+
 [dependencies]
 abrase = { path = "../abrase" }
 myriad = { path = "../myriad" }

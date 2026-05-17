@@ -3,5 +3,8 @@ name = "myriad"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+doc-test = false
+
 [dependencies]
 polka = { path = "../polka" }

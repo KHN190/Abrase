@@ -30,6 +30,7 @@ pub struct LoopCtx {
     // (and boxed-Copy ones) get rc-dec'd before the region pops force-free
     // anything still tracked.
     pub block_depth_at_entry: usize,
+    pub handler_depth_at_entry: usize,
 }
 
 #[derive(Clone)]
@@ -101,6 +102,8 @@ pub struct Compiler {
     // block_locals_stack.len() at function entry. return/throw/? unwind back
     // to this baseline.
     pub(super) fn_block_baseline: usize,
+    pub(super) handler_table_stack: Vec<Register>,
+    pub(super) fn_handler_baseline: usize,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -145,6 +148,8 @@ impl Compiler {
             fn_compiler_depth_baseline: 0,
             block_locals_stack: Vec::new(),
             fn_block_baseline: 0,
+            handler_table_stack: Vec::new(),
+            fn_handler_baseline: 0,
             errors: Vec::new(),
             source: String::new(),
         }
@@ -339,6 +344,8 @@ impl Compiler {
         let saved_fn_baseline = self.fn_compiler_depth_baseline;
         let saved_block_locals_stack = std::mem::take(&mut self.block_locals_stack);
         let saved_fn_block_baseline = self.fn_block_baseline;
+        let saved_handler_table_stack = std::mem::take(&mut self.handler_table_stack);
+        let saved_fn_handler_baseline = self.fn_handler_baseline;
 
         self.current_fn_fallible = effects::fn_is_fallible(fn_decl);
         self.next_reg = 0;
@@ -347,6 +354,7 @@ impl Compiler {
         self.compiler_region_depth = 0;
         self.fn_compiler_depth_baseline = 0;
         self.fn_block_baseline = 0;
+        self.fn_handler_baseline = 0;
         // Open a "params layer" on block_locals_stack so each param reg is
         // Drop'd on natural fn exit AND on every abnormal exit. Without this,
         // a param holding a heap handle (closure env, record, etc.) leaks
@@ -445,6 +453,8 @@ impl Compiler {
         self.fn_compiler_depth_baseline = saved_fn_baseline;
         self.block_locals_stack = saved_block_locals_stack;
         self.fn_block_baseline = saved_fn_block_baseline;
+        self.handler_table_stack = saved_handler_table_stack;
+        self.fn_handler_baseline = saved_fn_handler_baseline;
 
         Ok(chunk)
     }

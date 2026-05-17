@@ -36,7 +36,7 @@ pub struct VirtualMachine {
     pub(crate) natives: NativeRegistry,
 }
 
-// Heap continuation slots [pc, base, dest_reg, alive]; dispatch table for arm fns; fallback handler_fn.
+// Heap continuation slots [pc, base, dest_reg, alive].
 pub struct HandlerFrame {
     pub effect_id: u16,
     pub handler_fn: usize,
@@ -134,23 +134,34 @@ mod region_tests {
     fn vm() -> VirtualMachine { VirtualMachine::new() }
 
     #[test]
-    fn region_depth_starts_at_zero() {
-        assert_eq!(vm().region_depth(), 0);
+    fn region_force_frees_even_with_rc_greater_than_one() {
+        let mut v = vm();
+        v.region_push();
+        let (slot, gen_) = v.heap_alloc(1);
+        v.region_record_alloc(slot, gen_);
+        v.heap.rc_inc(slot, gen_).unwrap(); // rc = 2
+        v.heap.rc_inc(slot, gen_).unwrap(); // rc = 3
+        v.region_pop().expect("pop ok");
+        assert_eq!(v.heap_live_count(), 0, "force_free ignores rc");
     }
 
     #[test]
-    fn region_push_increments_depth() {
+    fn region_cascade_frees_handles_inside_cell() {
+        // A region-allocated cell that stores another handle to a non-region
+        // cell — force_free should cascade rc_dec to the child.
         let mut v = vm();
+        let (child_slot, child_gen) = v.heap_alloc(1); // outside region, rc=1
         v.region_push();
-        assert_eq!(v.region_depth(), 1);
-        v.region_push();
-        assert_eq!(v.region_depth(), 2);
-    }
-
-    #[test]
-    fn region_pop_without_push_errors() {
-        let mut v = vm();
-        assert!(v.region_pop().is_err());
+        let (parent_slot, parent_gen) = v.heap_alloc(1);
+        v.region_record_alloc(parent_slot, parent_gen);
+        v.heap.rc_inc(child_slot, child_gen).unwrap(); // child rc=2
+        v.heap_st(parent_slot, parent_gen, 0,
+                  Value::from_handle(child_slot, child_gen)).unwrap();
+        // live = parent + child
+        assert_eq!(v.heap_live_count(), 2);
+        v.region_pop().expect("pop ok");
+        // parent force-freed → cascade rc_dec on child (rc 2→1). Child still live.
+        assert_eq!(v.heap_live_count(), 1, "child survives at rc=1; parent freed");
     }
 
     #[test]
@@ -162,28 +173,6 @@ mod region_tests {
         assert_eq!(v.heap_live_count(), 1);
         v.region_pop().expect("pop ok");
         assert_eq!(v.heap_live_count(), 0, "alloc recorded in region must be force-freed");
-    }
-
-    #[test]
-    fn region_pop_ignores_alloc_not_recorded() {
-        let mut v = vm();
-        v.region_push();
-        let _ = v.heap_alloc(2); // recorded by VM only when going through OpCode::Alloc
-        v.region_pop().expect("pop ok");
-        // direct heap_alloc isn't recorded — alloc survives.
-        assert_eq!(v.heap_live_count(), 1);
-    }
-
-    #[test]
-    fn region_force_frees_even_with_rc_greater_than_one() {
-        let mut v = vm();
-        v.region_push();
-        let (slot, gen_) = v.heap_alloc(1);
-        v.region_record_alloc(slot, gen_);
-        v.heap.rc_inc(slot, gen_).unwrap(); // rc = 2
-        v.heap.rc_inc(slot, gen_).unwrap(); // rc = 3
-        v.region_pop().expect("pop ok");
-        assert_eq!(v.heap_live_count(), 0, "force_free ignores rc");
     }
 
     #[test]
@@ -230,24 +219,5 @@ mod region_tests {
         assert_eq!(v.heap_live_count(), 1);
         // No region to pop.
         assert!(v.region_pop().is_err());
-    }
-
-    #[test]
-    fn region_cascade_frees_handles_inside_cell() {
-        // A region-allocated cell that stores another handle to a non-region
-        // cell — force_free should cascade rc_dec to the child.
-        let mut v = vm();
-        let (child_slot, child_gen) = v.heap_alloc(1); // outside region, rc=1
-        v.region_push();
-        let (parent_slot, parent_gen) = v.heap_alloc(1);
-        v.region_record_alloc(parent_slot, parent_gen);
-        v.heap.rc_inc(child_slot, child_gen).unwrap(); // child rc=2
-        v.heap_st(parent_slot, parent_gen, 0,
-                  Value::from_handle(child_slot, child_gen)).unwrap();
-        // live = parent + child
-        assert_eq!(v.heap_live_count(), 2);
-        v.region_pop().expect("pop ok");
-        // parent force-freed → cascade rc_dec on child (rc 2→1). Child still live.
-        assert_eq!(v.heap_live_count(), 1, "child survives at rc=1; parent freed");
     }
 }

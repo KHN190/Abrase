@@ -1140,6 +1140,28 @@ impl Checker {
                     .cloned()
                     .collect();
 
+                let mut seen_effect: Option<String> = None;
+                for arm in arms.iter() {
+                    if let ast::HandleArmKind::Effect(path) = &arm.kind {
+                        if path.len() >= 2 {
+                            let eff = path[..path.len() - 1].join(".");
+                            match &seen_effect {
+                                None => seen_effect = Some(eff),
+                                Some(prev) if prev == &eff => {}
+                                Some(prev) => {
+                                    self.report_error(
+                                        format!("`handle` may only cover arms of a single effect; \
+                                                 saw arms for both `{}` and `{}` (split into separate `handle` blocks)",
+                                            prev, eff),
+                                        expr.span,
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let mut arm_types = Vec::new();
                 for (arm_idx, arm) in arms.iter().enumerate() {
                     // Validate arm pattern if present (introduces binder visible to body)

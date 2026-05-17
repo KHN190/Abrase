@@ -307,28 +307,6 @@ fn dispatch_no_matching_handler_returns_no_match() {
 }
 
 #[test]
-fn dispatch_via_handler_fn_fallback_after_handle() {
-    // Handle (current single-arm form) sets effect_id=0, handler_fn=imm16.
-    // Lookup key (effect_id 0, op_id 0) = 0x0000 falls back to handler_fn.
-    let module = module_with(
-        vec![
-            OpCode::PushConst(r(0), 0),
-            OpCode::Handle(r(0), 42),
-            OpCode::PushConst(r(1), 1),
-            OpCode::PushConst(r(2), 2),
-            OpCode::Deo(r(1), r(2)),
-            OpCode::Dei(r(3), r(2)),
-            OpCode::Ret(r(3)),
-        ],
-        vec![Value::from_int(0), Value::from_int(0x0000), Value::from_int(0xE000)],
-        4,
-        [0; 32],
-    );
-    let v = VirtualMachine::new().run_module(&module).unwrap();
-    assert_eq!(v, Value::from_int(42), "op_id 0 falls back to handler_fn");
-}
-
-#[test]
 fn dispatch_device_is_vm_intrinsic_not_a_device_mask_requirement() {
     let mut vm = VirtualMachine::new();
     let mut mask = [0u8; 32];

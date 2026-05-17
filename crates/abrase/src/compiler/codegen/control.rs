@@ -68,6 +68,7 @@ impl Compiler {
 
         let depth_at_entry = self.compiler_region_depth;
         let block_depth_at_entry = self.block_locals_stack.len();
+        let handler_depth_at_entry = self.handler_table_stack.len();
         self.emit_region_push()?;
 
         self.loop_stack.push(LoopCtx {
@@ -77,6 +78,7 @@ impl Compiler {
             continue_patches: Vec::new(),
             compiler_depth_at_entry: depth_at_entry,
             block_depth_at_entry,
+            handler_depth_at_entry,
         });
 
         self.compile_block(body)?;
@@ -113,6 +115,7 @@ impl Compiler {
         let loop_top = self.code.len();
         let depth_at_entry = self.compiler_region_depth;
         let block_depth_at_entry = self.block_locals_stack.len();
+        let handler_depth_at_entry = self.handler_table_stack.len();
         self.emit_region_push()?;
 
         self.loop_stack.push(LoopCtx {
@@ -122,6 +125,7 @@ impl Compiler {
             continue_patches: Vec::new(),
             compiler_depth_at_entry: depth_at_entry,
             block_depth_at_entry,
+            handler_depth_at_entry,
         });
 
         self.compile_block(body)?;
@@ -155,15 +159,13 @@ impl Compiler {
         let carries_value = if let Some(v) = value {
             carried_ty = self.infer_expr_type(v);
             let r = self.compile_expr(v)?;
-            // Move (not Copy): Copy bumps RC, leaving the temporary src reg
-            // holding the same handle with no Drop emitted for it — the cell
-            // would never reach rc=0. Move transfers ownership cleanly.
+            // Copy bumps RC. Move transfers ownership cleanly.
             self.emit(OpCode::Move(dest, r));
             true
         } else {
             false
         };
-        // Canonical abnormal-exit order (see emit_region_forget_typed):
+        // Canonical abnormal-exit order:
         //   1. forget_typed    → promote carried value past region pops
         //   2. drops_for_exit  → rc-dec block-binders being unwound
         //   3. region_pops     → force-free anything still tracked
@@ -177,9 +179,12 @@ impl Compiler {
         }
         let ctx_compiler = self.loop_stack.last().unwrap().compiler_depth_at_entry;
         let ctx_block = self.loop_stack.last().unwrap().block_depth_at_entry;
+        let ctx_handler = self.loop_stack.last().unwrap().handler_depth_at_entry;
         let n_blocks = self.block_locals_stack.len().saturating_sub(ctx_block);
         let n_regions = self.compiler_region_depth.saturating_sub(ctx_compiler);
+        let n_handlers = self.handler_table_stack.len().saturating_sub(ctx_handler);
         self.emit_drops_for_exit(n_blocks, if carries_value { Some(dest) } else { None })?;
+        self.emit_handler_pops_for_exit(n_handlers)?;
         self.emit_region_pops_for_exit(n_regions)?;
 
         let pidx = self.code.len();
@@ -196,12 +201,14 @@ impl Compiler {
         if self.loop_stack.is_empty() {
             return Err("`continue` outside of loop".to_string());
         }
-        // No carried value, no forget. Same drops + pops as break.
         let ctx_compiler = self.loop_stack.last().unwrap().compiler_depth_at_entry;
         let ctx_block = self.loop_stack.last().unwrap().block_depth_at_entry;
+        let ctx_handler = self.loop_stack.last().unwrap().handler_depth_at_entry;
         let n_blocks = self.block_locals_stack.len().saturating_sub(ctx_block);
         let n_regions = self.compiler_region_depth.saturating_sub(ctx_compiler);
+        let n_handlers = self.handler_table_stack.len().saturating_sub(ctx_handler);
         self.emit_drops_for_exit(n_blocks, None)?;
+        self.emit_handler_pops_for_exit(n_handlers)?;
         self.emit_region_pops_for_exit(n_regions)?;
         let pidx = self.code.len();
         self.emit(OpCode::Jmp(0));
@@ -279,6 +286,7 @@ impl Compiler {
 
         let depth_at_entry = self.compiler_region_depth;
         let block_depth_at_entry = self.block_locals_stack.len();
+        let handler_depth_at_entry = self.handler_table_stack.len();
         self.emit_region_push()?;
 
         self.loop_stack.push(LoopCtx {
@@ -288,6 +296,7 @@ impl Compiler {
             continue_patches: Vec::new(),
             compiler_depth_at_entry: depth_at_entry,
             block_depth_at_entry,
+            handler_depth_at_entry,
         });
 
         if let ast::Pattern::Bind(name) = &pattern.node {
@@ -346,27 +355,23 @@ impl Compiler {
             reg
         };
         let ret_reg = if self.current_fn_fallible { self.wrap_ok(r)? } else { r };
-        // Canonical abnormal-exit order: forget_typed → drops → pops → Ret.
         if let Some(ty) = &inferred_ty {
             self.emit_region_forget_typed(ret_reg, ty)?;
         } else {
             self.emit_region_forget(ret_reg)?;
         }
         self.emit_drops_to_exit_fn(Some(ret_reg))?;
+        self.emit_handler_pops_to_exit_fn()?;
         self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(ret_reg));
         Ok(r)
     }
 
-    // Pop every compiler region above the function's entry baseline.
-    // Called by every site that emits Ret out of the current fn.
     pub(in crate::compiler) fn emit_pops_to_exit_fn(&mut self) -> Result<(), String> {
         let n = self.compiler_region_depth.saturating_sub(self.fn_compiler_depth_baseline);
         self.emit_region_pops_for_exit(n)
     }
 
-    // Drop every block-binder above the function's entry block baseline.
-    // Mirrors emit_pops_to_exit_fn for the rc-dec leg of the cleanup chain.
     pub(in crate::compiler) fn emit_drops_to_exit_fn(
         &mut self,
         skip: Option<Register>,
@@ -374,6 +379,11 @@ impl Compiler {
         let n_blocks = self.block_locals_stack.len()
             .saturating_sub(self.fn_block_baseline);
         self.emit_drops_for_exit(n_blocks, skip)
+    }
+
+    pub(in crate::compiler) fn emit_handler_pops_to_exit_fn(&mut self) -> Result<(), String> {
+        let n = self.handler_table_stack.len().saturating_sub(self.fn_handler_baseline);
+        self.emit_handler_pops_for_exit(n)
     }
 }
 
