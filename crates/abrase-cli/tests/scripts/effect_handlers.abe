@@ -1,5 +1,5 @@
-effect gen { fn yield(v: Int) -> Unit }
-effect choose { fn pick() -> Bool }
+effect gen { op yield(v: Int) -> Unit }
+effect choose { op pick() -> Bool }
 
 fn produce() -> <gen> Unit {
   gen.yield(10);

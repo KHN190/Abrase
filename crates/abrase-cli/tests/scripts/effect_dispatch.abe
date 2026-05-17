@@ -1,5 +1,5 @@
-effect counter { fn bump(by: Int) -> Int }
-effect logger  { fn note(n: Int) -> Unit }
+effect counter { op bump(by: Int) -> Int }
+effect logger  { op note(n: Int) -> Unit }
 
 fn worker(start: Int) -> <counter, logger> Int {
   let a = counter.bump(start);

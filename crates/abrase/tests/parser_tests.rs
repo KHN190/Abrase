@@ -472,7 +472,7 @@ fn test_decl_effect() {
 fn test_program_effect_with_op_no_stray_token() {
     // Regression: parse_effect_decl used to leave current_token on the
     // closing '}', causing parse_program to report a stray RBrace.
-    let input = "effect Gen { fn yield(v: Int) -> Unit }";
+    let input = "effect Gen { op yield(v: Int) -> Unit }";
     let mut p = Parser::new(Lexer::new(input));
     let decls = p.parse_program();
     assert!(p.errors.is_empty(), "unexpected parser errors: {:?}", p.errors);
@@ -490,7 +490,7 @@ fn test_program_effect_with_op_no_stray_token() {
 fn test_program_effect_followed_by_fn() {
     // Two declarations in sequence — the parser must advance past the effect's
     // '}' so the following 'fn' is recognised as the next top-level decl.
-    let input = "effect Logger { fn log(msg: Int) -> Unit } fn main() -> Int { 0 }";
+    let input = "effect Logger { op log(msg: Int) -> Unit } fn main() -> Int { 0 }";
     let mut p = Parser::new(Lexer::new(input));
     let decls = p.parse_program();
     assert!(p.errors.is_empty(), "unexpected parser errors: {:?}", p.errors);
@@ -511,7 +511,7 @@ fn test_program_empty_effect_followed_by_fn() {
 
 #[test]
 fn test_program_effect_multiple_ops() {
-    let input = "effect IO { fn read() -> Int fn write(n: Int) -> Unit }";
+    let input = "effect IO { op read() -> Int op write(n: Int) -> Unit }";
     let mut p = Parser::new(Lexer::new(input));
     let decls = p.parse_program();
     assert!(p.errors.is_empty(), "unexpected parser errors: {:?}", p.errors);
@@ -1216,7 +1216,7 @@ fn test_resume_with_complex_arg() {
 
 #[test]
 fn test_effect_decl_no_stray_rbrace_token() {
-    let input = "effect E { fn op() -> Unit } fn main() -> Int { 0 }";
+    let input = "effect E { op op() -> Unit } fn main() -> Int { 0 }";
     let mut p = Parser::new(Lexer::new(input));
     let decls = p.parse_program();
     assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
@@ -1232,6 +1232,60 @@ fn test_effect_empty_no_stray_rbrace() {
     let decls = p.parse_program();
     assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
     assert_eq!(decls.len(), 2);
+}
+
+#[test]
+fn test_effect_op_as_operation_name() {
+    // Test that "op" can be used as an operation name: op op() -> Int
+    let input = "effect E { op op() -> Int }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 1);
+    if let Decl::Effect { name, ops, .. } = &decls[0] {
+        assert_eq!(name, "E");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].name, "op");
+        assert!(ops[0].params.is_empty());
+    } else {
+        panic!("Expected Effect declaration");
+    }
+}
+
+#[test]
+fn test_effect_op_with_params_as_operation_name() {
+    // Test that "op" can be an operation name with parameters: op op(x: Int) -> Int
+    let input = "effect E { op op(x: Int) -> Int }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 1);
+    if let Decl::Effect { name, ops, .. } = &decls[0] {
+        assert_eq!(name, "E");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].name, "op");
+        assert_eq!(ops[0].params.len(), 1);
+    } else {
+        panic!("Expected Effect declaration");
+    }
+}
+
+#[test]
+fn test_effect_multiple_op_operations() {
+    // Test multiple operations where one is named "op": op op() -> Int op other() -> Unit
+    let input = "effect E { op op() -> Int op other() -> Unit }";
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "unexpected errors: {:?}", p.errors);
+    assert_eq!(decls.len(), 1);
+    if let Decl::Effect { name, ops, .. } = &decls[0] {
+        assert_eq!(name, "E");
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0].name, "op");
+        assert_eq!(ops[1].name, "other");
+    } else {
+        panic!("Expected Effect declaration");
+    }
 }
 
 #[test]

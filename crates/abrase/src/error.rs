@@ -14,7 +14,7 @@ impl fmt::Display for ErrorCode {
         match self {
             ErrorCode::ParseError => write!(f, "ParseError"),
             ErrorCode::TypeError => write!(f, "TypeError"),
-            ErrorCode::CodegenError => write!(f, "CodegenError"),
+            ErrorCode::CodegenError => write!(f, "CompileError"),
             ErrorCode::RuntimeError => write!(f, "RuntimeError"),
         }
     }

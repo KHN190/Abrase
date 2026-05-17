@@ -6,6 +6,7 @@ pub mod impls;
 pub mod closures;
 pub mod effects;
 pub mod handlers;
+pub mod debug;
 
 use crate::ast;
 use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module};
@@ -54,11 +55,13 @@ pub struct Compiler {
     pub(super) layouts: LayoutCtx,
     pub(super) pending_arg_patches: Vec<(usize, u8)>,
     pub(super) current_fn_fallible: bool,
+    pub(super) current_fn_name: String,
     pub(super) effect_ids: HashMap<String, u16>,
     pub(super) op_ids: HashMap<(String, String), u8>,
     pub(super) effect_op_counts: HashMap<String, u8>,
     pub(super) effect_op_to_arm: HashMap<(String, String), String>,
     pub(super) effect_arms_by_handle: HashMap<ast::Span, HashMap<(String, String), String>>,
+    pub(super) arm_resume_counts: HashMap<String, usize>,
     // Per-call-site op dispatch: handle nested effects before global fallback.
     pub(super) op_call_to_arm: HashMap<ast::Span, String>,
     // Handle expression span -> synthesised return-arm fn name.
@@ -106,6 +109,7 @@ pub struct Compiler {
     pub(super) fn_handler_baseline: usize,
     pub errors: Vec<Error>,
     pub source: String,
+    pub(super) debug_sink: Option<debug::CompileDebugSink>,
 }
 
 impl Compiler {
@@ -126,11 +130,13 @@ impl Compiler {
             },
             pending_arg_patches: Vec::new(),
             current_fn_fallible: false,
+            current_fn_name: String::new(),
             effect_ids: HashMap::new(),
             op_ids: HashMap::new(),
             effect_op_counts: HashMap::new(),
             effect_op_to_arm: HashMap::new(),
             effect_arms_by_handle: HashMap::new(),
+            arm_resume_counts: HashMap::new(),
             op_call_to_arm: HashMap::new(),
             return_arm_by_handle: HashMap::new(),
             arm_captures: HashMap::new(),
@@ -152,12 +158,42 @@ impl Compiler {
             fn_handler_baseline: 0,
             errors: Vec::new(),
             source: String::new(),
+            debug_sink: None,
         }
     }
 
     pub fn with_source(mut self, source: String) -> Self {
         self.source = source;
         self
+    }
+
+    pub fn with_debug(mut self, on: bool) -> Self {
+        self.debug_sink = if on { Some(debug::stderr_sink()) } else { None };
+        self
+    }
+
+    pub fn with_debug_sink(mut self, sink: debug::CompileDebugSink) -> Self {
+        self.debug_sink = Some(sink);
+        self
+    }
+
+    /// Build a Vec<String> indexed by function id (matches Module.functions
+    /// order). Empty slot for unmapped indices.
+    pub fn fn_names(&self) -> Vec<String> {
+        let n = self.functions.len();
+        let mut out = vec![String::new(); n];
+        for (name, &idx) in &self.func_map {
+            if idx < n {
+                out[idx] = name.clone();
+            }
+        }
+        out
+    }
+
+    pub(super) fn emit_debug(&mut self, msg: &str) {
+        if let Some(sink) = &mut self.debug_sink {
+            sink(msg);
+        }
     }
 
     pub fn register_host_fn(&mut self, decl: HostFnDecl) {
@@ -257,12 +293,19 @@ impl Compiler {
 
         // Pre-pass: lift handler arms to synthetic top-level FnDecls.
         let mut handler_lowering = handlers::HandleLowering::new();
+        if self.debug_sink.is_some() {
+            handler_lowering = handler_lowering.with_debug_sink(debug::stderr_sink());
+        }
         handler_lowering.lower(ast);
+        for err in handler_lowering.errors {
+            self.errors.push(Error::new(ErrorCode::CodegenError, ast::Span::new(0, 0), err));
+        }
         self.effect_op_to_arm = handler_lowering.effect_op_to_arm;
         self.op_call_to_arm = handler_lowering.op_call_to_arm;
         self.return_arm_by_handle = handler_lowering.return_arm_by_handle;
         self.effect_arms_by_handle = handler_lowering.effect_arms_by_handle;
         self.arm_captures = handler_lowering.arm_captures;
+        self.arm_resume_counts = handler_lowering.arm_resume_counts;
         self.effect_ids = handler_lowering.effect_ids;
         self.op_ids = handler_lowering.op_ids;
         self.effect_op_counts = handler_lowering.effect_op_counts;
@@ -321,8 +364,32 @@ impl Compiler {
         };
 
         for (idx, fn_decl) in fn_decls {
+            if self.debug_sink.is_some() {
+                self.emit_debug(&format!("[COMPILE] idx={}, name={}", idx, fn_decl.name));
+            }
             let chunk = self.compile_fn(&fn_decl)?;
             self.functions[idx] = chunk;
+        }
+
+        if let Some(sink) = &mut self.debug_sink {
+            sink("[FUNC_MAP]");
+            let mut entries: Vec<(&String, &usize)> = self.func_map.iter().collect();
+            entries.sort_by_key(|(_, idx)| **idx);
+            for (name, idx) in entries {
+                sink(&format!("  {} -> {}", name, idx));
+            }
+            sink("[BYTECODE]");
+            for (i, func) in self.functions.iter().enumerate() {
+                match func {
+                    Chunk::Bytecode(bc) => {
+                        sink(&format!("[{}] {} instrs:", i, bc.code.len()));
+                        for (j, op) in bc.code.iter().enumerate() {
+                            sink(&format!("    [{}] {:?}", j, op));
+                        }
+                    }
+                    Chunk::Native(n) => sink(&format!("[{}] Native {}", i, n.name)),
+                }
+            }
         }
 
         Ok(Module {
@@ -340,6 +407,7 @@ impl Compiler {
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
         let saved_fallible = self.current_fn_fallible;
+        let saved_fn_name = std::mem::take(&mut self.current_fn_name);
         let saved_compiler_region_depth = self.compiler_region_depth;
         let saved_fn_baseline = self.fn_compiler_depth_baseline;
         let saved_block_locals_stack = std::mem::take(&mut self.block_locals_stack);
@@ -348,6 +416,7 @@ impl Compiler {
         let saved_fn_handler_baseline = self.fn_handler_baseline;
 
         self.current_fn_fallible = effects::fn_is_fallible(fn_decl);
+        self.current_fn_name = fn_decl.name.clone();
         self.next_reg = 0;
         // Each fn starts with a fresh region tally + block stack;
         // return/throw unwind back to this baseline (0).
@@ -368,8 +437,14 @@ impl Compiler {
                         Ok(reg) => {
                             self.var_to_reg.insert(name.clone(), reg);
                             self.var_types.insert(name.clone(), ty.clone());
-                            if let Some(top) = self.block_locals_stack.last_mut() {
-                                top.push(reg);
+                            // For handler arm functions, don't track __env and __return_env as
+                            // locals to drop, since they're shared resources managed by the caller
+                            let is_handler_arm = fn_decl.name.starts_with("__handle_");
+                            let skip_drop = is_handler_arm && (name == "__env" || name == "__return_env");
+                            if !skip_drop {
+                                if let Some(top) = self.block_locals_stack.last_mut() {
+                                    top.push(reg);
+                                }
                             }
                         }
                         Err(_) => {
@@ -449,6 +524,7 @@ impl Compiler {
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
         self.current_fn_fallible = saved_fallible;
+        self.current_fn_name = saved_fn_name;
         self.compiler_region_depth = saved_compiler_region_depth;
         self.fn_compiler_depth_baseline = saved_fn_baseline;
         self.block_locals_stack = saved_block_locals_stack;

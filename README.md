@@ -66,7 +66,7 @@ fn main() -> Int {  // main() must be pure (no effects)
 
 // Effect handlers
 
-effect Logger { log(s: String) -> Unit }
+effect Logger { op log(s: String) -> Unit }
 
 fn work() -> <Logger> Int {
   Logger.log("starting");
@@ -82,7 +82,7 @@ fn main() -> Int {
 
 // Generators by effect system
 
-effect gen { fn yield(v: Int) -> Unit }
+effect gen { op yield(v: Int) -> Unit }
 
 fn produce() -> <gen> Unit { gen.yield(10); gen.yield(20) }
 

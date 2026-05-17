@@ -7,6 +7,7 @@ pub mod interpreter;
 pub mod loader;
 pub mod region;
 pub mod builtins;
+pub mod debug;
 
 pub use polka::Value;
 pub use value::{BoxPool, BoxedValue};
@@ -14,6 +15,7 @@ pub use device::{Device, DeviceTable};
 pub use memory::Heap;
 pub use region::RegionTable;
 pub use builtins::{NativeFn, NativeRegistry};
+pub use debug::{DebugEvent, DebugSink};
 
 use frame::Frame;
 
@@ -34,16 +36,21 @@ pub struct VirtualMachine {
     pub(crate) resolved_constants: Vec<Vec<Value>>,
     pub(crate) region_table: RegionTable,
     pub(crate) natives: NativeRegistry,
+    pub(crate) debug_sink: Option<DebugSink>,
+    pub(crate) fn_names: Vec<String>,
+    // The step loop increments self.pc before exec(), 
+    // so a runtime error reporting uses this field instead.
+    pub(crate) failing_pc: usize,
 }
 
-// Heap continuation slots [pc, base, dest_reg, alive].
 pub struct HandlerFrame {
     pub effect_id: u16,
     pub handler_fn: usize,
     pub dispatch_table_slot: Option<u32>,
     pub dispatch_table_gen: u32,
-    pub cell_slot: u32,
+    pub cell_slot: u32,      // 当前活跃 cell
     pub cell_gen: u32,
+    pub cells_allocated: Vec<(u32, u32)>,  // 所有 cells (slot, gen)
 }
 
 pub mod cont_slot {
@@ -51,7 +58,10 @@ pub mod cont_slot {
     pub const SUSPEND_BASE: usize = 1;
     pub const DEST_REG: usize = 2;
     pub const ALIVE: usize = 3;
-    pub const SIZE: usize = 4;
+    pub const SUSPEND_FUNC: usize = 4;
+    pub const DISPATCH_FN_ID: usize = 5;
+    pub const DISPATCH_ENV: usize = 6;
+    pub const SIZE: usize = 7;
 }
 
 impl VirtualMachine {
@@ -75,6 +85,30 @@ impl VirtualMachine {
             resolved_constants: Vec::new(),
             region_table: RegionTable::new(),
             natives,
+            debug_sink: None,
+            fn_names: Vec::new(),
+            failing_pc: 0,
+        }
+    }
+
+    pub fn with_debug(mut self, on: bool) -> Self {
+        self.debug_sink = if on { Some(debug::stderr_sink()) } else { None };
+        self
+    }
+
+    pub fn with_debug_sink(mut self, sink: DebugSink) -> Self {
+        self.debug_sink = Some(sink);
+        self
+    }
+
+    pub fn with_fn_names(mut self, names: Vec<String>) -> Self {
+        self.fn_names = names;
+        self
+    }
+
+    pub(crate) fn emit_debug(&mut self, event: &DebugEvent) {
+        if let Some(sink) = &mut self.debug_sink {
+            sink(event, &self.fn_names);
         }
     }
 

@@ -1,8 +1,0 @@
-type Point = { x: Int, y: Int }
-
-fn main() -> Int {
-  let p: Point = Point { x: 1, y: 2 };
-  let _ = p.z;
-  let arr = [1, 2, 3];
-  arr[true]
-}

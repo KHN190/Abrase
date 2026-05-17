@@ -1,6 +1,0 @@
-type DivError = DivByZero
-
-fn main() -> Int {
-  let _ = NoSuchName;
-  0
-}

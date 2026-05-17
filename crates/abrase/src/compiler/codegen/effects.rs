@@ -60,26 +60,37 @@ impl Compiler {
         arg: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<Register, String> {
         let inferred_ty = arg.and_then(|e| self.infer_expr_type(e));
-        let reg = if let Some(e) = arg {
+        let val_reg = if let Some(e) = arg {
             self.compile_expr(e)?
         } else {
             let r = self.alloc_register()?;
             let idx = self.add_constant(Value::UNIT)?;
-            //   PushConst(r, const_idx)  # Load unit value
             self.emit(OpCode::PushConst(r, idx));
             r
         };
-        if let Some(ty) = &inferred_ty {
-            self.emit_region_forget_typed(reg, ty)?;
+
+        let resume_count = self.arm_resume_counts
+            .get(&self.current_fn_name)
+            .copied()
+            .unwrap_or(0);
+        let is_multishot = resume_count > 1;
+
+        if is_multishot {
+            let dest = self.alloc_register()?;
+            self.emit(OpCode::Resume(dest, val_reg));
+            Ok(dest)
         } else {
-            self.emit_region_forget(reg)?;
+            if let Some(ty) = &inferred_ty {
+                self.emit_region_forget_typed(val_reg, ty)?;
+            } else {
+                self.emit_region_forget(val_reg)?;
+            }
+            self.emit_drops_to_exit_fn(Some(val_reg))?;
+            self.emit_handler_pops_to_exit_fn()?;
+            self.emit_pops_to_exit_fn()?;
+            self.emit(OpCode::Ret(val_reg));
+            Ok(val_reg)
         }
-        self.emit_drops_to_exit_fn(Some(reg))?;
-        self.emit_handler_pops_to_exit_fn()?;
-        self.emit_pops_to_exit_fn()?;
-        //   Ret(reg)                     # Return resume value to handler
-        self.emit(OpCode::Ret(reg));
-        Ok(reg)
     }
 
     pub(in crate::compiler) fn compile_handle(
@@ -146,13 +157,34 @@ impl Compiler {
             }
             _ => None,
         });
-        let eff = match eff_name { Some(n) => n, None => return Ok(false) };
+        if let Some(sink) = &mut self.debug_sink {
+            sink(&format!("[emit_handle_install] eff_name={:?}", eff_name));
+        }
+        let eff = match eff_name { Some(n) => n, None => {
+            if let Some(sink) = &mut self.debug_sink {
+                sink("[emit_handle_install] no effect found, returning false");
+            }
+            return Ok(false)
+        } };
         let effect_id = match self.effect_ids.get(&eff).copied() {
             Some(id) => id,
-            None => return Ok(false),
+            None => {
+                if let Some(sink) = &mut self.debug_sink {
+                    sink("[emit_handle_install] effect_id not found");
+                }
+                return Ok(false)
+            },
         };
         let op_count = self.effect_op_counts.get(&eff).copied().unwrap_or(0) as usize;
-        if op_count == 0 { return Ok(false); }
+        if let Some(sink) = &mut self.debug_sink {
+            sink(&format!("[emit_handle_install] effect_id={}, op_count={}", effect_id, op_count));
+        }
+        if op_count == 0 {
+            if let Some(sink) = &mut self.debug_sink {
+                sink("[emit_handle_install] op_count is 0, returning false");
+            }
+            return Ok(false);
+        }
 
         let local_arms = self.effect_arms_by_handle.get(&handle_span).cloned().unwrap_or_default();
 

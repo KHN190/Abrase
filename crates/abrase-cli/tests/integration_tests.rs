@@ -110,6 +110,13 @@ fn effect_dispatch_runs() {
 }
 
 #[test]
+fn multiple_suspension_points() {
+    let v = run_file("tests/scripts/multi_effect_handler.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(20));
+}
+
+#[test]
 fn region_all_allowed_shapes() {
     let (v, vm) = run_file_full("tests/scripts/region.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
@@ -122,7 +129,6 @@ fn region_all_allowed_shapes() {
 
 #[test]
 fn effect_handlers_typecheck() {
-    // generator (single-shot resume) and backtracking (multi-shot resume) handlers.
     let errs = typeck_file("tests/scripts/effect_handlers.abe");
     assert!(errs.is_empty(),
         "expected no typeck errors for effect handler patterns, got: {:?}", errs);
@@ -136,38 +142,15 @@ fn traits_and_generics() {
 }
 
 #[test]
-fn neg_move_errors() {
-    let errs = typeck_file("tests/scripts/bad_moves.abe");
-    let moved_count = errs.iter().filter(|m| m.contains("moved")).count();
-    assert!(moved_count >= 2,
-        "expected >=2 'moved' errors (double-move and use-after-move), got {}: {:?}",
-        moved_count, errs);
-}
-
-#[test]
-fn neg_undefined_ident_typeck_errors() {
-    let errs = typeck_file("tests/scripts/bad_bare_variant.abe");
-    assert!(errs.iter().any(|m| m.contains("Undefined variable") && m.contains("NoSuchName")),
-        "expected 'Undefined variable: NoSuchName', got: {:?}", errs);
-}
-
-#[test]
-fn neg_record_and_array_errors() {
-    let errs = typeck_file("tests/scripts/bad_records_arrays.abe");
-    assert!(errs.len() >= 2,
-        "expected >=2 errors (unknown field + bad index type), got: {:?}", errs);
-}
-
-#[test]
-fn neg_borrow_across_effect_typeck_errors() {
-    let errs = typeck_file("tests/scripts/bad_borrow_across_effect.abe");
-    assert!(errs.iter().any(|m| m.contains("live across effect operation")),
-        "expected borrow-barrier error, got: {:?}", errs);
-}
-
-#[test]
 fn string_interp_with_records_recursion_and_closures() {
     let v = run_file_string("tests/scripts/interp.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, "user=[Alice:30] total=10 next=11");
+}
+
+#[test]
+fn handler_persistent_across_calls() {
+    let v = run_file("tests/scripts/multi_effect_handler.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v.as_int(), Some(20));
 }

@@ -1,0 +1,20 @@
+// Handler persistent across multiple effect calls
+// Handler frame should stay alive across multiple suspension points
+
+effect E { op f(x: Int) -> Int }
+
+fn work() -> <E> Int {
+  let a = E.f(1);
+  let b = E.f(2);
+  a + b
+}
+
+fn main() -> Int {
+  handle work() {
+    E.f => {
+      let r = resume(10);
+      r
+    }
+    return v => v
+  }
+}

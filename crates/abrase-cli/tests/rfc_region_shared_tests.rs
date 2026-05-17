@@ -1,6 +1,3 @@
-// Tests for RFC region-shared (phase 1 typeck enforcement).
-// See wiki/rfc-region-shared.md.
-
 use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;

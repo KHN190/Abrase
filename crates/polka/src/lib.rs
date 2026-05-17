@@ -80,7 +80,7 @@ pub enum OpCode {
     Deo(Register, Register),
 
     Handle(Register, Register, u16),
-    Resume(Register),
+    Resume(Register, Register),
 }
 
 #[derive(Clone, Default)]

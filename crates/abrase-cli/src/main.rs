@@ -12,14 +12,23 @@ const USAGE: &str = "\
 Abrase compiler & Myriad VM
 
 usage:
-    abrase run    <file.abe>    parse, compile, execute main()
-    abrase check  <file.abe>    parse and type-check; no execution
-    abrase parse  <file.abe>    dump AST and parser errors
-    abrase disasm <file.abe>    parse, compile, dump bytecode
+    abrase run    [--debug] <file.abe>    parse, compile, execute main()
+    abrase check  <file.abe>               parse and type-check; no execution
+    abrase parse  <file.abe>               dump AST and parser errors
+    abrase disasm <file.abe>               parse, compile, dump bytecode
+
+flags:
+    --debug    dump compile-time lowering/codegen prints and runtime
+               instruction trace + handler events to stderr
 ";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().collect();
+    let raw: Vec<String> = env::args().collect();
+    let mut debug = false;
+    let mut args: Vec<String> = Vec::with_capacity(raw.len());
+    for a in raw {
+        if a == "--debug" { debug = true; } else { args.push(a); }
+    }
     if args.len() < 3 {
         eprint!("{}", USAGE);
         return ExitCode::from(64);
@@ -36,7 +45,7 @@ fn main() -> ExitCode {
     };
 
     match cmd {
-        "run" => cmd_run(&source),
+        "run" => cmd_run(&source, debug),
         "check" => cmd_check(&source),
         "parse" => cmd_parse(&source),
         "disasm" => cmd_disasm(&source),
@@ -68,10 +77,16 @@ fn frontend(source: &str) -> Result<Vec<abrase::ast::Decl>, ExitCode> {
     Ok(ast)
 }
 
-fn cmd_run(source: &str) -> ExitCode {
+fn cmd_run(source: &str, debug: bool) -> ExitCode {
+    if debug {
+        eprintln!("# debug fmt:");
+        eprintln!("#   compile-time: [lower] [COMPILE] [CALL] [emit_handle_install] [FUNC_MAP] [BYTECODE]");
+        eprintln!("#   runtime trace: [<fn_name>#<fn_id>:<pc>] <op>");
+        eprintln!("#   handler events: [handle] push ... / [resume] -> ...");
+    }
     let ast = match frontend(source) { Ok(a) => a, Err(c) => return c };
 
-    let mut compiler = Compiler::new().with_source(source.to_string());
+    let mut compiler = Compiler::new().with_source(source.to_string()).with_debug(debug);
     let module = match compiler.compile_module(&ast) {
         Ok(m) => m,
         Err(_) => {
@@ -79,8 +94,11 @@ fn cmd_run(source: &str) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let fn_names = compiler.fn_names();
 
-    let mut vm = VirtualMachine::new();
+    let mut vm = VirtualMachine::new()
+        .with_debug(debug)
+        .with_fn_names(fn_names);
     match vm.run_module(&module) {
         Ok(v) => { print_result(&vm, v); ExitCode::SUCCESS }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }

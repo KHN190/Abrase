@@ -307,6 +307,18 @@ fn dispatch_no_matching_handler_returns_no_match() {
 }
 
 #[test]
+fn device_out_reads_back_dispatch_env() {
+    // 0xE0_02 is the dispatch device's env port. Without a prior write,
+    // device_out should return NONE (0)
+    let src = r#"
+        fn main() -> Int { device_out(57346) }
+    "#;
+    let mut rt = abrase_cli::host::Runtime::new();
+    let result = rt.eval(src).expect("dispatch env without prior lookup returns NONE");
+    assert_eq!(result, Value::from_int(0), "dispatch env with no handler should return NONE");
+}
+
+#[test]
 fn dispatch_device_is_vm_intrinsic_not_a_device_mask_requirement() {
     let mut vm = VirtualMachine::new();
     let mut mask = [0u8; 32];

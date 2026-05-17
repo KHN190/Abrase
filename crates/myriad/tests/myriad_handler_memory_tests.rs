@@ -20,6 +20,7 @@ fn handler_frame_basic_structure() {
         dispatch_table_gen: generation,
         cell_slot: slot,
         cell_gen: generation,
+        cells_allocated: vec![(slot, generation)],
     };
 
     assert_eq!(frame.effect_id, 123);
@@ -30,10 +31,8 @@ fn handler_frame_basic_structure() {
 
 #[test]
 fn handler_frame_push_succeeds() {
-    // Test that push_handler works with a valid HandlerFrame
     let mut vm = VirtualMachine::new();
 
-    // Create and push a handler frame using public API
     let (slot, generation) = vm.heap_alloc(4);
     vm.push_handler(HandlerFrame {
         effect_id: 123,
@@ -42,9 +41,9 @@ fn handler_frame_push_succeeds() {
         dispatch_table_gen: generation,
         cell_slot: slot,
         cell_gen: generation,
+        cells_allocated: vec![(slot, generation)],
     });
 
-    // If we get here without panic, the push succeeded
     assert!(true, "push_handler succeeded without error");
 }
 
@@ -60,6 +59,7 @@ fn handle_with_dispatch_table_handle_value() {
         dispatch_table_gen: table_gen,
         cell_slot: cont_slot,
         cell_gen: cont_gen,
+        cells_allocated: vec![(cont_slot, cont_gen)],
     };
 
     assert_eq!(frame.dispatch_table_slot, Some(table_slot));
@@ -80,6 +80,7 @@ fn handle_with_fallback_handler_function() {
         dispatch_table_gen: 0,
         cell_slot: cont_slot,
         cell_gen: cont_gen,
+        cells_allocated: vec![(cont_slot, cont_gen)],
     };
 
     assert_eq!(frame.handler_fn, 7);
@@ -125,7 +126,6 @@ fn multiple_allocations_in_region() {
 
 #[test]
 fn multiple_handler_frames_creation() {
-    // Test that multiple HandlerFrame structures with different configs
     let frames: Vec<_> = (0..3)
         .map(|i| HandlerFrame {
             effect_id: i as u16,
@@ -134,6 +134,7 @@ fn multiple_handler_frames_creation() {
             dispatch_table_gen: i as u32,
             cell_slot: i as u32 + 100,
             cell_gen: i as u32,
+            cells_allocated: vec![(i as u32 + 100, i as u32)],
         })
         .collect();
 
@@ -153,9 +154,10 @@ fn handler_with_invalid_generation_structure() {
         effect_id: 1,
         handler_fn: 0,
         dispatch_table_slot: Some(100),
-        dispatch_table_gen: 999, // Invalid generation
+        dispatch_table_gen: 999,
         cell_slot: 100,
         cell_gen: 999,
+        cells_allocated: vec![(100, 999)],
     };
 
     assert_eq!(frame.dispatch_table_gen, 999);
@@ -209,7 +211,6 @@ fn heap_st_modifies_cell() {
     let val1 = Value::from_int(42);
     let val2 = Value::from_int(100);
 
-    // Write to cell
     let old1 = vm.heap_st(slot, generation, 0, val1).expect("write 1");
     let old2 = vm.heap_st(slot, generation, 1, val2).expect("write 2");
 

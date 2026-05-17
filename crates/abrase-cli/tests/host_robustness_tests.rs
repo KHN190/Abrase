@@ -94,15 +94,13 @@ fn device_in_writes_byte_to_console() {
 #[test]
 fn device_out_reads_back_dispatch_state() {
     // 0xE0_00 is the dispatch device's lookup port. Without a prior write,
-    // device_out should surface an error — but not panic, and the Runtime
-    // should report it cleanly.
+    // device_out should return DISPATCH_NO_MATCH (0xFFFF)
     let src = r#"
         fn main() -> Int { device_out(57344) }
     "#;
     let mut rt = abrase_cli::host::Runtime::new();
-    let err = rt.eval(src).expect_err("dispatch read without prior lookup must err");
-    assert!(err.contains("dispatch"),
-        "error should reference dispatch device; got: {}", err);
+    let result = rt.eval(src).expect("dispatch without prior lookup returns NO_MATCH");
+    assert_eq!(result, Value::from_int(0xFFFF), "dispatch with no handler should return DISPATCH_NO_MATCH (0xFFFF)");
 }
 
 #[test]

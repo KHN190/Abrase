@@ -5,8 +5,7 @@ use crate::bytecode::Value;
 
 pub(in crate::compiler) enum CallEnv {
     None,
-    Reg(Register),
-    EmptyAlloc,
+    Reg(Register)
 }
 
 pub(in crate::compiler) enum CallTarget<'a> {
@@ -29,7 +28,19 @@ impl Compiler {
         args: &[ast::Spanned<ast::Expr>],
         call_span: ast::Span,
     ) -> Result<Register, String> {
+        if let Some(sink) = &mut self.debug_sink {
+            sink(&format!("[CALL] fn={}, callee={:?}", self.current_fn_name, callee.node));
+        }
         let target = self.resolve_call(callee, args, call_span)?;
+        if let Some(sink) = &mut self.debug_sink {
+            let kind = match &target {
+                CallTarget::EffectOpDispatch { .. } => "EffectOpDispatch",
+                CallTarget::Function { .. } => "Function",
+                CallTarget::Method { .. } => "Method",
+                _ => "Other",
+            };
+            sink(&format!("[CALL] resolved to {:?}", kind));
+        }
         match target {
             CallTarget::EnvLoad { env_reg, idx } => self.emit_env_load(env_reg, idx),
             CallTarget::SharedCtor => self.emit_shared_ctor(args),
@@ -195,15 +206,6 @@ impl Compiler {
         Ok(None)
     }
 
-    fn find_arm_env(&self, arm_name: &str) -> Option<Register> {
-        for envs in self.arm_env_stack.iter().rev() {
-            if let Some(r) = envs.get(arm_name) {
-                return Some(*r);
-            }
-        }
-        None
-    }
-
     fn emit_env_load(&mut self, env_reg: Register, idx: u16) -> Result<Register, String> {
         let dest = self.alloc_register()?;
         self.emit(OpCode::Ld(dest, env_reg, idx));
@@ -341,12 +343,7 @@ impl Compiler {
     ) -> Result<Register, String> {
         let env_to_pass = match env {
             CallEnv::None => None,
-            CallEnv::Reg(r) => Some(r),
-            CallEnv::EmptyAlloc => {
-                let r = self.alloc_register()?;
-                self.emit(OpCode::Alloc(r, 1));
-                Some(r)
-            }
+            CallEnv::Reg(r) => Some(r)
         };
         let mut staged: Vec<(Register, bool)> = env_to_pass.into_iter().map(|r| (r, true)).collect();
         for arg in args {

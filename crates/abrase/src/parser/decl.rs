@@ -397,17 +397,18 @@ impl<'a> Parser<'a> {
         let mut ops = Vec::new();
         self.next_token();
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
-            if self.current_token == Token::Fn {
-                let sig = self.parse_fn_signature()?;
-                ops.push(sig);
+            if let Token::Ident(op_name) = &self.current_token {
+                if op_name == "op" {
+                    let sig = self.parse_fn_signature()?;
+                    ops.push(sig);
+                }
             }
-            if self.current_token != Token::RBrace {
-                self.next_token();
-            }
-        }
-        if self.current_token == Token::RBrace {
             self.next_token();
         }
+        if self.current_token != Token::RBrace {
+            return Err(format!("Expected '}}' to close effect '{}'", name));
+        }
+        self.next_token();
         Ok(Decl::Effect { is_pub, name, ops })
     }
 

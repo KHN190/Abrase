@@ -224,9 +224,12 @@ fn test_handle_opcode() {
 
 #[test]
 fn test_resume_opcode() {
-    let r = OpCode::Resume(Register(1));
+    let r = OpCode::Resume(Register(1), Register(2));
     match r {
-        OpCode::Resume(reg) => assert_eq!(reg.to_usize(), 1),
+        OpCode::Resume(dest, val) => {
+            assert_eq!(dest.to_usize(), 1);
+            assert_eq!(val.to_usize(), 2);
+        }
         _ => panic!("Not a Resume opcode"),
     }
 }

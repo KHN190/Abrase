@@ -133,7 +133,7 @@ fn test_handle_allocates_cell_and_resume_frees_it() {
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::Handle(r(3), r(1), 0),
-            OpCode::Resume(r(0)),
+            OpCode::Resume(r(3), r(0)),
             OpCode::Ret(r(3)),
         ],
         constants: vec![Value::from_int(99)],
@@ -146,8 +146,8 @@ fn test_handle_allocates_cell_and_resume_frees_it() {
 }
 
 #[test]
-fn test_handle_allocates_one_cell_per_install() {
-    // One Handle (no Resume) leaves exactly one live continuation cell.
+fn test_handle_without_dispatch_allocates_no_cell() {
+    // Handle defers cell allocation to dispatch.lookup; install alone leaves no live cells.
     let mut vm = VirtualMachine::new();
     let install = Chunk::Bytecode(BytecodeChunk {
         code: vec![
@@ -159,26 +159,50 @@ fn test_handle_allocates_one_cell_per_install() {
         param_count: 0, string_constants: Vec::new(),
     });
     let _ = vm.run(&install);
-    assert_eq!(vm.heap_live_count(), 1,
-        "Handle must allocate exactly one continuation cell");
+    assert_eq!(vm.heap_live_count(), 0,
+        "Handle defers cell allocation to dispatch; no cell at install time");
 }
 
 #[test]
-fn test_double_resume_traps_after_single_shot() {
-    // After first Resume frees the cell, re-entry hits an empty handler stack → trap.
+fn test_dispatch_lookup_allocates_one_cell() {
+    // dispatch.lookup (not Handle) is the point at which exactly one continuation cell is allocated.
+    let lookup_port = Value::from_int(
+        (polka::DISPATCH_ID as i64) << 8 | polka::DISPATCH_PORT_LOOKUP as i64
+    );
+    let mut vm = VirtualMachine::new();
+    let chunk = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),        // r(0) = 0  (lookup key)
+            OpCode::PushConst(r(2), 1),        // r(2) = dispatch.lookup port
+            OpCode::Handle(r(3), r(1), 0),     // push handler frame (r(1) uninit → no table)
+            OpCode::Deo(r(0), r(2)),           // dispatch.lookup → alloc 1 cell
+            OpCode::Ret(r(0)),
+        ],
+        constants: vec![Value::from_int(0), lookup_port],
+        reg_count: 256,
+        param_count: 0, string_constants: Vec::new(),
+    });
+    let _ = vm.run(&chunk);
+    assert_eq!(vm.heap_live_count(), 1,
+        "dispatch.lookup must allocate exactly one continuation cell");
+}
+
+#[test]
+fn test_resume_on_uninitialized_handler_traps() {
+    // Resume before any dispatch.lookup → cell_slot is still the dummy 0 → trap.
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
             OpCode::Handle(r(3), r(1), 0),
-            OpCode::Resume(r(0)),
+            OpCode::Resume(r(3), r(0)),
             OpCode::Ret(r(3)),
         ],
         vec![Value::from_int(99)],
     );
-    assert!(result.is_err(), "second resume must trap, got {:?}", result);
+    assert!(result.is_err(), "resume on uninitialized handler must trap, got {:?}", result);
     let err = result.unwrap_err();
-    assert!(err.contains("Resume") || err.contains("resume"),
-            "expected resume-related error, got: {}", err);
+    assert!(err.contains("invalid slot") || err.contains("slot 0"),
+            "expected invalid-slot error, got: {}", err);
 }
 
 //  Call whose `dest` is outside the caller's reg_count must trap.
@@ -201,7 +225,7 @@ fn test_resume_without_handler_traps() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
-            OpCode::Resume(r(0)),
+            OpCode::Resume(r(1), r(0)),
             OpCode::Ret(r(0)),
         ],
         vec![Value::from_int(7)],

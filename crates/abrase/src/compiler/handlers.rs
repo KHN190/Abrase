@@ -14,8 +14,11 @@ pub struct HandleLowering {
     pub op_ids: HashMap<(String, String), u8>,
     pub effect_op_counts: HashMap<String, u8>,
     pub arm_to_handle: HashMap<String, Span>,
+    pub arm_resume_counts: HashMap<String, usize>,
+    pub errors: Vec<String>,
     next_id: usize,
     handle_stack: Vec<HashMap<(String, String), String>>,
+    pub debug_sink: Option<crate::compiler::debug::CompileDebugSink>,
 }
 
 impl HandleLowering {
@@ -31,16 +34,30 @@ impl HandleLowering {
             op_ids: HashMap::new(),
             effect_op_counts: HashMap::new(),
             arm_to_handle: HashMap::new(),
+            arm_resume_counts: HashMap::new(),
+            errors: Vec::new(),
             next_id: 0,
             handle_stack: Vec::new(),
+            debug_sink: None,
         }
+    }
+
+    pub fn with_debug_sink(mut self, sink: crate::compiler::debug::CompileDebugSink) -> Self {
+        self.debug_sink = Some(sink);
+        self
     }
 
     pub fn lower(&mut self, ast: &[Decl]) {
         let mut op_sigs: HashMap<(String, String), FnSignature> = HashMap::new();
         let mut next_eff: u16 = 1;
+        if let Some(sink) = &mut self.debug_sink {
+            sink(&format!("[lower] processing {} declarations", ast.len()));
+        }
         for decl in ast {
             if let Decl::Effect { name, ops, .. } = decl {
+                if let Some(sink) = &mut self.debug_sink {
+                    sink(&format!("[lower] found Effect '{}' with {} ops", name, ops.len()));
+                }
                 if !self.effect_ids.contains_key(name) {
                     self.effect_ids.insert(name.clone(), next_eff);
                     next_eff += 1;
@@ -50,6 +67,9 @@ impl HandleLowering {
                     self.op_ids.insert((name.clone(), op.name.clone()), i as u8);
                 }
                 self.effect_op_counts.insert(name.clone(), ops.len() as u8);
+                if let Some(sink) = &mut self.debug_sink {
+                    sink(&format!("[lower] effect_op_counts[{}] = {}", name, ops.len()));
+                }
             }
         }
 
@@ -185,6 +205,10 @@ impl HandleLowering {
                 HandleArmKind::Return => {
                     let fn_name = format!("__handle_return_{}", self.next_id);
                     self.next_id += 1;
+                    let resume_count = self.count_resumes_in_expr(&arm.body);
+                    if resume_count > 1 {
+                        self.errors.push("Multiple resume calls in one handler arm not yet implemented".to_string());
+                    }
                     let (params, body) = self.build_arm_fn(
                         &fn_name,
                         handle_span,
@@ -193,6 +217,7 @@ impl HandleLowering {
                         &arm.body,
                         scope,
                     );
+                    self.arm_resume_counts.insert(fn_name.clone(), resume_count);
                     self.synthetic_fns.push(FnDecl {
                         attrs: vec![],
                         is_pub: false,
@@ -223,6 +248,10 @@ impl HandleLowering {
                             _ => None,
                         })
                     });
+                    let resume_count = self.count_resumes_in_expr(&arm.body);
+                    if resume_count > 1 {
+                        self.errors.push("Multi-shot resume (multiple resume calls in one handler arm) not yet implemented".to_string());
+                    }
                     let (params, body) = self.build_arm_fn(
                         &fn_name,
                         handle_span,
@@ -231,6 +260,7 @@ impl HandleLowering {
                         &arm.body,
                         scope,
                     );
+                    self.arm_resume_counts.insert(fn_name.clone(), resume_count);
                     self.synthetic_fns.push(FnDecl {
                         attrs: vec![],
                         is_pub: false,
@@ -321,6 +351,83 @@ impl HandleLowering {
         };
         (params, body)
     }
+
+    fn count_resumes_in_expr(&self, expr: &Spanned<Expr>) -> usize {
+        match &expr.node {
+            Expr::Resume(_) => 1,
+            Expr::Binary { left, right, .. } => {
+                self.count_resumes_in_expr(left) + self.count_resumes_in_expr(right)
+            }
+            Expr::Unary { right, .. } => self.count_resumes_in_expr(right),
+            Expr::Call { callee, args } => {
+                self.count_resumes_in_expr(callee) + args.iter().map(|a| self.count_resumes_in_expr(a)).sum::<usize>()
+            }
+            Expr::Index { base, index } => {
+                self.count_resumes_in_expr(base) + self.count_resumes_in_expr(index)
+            }
+            Expr::Block(b) => {
+                b.stmts.iter().map(|s| self.count_resumes_in_stmt(s)).sum::<usize>() +
+                b.ret.as_ref().map(|r| self.count_resumes_in_expr(r)).unwrap_or(0)
+            }
+            Expr::If { condition, consequence, alternative } => {
+                self.count_resumes_in_expr(condition) +
+                self.count_resumes_in_expr(consequence) +
+                alternative.as_ref().map(|a| self.count_resumes_in_expr(a)).unwrap_or(0)
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.count_resumes_in_expr(scrutinee) +
+                arms.iter().map(|a| self.count_resumes_in_expr(&a.body)).sum::<usize>()
+            }
+            Expr::For { iter, body, .. } => {
+                self.count_resumes_in_expr(iter) +
+                body.stmts.iter().map(|s| self.count_resumes_in_stmt(s)).sum::<usize>() +
+                body.ret.as_ref().map(|r| self.count_resumes_in_expr(r)).unwrap_or(0)
+            }
+            Expr::While { condition, body } => {
+                self.count_resumes_in_expr(condition) +
+                body.stmts.iter().map(|s| self.count_resumes_in_stmt(s)).sum::<usize>() +
+                body.ret.as_ref().map(|r| self.count_resumes_in_expr(r)).unwrap_or(0)
+            }
+            Expr::Loop { body } => {
+                body.stmts.iter().map(|s| self.count_resumes_in_stmt(s)).sum::<usize>() +
+                body.ret.as_ref().map(|r| self.count_resumes_in_expr(r)).unwrap_or(0)
+            }
+            Expr::Break(Some(e)) => self.count_resumes_in_expr(e),
+            Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) => self.count_resumes_in_expr(e),
+            Expr::Tuple(elems) | Expr::Array(elems) => {
+                elems.iter().map(|e| self.count_resumes_in_expr(e)).sum::<usize>()
+            }
+            Expr::ArrayRepeat { elem, count } => {
+                self.count_resumes_in_expr(elem) + self.count_resumes_in_expr(count)
+            }
+            Expr::Variant { args, .. } => {
+                args.iter().map(|a| self.count_resumes_in_expr(a)).sum::<usize>()
+            }
+            Expr::FieldAccess { base, .. } => self.count_resumes_in_expr(base),
+            Expr::Closure { body, .. } => self.count_resumes_in_expr(body),
+            Expr::Range { start, end, .. } => {
+                start.as_ref().map(|s| self.count_resumes_in_expr(s)).unwrap_or(0) +
+                end.as_ref().map(|e| self.count_resumes_in_expr(e)).unwrap_or(0)
+            }
+            Expr::Region { body, .. } => {
+                body.stmts.iter().map(|s| self.count_resumes_in_stmt(s)).sum::<usize>() +
+                body.ret.as_ref().map(|r| self.count_resumes_in_expr(r)).unwrap_or(0)
+            }
+            Expr::Handle { expr, arms } => {
+                self.count_resumes_in_expr(expr) +
+                arms.iter().map(|a| self.count_resumes_in_expr(&a.body)).sum::<usize>()
+            }
+            _ => 0,
+        }
+    }
+
+    fn count_resumes_in_stmt(&self, stmt: &Spanned<Stmt>) -> usize {
+        match &stmt.node {
+            Stmt::Let { value, .. } => self.count_resumes_in_expr(value),
+            Stmt::Expr(e) => self.count_resumes_in_expr(e),
+            Stmt::Empty => 0,
+        }
+    }
 }
 
 struct ScopeStack {
@@ -349,6 +456,181 @@ impl ScopeStack {
             if let Some(t) = scope.get(name) { return Some(t.clone()); }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::Parser;
+    use crate::lexer::Lexer;
+
+    fn parse(source: &str) -> Vec<Decl> {
+        let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
+        let ast = parser.parse_program();
+        assert!(parser.errors.is_empty(), "parse errors: {}", parser.pretty_print_errors());
+        ast
+    }
+
+    #[test]
+    fn test_effect_call_in_work_function() {
+        let source = r#"
+effect E { op f() -> Int }
+fn work() -> <E> Int { E.f() }
+fn main() -> Int {
+  handle work() {
+    E.f => { resume(10) }
+    return v => v
+  }
+}
+"#;
+        let ast = parse(source);
+        let mut lowering = HandleLowering::new();
+        lowering.lower(&ast);
+
+        assert!(
+            lowering.effect_op_to_arm.contains_key(&("E".to_string(), "f".to_string())),
+            "E.f should be in effect_op_to_arm"
+        );
+        assert!(
+            !lowering.synthetic_fns.is_empty(),
+            "synthetic_fns should not be empty after lowering"
+        );
+    }
+
+    #[test]
+    fn test_multishot_resume_count() {
+        let source = r#"
+effect E { op f() -> Int }
+fn work() -> <E> Int { E.f() }
+fn main() -> Int {
+  handle work() {
+    E.f => { let a = resume(10); let b = resume(20); a + b }
+    return v => v
+  }
+}
+"#;
+        let ast = parse(source);
+        let mut lowering = HandleLowering::new();
+        lowering.lower(&ast);
+
+        let handler_arm = lowering
+            .synthetic_fns
+            .iter()
+            .find(|f| f.name.starts_with("__handle_op_E_f"))
+            .expect("handler arm should exist");
+
+        let resume_count = lowering
+            .arm_resume_counts
+            .get(&handler_arm.name)
+            .copied()
+            .unwrap_or(0);
+
+        assert_eq!(
+            resume_count, 2,
+            "handler arm should have 2 resume calls, got {}",
+            resume_count
+        );
+    }
+
+    #[test]
+    fn test_single_shot_resume_count() {
+        let source = r#"
+effect E { op f() -> Int }
+fn work() -> <E> Int { E.f() }
+fn main() -> Int {
+  handle work() {
+    E.f => { resume(10) }
+    return v => v
+  }
+}
+"#;
+        let ast = parse(source);
+        let mut lowering = HandleLowering::new();
+        lowering.lower(&ast);
+
+        let handler_arm = lowering
+            .synthetic_fns
+            .iter()
+            .find(|f| f.name.starts_with("__handle_op_E_f"))
+            .expect("handler arm should exist");
+
+        let resume_count = lowering
+            .arm_resume_counts
+            .get(&handler_arm.name)
+            .copied()
+            .unwrap_or(0);
+
+        assert_eq!(
+            resume_count, 1,
+            "handler arm should have 1 resume call, got {}",
+            resume_count
+        );
+    }
+
+    #[test]
+    fn test_effect_op_counts_populated() {
+        let source = r#"
+effect E { op f() -> Int }
+fn work() -> <E> Int { E.f() }
+fn main() -> Int {
+  handle work() {
+    E.f => { resume(10) }
+    return v => v
+  }
+}
+"#;
+        let ast = parse(source);
+        let mut lowering = HandleLowering::new();
+        lowering.lower(&ast);
+
+        eprintln!("[TEST] effect_op_counts: {:?}", lowering.effect_op_counts);
+        assert!(
+            lowering.effect_op_counts.contains_key("E"),
+            "E should be in effect_op_counts"
+        );
+        let count = lowering.effect_op_counts.get("E").copied().unwrap_or(0);
+        assert_eq!(count, 1, "E should have 1 op, got {}", count);
+    }
+
+    #[test]
+    fn test_work_function_call_chain() {
+        let source = r#"
+effect E { op f() -> Int }
+fn work() -> <E> Int { E.f() }
+fn main() -> Int {
+  handle work() {
+    E.f => { resume(10) }
+    return v => v
+  }
+}
+"#;
+        let ast = parse(source);
+        let mut lowering = HandleLowering::new();
+        lowering.lower(&ast);
+
+        // work function should be preserved in synthetic_fns (as a user fn, not synthetic)
+        // So it should NOT be in synthetic_fns, but it should exist in the original AST
+        let found_work_in_synthetic = lowering
+            .synthetic_fns
+            .iter()
+            .any(|f| f.name == "work");
+
+        assert!(
+            !found_work_in_synthetic,
+            "work() should NOT be in synthetic_fns (it's user-defined)"
+        );
+
+        // Verify synthetic arms were created
+        let found_handler_arm = lowering
+            .synthetic_fns
+            .iter()
+            .any(|f| f.name.starts_with("__handle_op_E_f"));
+
+        assert!(
+            found_handler_arm,
+            "synthetic handler arm for E.f should exist"
+        );
     }
 }
 
