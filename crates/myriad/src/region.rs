@@ -41,4 +41,16 @@ impl RegionTable {
     pub fn clear(&mut self) {
         self.stack.clear();
     }
+
+    // Remove a (slot, generation) from every active region. Used by
+    // break/return/throw codegen to "promote" the carried value past the
+    // upcoming region pops so its heap cell isn't force-freed. A handle can
+    // only have been recorded in one region (the topmost at alloc time), but
+    // walking the whole stack is cheap and removes the need for codegen to
+    // know which depth it lived in.
+    pub fn forget(&mut self, slot: u32, generation: u32) {
+        for region in &mut self.stack {
+            region.retain(|(s, g)| !(*s == slot && *g == generation));
+        }
+    }
 }

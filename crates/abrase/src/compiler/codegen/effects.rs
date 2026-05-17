@@ -15,8 +15,11 @@ impl Compiler {
         }
         let err_val = self.compile_expr(inner)?;
         let wrapped = self.wrap_err(err_val)?;
-        // Throw unwinds the function like return — pop every enclosing loop's
-        // per-iteration region.
+        // Canonical abnormal-exit order: forget_typed → drops → pops → Ret.
+        // wrap_err produces a Result<_, E> variant; single-level forget on
+        // Named types is the policy (see emit_region_forget_typed).
+        self.emit_region_forget(wrapped)?;
+        self.emit_drops_to_exit_fn(Some(wrapped))?;
         self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(wrapped));
         Ok(wrapped)
@@ -39,7 +42,10 @@ impl Compiler {
         self.emit(OpCode::Eq(is_err, tag, err_tag));
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(is_err, 0));
-        // Err path returns out of the function — pop every enclosing loop region.
+        // Err path: same shape as throw — forget the wrapped value, drop
+        // every binder above fn baseline, pop every region, Ret.
+        self.emit_region_forget(res)?;
+        self.emit_drops_to_exit_fn(Some(res))?;
         self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(res));
         let after = self.code.len();
@@ -53,7 +59,11 @@ impl Compiler {
         &mut self,
         arg: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<Register, String> {
-        // Tail-position only for now: `resume(v)` becomes `Ret(v)`.
+        // Tail-position only for now: `resume(v)` becomes `Ret(v)` out of
+        // the synthesised handler-arm fn. Same canonical exit order as
+        // return/throw — forget_typed → drops → pops → Ret — so per-stmt
+        // regions and move-binders inside the arm body get cleaned.
+        let inferred_ty = arg.and_then(|e| self.infer_expr_type(e));
         let reg = if let Some(e) = arg {
             self.compile_expr(e)?
         } else {
@@ -62,6 +72,13 @@ impl Compiler {
             self.emit(OpCode::PushConst(r, idx));
             r
         };
+        if let Some(ty) = &inferred_ty {
+            self.emit_region_forget_typed(reg, ty)?;
+        } else {
+            self.emit_region_forget(reg)?;
+        }
+        self.emit_drops_to_exit_fn(Some(reg))?;
+        self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(reg));
         Ok(reg)
     }

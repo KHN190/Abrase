@@ -106,7 +106,7 @@ impl Heap {
             if let Some((s, g)) = v.as_handle() {
                 self.rc_dec(s, g, pool)?;
             } else if let Some(box_idx) = v.as_box() {
-                pool.dec(box_idx);
+                pool.dec_cascade(box_idx, self);
             }
         }
         Ok(true)
@@ -128,7 +128,7 @@ impl Heap {
                     debug_assert!(false, "force_free cascade rc_dec failed: {}", e);
                 }
             } else if let Some(box_idx) = v.as_box() {
-                pool.dec(box_idx);
+                pool.dec_cascade(box_idx, self);
             }
         }
         Ok(())
@@ -136,5 +136,16 @@ impl Heap {
 
     pub fn live_count(&self) -> usize {
         self.cells.iter().filter(|c| c.is_some()).count()
+    }
+
+    // Drop every slot and bookkeeping vector — used by run_module_inner at
+    // entry so consecutive runs start from a clean heap regardless of
+    // whatever state the previous run left behind.
+    pub fn clear(&mut self) {
+        self.cells.clear();
+        self.rc.clear();
+        self.generation.clear();
+        self.free_list.clear();
+        self.bytes_used = 0;
     }
 }

@@ -19,10 +19,15 @@ fn expect_typeck_ok(src: &str) {
     }
 }
 
-// === Rejected: borrow of a loop-body-local escaping via break ===
+// === Accepted: `&primitive_local` escaping a loop is safe ===
+//
+// The Ref cell stores a snapshot of the bits (an i48 Int, in these cases).
+// Codegen emits region_forget on the break/return value before the region
+// pops, so the cell itself survives the unwind. No dangling — the bits in
+// the cell don't reach back into the region.
 
 #[test]
-fn loop_break_with_inner_ref_rejected() {
+fn loop_break_with_inner_int_ref_permitted() {
     let src = r#"
         fn main() -> &Int {
             loop {
@@ -31,11 +36,11 @@ fn loop_break_with_inner_ref_rejected() {
             }
         }
     "#;
-    expect_escape_err(src);
+    expect_typeck_ok(src);
 }
 
 #[test]
-fn for_break_with_inner_ref_rejected() {
+fn for_break_with_inner_int_ref_permitted() {
     let src = r#"
         fn main() -> Int {
             for i in 0..1 {
@@ -45,11 +50,11 @@ fn for_break_with_inner_ref_rejected() {
             0
         }
     "#;
-    expect_escape_err(src);
+    expect_typeck_ok(src);
 }
 
 #[test]
-fn while_break_with_inner_ref_rejected() {
+fn while_break_with_inner_int_ref_permitted() {
     let src = r#"
         fn main() -> Int {
             while true {
@@ -59,7 +64,7 @@ fn while_break_with_inner_ref_rejected() {
             0
         }
     "#;
-    expect_escape_err(src);
+    expect_typeck_ok(src);
 }
 
 // === Rejected: ref-typed binding declared inside the loop ===

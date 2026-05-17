@@ -59,10 +59,20 @@ impl Compiler {
                 self.compile_range(start.as_deref(), end.as_deref(), *inclusive)
             }
             ast::Expr::Region { body, .. } => {
+                // User-written `region { ... body }`. Body's value may be a
+                // heap handle alloc'd inside; promote it past pop via
+                // typed forget so the cell survives (same shape as break/
+                // return carrying a value).
+                let body_ty = body.ret.as_ref().and_then(|e| self.infer_expr_type(e));
                 self.emit_region_push()?;
-                let result = self.compile_block(body);
+                let result = self.compile_block(body)?;
+                if let Some(ty) = &body_ty {
+                    self.emit_region_forget_typed(result, ty)?;
+                } else {
+                    self.emit_region_forget(result)?;
+                }
                 self.emit_region_pop()?;
-                result
+                Ok(result)
             }
         }
     }
@@ -100,12 +110,18 @@ impl Compiler {
                             self.closure_by_var.insert(name.clone(), info);
                         }
                     }
+                    if let Some(top) = self.block_locals_stack.last_mut() {
+                        top.push(bound_reg);
+                    }
                     Ok(())
                 } else {
                     Err("Only simple bindings supported".to_string())
                 }
             }
             ast::Stmt::Expr(expr) => {
+                // every allocation it performs should be reclaimed at the
+                // statement boundary.
+                self.emit_region_push()?;
                 let reg = self.compile_expr(expr)?;
                 let needs_drop = self.infer_expr_type(expr)
                     .as_ref()
@@ -114,6 +130,7 @@ impl Compiler {
                 if needs_drop {
                     self.emit(OpCode::Drop(reg));
                 }
+                self.emit_region_pop()?;
                 Ok(())
             }
             ast::Stmt::Empty => Ok(()),
@@ -125,6 +142,7 @@ impl Compiler {
         block: &ast::Block,
     ) -> Result<Register, String> {
         let pre_bindings: std::collections::HashSet<String> = self.var_to_reg.keys().cloned().collect();
+        self.block_locals_stack.push(Vec::new());
         for stmt in &block.stmts {
             self.compile_stmt(stmt)?;
         }
@@ -136,16 +154,15 @@ impl Compiler {
             self.emit(OpCode::PushConst(reg, idx));
             reg
         };
+        // Drop every binder in this layer except the result.
+        self.emit_drops_for_exit(1, Some(result))?;
+        self.block_locals_stack.pop();
+        // Drop the entries that were created inside this block.
         let new_bindings: Vec<String> = self.var_to_reg.keys()
             .filter(|k| !pre_bindings.contains(*k))
             .cloned()
             .collect();
         for name in &new_bindings {
-            if let (Some(reg), Some(ty)) = (self.var_to_reg.get(name).copied(), self.var_types.get(name)) {
-                if is_move_type(ty) && reg != result {
-                    self.emit(OpCode::Drop(reg));
-                }
-            }
             self.var_to_reg.remove(name);
             self.var_types.remove(name);
         }

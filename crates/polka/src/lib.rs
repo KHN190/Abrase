@@ -12,6 +12,8 @@ pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
 pub const REGION_ID: u8 = 0xE1;
 pub const REGION_PORT_PUSH: u8 = 0x00;
 pub const REGION_PORT_POP: u8 = 0x01;
+// Used by break/return/throw to remove ref from region record list.
+pub const REGION_PORT_FORGET: u8 = 0x02;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Register(pub u8);
@@ -89,8 +91,7 @@ pub struct BytecodeChunk {
 }
 
 // Declaration of a native (host-implemented) function slot in the module's
-// function table. The function body itself lives in the runtime — polka only
-// records the name and arity so the wire format stays pure data.
+// function table. The function body itself lives in the runtime.
 #[derive(Clone, Debug)]
 pub struct NativeChunk {
     pub name: String,

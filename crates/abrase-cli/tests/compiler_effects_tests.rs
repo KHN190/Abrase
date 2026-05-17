@@ -46,14 +46,16 @@ fn effect_op_call_reroutes_to_arm() {
 }
 
 #[test]
-fn arm_body_can_short_circuit_without_resume() {
+fn arm_body_resumes_with_constant() {
+    // typeck rejects bare-value arm bodies (must-resume rule); make the
+    // resume explicit. Semantically identical under the current lowering.
     let src = r#"
         effect provider { fn give() -> Int }
         fn produce() -> <provider> Int { provider.give() * 10 }
         fn main() -> Int {
             handle produce() {
                 return v => v,
-                provider.give => 5
+                provider.give => resume(5)
             }
         }
     "#;

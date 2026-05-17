@@ -140,7 +140,7 @@ impl fmt::Debug for Value {
         if let Some(b) = self.as_bool()  { return write!(f, "Bool({})", b); }
         if let Some(c) = self.as_char()  { return write!(f, "Char({:?})", c); }
         if self.is_unit() { return write!(f, "Unit"); }
-        if let Some((s, g)) = self.as_handle() { return write!(f, "Handle({},{})", s, g); }
+        if let Some((s, g)) = self.as_handle() { return write!(f, "Ref({},{})", s, g); }
         if let Some(i) = self.as_box() { return write!(f, "Box({})", i); }
         write!(f, "Value({:#x})", self.0)
     }

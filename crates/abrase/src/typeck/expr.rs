@@ -1162,6 +1162,17 @@ impl Checker {
                     let arm_ty = self.infer_expr(&arm.body);
                     arm_types.push(arm_ty);
 
+                    if matches!(arm.kind, ast::HandleArmKind::Effect(_))
+                        && !Self::arm_resumes_or_diverges(&arm.body)
+                    {
+                        self.report_error(
+                            "effect handler arm must call `resume`/`return`/`throw` \
+                             on every path; missing leaks the captured continuation"
+                                .into(),
+                            arm.body.span,
+                        );
+                    }
+
                     if is_non_return {
                         self.pop_region();
                         self.in_handler_arm = saved_in_arm;
@@ -1235,6 +1246,13 @@ impl Checker {
     // borrow would dangle past `barrier_depth`. `break` uses the innermost
     // loop's depth; `return`/`throw` use the outermost loop's depth (they
     // unwind every enclosing loop on the way out of the function).
+    //
+    // The Ref cell itself is region_forgotten on break/return (see codegen),
+    // so cells survive the pop. What matters is whether the bits stored in
+    // the cell would dangle: a snapshot of a primitive is safe forever; a
+    // snapshot of a heap handle is stale once the pointee's cell is force-
+    // freed by the region pop. So we only reject when the borrowed root is
+    // heap-typed AND inside the region barrier.
     fn check_escape_past(
         &self,
         val: &ast::Spanned<ast::Expr>,
@@ -1254,7 +1272,9 @@ impl Checker {
         };
         for scope in self.scopes.iter().rev() {
             if let Some(meta) = scope.vars.get(&root) {
-                if meta.bound_at_region_depth >= barrier_depth {
+                if meta.bound_at_region_depth >= barrier_depth
+                    && is_heap_typed(&meta.ty)
+                {
                     return Some((root, val.span));
                 }
                 return None;
@@ -1287,6 +1307,81 @@ impl Checker {
             ast::Expr::FieldAccess { base, .. } => Self::root_ident(base),
             ast::Expr::Index { base, .. } => Self::root_ident(base),
             _ => None,
+        }
+    }
+}
+
+// True when a value of `ty` carries a heap reference internally — i.e.,
+// when a Ref-snapshot of it would contain a handle that goes stale after
+// region_pop force-frees the underlying cell. Primitives (Int/Float/Bool/
+// Char/Unit/Never) hold their bits inline, so &them is safe to escape.
+fn is_heap_typed(ty: &Type) -> bool {
+    match ty {
+        Type::Int | Type::Float | Type::Bool | Type::Char
+        | Type::Unit | Type::Never => false,
+        // Reference itself is an 8-byte handle, but the cell it points to
+        // may live in the same region as the borrow — conservatively heap.
+        _ => true,
+    }
+}
+
+impl Checker {
+    // ↑ helper above; reopen impl for the divergence-analysis methods below.
+
+    // Returns true when evaluating `expr` definitely encounters a `resume`,
+    // `return`, or `throw` on every control-flow path. Operand-evaluating
+    // forms (Binary, Unary, Call, …) propagate divergence from any operand:
+    // once an operand resumes/returns, surrounding operators never run, so
+    // patterns like `v + resume(())` qualify. Branching forms (If, Match)
+    // need every arm to diverge.
+    fn arm_resumes_or_diverges(expr: &ast::Spanned<ast::Expr>) -> bool {
+        match &expr.node {
+            ast::Expr::Resume(_)
+            | ast::Expr::Return(_)
+            | ast::Expr::Throw(_) => true,
+            ast::Expr::Block(b) => {
+                let stmt_diverges = b.stmts.iter().any(|s| match &s.node {
+                    ast::Stmt::Expr(e) => Self::arm_resumes_or_diverges(e),
+                    ast::Stmt::Let { value, .. } => Self::arm_resumes_or_diverges(value),
+                    ast::Stmt::Empty => false,
+                });
+                if stmt_diverges { return true; }
+                match &b.ret {
+                    Some(tail) => Self::arm_resumes_or_diverges(tail),
+                    None => false,
+                }
+            }
+            ast::Expr::If { condition, consequence, alternative: Some(alt) } => {
+                Self::arm_resumes_or_diverges(condition)
+                    || (Self::arm_resumes_or_diverges(consequence)
+                        && Self::arm_resumes_or_diverges(alt))
+            }
+            ast::Expr::If { condition, alternative: None, .. } => {
+                Self::arm_resumes_or_diverges(condition)
+            }
+            ast::Expr::Match { scrutinee, arms } => {
+                if Self::arm_resumes_or_diverges(scrutinee) { return true; }
+                !arms.is_empty()
+                    && arms.iter().all(|a| Self::arm_resumes_or_diverges(&a.body))
+            }
+            ast::Expr::Binary { left, right, .. } => {
+                Self::arm_resumes_or_diverges(left)
+                    || Self::arm_resumes_or_diverges(right)
+            }
+            ast::Expr::Unary { right, .. } => Self::arm_resumes_or_diverges(right),
+            ast::Expr::Call { callee, args } => {
+                Self::arm_resumes_or_diverges(callee)
+                    || args.iter().any(|a| Self::arm_resumes_or_diverges(a))
+            }
+            ast::Expr::Index { base, index } => {
+                Self::arm_resumes_or_diverges(base)
+                    || Self::arm_resumes_or_diverges(index)
+            }
+            ast::Expr::FieldAccess { base, .. } => Self::arm_resumes_or_diverges(base),
+            ast::Expr::Tuple(items) | ast::Expr::Array(items) => {
+                items.iter().any(|e| Self::arm_resumes_or_diverges(e))
+            }
+            _ => false,
         }
     }
 }

@@ -19,7 +19,6 @@ impl Compiler {
         let result_reg = self.alloc_register()?;
 
         let cons_reg = self.compile_expr(consequence)?;
-        // Peephole only on leaf expressions; phi-joining forms can't be redirected.
         if !is_leaf_for_peephole(&consequence.node)
             || !self.try_redirect_last_dest(cons_reg, result_reg)
         {
@@ -67,6 +66,8 @@ impl Compiler {
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(cond_reg, 0));
 
+        let depth_at_entry = self.compiler_region_depth;
+        let block_depth_at_entry = self.block_locals_stack.len();
         self.emit_region_push()?;
 
         self.loop_stack.push(LoopCtx {
@@ -74,6 +75,8 @@ impl Compiler {
             continue_target: loop_top,
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
+            compiler_depth_at_entry: depth_at_entry,
+            block_depth_at_entry,
         });
 
         self.compile_block(body)?;
@@ -108,6 +111,8 @@ impl Compiler {
         // Per-iteration region: back-jump lands BEFORE the push so each iter
         // gets a fresh region. break/continue emit their own pop before Jmp.
         let loop_top = self.code.len();
+        let depth_at_entry = self.compiler_region_depth;
+        let block_depth_at_entry = self.block_locals_stack.len();
         self.emit_region_push()?;
 
         self.loop_stack.push(LoopCtx {
@@ -115,6 +120,8 @@ impl Compiler {
             continue_target: loop_top,
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
+            compiler_depth_at_entry: depth_at_entry,
+            block_depth_at_entry,
         });
 
         self.compile_block(body)?;
@@ -143,15 +150,38 @@ impl Compiler {
         if self.loop_stack.is_empty() {
             return Err("`break` outside of loop".to_string());
         }
-        if let Some(v) = value {
+        let dest = self.loop_stack.last().unwrap().result_reg;
+        let mut carried_ty: Option<ast::Type> = None;
+        let carries_value = if let Some(v) = value {
+            carried_ty = self.infer_expr_type(v);
             let r = self.compile_expr(v)?;
-            let dest = self.loop_stack.last().unwrap().result_reg;
-            self.emit(OpCode::Copy(dest, r));
+            // Move (not Copy): Copy bumps RC, leaving the temporary src reg
+            // holding the same handle with no Drop emitted for it — the cell
+            // would never reach rc=0. Move transfers ownership cleanly.
+            self.emit(OpCode::Move(dest, r));
+            true
+        } else {
+            false
+        };
+        // Canonical abnormal-exit order (see emit_region_forget_typed):
+        //   1. forget_typed    → promote carried value past region pops
+        //   2. drops_for_exit  → rc-dec block-binders being unwound
+        //   3. region_pops     → force-free anything still tracked
+        //   4. Jmp             → loop's exit
+        if carries_value {
+            if let Some(ty) = &carried_ty {
+                self.emit_region_forget_typed(dest, ty)?;
+            } else {
+                self.emit_region_forget(dest)?;
+            }
         }
-        // Pop the current iteration's region before jumping out: each iter
-        // pushes one region (see compile_loop/while/for), and break bypasses
-        // the normal end-of-iter pop.
-        self.emit_region_pop()?;
+        let ctx_compiler = self.loop_stack.last().unwrap().compiler_depth_at_entry;
+        let ctx_block = self.loop_stack.last().unwrap().block_depth_at_entry;
+        let n_blocks = self.block_locals_stack.len().saturating_sub(ctx_block);
+        let n_regions = self.compiler_region_depth.saturating_sub(ctx_compiler);
+        self.emit_drops_for_exit(n_blocks, if carries_value { Some(dest) } else { None })?;
+        self.emit_region_pops_for_exit(n_regions)?;
+
         let pidx = self.code.len();
         self.emit(OpCode::Jmp(0));
         self.loop_stack.last_mut().unwrap().break_patches.push(pidx);
@@ -166,10 +196,13 @@ impl Compiler {
         if self.loop_stack.is_empty() {
             return Err("`continue` outside of loop".to_string());
         }
-        // Pop the current iteration's region before jumping. The patch target
-        // (set by compile_loop/while/for) routes back to the loop top (which
-        // re-pushes) or to the for-increment block.
-        self.emit_region_pop()?;
+        // No carried value, no forget. Same drops + pops as break.
+        let ctx_compiler = self.loop_stack.last().unwrap().compiler_depth_at_entry;
+        let ctx_block = self.loop_stack.last().unwrap().block_depth_at_entry;
+        let n_blocks = self.block_locals_stack.len().saturating_sub(ctx_block);
+        let n_regions = self.compiler_region_depth.saturating_sub(ctx_compiler);
+        self.emit_drops_for_exit(n_blocks, None)?;
+        self.emit_region_pops_for_exit(n_regions)?;
         let pidx = self.code.len();
         self.emit(OpCode::Jmp(0));
         self.loop_stack
@@ -190,9 +223,7 @@ impl Compiler {
         iter: &ast::Spanned<ast::Expr>,
         body: &ast::Block,
     ) -> Result<Register, String> {
-        // Three forms: inline Range expr (fast path, inclusivity known at
-        // compile time), Range value (read 3-field heap cell), or any other
-        // iter type (error).
+        // inline Range expr, Range value or any other iter.
         let (start_reg, end_reg, inclusive_kind) = match &iter.node {
             ast::Expr::Range { start, end, inclusive } => {
                 let s = match start {
@@ -211,7 +242,6 @@ impl Compiler {
                 (s, e, InclusiveKind::Static(*inclusive))
             }
             _ => {
-                // Range value: 3-field heap cell {0: start, 1: end, 2: inclusive flag}.
                 let handle = self.compile_expr(iter)?;
                 let s = self.alloc_register()?;
                 self.emit(OpCode::Ld(s, handle, 0));
@@ -230,9 +260,7 @@ impl Compiler {
         let unit_idx = self.add_constant(Value::UNIT)?;
         self.emit(OpCode::PushConst(result_reg, unit_idx));
 
-        // Per-iteration region: cond check + Jz live BEFORE the push so the
-        // exit path on a false cond doesn't owe a pop. break/continue emit
-        // their own pop before Jmp.
+        // per-iter region
         let cond_addr = self.code.len();
         let cmp_reg = self.alloc_register()?;
         match inclusive_kind {
@@ -249,6 +277,8 @@ impl Compiler {
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(cmp_reg, 0));
 
+        let depth_at_entry = self.compiler_region_depth;
+        let block_depth_at_entry = self.block_locals_stack.len();
         self.emit_region_push()?;
 
         self.loop_stack.push(LoopCtx {
@@ -256,6 +286,8 @@ impl Compiler {
             continue_target: 0,
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
+            compiler_depth_at_entry: depth_at_entry,
+            block_depth_at_entry,
         });
 
         if let ast::Pattern::Bind(name) = &pattern.node {
@@ -272,9 +304,7 @@ impl Compiler {
             self.var_types.remove(name);
         }
 
-        // Normal iter end: pop, then run the increment step, then back-jump.
-        // `continue` jumps to `continue_addr` (the increment step) — it has
-        // already emitted its own pop in compile_continue.
+        // normal iter end
         self.emit_region_pop()?;
         let continue_addr = self.code.len();
 
@@ -306,6 +336,7 @@ impl Compiler {
         &mut self,
         opt_expr: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<Register, String> {
+        let inferred_ty = opt_expr.and_then(|e| self.infer_expr_type(e));
         let r = if let Some(expr) = opt_expr {
             self.compile_expr(expr)?
         } else {
@@ -315,22 +346,34 @@ impl Compiler {
             reg
         };
         let ret_reg = if self.current_fn_fallible { self.wrap_ok(r)? } else { r };
-        // Return unwinds every enclosing loop's per-iteration region. break
-        // only escapes one loop (single pop, handled in compile_break), but
-        // return jumps clear out of the function, so it must pop them all.
+        // Canonical abnormal-exit order: forget_typed → drops → pops → Ret.
+        if let Some(ty) = &inferred_ty {
+            self.emit_region_forget_typed(ret_reg, ty)?;
+        } else {
+            self.emit_region_forget(ret_reg)?;
+        }
+        self.emit_drops_to_exit_fn(Some(ret_reg))?;
         self.emit_pops_to_exit_fn()?;
         self.emit(OpCode::Ret(ret_reg));
         Ok(r)
     }
 
-    // Emit one region_pop per enclosing loop currently active in the codegen
-    // state. Used by `return` and `throw`, which leave the function and so
-    // bypass every loop's normal end-of-iter pop.
+    // Pop every compiler region above the function's entry baseline.
+    // Called by every site that emits Ret out of the current fn.
     pub(in crate::compiler) fn emit_pops_to_exit_fn(&mut self) -> Result<(), String> {
-        for _ in 0..self.loop_stack.len() {
-            self.emit_region_pop()?;
-        }
-        Ok(())
+        let n = self.compiler_region_depth.saturating_sub(self.fn_compiler_depth_baseline);
+        self.emit_region_pops_for_exit(n)
+    }
+
+    // Drop every block-binder above the function's entry block baseline.
+    // Mirrors emit_pops_to_exit_fn for the rc-dec leg of the cleanup chain.
+    pub(in crate::compiler) fn emit_drops_to_exit_fn(
+        &mut self,
+        skip: Option<Register>,
+    ) -> Result<(), String> {
+        let n_blocks = self.block_locals_stack.len()
+            .saturating_sub(self.fn_block_baseline);
+        self.emit_drops_for_exit(n_blocks, skip)
     }
 }
 
@@ -339,8 +382,7 @@ enum InclusiveKind {
     Dynamic(Register),
 }
 
-// Phi-joining forms (Match, If, Block, Handle, While) write the result reg
-// from multiple sites and can't be redirected by a single last-emit rewrite.
+// Phi-joining forms (Match, If, Block, Handle, While) 
 fn is_leaf_for_peephole(expr: &ast::Expr) -> bool {
     matches!(
         expr,

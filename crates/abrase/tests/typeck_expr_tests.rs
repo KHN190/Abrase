@@ -2656,13 +2656,15 @@ fn verify_handle_exception_arm() {
 #[test]
 fn verify_handle_custom_effect() {
     let mut checker = Checker::new();
+    // Effect arm bodies must resume on every path (must-resume check); a
+    // bare literal would leak the continuation, so use `resume(())` here.
     let expr = sp(ast::Expr::Handle {
         expr: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
         arms: vec![
             ast::HandleArm {
                 kind: ast::HandleArmKind::Effect(vec!["logger".into(), "log".into()]),
                 pattern: Some(sp(Pattern::Bind("msg".into()))),
-                body: sp(ast::Expr::Literal(ast::Literal::Unit)),
+                body: sp(ast::Expr::Resume(None)),
             },
         ],
     });

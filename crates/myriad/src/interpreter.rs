@@ -11,8 +11,7 @@ const MAX_RECURSION_DEPTH: usize = 2048;
 pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
 // VM exit_code when mem_charge cannot satisfy a request. The VM halts cleanly;
-// run_module surfaces an "out of memory" Err so the host sees it. Users cannot
-// catch this — runtime effect dispatch isn't wired yet.
+// TODO runtime effect dispatch isn't wired yet.
 pub const OOM_EXIT_CODE: i64 = 137;
 
 impl VirtualMachine {
@@ -29,13 +28,17 @@ impl VirtualMachine {
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
         validate_module_register_budget(module)?;
         self.validate_module_devices(module)?;
+        // Reset all VM state before resolve_constants
+        // Resolve intern string constants into the box_pool.
+        self.frames.clear();
+        self.handlers.clear();
+        self.region_table.clear();
+        self.heap.clear();
+        self.box_pool.clear();
         self.resolve_constants(module)?;
         self.pc = 0;
         self.base_reg = 0;
         self.current_func = module.entry;
-        self.frames.clear();
-        self.handlers.clear();
-        self.region_table.clear();
         self.halted = false;
         self.exit_code = None;
         let needed = FRAME_REGS;
@@ -51,11 +54,10 @@ impl VirtualMachine {
                 let v = self.read_abs(self.base_reg);
                 return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
             }
-            // current_func bounds are typeck-redundant: validated at module
-            // load, and do_call is the only writer (it validates fn_id first).
             debug_assert!(self.current_func < module.functions.len(),
                 "current_func {} out of bounds (functions.len {})",
                 self.current_func, module.functions.len());
+
             let bc = match unsafe { module.functions.get_unchecked(self.current_func) } {
                 Chunk::Bytecode(b) => b,
                 Chunk::Native(_) => return Err(format!(
@@ -201,6 +203,10 @@ impl VirtualMachine {
                 let v = self.read(*s)?;
                 self.value_rc_inc(&v)?;
                 let (slot, generation) = self.checked_heap_alloc(1)?;
+                // Record the enclosing region (if any), same as Alloc
+                // and Ref, so per-iter / stmt-position pops force-free the
+                // ref cell instead of leaking it.
+                self.region_record_alloc(slot, generation);
                 self.heap.st(slot, generation, 0, v)?;
                 self.write(*d, Value::from_handle(slot, generation))
             }
@@ -263,6 +269,14 @@ impl VirtualMachine {
                     return match port {
                         polka::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
                         polka::REGION_PORT_POP  => self.region_pop(),
+                        polka::REGION_PORT_FORGET => {
+                            // No-op for non-handle values: callers may emit
+                            // forget unconditionally for the break/return value.
+                            if let Some((slot, gen_)) = v.as_handle() {
+                                self.region_table.forget(slot, gen_);
+                            }
+                            Ok(())
+                        }
                         _ => Err(format!("region: unknown port {:#x}", port)),
                     };
                 }
@@ -334,6 +348,12 @@ impl VirtualMachine {
                 }
                 self.write_abs(abs, val);
                 self.heap.force_free(frame.cell_slot, frame.cell_gen, &mut self.box_pool)?;
+                // Continuation cell was region_record'd at Handle time; strip
+                // it from every active region's record list now that it's
+                // gone. force_free itself is idempotent so a later region
+                // pop wouldn't double-free, but the list would still grow
+                // by one slot/gen per Handle/Resume cycle without this.
+                self.region_table.forget(frame.cell_slot, frame.cell_gen);
                 Ok(())
             }
         }
@@ -508,7 +528,7 @@ impl VirtualMachine {
         if let Some((slot, generation)) = v.as_handle() {
             self.heap.rc_dec(slot, generation, &mut self.box_pool).map(|_| ())
         } else if let Some(idx) = v.as_box() {
-            self.box_pool.dec(idx);
+            self.box_pool.dec_cascade(idx, &mut self.heap);
             Ok(())
         } else {
             Ok(())

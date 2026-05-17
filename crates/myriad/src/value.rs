@@ -10,7 +10,7 @@ pub enum BoxedValue {
     Int(i64),
 }
 
-// Design: per-VM pool (option A). B/C (module-owned / process-shared) still on the table — revisit when cartridge serialize lands.
+// TODO: per-VM pool; module-owned; process-shared? still on the table 
 pub struct BoxPool {
     slots: Vec<Option<BoxedValue>>,
     rc: Vec<u32>,
@@ -40,8 +40,15 @@ impl BoxPool {
 
     pub fn bytes_used(&self) -> usize { self.bytes_used }
 
-    // Bytes the next intern of `b` would charge — caller checks the budget
-    // before paying.
+    pub fn clear(&mut self) {
+        self.slots.clear();
+        self.rc.clear();
+        self.bytes.clear();
+        self.free_list.clear();
+        self.bytes_used = 0;
+    }
+
+    // Bytes the next intern of `b` would charge
     pub fn pending_bytes(b: &BoxedValue) -> usize { boxed_value_bytes(b) }
 
     pub fn intern(&mut self, b: BoxedValue) -> u32 {
@@ -96,6 +103,35 @@ impl BoxPool {
         }
     }
 
+    // rc-dec a box
+    #[inline]
+    pub fn dec_cascade(&mut self, idx: u32, heap: &mut super::memory::Heap) -> bool {
+        let i = idx as usize;
+        if i >= self.rc.len() || self.rc[i] == 0 { return false; }
+        self.rc[i] -= 1;
+        if self.rc[i] != 0 { return false; }
+        let taken = self.slots[i].take();
+        self.bytes_used = self.bytes_used.saturating_sub(self.bytes[i]);
+        self.bytes[i] = 0;
+        self.free_list.push(idx);
+        if let Some(b) = taken {
+            match b {
+                BoxedValue::Closure { env_slot, env_gen, .. } => {
+                    let _ = heap.rc_dec(env_slot, env_gen, self);
+                }
+                BoxedValue::Reference(v) => {
+                    if let Some((s, g)) = v.as_handle() {
+                        let _ = heap.rc_dec(s, g, self);
+                    } else if let Some(b_idx) = v.as_box() {
+                        self.dec_cascade(b_idx, heap);
+                    }
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+
     pub fn free(&mut self, idx: u32) {
         if (idx as usize) < self.slots.len() && self.slots[idx as usize].is_some() {
             self.slots[idx as usize] = None;
@@ -113,8 +149,7 @@ impl BoxPool {
         self.slots.iter().filter(|s| s.is_some()).count()
     }
 
-    // Inline if it fits i48, otherwise intern as `BoxedValue::Int` and return a TAG_BOX.
-    // (Lives on BoxPool because polka's pure Value type cannot reference the pool.)
+    // Inline if it fits i48, otherwise intern as `BoxedValue::Int`
     #[inline]
     pub fn intern_int(&mut self, n: i64) -> Value {
         if Value::fits_i48(n) {
@@ -125,7 +160,7 @@ impl BoxPool {
         }
     }
 
-    // Read i64 from inline TAG_INT or from a boxed BoxedValue::Int (i48 overflow path).
+    // Read i64 from inline TAG_INT or from BoxedValue::Int (i48 overflow path).
     #[inline]
     pub fn read_int(&self, v: Value) -> Option<i64> {
         if let Some(n) = v.as_int() { return Some(n); }
@@ -154,7 +189,7 @@ mod tests {
     #[test]
     fn box_pool_rc_reclaims_at_zero() {
         let mut pool = BoxPool::new();
-        let idx = pool.intern(BoxedValue::String("a".into()));   // rc=1
+        let idx = pool.intern(BoxedValue::String("a".into()));    // rc=1
         pool.inc(idx).unwrap();                                   // rc=2
         assert_eq!(pool.live_count(), 1);
         assert!(!pool.dec(idx));                                  // rc=1, not freed
@@ -173,7 +208,6 @@ mod tests {
 
     #[test]
     fn box_pool_inc_rejects_overflow() {
-        // Force rc to u32::MAX then try to inc — must Err, not silently saturate.
         let mut pool = BoxPool::new();
         let idx = pool.intern(BoxedValue::String("x".into()));
         pool.rc[idx as usize] = u32::MAX;

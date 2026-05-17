@@ -27,10 +27,18 @@ fn expect_no_escape_err(src: &str) {
     );
 }
 
-// === Rejected: borrow of a loop-body-local escaping via break ===
+// === Accepted: `&primitive_local` escaping a loop is safe ===
+//
+// The Ref cell stores a snapshot of the bits (an i48 Int, in these cases).
+// Codegen emits region_forget on the break/return value before the region
+// pops, so the cell itself survives the unwind. No dangling — the bits in
+// the cell don't reach back into the region.
+//
+// These tests previously asserted rejection; that policy predates
+// region_forget. See compiler_loop_region_tests.rs for the runtime side.
 
 #[test]
-fn loop_break_with_inner_ref_rejected() {
+fn loop_break_with_inner_int_ref_permitted() {
     let src = r#"
         fn main() -> &Int {
             loop {
@@ -39,11 +47,11 @@ fn loop_break_with_inner_ref_rejected() {
             }
         }
     "#;
-    expect_escape_err(src);
+    expect_no_escape_err(src);
 }
 
 #[test]
-fn loop_return_with_inner_ref_rejected() {
+fn loop_return_with_inner_int_ref_permitted() {
     let src = r#"
         fn main() -> Int {
             loop {
@@ -53,11 +61,11 @@ fn loop_return_with_inner_ref_rejected() {
             0
         }
     "#;
-    expect_escape_err(src);
+    expect_no_escape_err(src);
 }
 
 #[test]
-fn for_break_with_inner_ref_rejected() {
+fn for_break_with_inner_int_ref_permitted() {
     let src = r#"
         fn main() -> Int {
             for i in 0..1 {
@@ -67,11 +75,11 @@ fn for_break_with_inner_ref_rejected() {
             0
         }
     "#;
-    expect_escape_err(src);
+    expect_no_escape_err(src);
 }
 
 #[test]
-fn for_return_with_inner_ref_rejected() {
+fn for_return_with_inner_int_ref_permitted() {
     let src = r#"
         fn main() -> Int {
             for i in 0..1 {
@@ -81,12 +89,11 @@ fn for_return_with_inner_ref_rejected() {
             0
         }
     "#;
-    expect_escape_err(src);
+    expect_no_escape_err(src);
 }
 
-
 #[test]
-fn while_break_with_inner_ref_rejected() {
+fn while_break_with_inner_int_ref_permitted() {
     let src = r#"
         fn main() -> Int {
             while true {
@@ -96,11 +103,11 @@ fn while_break_with_inner_ref_rejected() {
             0
         }
     "#;
-    expect_escape_err(src);
+    expect_no_escape_err(src);
 }
 
 #[test]
-fn while_return_with_inner_ref_rejected() {
+fn while_return_with_inner_int_ref_permitted() {
     let src = r#"
         fn main() -> Int {
             while true {
@@ -110,7 +117,7 @@ fn while_return_with_inner_ref_rejected() {
             0
         }
     "#;
-    expect_escape_err(src);
+    expect_no_escape_err(src);
 }
 
 // === Rejected: ref-typed binding declared inside the loop ===

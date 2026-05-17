@@ -21,6 +21,15 @@ pub struct LoopCtx {
     pub continue_target: usize,
     pub break_patches: Vec<usize>,
     pub continue_patches: Vec<usize>,
+    // Region depth recorded BEFORE the loop's own per-iter push.
+    // Used by break/continue to emit the right number of region pops when
+    // exiting through nested statement-position regions or inner loops.
+    pub compiler_depth_at_entry: usize,
+    // block_locals_stack.len() at loop entry. break/continue emit Drop for
+    // every block scope opened inside the loop body so move-typed binders
+    // (and boxed-Copy ones) get rc-dec'd before the region pops force-free
+    // anything still tracked.
+    pub block_depth_at_entry: usize,
 }
 
 #[derive(Clone)]
@@ -71,6 +80,25 @@ pub struct Compiler {
     pub(super) host_fns: HashMap<String, HostFnDecl>,
     pub(super) device_mask: [u8; 32],
     pub(super) current_span: ast::Span,
+    // Count of regions currently active inside the function being compiled.
+    // Bumped by every emit_region_push / emit_region_pop — counts user
+    // `region { ... }` blocks the same as compiler-inserted ones (loop bodies,
+    // statement-position blocks). break/continue/return/throw unwind all of
+    // them by depth diff.
+    pub(super) compiler_region_depth: usize,
+    // Compiler-region depth at function entry. return/throw emits
+    // (compiler_region_depth - fn_compiler_depth_baseline) pops before exiting.
+    pub(super) fn_compiler_depth_baseline: usize,
+    // Per-block stack of binder registers introduced by `let` bindings.
+    // ALL bindings (Move and Copy) are pushed — Drop on a non-heap Value is
+    // a no-op, but Drop on a Copy register that happens to hold a boxed Int
+    // (i48 overflow) properly rc-dec's the box. Normal block exit and every
+    // abnormal exit (break/continue/return/throw/?/resume) emit Drop for
+    // every reg in the layers being unwound, skipping the carried value.
+    pub(super) block_locals_stack: Vec<Vec<Register>>,
+    // block_locals_stack.len() at function entry. return/throw/? unwind back
+    // to this baseline.
+    pub(super) fn_block_baseline: usize,
     pub errors: Vec<Error>,
     pub source: String,
 }
@@ -107,6 +135,10 @@ impl Compiler {
             host_fns: HashMap::new(),
             device_mask: [0; 32],
             current_span: ast::Span::new(0, 0),
+            compiler_region_depth: 0,
+            fn_compiler_depth_baseline: 0,
+            block_locals_stack: Vec::new(),
+            fn_block_baseline: 0,
             errors: Vec::new(),
             source: String::new(),
         }
@@ -293,9 +325,23 @@ impl Compiler {
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
         let saved_fallible = self.current_fn_fallible;
+        let saved_compiler_region_depth = self.compiler_region_depth;
+        let saved_fn_baseline = self.fn_compiler_depth_baseline;
+        let saved_block_locals_stack = std::mem::take(&mut self.block_locals_stack);
+        let saved_fn_block_baseline = self.fn_block_baseline;
 
         self.current_fn_fallible = effects::fn_is_fallible(fn_decl);
         self.next_reg = 0;
+        // Each fn starts with a fresh region tally + block stack;
+        // return/throw unwind back to this baseline (0).
+        self.compiler_region_depth = 0;
+        self.fn_compiler_depth_baseline = 0;
+        self.fn_block_baseline = 0;
+        // Open a "params layer" on block_locals_stack so each param reg is
+        // Drop'd on natural fn exit AND on every abnormal exit. Without this,
+        // a param holding a heap handle (closure env, record, etc.) leaks
+        // because no one rc_decs it when the fn returns.
+        self.block_locals_stack.push(Vec::new());
 
         for param in &fn_decl.params {
             if let ast::Param::Named { pattern, ty } = param {
@@ -304,6 +350,9 @@ impl Compiler {
                         Ok(reg) => {
                             self.var_to_reg.insert(name.clone(), reg);
                             self.var_types.insert(name.clone(), ty.clone());
+                            if let Some(top) = self.block_locals_stack.last_mut() {
+                                top.push(reg);
+                            }
                         }
                         Err(_) => {
                             self.errors.push(Error::new(
@@ -336,6 +385,15 @@ impl Compiler {
                 } else {
                     result_reg
                 };
+                // Drop params (the layer pushed at fn entry), skipping ret.
+                // Mirrors what every abnormal exit already does via
+                // emit_drops_to_exit_fn — the natural fallthrough path must
+                // match, otherwise normal vs abnormal returns leak differently.
+                if let Err(msg) = self.emit_drops_for_exit(1, Some(ret_reg)) {
+                    self.errors.push(Error::new(ErrorCode::CodegenError, self.current_span, msg));
+                    return Err(self.errors.clone());
+                }
+                self.block_locals_stack.pop();
                 self.emit(OpCode::Ret(ret_reg));
             }
             Err(msg) => {
@@ -373,6 +431,10 @@ impl Compiler {
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
         self.current_fn_fallible = saved_fallible;
+        self.compiler_region_depth = saved_compiler_region_depth;
+        self.fn_compiler_depth_baseline = saved_fn_baseline;
+        self.block_locals_stack = saved_block_locals_stack;
+        self.fn_block_baseline = saved_fn_block_baseline;
 
         Ok(chunk)
     }

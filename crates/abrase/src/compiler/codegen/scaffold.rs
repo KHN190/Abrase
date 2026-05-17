@@ -1,5 +1,6 @@
 // Low-level codegen helpers: register allocation, opcodes, constants, jumps, result-wrapping.
 
+use crate::ast;
 use crate::bytecode::{OpCode, Register, FRAME_REGS};
 use crate::compiler::Compiler;
 use crate::compiler::effects;
@@ -84,12 +85,163 @@ impl Compiler {
         self.add_constant(Value::from_str_const(str_idx))
     }
 
+    // Region push/pop. Tracked in `compiler_region_depth` regardless of who
+    // opened the region — user-written `region { ... }` blocks count the same
+    // as compiler-inserted ones (loop bodies, statement-position blocks).
+    // break/continue/return/throw unwind ALL of them by depth diff, so
+    // `loop { region { return ... } }` properly pops the user region too.
     pub(in crate::compiler) fn emit_region_push(&mut self) -> Result<(), String> {
-        self.emit_region_marker(crate::bytecode::REGION_PORT_PUSH)
+        self.emit_region_marker(crate::bytecode::REGION_PORT_PUSH)?;
+        self.compiler_region_depth += 1;
+        Ok(())
     }
 
     pub(in crate::compiler) fn emit_region_pop(&mut self) -> Result<(), String> {
+        self.emit_region_marker(crate::bytecode::REGION_PORT_POP)?;
+        debug_assert!(self.compiler_region_depth > 0,
+            "emit_region_pop: compiler_region_depth underflow");
+        self.compiler_region_depth = self.compiler_region_depth.saturating_sub(1);
+        Ok(())
+    }
+
+    // Bare pop that doesn't lower the static depth counter. Used by
+    // emit_region_pops_for_exit when the calling control-flow form (break,
+    // return, throw, `?`) won't fall through — subsequent codegen still sees
+    // itself at the pre-exit depth.
+    fn emit_region_pop_unaccounted(&mut self) -> Result<(), String> {
         self.emit_region_marker(crate::bytecode::REGION_PORT_POP)
+    }
+
+    // Emit N region pops without changing the static depth tracker. Used by
+    // break/continue/return/throw — those instructions don't fall through, so
+    // subsequent codegen still thinks of itself at the pre-exit depth.
+    pub(in crate::compiler) fn emit_region_pops_for_exit(&mut self, n: usize) -> Result<(), String> {
+        for _ in 0..n {
+            self.emit_region_pop_unaccounted()?;
+        }
+        Ok(())
+    }
+
+    // Emit a region_forget for `reg`: if at runtime `reg` holds a heap handle,
+    // strip it from every active region's record list so the subsequent
+    // region_pop force-frees don't reclaim it. No-op for non-handle values.
+    // Call this BEFORE emit_region_pops_for_exit on any value being carried
+    // out by break/return/throw.
+    pub(in crate::compiler) fn emit_region_forget(&mut self, reg: Register) -> Result<(), String> {
+        let port_val =
+            ((crate::bytecode::REGION_ID as i64) << 8) | (crate::bytecode::REGION_PORT_FORGET as i64);
+        let port_idx = self.add_constant(Value::from_int(port_val))?;
+        let port_reg = self.alloc_register()?;
+        self.emit(OpCode::PushConst(port_reg, port_idx));
+        self.emit(OpCode::Deo(reg, port_reg));
+        Ok(())
+    }
+
+    // Walk a carried value's type structure and emit region_forget for the
+    // outer cell plus any heap handles reachable through fields. Records and
+    // tuples have known layout — load each field and recurse. Variants do
+    // a single-level forget (their tag is only known at runtime; per-case
+    // recursive forget would need a tag-switch — deferred). Closures /
+    // functions: single-level. Recursive variants (List, Tree) terminate
+    // here too — they hit MAX_DEPTH and surface a compile error rather than
+    // overflowing the host stack.
+    //
+    // ORDER INVARIANT (applies to every abnormal exit site):
+    //   1. emit_region_forget_typed(carried_reg, &carried_ty)
+    //   2. emit_drops_for_exit(blocks_to_unwind, skip = Some(carried_reg))
+    //   3. emit_region_pops_for_exit(regions_to_unwind)
+    //   4. Jmp / Ret
+    // Drops MUST come before pops: pop force-frees cells, after which the
+    // Drop's rc_dec would observe a freed slot and err.
+    pub(in crate::compiler) fn emit_region_forget_typed(
+        &mut self,
+        reg: Register,
+        ty: &ast::Type,
+    ) -> Result<(), String> {
+        self.emit_region_forget_typed_inner(reg, ty, 0)
+    }
+
+    fn emit_region_forget_typed_inner(
+        &mut self,
+        reg: Register,
+        ty: &ast::Type,
+        depth: usize,
+    ) -> Result<(), String> {
+        const MAX_DEPTH: usize = 32;
+        if depth > MAX_DEPTH {
+            return Err(format!(
+                "region_forget type recursion exceeded {} levels — \
+                 carried value is too deeply nested to escape; \
+                 bind to a let inside the region instead",
+                MAX_DEPTH
+            ));
+        }
+        match ty {
+            // Scalars: not heap, nothing to forget.
+            ast::Type::Named(n) if matches!(
+                n.as_str(),
+                "Int" | "Float" | "Bool" | "Char" | "Unit" | "Never"
+            ) => Ok(()),
+
+            // Single-level forget — handle wrapper, but inner not walked.
+            ast::Type::Reference { .. }
+            | ast::Type::Function { .. } => {
+                self.emit_region_forget(reg)
+            }
+
+            // Tuples: known offsets. Forget outer, then Ld each field, recurse.
+            ast::Type::Tuple(items) => {
+                self.emit_region_forget(reg)?;
+                for (i, t) in items.iter().enumerate() {
+                    let inner = self.alloc_register()?;
+                    let offset = u16::try_from(i)
+                        .map_err(|_| "tuple index exceeds u16".to_string())?;
+                    self.emit(OpCode::Ld(inner, reg, offset));
+                    self.emit_region_forget_typed_inner(inner, t, depth + 1)?;
+                }
+                Ok(())
+            }
+
+            // Named user types (record / variant): single-level forget for
+            // now. Per-field recursion requires keeping field TYPES (not just
+            // names) on `LayoutCtx`; deferred. The outer cell survives, but
+            // inner heap cells reachable through fields will be force-freed
+            // by region_pop. A user carrying a record-of-refs out of a
+            // region currently risks stale handles inside the record —
+            // typeck's `is_heap_typed` still rejects that path.
+            ast::Type::Named(_) => self.emit_region_forget(reg),
+
+            // Generics (Array<T>, Vec<T>, etc.): outer-only for now —
+            // per-element forget needs runtime length probing.
+            ast::Type::Generic { .. } => {
+                self.emit_region_forget(reg)
+            }
+
+            // Anything else (unknown / future): conservative single forget.
+            _ => self.emit_region_forget(reg),
+        }
+    }
+
+    // Emit OpCode::Drop for every binder reg in the top `n` block scopes,
+    // skipping `skip` if Some (the carried value being escaped). Used by
+    // every abnormal exit AND by the natural end-of-block path to keep
+    // both routes flowing the same Drops.
+    pub(in crate::compiler) fn emit_drops_for_exit(
+        &mut self,
+        n_blocks: usize,
+        skip: Option<Register>,
+    ) -> Result<(), String> {
+        let total = self.block_locals_stack.len();
+        let start = total.saturating_sub(n_blocks);
+        // iterate top n layers (start..total) WITHOUT removing them
+        for layer_idx in (start..total).rev() {
+            let regs: Vec<Register> = self.block_locals_stack[layer_idx].clone();
+            for reg in regs {
+                if Some(reg) == skip { continue; }
+                self.emit(OpCode::Drop(reg));
+            }
+        }
+        Ok(())
     }
 
     fn emit_region_marker(&mut self, port: u8) -> Result<(), String> {
