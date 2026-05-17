@@ -1,6 +1,22 @@
-// NaN-boxed Value: scalar equality and tag round-trips.
-use polka::{BytecodeChunk, Chunk, OpCode, Register};
+use polka::{BytecodeChunk, Chunk, Module, OpCode, Register};
 use myriad::{Value, VirtualMachine};
+
+fn r(n: u8) -> Register { Register(n) }
+
+fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
+    VirtualMachine::new().run(&Chunk::Bytecode(BytecodeChunk {
+        code: ops, constants, reg_count: 256, param_count: 0, string_constants: Vec::new(),
+    }))
+}
+
+fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, usize)>) -> Result<Value, String> {
+    let n = functions.len();
+    let chunks: Vec<Chunk> = functions.into_iter().map(|(code, constants, reg_count, param_count)| {
+        Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count, string_constants: Vec::new() })
+    }).collect();
+    let module = Module { functions: chunks, entry: n - 1, device_mask: [0; 32] };
+    VirtualMachine::new().run_module(&module)
+}
 
 #[test]
 fn test_value_int_eq() {
@@ -81,7 +97,6 @@ fn oom_alloc_loop_returns_err_not_panic() {
     );
 }
 
-
 // rc_dec to zero must refund the cell's bytes so subsequent allocs see room
 // again. Without the refund, repeated alloc/drop would slowly leak budget.
 #[test]
@@ -108,4 +123,168 @@ fn oom_freed_cells_refund_budget() {
     let result = VirtualMachine::new().run(&chunk);
     assert_eq!(result, Ok(Value::from_int(0)),
         "alloc/drop loop must succeed when refund works; got: {:?}", result);
+}
+
+#[test]
+fn test_handle_allocates_cell_and_resume_frees_it() {
+    // Single-shot Resume must reclaim its cell; heap net-zero at exit.
+    let mut vm = VirtualMachine::new();
+    let chunk = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),    // r0 = 99 (resume value)
+            OpCode::Handle(r(3), 0),       // install w/ dest=r3
+            OpCode::Resume(r(0)),          // pops, writes 99 → r3, frees cell
+            OpCode::Ret(r(3)),
+        ],
+        constants: vec![Value::from_int(99)],
+        reg_count: 256,
+        param_count: 0, string_constants: Vec::new(),
+    });
+    let _ = vm.run(&chunk);
+    assert_eq!(vm.heap_live_count(), 0,
+        "continuation cell should be reclaimed after single-shot resume");
+}
+
+#[test]
+fn test_handle_allocates_one_cell_per_install() {
+    // One Handle (no Resume) leaves exactly one live continuation cell.
+    let mut vm = VirtualMachine::new();
+    let install = Chunk::Bytecode(BytecodeChunk {
+        code: vec![
+            OpCode::Handle(r(7), 0),       // dest = r7
+            OpCode::Ret(r(0)),
+        ],
+        constants: vec![Value::from_int(0)],
+        reg_count: 256,
+        param_count: 0, string_constants: Vec::new(),
+    });
+    let _ = vm.run(&install);
+    assert_eq!(vm.heap_live_count(), 1,
+        "Handle must allocate exactly one continuation cell");
+}
+
+#[test]
+fn test_double_resume_traps_after_single_shot() {
+    // After first Resume frees the cell, re-entry hits an empty handler stack → trap.
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Handle(r(3), 0),
+            OpCode::Resume(r(0)),
+            OpCode::Ret(r(3)),
+        ],
+        vec![Value::from_int(99)],
+    );
+    assert!(result.is_err(), "second resume must trap, got {:?}", result);
+    let err = result.unwrap_err();
+    assert!(err.contains("Resume") || err.contains("resume"),
+            "expected resume-related error, got: {}", err);
+}
+
+//  Call whose `dest` is outside the caller's reg_count must trap.
+#[test]
+fn test_call_dest_out_of_caller_window_traps() {
+    let result = run_module_with_param_counts(vec![
+        (vec![OpCode::Ret(r(0))], vec![Value::from_int(1)], 1, 0),
+        // Caller has reg_count=2 but Call writes to r9 — out of window.
+        (vec![OpCode::Call(r(9), 0), OpCode::Ret(r(0))], vec![], 2, 0),
+    ]);
+    assert!(result.is_err(), "call with out-of-window dest must trap");
+    let err = result.unwrap_err();
+    assert!(err.contains("out of caller window") || err.contains("register window"),
+            "expected window error, got: {}", err);
+}
+
+// Drive Handle/Resume opcodes directly; codegen lowers `handle` to arm-fn Calls.
+#[test]
+fn test_resume_without_handler_traps() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Resume(r(0)),
+            OpCode::Ret(r(0)),
+        ],
+        vec![Value::from_int(7)],
+    );
+    assert!(result.is_err(), "resume without handler must trap");
+}
+
+#[test]
+fn test_rc_inc_keeps_cell_alive_until_balanced() {
+    use myriad::memory::Heap;
+    use myriad::BoxPool;
+    let mut heap = Heap::new();
+    let mut pool = BoxPool::new();
+    let (slot, g_) = heap.alloc(1);
+    heap.rc_inc(slot, g_).unwrap();
+    let freed1 = heap.rc_dec(slot, g_, &mut pool).unwrap();
+    assert!(!freed1, "still aliased; must not reclaim");
+    let freed2 = heap.rc_dec(slot, g_, &mut pool).unwrap();
+    assert!(freed2, "last alias dropped; must reclaim");
+    assert_eq!(heap.live_count(), 0);
+}
+
+#[test]
+fn test_recursive_drop_reclaims_nested_handles() {
+    use myriad::memory::Heap;
+    use myriad::BoxPool;
+    let mut heap = Heap::new();
+    let mut pool = BoxPool::new();
+    let (child, cgen) = heap.alloc(1);
+    let (parent, pgen) = heap.alloc(1);
+    heap.st(parent, pgen, 0, Value::from_handle(child, cgen)).unwrap();
+    heap.rc_dec(parent, pgen, &mut pool).unwrap();
+    assert_eq!(heap.live_count(), 0, "child must be reclaimed transitively");
+}
+
+#[test]
+fn test_drop_reclaims_heap_via_rc_dec() {
+    let mut vm = VirtualMachine::new();
+    let module = Module {
+        functions: vec![Chunk::Bytecode(BytecodeChunk {
+            code: vec![
+                OpCode::Alloc(r(0), 4),
+                OpCode::Alloc(r(1), 4),
+                OpCode::Drop(r(0)),
+                OpCode::Drop(r(1)),
+                OpCode::PushConst(r(2), 0),
+                OpCode::Ret(r(2)),
+            ],
+            constants: vec![Value::from_int(0)],
+            reg_count: 3,
+            param_count: 0, string_constants: Vec::new(),
+        })],
+        entry: 0,
+        device_mask: [0; 32],
+    };
+    let result = vm.run_module(&module);
+    assert_eq!(result, Ok(Value::from_int(0)));
+    assert_eq!(vm.heap_live_count(), 0, "all heap cells must be reclaimed");
+}
+
+#[test]
+fn test_handle_after_free_is_rejected_via_generation() {
+    let mut vm = VirtualMachine::new();
+    let module = Module {
+        functions: vec![Chunk::Bytecode(BytecodeChunk {
+            code: vec![
+                OpCode::Alloc(r(0), 1),
+                OpCode::Copy(r(1), r(0)),
+                OpCode::Drop(r(0)),
+                OpCode::Drop(r(1)),
+                OpCode::Alloc(r(2), 1),
+                OpCode::Copy(r(3), r(2)),
+                OpCode::Drop(r(2)),
+                OpCode::PushConst(r(4), 0),
+                OpCode::Ret(r(4)),
+            ],
+            constants: vec![Value::from_int(0)],
+            reg_count: 5,
+            param_count: 0, string_constants: Vec::new(),
+        })],
+        entry: 0,
+        device_mask: [0; 32],
+    };
+    let result = vm.run_module(&module);
+    assert_eq!(result, Ok(Value::from_int(0)));
 }

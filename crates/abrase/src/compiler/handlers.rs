@@ -7,8 +7,12 @@ pub struct HandleLowering {
     pub effect_op_to_arm: HashMap<(String, String), String>,
     pub op_call_to_arm: HashMap<Span, String>,
     pub return_arm_by_handle: HashMap<Span, String>,
+    pub effect_arms_by_handle: HashMap<Span, HashMap<(String, String), String>>,
     pub synthetic_fns: Vec<FnDecl>,
     pub arm_captures: HashMap<String, Vec<CaptureInfo>>,
+    pub effect_ids: HashMap<String, u16>,
+    pub op_ids: HashMap<(String, String), u8>,
+    pub effect_op_counts: HashMap<String, u8>,
     next_id: usize,
     handle_stack: Vec<HashMap<(String, String), String>>,
 }
@@ -19,8 +23,12 @@ impl HandleLowering {
             effect_op_to_arm: HashMap::new(),
             op_call_to_arm: HashMap::new(),
             return_arm_by_handle: HashMap::new(),
+            effect_arms_by_handle: HashMap::new(),
             synthetic_fns: Vec::new(),
             arm_captures: HashMap::new(),
+            effect_ids: HashMap::new(),
+            op_ids: HashMap::new(),
+            effect_op_counts: HashMap::new(),
             next_id: 0,
             handle_stack: Vec::new(),
         }
@@ -28,11 +36,18 @@ impl HandleLowering {
 
     pub fn lower(&mut self, ast: &[Decl]) {
         let mut op_sigs: HashMap<(String, String), FnSignature> = HashMap::new();
+        let mut next_eff: u16 = 1;
         for decl in ast {
             if let Decl::Effect { name, ops, .. } = decl {
-                for op in ops {
-                    op_sigs.insert((name.clone(), op.name.clone()), op.clone());
+                if !self.effect_ids.contains_key(name) {
+                    self.effect_ids.insert(name.clone(), next_eff);
+                    next_eff += 1;
                 }
+                for (i, op) in ops.iter().enumerate() {
+                    op_sigs.insert((name.clone(), op.name.clone()), op.clone());
+                    self.op_ids.insert((name.clone(), op.name.clone()), i as u8);
+                }
+                self.effect_op_counts.insert(name.clone(), ops.len() as u8);
             }
         }
 
@@ -88,6 +103,7 @@ impl HandleLowering {
         match &expr.node {
             Expr::Handle { expr: body, arms } => {
                 let local_dispatch = self.lift_arms(expr.span, arms, op_sigs, scope);
+                self.effect_arms_by_handle.insert(expr.span, local_dispatch.clone());
                 self.handle_stack.push(local_dispatch);
                 self.walk_expr(body, op_sigs, scope);
                 self.handle_stack.pop();

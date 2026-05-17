@@ -53,9 +53,11 @@ pub struct Compiler {
     pub(super) layouts: LayoutCtx,
     pub(super) pending_arg_patches: Vec<(usize, u8)>,
     pub(super) current_fn_fallible: bool,
-    // Effect-handler lowering tables built by the pre-pass.
-    // (effect_name, op_name) -> synthesised arm fn name.
+    pub(super) effect_ids: HashMap<String, u16>,
+    pub(super) op_ids: HashMap<(String, String), u8>,
+    pub(super) effect_op_counts: HashMap<String, u8>,
     pub(super) effect_op_to_arm: HashMap<(String, String), String>,
+    pub(super) effect_arms_by_handle: HashMap<ast::Span, HashMap<(String, String), String>>,
     // Per-call-site op dispatch: handle nested effects before global fallback.
     pub(super) op_call_to_arm: HashMap<ast::Span, String>,
     // Handle expression span -> synthesised return-arm fn name.
@@ -121,7 +123,11 @@ impl Compiler {
             },
             pending_arg_patches: Vec::new(),
             current_fn_fallible: false,
+            effect_ids: HashMap::new(),
+            op_ids: HashMap::new(),
+            effect_op_counts: HashMap::new(),
             effect_op_to_arm: HashMap::new(),
+            effect_arms_by_handle: HashMap::new(),
             op_call_to_arm: HashMap::new(),
             return_arm_by_handle: HashMap::new(),
             arm_captures: HashMap::new(),
@@ -250,7 +256,11 @@ impl Compiler {
         self.effect_op_to_arm = handler_lowering.effect_op_to_arm;
         self.op_call_to_arm = handler_lowering.op_call_to_arm;
         self.return_arm_by_handle = handler_lowering.return_arm_by_handle;
+        self.effect_arms_by_handle = handler_lowering.effect_arms_by_handle;
         self.arm_captures = handler_lowering.arm_captures;
+        self.effect_ids = handler_lowering.effect_ids;
+        self.op_ids = handler_lowering.op_ids;
+        self.effect_op_counts = handler_lowering.effect_op_counts;
 
         let mut fn_decls = Vec::new();
 

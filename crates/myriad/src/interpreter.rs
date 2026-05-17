@@ -10,10 +10,6 @@ const MAX_RECURSION_DEPTH: usize = 2048;
 // Hard cap on VM-managed memory (heap cells + boxed values).
 pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
-// VM exit_code when mem_charge cannot satisfy a request. The VM halts cleanly;
-// TODO runtime effect dispatch isn't wired yet.
-pub const OOM_EXIT_CODE: i64 = 137;
-
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
         let module = Module { functions: vec![chunk.clone()], entry: 0, device_mask: [0; 32] };
@@ -242,6 +238,10 @@ impl VirtualMachine {
                         .ok_or("dispatch read without prior lookup (deo to dispatch.lookup port required first)")?;
                     return self.write(*d, Value::from_int(r as i64));
                 }
+                if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_ENV {
+                    let v = self.dispatch_last_env.take().unwrap_or(Value::NONE);
+                    return self.write(*d, v);
+                }
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
                 let v = dev.read(port)?;
@@ -262,7 +262,16 @@ impl VirtualMachine {
                         Some(n) if (0..=0xFFFF).contains(&n) => n as u16,
                         _ => return Err(format!("dispatch.lookup: bad key {:?}", v)),
                     };
-                    self.dispatch_last_result = Some(self.resolve_dispatch(key));
+                    let (fn_id, env) = self.resolve_dispatch(key);
+                    self.dispatch_last_result = Some(fn_id);
+                    self.dispatch_last_env = env;
+                    return Ok(());
+                }
+                if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_POP_HANDLER {
+                    let frame = self.handlers.pop()
+                        .ok_or("dispatch.pop_handler: no active handler frame")?;
+                    let _ = self.heap.force_free(frame.cell_slot, frame.cell_gen, &mut self.box_pool);
+                    self.region_table.forget(frame.cell_slot, frame.cell_gen);
                     return Ok(());
                 }
                 if device_id == polka::REGION_ID {
@@ -284,25 +293,27 @@ impl VirtualMachine {
                     .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
                 dev.write_with_pool(port, v, &mut self.box_pool)
             }
-            OpCode::Handle(dest, fn_id) => {
-                // Heap-alloc continuation cell; `dest` is the suspended frame's result reg.
+            OpCode::Handle(r_a, imm) => {
+                let r_a_val = self.read_abs(self.abs(*r_a));
                 let (slot, generation) = self.checked_heap_alloc(super::cont_slot::SIZE)?;
-                // Region gap (3): record the cell so an enclosing region's
-                // force-free reclaims it if the handler doesn't fire resume.
                 self.region_record_alloc(slot, generation);
                 self.heap.st(slot, generation, super::cont_slot::SUSPEND_PC,
                     Value::from_int(self.pc as i64))?;
                 self.heap.st(slot, generation, super::cont_slot::SUSPEND_BASE,
                     Value::from_int(self.base_reg as i64))?;
                 self.heap.st(slot, generation, super::cont_slot::DEST_REG,
-                    Value::from_int(dest.to_usize() as i64))?;
+                    Value::from_int(r_a.to_usize() as i64))?;
                 self.heap.st(slot, generation, super::cont_slot::ALIVE,
                     Value::from_int(1))?;
+                let (table_slot, table_gen, effect_id, fallback_fn) = match r_a_val.as_handle() {
+                    Some((s, g)) => (Some(s), g, *imm, 0usize),
+                    None => (None, 0, 0u16, *imm as usize),
+                };
                 self.handlers.push(super::HandlerFrame {
-                    effect_id: 0,
-                    handler_fn: *fn_id as usize,
-                    dispatch_table_slot: None,
-                    dispatch_table_gen: 0,
+                    effect_id,
+                    handler_fn: fallback_fn,
+                    dispatch_table_slot: table_slot,
+                    dispatch_table_gen: table_gen,
                     cell_slot: slot,
                     cell_gen: generation,
                 });
@@ -348,11 +359,6 @@ impl VirtualMachine {
                 }
                 self.write_abs(abs, val);
                 self.heap.force_free(frame.cell_slot, frame.cell_gen, &mut self.box_pool)?;
-                // Continuation cell was region_record'd at Handle time; strip
-                // it from every active region's record list now that it's
-                // gone. force_free itself is idempotent so a later region
-                // pop wouldn't double-free, but the list would still grow
-                // by one slot/gen per Handle/Resume cycle without this.
                 self.region_table.forget(frame.cell_slot, frame.cell_gen);
                 Ok(())
             }
@@ -455,10 +461,6 @@ impl VirtualMachine {
         Ok(())
     }
 
-    // Frame-local r → absolute slot. Bounds are typeck-redundant: codegen
-    // never emits a register outside the frame's declared `reg_count`, and
-    // do_call resizes the vec to fit before transferring control. We keep a
-    // debug_assert! to catch codegen bugs in dev; release skips the check.
     #[inline(always)]
     fn abs(&self, r: Register) -> usize {
         let abs = self.base_reg + r.to_usize();
@@ -489,9 +491,6 @@ impl VirtualMachine {
         unsafe { std::mem::replace(self.registers.get_unchecked_mut(abs), Value::NONE) }
     }
 
-    // r → Value with an `is_none()` (use-after-move) guard. The guard is
-    // typeck-redundant in well-formed programs but is a logic check, not a
-    // bounds check — keep it in release.
     #[inline(always)]
     fn read(&self, r: Register) -> Result<Value, String> {
         let v = self.read_abs(self.abs(r));
@@ -554,18 +553,13 @@ impl VirtualMachine {
         self.heap.bytes_used().saturating_add(self.box_pool.bytes_used())
     }
 
-    // On budget overflow: clean halt + Err. No user-level recovery — runtime
-    // effect dispatch isn't wired yet, so we always take the fallback path.
     fn mem_charge(&mut self, bytes: usize) -> Result<(), String> {
         let projected = self.mem_used().saturating_add(bytes);
         if projected <= MAX_RAM { return Ok(()); }
-        let msg = format!(
+        Err(format!(
             "out of memory: requested {} bytes, {} / {} already in use",
             bytes, self.mem_used(), MAX_RAM
-        );
-        self.halted = true;
-        self.exit_code = Some(OOM_EXIT_CODE);
-        Err(msg)
+        ))
     }
 
     #[inline(always)]
@@ -681,24 +675,33 @@ impl VirtualMachine {
         Ok(())
     }
 
-    // Dispatch device 0xE0 lookup
-    fn resolve_dispatch(&self, key: u16) -> u16 {
+    fn resolve_dispatch(&self, key: u16) -> (u16, Option<Value>) {
         let effect_id = (key >> 8) as u16;
         let op_id = (key & 0xFF) as usize;
         for h in self.handlers.iter().rev() {
             if h.effect_id != effect_id { continue; }
             if let Some(slot) = h.dispatch_table_slot {
+                if let Ok(v) = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2) {
+                    if let Some(n) = v.as_int() {
+                        if (0..=0xFFFF).contains(&n) {
+                            let env = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2 + 1).ok();
+                            return (n as u16, env);
+                        }
+                    }
+                }
                 if let Ok(v) = self.heap.ld(slot, h.dispatch_table_gen, op_id) {
                     if let Some(n) = v.as_int() {
-                        if (0..=0xFFFF).contains(&n) { return n as u16; }
+                        if (0..=0xFFFF).contains(&n) {
+                            return (n as u16, None);
+                        }
                     }
                 }
             }
             if op_id == 0 && h.handler_fn <= 0xFFFF {
-                return h.handler_fn as u16;
+                return (h.handler_fn as u16, None);
             }
         }
-        polka::DISPATCH_NO_MATCH
+        (polka::DISPATCH_NO_MATCH, None)
     }
 }
 
@@ -706,14 +709,6 @@ fn is_falsy(val: &Value) -> bool {
     if let Some(b) = val.as_bool() { return !b; }
     if let Some(i) = val.as_int() { return i == 0; }
     val.is_unit()
-}
-
-#[allow(dead_code)]
-fn expect_bytecode(module: &Module, fn_id: usize) -> Result<&BytecodeChunk, String> {
-    match &module.functions[fn_id] {
-        Chunk::Bytecode(b) => Ok(b),
-        Chunk::Native(_) => Err(format!("expected bytecode chunk at fn {}, found native", fn_id)),
-    }
 }
 
 // 16-bit port = (device_id << 8) | port_offset

@@ -17,9 +17,9 @@ pub(in crate::compiler) enum CallTarget<'a> {
     HostFn { fn_id: u16 },
     VariantCtor { tag: u32 },
     UnresolvedMethod { receiver: String, field: String },
-    // Host-contract intrinsics.
     DeviceIn,
     DeviceOut,
+    EffectOpDispatch { effect_id: u16, op_id: u8 },
 }
 
 impl Compiler {
@@ -39,6 +39,9 @@ impl Compiler {
             CallTarget::Method { func_id, receiver } => self.emit_method_call(func_id, receiver, args),
             CallTarget::DeviceIn => self.emit_device_in(args),
             CallTarget::DeviceOut => self.emit_device_out(args),
+            CallTarget::EffectOpDispatch { effect_id, op_id } => {
+                self.emit_effect_op_dispatch(effect_id, op_id, args)
+            }
             CallTarget::UnresolvedMethod { receiver, field } => Err(format!(
                 "No method '{}' on type '{}' (or receiver type could not be inferred)",
                 field, receiver
@@ -114,25 +117,18 @@ impl Compiler {
     fn resolve_effect_op_call<'a>(
         &self,
         callee: &'a ast::Spanned<ast::Expr>,
-        call_span: ast::Span,
+        _call_span: ast::Span,
     ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::FieldAccess { base, field } = &callee.node else { return Ok(None) };
         let ast::Expr::Identifier(eff_name) = &base.node else { return Ok(None) };
-        let arm_name = if let Some(name) = self.op_call_to_arm.get(&call_span).cloned() {
-            name
-        } else if let Some(name) = self.effect_op_to_arm.get(&(eff_name.clone(), field.clone())).cloned() {
-            name
-        } else {
-            return Ok(None);
+        let key = (eff_name.clone(), field.clone());
+        if !self.effect_op_to_arm.contains_key(&key) { return Ok(None); }
+        let effect_id = match self.effect_ids.get(eff_name).copied() {
+            Some(id) => id,
+            None => return Ok(None),
         };
-        let func_id = *self.func_map.get(&arm_name)
-            .ok_or_else(|| format!("internal: arm '{}' missing from fn table", arm_name))?;
-        let env = match self.find_arm_env(&arm_name) {
-            Some(r) => CallEnv::Reg(r),
-            None => CallEnv::EmptyAlloc,
-        };
-        let fid = super::scaffold::to_u16(func_id, &format!("Effect arm fn_id for '{}'", arm_name))?;
-        Ok(Some(CallTarget::Function { func_id: fid, env }))
+        let op_id = self.op_ids.get(&key).copied().unwrap_or(0);
+        Ok(Some(CallTarget::EffectOpDispatch { effect_id, op_id }))
     }
 
     fn resolve_method_call<'a>(
@@ -266,6 +262,47 @@ impl Compiler {
         let port = self.compile_expr(&args[0])?;
         let dest = self.alloc_register()?;
         self.emit(OpCode::Dei(dest, port));
+        Ok(dest)
+    }
+
+    fn emit_effect_op_dispatch(
+        &mut self,
+        effect_id: u16,
+        op_id: u8,
+        args: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Register, String> {
+        let key = ((effect_id as i64) << 8) | (op_id as i64);
+        let lookup_port = ((crate::bytecode::DISPATCH_ID as i64) << 8)
+            | (crate::bytecode::DISPATCH_PORT_LOOKUP as i64);
+        let env_port = ((crate::bytecode::DISPATCH_ID as i64) << 8)
+            | (crate::bytecode::DISPATCH_PORT_ENV as i64);
+
+        let key_reg = self.alloc_register()?;
+        let key_idx = self.add_constant(Value::from_int(key))?;
+        self.emit(OpCode::PushConst(key_reg, key_idx));
+
+        let lookup_port_reg = self.alloc_register()?;
+        let lookup_port_idx = self.add_constant(Value::from_int(lookup_port))?;
+        self.emit(OpCode::PushConst(lookup_port_reg, lookup_port_idx));
+        self.emit(OpCode::Deo(key_reg, lookup_port_reg));
+
+        let fn_id_reg = self.alloc_register()?;
+        self.emit(OpCode::Dei(fn_id_reg, lookup_port_reg));
+
+        let env_port_reg = self.alloc_register()?;
+        let env_port_idx = self.add_constant(Value::from_int(env_port))?;
+        self.emit(OpCode::PushConst(env_port_reg, env_port_idx));
+        let env_reg = self.alloc_register()?;
+        self.emit(OpCode::Dei(env_reg, env_port_reg));
+
+        let mut staged: Vec<(Register, bool)> = vec![(env_reg, false)];
+        for arg in args {
+            let r = self.compile_expr(arg)?;
+            staged.push((r, self.arg_should_move(arg)));
+        }
+        self.stage_call_args(&staged)?;
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::CallReg(dest, fn_id_reg));
         Ok(dest)
     }
 

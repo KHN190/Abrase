@@ -7,6 +7,8 @@ pub const FRAME_REGS: usize = 256;
 
 pub const DISPATCH_ID: u8 = 0xE0;
 pub const DISPATCH_PORT_LOOKUP: u8 = 0x00;
+pub const DISPATCH_PORT_POP_HANDLER: u8 = 0x01;
+pub const DISPATCH_PORT_ENV: u8 = 0x02;
 pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
 
 pub const REGION_ID: u8 = 0xE1;
@@ -90,8 +92,7 @@ pub struct BytecodeChunk {
     pub param_count: usize,
 }
 
-// Declaration of a native (host-implemented) function slot in the module's
-// function table. The function body itself lives in the runtime.
+// Native (host-implemented) function slot
 #[derive(Clone, Debug)]
 pub struct NativeChunk {
     pub name: String,

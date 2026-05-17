@@ -1,0 +1,24 @@
+effect counter { fn bump(by: Int) -> Int }
+effect logger  { fn note(n: Int) -> Unit }
+
+fn worker(start: Int) -> <counter, logger> Int {
+  let a = counter.bump(start);
+  logger.note(a);
+  let b = counter.bump(1);
+  logger.note(b);
+  a + b
+}
+
+fn run_with_log() -> <counter> Int {
+  handle worker(10) {
+    return v          => v,
+    logger.note n     => resume(())
+  }
+}
+
+fn main() -> Int {
+  handle run_with_log() {
+    return v          => v,
+    counter.bump by   => resume(by + by)
+  }
+}

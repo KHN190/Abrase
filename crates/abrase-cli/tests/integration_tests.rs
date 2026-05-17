@@ -119,6 +119,13 @@ fn effect_log_runs() {
 }
 
 #[test]
+fn effect_dispatch_runs() {
+    let v = run_file("tests/scripts/effect_dispatch.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(22));
+}
+
+#[test]
 fn region_all_allowed_shapes() {
     // Exercises every currently-allowed `region { }` form: anonymous,
     // labeled, nested, empty-body, multi-Shared, sibling regions. Body

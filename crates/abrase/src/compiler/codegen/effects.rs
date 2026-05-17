@@ -94,9 +94,15 @@ impl Compiler {
         let envs = self.pack_arm_envs(&arm_names)?;
         self.arm_env_stack.push(envs);
 
+        let installed_frame = self.emit_handle_install(handle_span, arms)?;
+
         let body_reg = self.compile_expr(body)?;
         let arm_envs = self.arm_env_stack.pop()
             .ok_or_else(|| "internal: arm_env_stack underflow at compile_handle".to_string())?;
+
+        if installed_frame {
+            self.emit_handle_pop()?;
+        }
 
         let ret_arm_name = self.return_arm_by_handle.get(&handle_span).cloned()
             .ok_or_else(|| format!(
@@ -107,7 +113,6 @@ impl Compiler {
         let env_reg = arm_envs.get(&ret_arm_name).copied()
             .ok_or_else(|| format!("internal: no env packed for return arm '{}'", ret_arm_name))?;
 
-        // Call convention: (env, body_result).
         let pos = self.code.len();
         self.emit(OpCode::Copy(Register(0), env_reg));
         self.pending_arg_patches.push((pos, 0));
@@ -121,6 +126,72 @@ impl Compiler {
         Ok(dest)
     }
 
+    fn emit_handle_install(&mut self, handle_span: ast::Span, arms: &[ast::HandleArm]) -> Result<bool, String> {
+        let eff_name = arms.iter().find_map(|arm| match &arm.kind {
+            ast::HandleArmKind::Effect(path) if path.len() >= 2 => {
+                Some(path[..path.len()-1].join("."))
+            }
+            _ => None,
+        });
+        let eff = match eff_name { Some(n) => n, None => return Ok(false) };
+        let effect_id = match self.effect_ids.get(&eff).copied() {
+            Some(id) => id,
+            None => return Ok(false),
+        };
+        let op_count = self.effect_op_counts.get(&eff).copied().unwrap_or(0) as usize;
+        if op_count == 0 { return Ok(false); }
+
+        let local_arms = self.effect_arms_by_handle.get(&handle_span).cloned().unwrap_or_default();
+
+        let table_reg = self.alloc_register()?;
+        let alloc_size = super::scaffold::to_u16((op_count * 2).max(1), "Dispatch table size")?;
+        self.emit(OpCode::Alloc(table_reg, alloc_size));
+
+        let current_envs = self.arm_env_stack.last().cloned().unwrap_or_default();
+        for arm in arms {
+            if let ast::HandleArmKind::Effect(path) = &arm.kind {
+                if path.len() < 2 { continue; }
+                let op_name = path.last().cloned().unwrap();
+                let key = (eff.clone(), op_name);
+                let arm_name = match local_arms.get(&key).cloned() {
+                    Some(n) => n,
+                    None => match self.effect_op_to_arm.get(&key).cloned() {
+                        Some(n) => n,
+                        None => continue,
+                    },
+                };
+                let op_id = self.op_ids.get(&key).copied().unwrap_or(0);
+                let fn_id = *self.func_map.get(&arm_name).unwrap_or(&0);
+                let fn_id_reg = self.alloc_register()?;
+                let fn_id_idx = self.add_constant(crate::bytecode::Value::from_int(fn_id as i64))?;
+                self.emit(OpCode::PushConst(fn_id_reg, fn_id_idx));
+                let off = (op_id as u16).saturating_mul(2);
+                self.emit(OpCode::St(fn_id_reg, table_reg, off));
+                if let Some(env_reg) = current_envs.get(&arm_name).copied() {
+                    let tmp = self.alloc_register()?;
+                    self.emit(OpCode::Copy(tmp, env_reg));
+                    self.emit(OpCode::St(tmp, table_reg, off + 1));
+                }
+            }
+        }
+        let eid_u16 = effect_id;
+        self.emit(OpCode::Handle(table_reg, eid_u16));
+        Ok(true)
+    }
+
+    fn emit_handle_pop(&mut self) -> Result<(), String> {
+        let unit_reg = self.alloc_register()?;
+        let unit_idx = self.add_constant(crate::bytecode::Value::UNIT)?;
+        self.emit(OpCode::PushConst(unit_reg, unit_idx));
+        let port_reg = self.alloc_register()?;
+        let port_val = ((crate::bytecode::DISPATCH_ID as i64) << 8)
+            | (crate::bytecode::DISPATCH_PORT_POP_HANDLER as i64);
+        let port_idx = self.add_constant(crate::bytecode::Value::from_int(port_val))?;
+        self.emit(OpCode::PushConst(port_reg, port_idx));
+        self.emit(OpCode::Deo(unit_reg, port_reg));
+        Ok(())
+    }
+
     // Gather the arm fn names belonging to a particular `handle` expression
     fn collect_handle_arm_names(
         &self,
@@ -131,13 +202,17 @@ impl Compiler {
         if let Some(name) = self.return_arm_by_handle.get(&handle_span) {
             out.push(name.clone());
         }
+        let local = self.effect_arms_by_handle.get(&handle_span);
         for arm in arms {
             if let ast::HandleArmKind::Effect(path) = &arm.kind {
                 if path.len() >= 2 {
                     if let Some(op) = path.last().cloned() {
                         let eff = path[..path.len()-1].join(".");
-                        if let Some(name) = self.effect_op_to_arm.get(&(eff, op)) {
-                            out.push(name.clone());
+                        let key = (eff, op);
+                        let name = local.and_then(|m| m.get(&key).cloned())
+                            .or_else(|| self.effect_op_to_arm.get(&key).cloned());
+                        if let Some(name) = name {
+                            out.push(name);
                         }
                     }
                 }
