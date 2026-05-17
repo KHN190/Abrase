@@ -10,7 +10,7 @@ It features:
 * Effect system
 * Simplified lifecycle management
 
-We also include Myriad as a safe sandbox environment, which can later compile to native.
+We also include Myriad as a safe sandbox environment, which can later compile to native or transplanted to any platform in a few days due to simplicity design.
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
