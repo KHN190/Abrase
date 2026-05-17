@@ -62,6 +62,12 @@ pub(in crate::compiler) fn is_move_type(ty: &ast::Type) -> bool {
     matches!(rty.ownership(), Ownership::Move)
 }
 
+pub(in crate::compiler) fn is_share_type(ty: &ast::Type) -> bool {
+    use crate::ty::Ownership;
+    let rty = ast_type_to_rt(ty);
+    matches!(rty.ownership(), Ownership::Share)
+}
+
 fn ast_type_to_rt(ty: &ast::Type) -> crate::ty::Type {
     use crate::ty::Type as RTy;
     match ty {

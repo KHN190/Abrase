@@ -7,6 +7,7 @@ pub mod closures;
 pub mod effects;
 pub mod handlers;
 pub mod debug;
+pub mod liveness;
 
 use crate::ast;
 use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module};
@@ -110,6 +111,9 @@ pub struct Compiler {
     pub errors: Vec<Error>,
     pub source: String,
     pub(super) debug_sink: Option<debug::CompileDebugSink>,
+    // Remaining use counts for each variable in the current function body,
+    // populated by liveness::count_uses before compiling each function.
+    pub(super) remaining_uses: HashMap<String, usize>,
 }
 
 impl Compiler {
@@ -159,6 +163,20 @@ impl Compiler {
             errors: Vec::new(),
             source: String::new(),
             debug_sink: None,
+            remaining_uses: HashMap::new(),
+        }
+    }
+
+    /// Decrement the remaining-use counter for `name`. Returns `true` when the
+    /// count reaches zero, meaning this is the last use and Move can be emitted
+    /// instead of Copy for Share-type values.
+    pub(super) fn consume_use(&mut self, name: &str) -> bool {
+        match self.remaining_uses.get_mut(name) {
+            Some(c) if *c > 0 && *c != usize::MAX => {
+                *c -= 1;
+                *c == 0
+            }
+            _ => false,
         }
     }
 
@@ -414,7 +432,9 @@ impl Compiler {
         let saved_fn_block_baseline = self.fn_block_baseline;
         let saved_handler_table_stack = std::mem::take(&mut self.handler_table_stack);
         let saved_fn_handler_baseline = self.fn_handler_baseline;
+        let saved_remaining_uses = std::mem::take(&mut self.remaining_uses);
 
+        self.remaining_uses = liveness::count_uses(&fn_decl.body);
         self.current_fn_fallible = effects::fn_is_fallible(fn_decl);
         self.current_fn_name = fn_decl.name.clone();
         self.next_reg = 0;
@@ -531,6 +551,7 @@ impl Compiler {
         self.fn_block_baseline = saved_fn_block_baseline;
         self.handler_table_stack = saved_handler_table_stack;
         self.fn_handler_baseline = saved_fn_handler_baseline;
+        self.remaining_uses = saved_remaining_uses;
 
         Ok(chunk)
     }

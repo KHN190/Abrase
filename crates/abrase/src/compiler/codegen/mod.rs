@@ -8,7 +8,7 @@ pub mod calls;
 pub mod effects;
 pub mod closure_expr;
 
-pub(in crate::compiler) use inference::is_move_type;
+pub(in crate::compiler) use inference::{is_move_type, is_share_type};
 
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
@@ -90,7 +90,9 @@ impl Compiler {
                     let bound_reg = if let ast::Expr::Identifier(src_name) = &value.node {
                         let dest = self.alloc_register()?;
                         let is_move = inferred_ty.as_ref().map(is_move_type).unwrap_or(false);
-                        if is_move {
+                        let is_share = !is_move && inferred_ty.as_ref().map(is_share_type).unwrap_or(false);
+                        let src_name_owned = src_name.clone();
+                        if is_move || (is_share && self.consume_use(&src_name_owned)) {
                             self.emit(OpCode::Move(dest, src_reg));
                             self.var_to_reg.remove(src_name);
                             self.var_types.remove(src_name);

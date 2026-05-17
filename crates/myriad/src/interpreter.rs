@@ -261,11 +261,12 @@ impl VirtualMachine {
                         self.heap.ld(frame.cell_slot, frame.cell_gen,
                             super::cont_slot::DISPATCH_ENV)?
                     } else {
+                        // No active handler: return cached result or NONE
                         self.dispatch_last_env.take().unwrap_or(Value::NONE)
                     };
                     // Value::NONE is the VM's "uninitialized register" sentinel
-                    // — Ret rejects it as "Return register is empty". 
-                    // We encode NONE as 0 by hand.
+                    // , Ret rejects it as "Return register is empty". Thus we 
+                    // decode NONE to 0 by hand.
                     let env_val = if env_val.is_none() { Value::from_int(0) } else { env_val };
                     return self.write(*d, env_val);
                 }
@@ -349,15 +350,15 @@ impl VirtualMachine {
                     Some((s, g)) => (Some(s), g),
                     None => (None, 0),
                 };
-                // Koka风格：只在dispatch时创建cells，Handle不创建
+                // only create cells on dispatch, use dummy on init
                 self.handlers.push(super::HandlerFrame {
                     effect_id: *effect_id,
                     handler_fn: 0,
                     dispatch_table_slot: table_slot,
                     dispatch_table_gen: table_gen,
-                    cell_slot: 0,  // dummy，会被dispatch覆盖
+                    cell_slot: 0,  // dummy, to be overwritten by dispatch
                     cell_gen: 0,
-                    cells_allocated: Vec::new(),  // 空，dispatch会填充
+                    cells_allocated: Vec::new(),  // empty for now
                 });
                 Ok(())
             }

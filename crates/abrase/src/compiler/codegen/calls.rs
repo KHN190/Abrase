@@ -374,12 +374,17 @@ impl Compiler {
         Ok(dest)
     }
 
-    fn arg_should_move(&self, arg: &ast::Spanned<ast::Expr>) -> bool {
+    fn arg_should_move(&mut self, arg: &ast::Spanned<ast::Expr>) -> bool {
         match &arg.node {
             ast::Expr::Identifier(name) => {
-                match self.var_types.get(name) {
-                    Some(ty) => super::is_move_type(ty),
-                    None => false,
+                let owned_ty = self.var_types.get(name.as_str()).cloned();
+                match &owned_ty {
+                    Some(ty) if super::is_move_type(ty) => true,
+                    Some(ty) if super::is_share_type(ty) => {
+                        let n = name.clone();
+                        self.consume_use(&n)
+                    }
+                    _ => false,
                 }
             }
             _ => true,
