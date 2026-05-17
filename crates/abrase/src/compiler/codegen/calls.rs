@@ -144,10 +144,7 @@ impl Compiler {
         Ok(Some(CallTarget::Method { func_id: fid, receiver: base }))
     }
 
-    // Recognize the host-contract intrinsics `device_in`/`device_out` by
-    // name. They look like normal host fns to the user (registered with
-    // signatures in register_default_hosts) but codegen emits Deo/Dei
-    // directly. Errors on arity mismatch instead of falling through.
+    // Resolve `device_in`/`device_out` by name.
     fn resolve_primitive<'a>(
         &self,
         callee: &'a ast::Spanned<ast::Expr>,
@@ -182,8 +179,7 @@ impl Compiler {
     ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
         if name == "Shared" && args.len() == 1 { return Ok(Some(CallTarget::SharedCtor)); }
-        // Host fns are authoritative — compile_module already rejected user
-        // fns trying to shadow them. No `func_map` precedence check here.
+        // Host fns rejects shadowing. No `func_map` precedence check.
         if let Some(host) = self.host_fns.get(name) {
             if host.params.len() != args.len() {
                 return Err(format!(
@@ -271,6 +267,17 @@ impl Compiler {
         op_id: u8,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
+
+        //   PushConst(key_reg, key_idx)
+        //   PushConst(lookup_port_reg, lookup_port_idx)
+        //   Deo(key_reg, lookup_port_reg)      # Request handler fn_id
+        //   Dei(fn_id_reg, lookup_port_reg)    # Receive fn_id
+        //   PushConst(env_port_reg, env_port_idx)
+        //   Dei(env_reg, env_port_reg)         # Receive arm env
+        //   PushConst(return_env_reg, 0)       # Dummy return_env
+        //   <stage args with env, return_env, user_args>
+        //   CallReg(dest, fn_id_reg)           # Call dispatched handler
+
         let key = ((effect_id as i64) << 8) | (op_id as i64);
         let lookup_port = ((crate::bytecode::DISPATCH_ID as i64) << 8)
             | (crate::bytecode::DISPATCH_PORT_LOOKUP as i64);
@@ -295,7 +302,11 @@ impl Compiler {
         let env_reg = self.alloc_register()?;
         self.emit(OpCode::Dei(env_reg, env_port_reg));
 
-        let mut staged: Vec<(Register, bool)> = vec![(env_reg, false)];
+        let return_env_reg = self.alloc_register()?;
+        let zero_idx = self.add_constant(Value::from_int(0))?;
+        self.emit(OpCode::PushConst(return_env_reg, zero_idx));
+
+        let mut staged: Vec<(Register, bool)> = vec![(env_reg, false), (return_env_reg, false)];
         for arg in args {
             let r = self.compile_expr(arg)?;
             staged.push((r, self.arg_should_move(arg)));

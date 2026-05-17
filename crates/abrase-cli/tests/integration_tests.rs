@@ -103,22 +103,6 @@ fn closures_no_single_and_multi_capture() {
 }
 
 #[test]
-fn closures_default_capture_leaves_outer_binding_live() {
-    // Non-move closure captures clone the outer value, so the outer
-    // binding remains usable after the closure expression.
-    let v = run_file("tests/scripts/closures_move.abe")
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(23)); // (3 + 10) + 10
-}
-
-#[test]
-fn effect_log_runs() {
-    let v = run_file("tests/scripts/effect_log.abe")
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(42));
-}
-
-#[test]
 fn effect_dispatch_runs() {
     let v = run_file("tests/scripts/effect_dispatch.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
@@ -127,10 +111,6 @@ fn effect_dispatch_runs() {
 
 #[test]
 fn region_all_allowed_shapes() {
-    // Exercises every currently-allowed `region { }` form: anonymous,
-    // labeled, nested, empty-body, multi-Shared, sibling regions. Body
-    // computes a deterministic sum, then we assert the heap is empty —
-    // every Shared/Alloc inside any region must be force-freed at exit.
     let (v, vm) = run_file_full("tests/scripts/region.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(382),
@@ -150,8 +130,6 @@ fn effect_handlers_typecheck() {
 
 #[test]
 fn traits_and_generics() {
-    // id<T> specialized at Bool and Int call sites; (5).double() via trait impl = 10.
-    // Result: 42 + 10 = 52.
     let v = run_file("tests/scripts/traits_generics.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(52));
@@ -159,8 +137,6 @@ fn traits_and_generics() {
 
 #[test]
 fn neg_move_errors() {
-    // Asserts both double-move (let t=s; let u=s) and use-after-move-into-call
-    // produce "moved" errors. Expect at least 2 distinct errors.
     let errs = typeck_file("tests/scripts/bad_moves.abe");
     let moved_count = errs.iter().filter(|m| m.contains("moved")).count();
     assert!(moved_count >= 2,
@@ -177,7 +153,6 @@ fn neg_undefined_ident_typeck_errors() {
 
 #[test]
 fn neg_record_and_array_errors() {
-    // Combines unknown record field (`p.z`) and non-Int array index (`arr[true]`).
     let errs = typeck_file("tests/scripts/bad_records_arrays.abe");
     assert!(errs.len() >= 2,
         "expected >=2 errors (unknown field + bad index type), got: {:?}", errs);

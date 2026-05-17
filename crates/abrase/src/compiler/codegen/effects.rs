@@ -15,9 +15,7 @@ impl Compiler {
         }
         let err_val = self.compile_expr(inner)?;
         let wrapped = self.wrap_err(err_val)?;
-        // Canonical abnormal-exit order: forget_typed → drops → pops → Ret.
-        // wrap_err produces a Result<_, E> variant; single-level forget on
-        // Named types is the policy (see emit_region_forget_typed).
+        // abnormal-exit order: forget_typed → drops → pops → Ret.
         self.emit_region_forget(wrapped)?;
         self.emit_drops_to_exit_fn(Some(wrapped))?;
         self.emit_handler_pops_to_exit_fn()?;
@@ -61,16 +59,13 @@ impl Compiler {
         &mut self,
         arg: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<Register, String> {
-        // Tail-position only for now: `resume(v)` becomes `Ret(v)` out of
-        // the synthesised handler-arm fn. Same canonical exit order as
-        // return/throw — forget_typed → drops → pops → Ret — so per-stmt
-        // regions and move-binders inside the arm body get cleaned.
         let inferred_ty = arg.and_then(|e| self.infer_expr_type(e));
         let reg = if let Some(e) = arg {
             self.compile_expr(e)?
         } else {
             let r = self.alloc_register()?;
             let idx = self.add_constant(Value::UNIT)?;
+            //   PushConst(r, const_idx)  # Load unit value
             self.emit(OpCode::PushConst(r, idx));
             r
         };
@@ -82,6 +77,7 @@ impl Compiler {
         self.emit_drops_to_exit_fn(Some(reg))?;
         self.emit_handler_pops_to_exit_fn()?;
         self.emit_pops_to_exit_fn()?;
+        //   Ret(reg)                     # Return resume value to handler
         self.emit(OpCode::Ret(reg));
         Ok(reg)
     }
@@ -116,12 +112,26 @@ impl Compiler {
         let env_reg = arm_envs.get(&ret_arm_name).copied()
             .ok_or_else(|| format!("internal: no env packed for return arm '{}'", ret_arm_name))?;
 
+        //   PushConst(r7, 0)           # Load 0 into return_env_reg
+        //   Copy(r0, r5)               # arg 0: __env → r0
+        //   Copy(r0, r7)               # arg 1: __return_env → r0
+        //   Copy(r0, r6)               # arg 2: body_result → r0
+        //   Call(r8, 6)                # Call function_id=6, result → r8
+
         let pos = self.code.len();
         self.emit(OpCode::Copy(Register(0), env_reg));
         self.pending_arg_patches.push((pos, 0));
+
+        let return_env_reg = self.alloc_register()?;
+        let zero_idx = self.add_constant(Value::from_int(0))?;
+        self.emit(OpCode::PushConst(return_env_reg, zero_idx));
+        let pos = self.code.len();
+        self.emit(OpCode::Copy(Register(0), return_env_reg));
+        self.pending_arg_patches.push((pos, 1));
+
         let pos = self.code.len();
         self.emit(OpCode::Copy(Register(0), body_reg));
-        self.pending_arg_patches.push((pos, 1));
+        self.pending_arg_patches.push((pos, 2));
 
         let dest = self.alloc_register()?;
         let fid = super::scaffold::to_u16(func_id, "Handler arm fn_id")?;

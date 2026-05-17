@@ -7,6 +7,9 @@ members = [
 	"crates/abrase-cli"
 ]
 
+[profile.dev]
+opt-level = 1
+
 [profile.release]
 opt-level = 3
 lto = "fat"

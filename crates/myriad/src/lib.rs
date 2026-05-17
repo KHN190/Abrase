@@ -90,7 +90,7 @@ impl VirtualMachine {
         self.region_table.depth()
     }
 
-    pub(crate) fn region_record_alloc(&mut self, slot: u32, generation: u32) {
+    pub fn region_record_alloc(&mut self, slot: u32, generation: u32) {
         self.region_table.record_alloc(slot, generation);
     }
 

@@ -49,6 +49,7 @@ fn main() -> Int {
 }
 
 // Exceptions via `<exn>` effect
+// Syntax: fn name(params) -> <effects> ReturnType
 
 fn div(a: Int, b: Int) -> <exn<Int>> Int {
   if b == 0 { throw 99 } else { a / b }
@@ -59,7 +60,7 @@ fn pipeline(a: Int, b: Int) -> <exn<Int>> Int {
   v + 1
 }
 
-fn main() -> Int {
+fn main() -> Int {  // main() must be pure (no effects)
   match pipeline(20, 4) { Ok(v) => v, Err(_) => -1, _ => 0 }
 }
 

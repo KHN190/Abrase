@@ -31,6 +31,15 @@ impl Checker {
                     .map(|t| Box::new(self.convert_type(t)))
                     .unwrap_or_else(|| Box::new(Type::Unit));
 
+                // main() must be pure (no effects)
+                if fn_decl.name == "main" && !effects.is_empty() {
+                    self.report_error(
+                        format!("`main` function must be pure (no effects); found: {}",
+                            fn_decl.effects.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
+                        ast::Span { line: 0, col: 0 }
+                    );
+                }
+
                 let fn_type = Type::Function { params, effects, ret };
                 let module_path = self.current_module.clone();
                 self.register_module_item(&module_path, fn_decl.name.clone(), fn_type.clone());

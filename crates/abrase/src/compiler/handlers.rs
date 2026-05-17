@@ -13,6 +13,7 @@ pub struct HandleLowering {
     pub effect_ids: HashMap<String, u16>,
     pub op_ids: HashMap<(String, String), u8>,
     pub effect_op_counts: HashMap<String, u8>,
+    pub arm_to_handle: HashMap<String, Span>,
     next_id: usize,
     handle_stack: Vec<HashMap<(String, String), String>>,
 }
@@ -29,6 +30,7 @@ impl HandleLowering {
             effect_ids: HashMap::new(),
             op_ids: HashMap::new(),
             effect_op_counts: HashMap::new(),
+            arm_to_handle: HashMap::new(),
             next_id: 0,
             handle_stack: Vec::new(),
         }
@@ -185,6 +187,7 @@ impl HandleLowering {
                     self.next_id += 1;
                     let (params, body) = self.build_arm_fn(
                         &fn_name,
+                        handle_span,
                         arm.pattern.as_ref(),
                         None,
                         &arm.body,
@@ -201,7 +204,8 @@ impl HandleLowering {
                         where_clause: vec![],
                         body,
                     });
-                    self.return_arm_by_handle.insert(handle_span, fn_name);
+                    self.return_arm_by_handle.insert(handle_span, fn_name.clone());
+                    self.arm_to_handle.insert(fn_name, handle_span);
                 }
                 HandleArmKind::Effect(path) => {
                     let Some(op_name) = path.last().cloned() else { continue };
@@ -221,6 +225,7 @@ impl HandleLowering {
                     });
                     let (params, body) = self.build_arm_fn(
                         &fn_name,
+                        handle_span,
                         arm.pattern.as_ref(),
                         param_ty,
                         &arm.body,
@@ -238,6 +243,7 @@ impl HandleLowering {
                         body,
                     });
                     self.effect_op_to_arm.insert(key.clone(), fn_name.clone());
+                    self.arm_to_handle.insert(fn_name.clone(), handle_span);
                     local_dispatch.insert(key, fn_name);
                 }
                 HandleArmKind::Exn => {
@@ -252,6 +258,7 @@ impl HandleLowering {
     fn build_arm_fn(
         &mut self,
         fn_name: &str,
+        _handle_span: Span,
         pat: Option<&Spanned<Pattern>>,
         pat_ty: Option<Type>,
         body: &Spanned<Expr>,
@@ -283,10 +290,14 @@ impl HandleLowering {
             .collect();
         let rewritten_body = rewrite_captures(body, &layout, &param_names, None, "");
 
-        // Build the param list: __env first, then the arm pattern (if any).
+        // Build the param list: __env, __return_env, then the arm pattern (if any).
         let mut params: Vec<Param> = Vec::new();
         params.push(Param::Named {
             pattern: Spanned { node: Pattern::Bind("__env".into()), span: body.span },
+            ty: Type::Named("Int".into()),
+        });
+        params.push(Param::Named {
+            pattern: Spanned { node: Pattern::Bind("__return_env".into()), span: body.span },
             ty: Type::Named("Int".into()),
         });
         if let Some(p) = pat {

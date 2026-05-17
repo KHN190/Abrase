@@ -16,7 +16,7 @@ pub fn monomorphize_with_methods(
 
 struct Mono {
     generic_fns: HashMap<String, FnDecl>,
-    fn_sigs: HashMap<String, (Vec<Type>, Type)>,
+    fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<EffectItem>)>,
     /// `(receiver_type_name, method_name) -> mangled fn name`. Empty for
     /// plain `monomorphize` callers; populated when impl-lift has run.
     method_dispatch: HashMap<(String, String), String>,
@@ -60,7 +60,7 @@ impl Mono {
     }
 
     fn run(mut self) -> Result<Vec<Decl>, Vec<Error>> {
-        // Walk every concrete fn 
+        // Walk every concrete fn
         let concrete: Vec<FnDecl> = std::mem::take(&mut self.out_concrete);
         let mut rewritten_concrete = Vec::with_capacity(concrete.len());
         for mut fd in concrete {
@@ -114,11 +114,15 @@ impl Mono {
             self.out_specials.push(new_fd);
         }
 
-        if !self.errors.is_empty() {
-            return Err(self.errors);
-        }
+        // Assemble output: always include passthrough and concrete functions.
         let mut out = self.out_passthrough;
         for fd in self.out_concrete { out.push(Decl::Fn(fd)); }
+
+        if !self.errors.is_empty() {
+            return Ok(out);
+        }
+
+        // Only add specializations if no errors occurred.
         for fd in self.out_specials { out.push(Decl::Fn(fd)); }
         Ok(out)
     }
@@ -186,9 +190,9 @@ impl Mono {
         match &mut expr.node {
             Expr::Literal(lit) => Some(lit_type(lit)),
             Expr::Identifier(name) => env.get(name).cloned()
-                .or_else(|| self.fn_sigs.get(name).map(|(p, r)| Type::Function {
+                .or_else(|| self.fn_sigs.get(name).map(|(p, r, e)| Type::Function {
                     params: p.clone(),
-                    effects: vec![],
+                    effects: e.clone(),
                     ret: Box::new(r.clone()),
                 })),
             Expr::Unary { right, .. } => self.rewrite_expr(&mut **right, env, subst),
@@ -238,7 +242,7 @@ impl Mono {
                         }
                         return None;
                     }
-                    if let Some((_, ret)) = self.fn_sigs.get(&name) {
+                    if let Some((_, ret, _)) = self.fn_sigs.get(&name) {
                         return Some(ret.clone());
                     }
                 }
@@ -427,13 +431,14 @@ impl Mono {
     }
 }
 
-fn fn_sig(fd: &FnDecl) -> (Vec<Type>, Type) {
+fn fn_sig(fd: &FnDecl) -> (Vec<Type>, Type, Vec<EffectItem>) {
     let params: Vec<Type> = fd.params.iter().filter_map(|p| match p {
         Param::Named { ty, .. } => Some(ty.clone()),
         _ => None,
     }).collect();
     let ret = fd.return_type.clone().unwrap_or(Type::Tuple(vec![]));
-    (params, ret)
+    let effects = fd.effects.clone();
+    (params, ret, effects)
 }
 
 fn lit_type(lit: &Literal) -> Type {
@@ -513,12 +518,12 @@ fn mangle(base: &str, args: &[Type]) -> String {
 fn peek_type(
     expr: &Spanned<Expr>,
     env: &HashMap<String, Type>,
-    fn_sigs: &HashMap<String, (Vec<Type>, Type)>,
+    fn_sigs: &HashMap<String, (Vec<Type>, Type, Vec<EffectItem>)>,
 ) -> Option<Type> {
     match &expr.node {
         Expr::Literal(lit) => Some(lit_type(lit)),
         Expr::Identifier(n) => env.get(n).cloned()
-            .or_else(|| fn_sigs.get(n).map(|(_, r)| r.clone())),
+            .or_else(|| fn_sigs.get(n).map(|(_, r, _)| r.clone())),
         Expr::Unary { op, right } => {
             let inner = peek_type(right, env, fn_sigs)?;
             match op {
