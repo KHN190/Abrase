@@ -188,6 +188,30 @@ fn verify_compile_recursive_function() {
 }
 
 #[test]
+fn verify_callreg_closure_call() {
+    // A closure invocation emits CallReg (dynamic dispatch through a register).
+    let src = "fn main() -> Int { let f = |y| y + 1; f(5) }";
+    assert_eq!(run_source(src), Ok(Value::from_int(6)));
+}
+
+#[test]
+fn verify_callreg_closure_captures_outer_binding() {
+    let src = r#"fn main() -> Int { let n: Int = 10; let f = |y| n + y; f(5) }"#;
+    assert_eq!(run_source(src), Ok(Value::from_int(15)));
+}
+
+#[test]
+#[ignore = "codegen: first-class fn args need CallReg dispatch on a local var, not func_map lookup"]
+fn verify_callreg_first_class_function_passed_as_arg() {
+    let src = r#"
+        fn add_one(x: Int) -> Int { x + 1 }
+        fn apply(f: fn(Int) -> Int, x: Int) -> Int { f(x) }
+        fn main() -> Int { apply(add_one, 7) }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_int(8)));
+}
+
+#[test]
 fn verify_impl_method_lifted_to_synthetic_fn() {
     // impl-lift pass synthesizes Doubler__Int__double in the fn table for dispatch.
     let src = r#"

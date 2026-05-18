@@ -26,6 +26,32 @@ impl<'a> Parser<'a> {
                 Ok(Type::Named(name))
             }
             Token::SelfUpper => Ok(Type::Named("Self".into())),
+            Token::Fn => {
+                if !self.expect_peek(Token::LParen) {
+                    return Err("Expected '(' after 'fn' in function type".into());
+                }
+                let mut params = Vec::new();
+                if self.peek_token != Token::RParen {
+                    self.next_token();
+                    params.push(self.parse_type()?);
+                    while self.peek_token == Token::Comma {
+                        self.next_token();
+                        if self.peek_token == Token::RParen { break; }
+                        self.next_token();
+                        params.push(self.parse_type()?);
+                    }
+                }
+                if !self.expect_peek(Token::RParen) {
+                    return Err("Expected ')' in function type".into());
+                }
+                if self.peek_token == Token::Arrow {
+                    self.next_token();
+                    let (effects, ret) = self.parse_fn_type_tail()?;
+                    Ok(Type::Function { params, effects, ret: Box::new(ret) })
+                } else {
+                    Ok(Type::Function { params, effects: vec![], ret: Box::new(Type::Tuple(vec![])) })
+                }
+            }
             Token::Ampersand => {
                 self.next_token();
                 let is_mut = if self.current_token == Token::Mut {
