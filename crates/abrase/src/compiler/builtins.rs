@@ -167,6 +167,8 @@ impl Compiler {
             checker.register_impl_method("Ord", ty, "max", mx.into());
             checker.register_impl_method("Ord", ty, "min", mn.into());
             checker.register_impl_method("Abs", ty, "abs", ab.into());
+            checker.register_impl(ty, "Ord");
+            checker.register_impl(ty, "Abs");
         }
         for &(ty, mangled) in &[
             ("Int",   "__int_to_f"),
@@ -174,6 +176,7 @@ impl Compiler {
             ("Bool",  "__bool_to_f"),
         ] {
             checker.register_impl_method("ToF", ty, "to_f", mangled.into());
+            checker.register_impl(ty, "ToF");
         }
         for &(ty, mangled) in &[
             ("Float", "__float_to_i"),
@@ -181,8 +184,10 @@ impl Compiler {
             ("Bool",  "__bool_to_i"),
         ] {
             checker.register_impl_method("ToI", ty, "to_i", mangled.into());
+            checker.register_impl(ty, "ToI");
         }
         checker.register_impl_method("ToC", "Int", "to_c", "__int_to_c".into());
+        checker.register_impl("Int", "ToC");
         for &(ty, mangled) in &[
             ("Int",    "__int_to_s"),
             ("Float",  "__float_to_s"),
@@ -192,6 +197,7 @@ impl Compiler {
             ("Unit",   "__unit_to_s"),
         ] {
             checker.register_impl_method("ToS", ty, "to_s", mangled.into());
+            checker.register_impl(ty, "ToS");
         }
     }
 

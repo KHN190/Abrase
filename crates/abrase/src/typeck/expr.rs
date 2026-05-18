@@ -863,6 +863,39 @@ impl Checker {
                                 );
                             }
                         }
+                        // Verify any where-clause bounds declared on the callee
+                        // are satisfied by the inferred concrete type args.
+                        let type_args: Vec<(String, Type)> = callee_generic_vars.iter()
+                            .filter_map(|g| named_subst.get(g)
+                                .or_else(|| subst.get(g))
+                                .map(|t| (g.clone(), t.clone())))
+                            .collect();
+                        if !self.check_all_trait_bounds(&callee_name, &type_args) {
+                            for (param, arg) in &type_args {
+                                if let Some(bounds) = self.get_trait_bounds(param) {
+                                    for trait_name in &bounds {
+                                        let ty_str = match arg {
+                                            Type::Int    => "Int".to_string(),
+                                            Type::Float  => "Float".to_string(),
+                                            Type::Bool   => "Bool".to_string(),
+                                            Type::Char   => "Char".to_string(),
+                                            Type::String => "String".to_string(),
+                                            Type::Unit   => "Unit".to_string(),
+                                            Type::Named(n) => n.clone(),
+                                            _ => format!("{:?}", arg),
+                                        };
+                                        if !self.has_impl(&ty_str, trait_name) {
+                                            self.report_error(
+                                                format!("Type '{}' does not satisfy bound '{}: {}' \
+                                                         required by call to '{}'",
+                                                    ty_str, param, trait_name, callee_name),
+                                                expr.span,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     fn subst_named(ty: &Type, subst: &std::collections::HashMap<String, Type>) -> Type {
                         match ty {

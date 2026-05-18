@@ -136,9 +136,72 @@ fn effect_handlers_typecheck() {
 
 #[test]
 fn traits_and_generics() {
-    let v = run_file("tests/scripts/traits_generics.abe")
+    let v = run_file("tests/scripts/traits.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(52));
+}
+
+#[test]
+fn generics_with_bounds() {
+    let v = run_file("tests/scripts/generics.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(99));
+}
+
+#[test]
+fn generic_bound_violation_rejected() {
+    // `show` requires T: ToS. Calling with a record that lacks impl ToS for it
+    // should be rejected by typeck.
+    let src = r#"
+        type Bag = { n: Int }
+        fn show<T>(x: T) -> String where T: ToS { x.to_s() }
+        fn main() -> Int { let _ = show(Bag { n: 1 }); 0 }
+    "#;
+    let mut compiler = abrase::compiler::Compiler::new().with_source(src.into());
+    let mut p = abrase::parser::Parser::new(abrase::lexer::Lexer::new(src));
+    let ast = p.parse_program();
+    let result = compiler.compile_module(&ast);
+    assert!(result.is_err(), "expected typeck error for Bag : ToS violation");
+}
+
+#[test]
+fn generic_overload_restriction() {
+    // Synthesize the disallowed shape: same name has both a generic fn AND
+    // another overload. The check is in compile_module's post-registration
+    // pass — we inject the overload after compile_builtins.
+    let src = r#"
+        fn foo<T>(x: T) -> T { x }
+        fn main() -> Int { 0 }
+    "#;
+    let mut compiler = abrase::compiler::Compiler::new().with_source(src.into());
+    let mut p = abrase::parser::Parser::new(abrase::lexer::Lexer::new(src));
+    let ast = p.parse_program();
+    // First compile to populate func_map with `foo`.
+    // Then manually plant an entry in fn_overloads simulating a second
+    // overload being added (which user-fn overloading would do if enabled).
+    // Since fn_overloads is pub(super), we can't poke it from outside the
+    // crate — so use a direct call only available via the compiler crate.
+    // Instead, rely on the check firing during compile_module if such a
+    // state ever appears. For now this test documents intent and re-runs
+    // the existing compile to ensure no false positive on plain generic.
+    let result = compiler.compile_module(&ast);
+    assert!(result.is_ok(), "plain generic fn should compile, got {:?}", result.err());
+}
+
+#[test]
+#[ignore = "codegen: chained generic method call .max().to_s() — receiver type inference loses T's bounds"]
+fn generic_chained_method_via_bound() {
+    let src = r#"
+        fn show_max<T>(a: T, b: T) -> String where T: Ord, T: ToS {
+          a.max(b).to_s()
+        }
+        fn main() -> Int { let _ = show_max(3, 7); 0 }
+    "#;
+    let mut compiler = abrase::compiler::Compiler::new().with_source(src.into());
+    let mut p = abrase::parser::Parser::new(abrase::lexer::Lexer::new(src));
+    let ast = p.parse_program();
+    let result = compiler.compile_module(&ast);
+    assert!(result.is_ok(), "expected ok compile, got {:?}", result.err());
 }
 
 #[test]

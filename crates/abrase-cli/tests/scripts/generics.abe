@@ -1,0 +1,21 @@
+// Generic with a single trait bound, body uses the bound method.
+fn show<T>(x: T) -> String where T: ToS {
+  x.to_s()
+}
+
+// Nested generic call — wrap<T> forwards to id<T>.
+fn id<T>(x: T) -> T { x }
+fn wrap<T>(x: T) -> T { id(x) }
+
+// Multi-param generic, both bounded.
+fn first<A, B>(a: A, b: B) -> A where A: ToS, B: ToS {
+  a
+}
+
+fn main() -> Int {
+  let s1 = show(42);            // expects "42"
+  let s2 = show(true);          // expects "true"
+  let n  = wrap(99);            // expects 99
+  let _x = first(7, false);     // exercises multi-param mono
+  n
+}

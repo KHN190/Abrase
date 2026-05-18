@@ -25,13 +25,8 @@ pub struct LoopCtx {
     pub break_patches: Vec<usize>,
     pub continue_patches: Vec<usize>,
     // Region depth recorded BEFORE the loop's own per-iter push.
-    // Used by break/continue to emit the right number of region pops when
-    // exiting through nested statement-position regions or inner loops.
     pub compiler_depth_at_entry: usize,
-    // block_locals_stack.len() at loop entry. break/continue emit Drop for
-    // every block scope opened inside the loop body so move-typed binders
-    // (and boxed-Copy ones) get rc-dec'd before the region pops force-free
-    // anything still tracked.
+    // block_locals_stack.len() at loop entry.
     pub block_depth_at_entry: usize,
     pub handler_depth_at_entry: usize,
 }
@@ -195,9 +190,9 @@ impl Compiler {
         }
     }
 
-    /// Decrement the remaining-use counter for `name`. Returns `true` when the
-    /// count reaches zero, meaning this is the last use and Move can be emitted
-    /// instead of Copy for Share-type values.
+    // Decrement the remaining-use counter for `name`. Returns `true` when the
+    // count reaches zero, meaning this is the last use and Move can be emitted
+    // instead of Copy for Share-type values.
     pub(super) fn consume_use(&mut self, name: &str) -> bool {
         match self.remaining_uses.get_mut(name) {
             Some(c) if *c > 0 && *c != usize::MAX => {
@@ -223,8 +218,6 @@ impl Compiler {
         self
     }
 
-    /// Build a Vec<String> indexed by function id (matches Module.functions
-    /// order). Empty slot for unmapped indices.
     pub fn fn_names(&self) -> Vec<String> {
         let n = self.functions.len();
         let mut out = vec![String::new(); n];
@@ -390,6 +383,30 @@ impl Compiler {
             self.func_map.insert(arm_fn.name.clone(), idx);
             self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
             fn_decls.push((idx, arm_fn));
+        }
+
+        // Sanity: a name registered both in func_map and fn_overloads must NOT
+        // mix generic with non-generic (or two generic) fns. Mono mangles by
+        // (name, type_args); if two overloads have the same name and one is
+        // generic, specialisations could collide. User-fn overloading is not
+        // wired today, so this fires nowhere — kept as a safeguard if it lands.
+        for (name, extras) in &self.fn_overloads {
+            let mut all_ids = vec![*self.func_map.get(name).unwrap_or(&usize::MAX)];
+            all_ids.extend(extras.iter().copied());
+            let any_generic = all_ids.iter().any(|fid| {
+                fn_decls.iter().any(|(i, fd)| i == fid && !fd.generics.is_empty())
+            });
+            if any_generic && all_ids.len() > 1 {
+                self.errors.push(Error::new(
+                    ErrorCode::TypeError,
+                    ast::Span::new(0, 0),
+                    format!(
+                        "fn `{}` cannot have a generic overload alongside other overloads — \
+                         generic + overload mangling is not supported",
+                        name
+                    ),
+                ));
+            }
         }
 
         let entry = match self.func_map.get("main").copied() {
