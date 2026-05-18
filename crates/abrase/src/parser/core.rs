@@ -109,7 +109,7 @@ impl<'a> Parser<'a> {
             self.next_token();
             true
         } else {
-            let msg = format!("Expected {:?}, got {:?}", token, self.peek_token);
+            let msg = format!("Expected \"{}\", got \"{}\"", token.display(), self.peek_token.display());
             self.report_error(msg, self.peek_span);
             false
         }

@@ -87,10 +87,6 @@ impl Compiler {
         let ast::Expr::Identifier(name) = &callee.node else {
             return Err("Call target must be a function identifier".to_string());
         };
-        // Overload dispatch: if the name has additional overloads beyond the
-        // primary, infer arg types and pick the matching fn_id. Falls back to
-        // primary when nothing matches (typechecker should have already rejected
-        // a real mismatch).
         let func_id = if self.fn_overloads.contains_key(name) {
             self.resolve_overload_fn_id(name, args)?
         } else {
@@ -101,9 +97,6 @@ impl Compiler {
         Ok(CallTarget::Function { func_id: fid, env: CallEnv::None })
     }
 
-    // Pick a fn_id from the overload set whose param types match the args. Args
-    // typed via existing `infer_expr_type` (returns ast::Type). Signature params
-    // are ty::Type — we compare via a small bridge.
     fn resolve_overload_fn_id(
         &self,
         name: &str,
@@ -123,15 +116,10 @@ impl Compiler {
             });
             if ok { return Ok(*fid); }
         }
-        // No match — fall back to primary so codegen can proceed; typechecker
-        // is responsible for the user-facing error.
         candidates.first().copied()
             .ok_or_else(|| format!("Undefined function: {}", name))
     }
 
-    // ty::Type vs ast::Type bridge for overload param comparison. Only the
-    // primitive cases (Int/Float/Bool/Char/String/Unit) are handled; anything
-    // else returns false and lets codegen fall back to the primary overload.
     fn ty_matches_ast_type(ty: &crate::ty::Type, ast_ty: &ast::Type) -> bool {
         use crate::ty::Type as T;
         match (ty, ast_ty) {
@@ -381,8 +369,9 @@ impl Compiler {
         self.emit(OpCode::St(tag_reg, dest, 0));
         for (i, arg) in args.iter().enumerate() {
             let offset = super::scaffold::to_u16(i + 1, "Variant ctor offset")?;
+            let want_move = self.arg_should_move(arg);
             let v = self.compile_expr(arg)?;
-            self.emit(OpCode::St(v, dest, offset));
+            self.emit_store_field(v, want_move, dest, offset)?;
         }
         Ok(dest)
     }
@@ -426,21 +415,41 @@ impl Compiler {
         Ok(dest)
     }
 
-    fn arg_should_move(&mut self, arg: &ast::Spanned<ast::Expr>) -> bool {
+    pub(in crate::compiler) fn arg_should_move(&mut self, arg: &ast::Spanned<ast::Expr>) -> bool {
         match &arg.node {
             ast::Expr::Identifier(name) => {
-                let owned_ty = self.var_types.get(name.as_str()).cloned();
-                match &owned_ty {
-                    Some(ty) if super::is_move_type(ty) => true,
-                    Some(ty) if super::is_share_type(ty) => {
-                        let n = name.clone();
-                        self.consume_use(&n)
-                    }
-                    _ => false,
-                }
+                let n = name.clone();
+                self.id_should_move(&n)
             }
             _ => true,
         }
+    }
+
+    pub(in crate::compiler) fn id_should_move(&mut self, name: &str) -> bool {
+        let owned_ty = self.var_types.get(name).cloned();
+        match &owned_ty {
+            Some(ty) if super::is_move_type(ty) => true,
+            Some(ty) if super::is_share_type(ty) => self.consume_use(name),
+            _ => false,
+        }
+    }
+
+    pub(in crate::compiler) fn emit_store_field(
+        &mut self,
+        src: Register,
+        want_move: bool,
+        dest: Register,
+        offset: u16,
+    ) -> Result<(), String> {
+        let store_src = if want_move {
+            src
+        } else {
+            let tmp = self.alloc_register()?;
+            self.emit(OpCode::Copy(tmp, src));
+            tmp
+        };
+        self.emit(OpCode::St(store_src, dest, offset));
+        Ok(())
     }
 
     fn stage_call_args(&mut self, staged: &[(Register, bool)]) -> Result<(), String> {

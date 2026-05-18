@@ -144,13 +144,18 @@ impl Compiler {
             let offset = to_u16(i, "Record field offset")?;
             let init = fields.iter().find(|f| &f.name == fname)
                 .ok_or_else(|| format!("Missing field '{}' in {}", fname, type_name))?;
-            let src = if let Some(v) = &init.value {
-                self.compile_expr(v)?
+            let (src, want_move) = if let Some(v) = &init.value {
+                let m = self.arg_should_move(v);
+                let s = self.compile_expr(v)?;
+                (s, m)
             } else {
-                self.var_to_reg.get(&init.name).copied()
-                    .ok_or_else(|| format!("Undefined variable: {}", init.name))?
+                let name = init.name.clone();
+                let m = self.id_should_move(&name);
+                let s = self.var_to_reg.get(&name).copied()
+                    .ok_or_else(|| format!("Undefined variable: {}", name))?;
+                (s, m)
             };
-            self.emit(OpCode::St(src, dest, offset));
+            self.emit_store_field(src, want_move, dest, offset)?;
         }
         Ok(dest)
     }

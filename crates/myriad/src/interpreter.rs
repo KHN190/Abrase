@@ -328,8 +328,7 @@ impl VirtualMachine {
         }
         let new_frame_index = self.frames.len();
         self.frames.push(Frame::normal(self.current_func, self.pc, self.base_reg, dest_abs));
-        // The first call after a `Handle` install is the handle body call —
-        // record its frame index so do_ret can recognise the boundary.
+        // Mark the first call after Handle install as the body frame — the boundary do_ret looks for.
         if let Some(handler) = self.handlers.last_mut() {
             if handler.body_frame_index.is_none() {
                 handler.body_frame_index = Some(new_frame_index);
@@ -355,9 +354,7 @@ impl VirtualMachine {
             }
         };
 
-        // if the popped frame is a handle body's call frame, or an arm-
-        // continuation, and the active handler still has a pending return 
-        // arm, route `return_val` through the return arm
+        // Deep-handler routing: body frame or arm-continuation + pending arm → run value through return arm.
         let is_body_frame = self.handlers.last()
             .and_then(|h| h.body_frame_index)
             .map_or(false, |idx| idx == self.frames.len());
@@ -365,7 +362,6 @@ impl VirtualMachine {
             && self.handlers.last().map_or(false, |h| h.pending_return_arm_fn.is_some());
 
         if !route_through_return_arm {
-            // Normal Ret.
             if frame.is_arm_continuation && frame.arm_snapshot_count > 0 {
                 let snap = crate::snapshot::SnapshotHandle {
                     slot: frame.arm_snapshot_slot,
@@ -373,7 +369,6 @@ impl VirtualMachine {
                     count: frame.arm_snapshot_count,
                 };
                 self.restore_registers(frame.base_reg, snap)?;
-                // Single-shot: snapshot consumed, drop the off-region cell.
                 self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
             }
             self.pc = frame.ip;
@@ -383,8 +378,7 @@ impl VirtualMachine {
             return Ok(());
         }
 
-        // Restore arm's snapshot before invoking the return arm (so when
-        // the return arm Rets back, the arm body sees its own state).
+        // Restore arm regs before invoking return arm so the arm body resumes with its own state.
         if frame.is_arm_continuation && frame.arm_snapshot_count > 0 {
             let snap = crate::snapshot::SnapshotHandle {
                 slot: frame.arm_snapshot_slot,
@@ -395,8 +389,7 @@ impl VirtualMachine {
             self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
         }
 
-        // Take the return arm info; clear pending so subsequent pops in
-        // this handler don't re-apply it.
+        // Take + clear pending so subsequent arm-cont pops in this handler don't re-apply.
         let (ra_fn, ra_env) = {
             let h = self.handlers.last_mut().unwrap();
             let fn_id = h.pending_return_arm_fn.take().unwrap();
@@ -429,6 +422,7 @@ impl VirtualMachine {
         if needed > self.registers.len() {
             self.registers.resize(needed, Value::NONE);
         }
+        // ra_env: install path didn't rc_inc, so do it here. return_val: ref already transferred via take_abs.
         self.value_rc_inc(&ra_env)?;
         self.write_abs(new_base, ra_env);
         self.write_abs(new_base + 1, Value::from_int(0));
@@ -521,8 +515,7 @@ impl VirtualMachine {
             let (fn_id, env) = self.resolve_dispatch(key);
             self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_FN_ID,
                 Value::from_int(fn_id as i64))?;
-            // The cont cell takes a new ref to env: cascade rc_dec on cell
-            // free will balance with this rc_inc on store.
+            // rc_inc balances the cascade rc_dec when the cont cell is freed.
             let env_val = env.unwrap_or(Value::NONE);
             self.value_rc_inc(&env_val)?;
             self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV, env_val)?;
@@ -606,14 +599,23 @@ impl VirtualMachine {
         let yield_result_abs = arm_call_frame.dest_reg;
         let resume_ip = arm_call_frame.ip;
 
-        // Snapshot the arm's register window. Off-region so a suspended
-        // function's REGION.pop on the path back to its Ret can't free it.
+        // Off-region: a suspended fn's REGION.pop on the way back to its Ret can't free this.
         let arm_reg_count = self.current_fn_reg_count(module);
         let arm_snapshot = self.snapshot_registers_off_region(self.base_reg, arm_reg_count)?;
 
-        // Push the continuation frame. Pop when the continuation Rets.
+        // Insert above F1, past sibling arm-conts. Intermediate call frames stay on top so
+        // their Ret unwinds into the handle body; only the body's own Ret pops this.
         let arm_resume_dest_abs = self.base_reg + dest_reg.to_usize();
-        self.frames.push(super::Frame {
+        let insert_at = {
+            let body_idx = self.handlers.last().and_then(|h| h.body_frame_index)
+                .ok_or("resume: active handler has no body frame index")?;
+            let mut i = body_idx + 1;
+            while i < self.frames.len() && self.frames[i].is_arm_continuation {
+                i += 1;
+            }
+            i
+        };
+        self.frames.insert(insert_at, super::Frame {
             func_id: self.current_func,
             ip: self.pc,
             base_reg: self.base_reg,
@@ -629,6 +631,18 @@ impl VirtualMachine {
         self.current_func = saved_func;
         self.pc = resume_ip;
         self.restore_registers(saved_base, suspended_snapshot)?;
+
+        // Drop the snapshot now — it holds handles into region-tracked siblings; surviving
+        // until region pop would cascade rc_dec across already-freed cells. Clear the cont
+        // cell's pointer to it so its own later force_free doesn't cascade through dead memory.
+        if !suspended_snapshot.is_empty() {
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::REGS_SNAPSHOT_SLOT, Value::NONE)?;
+            self.heap.rc_dec(
+                suspended_snapshot.slot,
+                suspended_snapshot.generation,
+                &mut self.box_pool,
+            )?;
+        }
 
         if yield_result_abs >= self.registers.len() {
             return Err(format!(
