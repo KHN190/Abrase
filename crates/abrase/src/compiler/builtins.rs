@@ -5,27 +5,29 @@ use super::Compiler;
 
 impl Compiler {
     pub(super) fn register_builtins(&mut self) {
+        let s = TyType::String;
+        let i = TyType::Int;
+        let f = TyType::Float;
+        let u = TyType::Unit;
+        let b = TyType::Bool;
+        let c = TyType::Char;
+
         let cid = self.register_native_chunk("__concat", 2);
         self.concat_fn_id = Some(cid);
         let tid = self.register_native_chunk("__to_str", 1);
         self.to_str_fn_id = Some(tid);
         self.float_add_fn_id = Some(self.functions.len());
-        self.register_native_chunk("__float_add", 2);
+        self.register_typed_native("__float_add", vec![f.clone(), f.clone()], f.clone(), 2);
         self.float_sub_fn_id = Some(self.functions.len());
-        self.register_native_chunk("__float_sub", 2);
+        self.register_typed_native("__float_sub", vec![f.clone(), f.clone()], f.clone(), 2);
         self.float_mul_fn_id = Some(self.functions.len());
-        self.register_native_chunk("__float_mul", 2);
+        self.register_typed_native("__float_mul", vec![f.clone(), f.clone()], f.clone(), 2);
         self.float_div_fn_id = Some(self.functions.len());
-        self.register_native_chunk("__float_div", 2);
+        self.register_typed_native("__float_div", vec![f.clone(), f.clone()], f.clone(), 2);
         self.float_lt_fn_id = Some(self.functions.len());
-        self.register_native_chunk("__float_lt", 2);
+        self.register_typed_native("__float_lt", vec![f.clone(), f.clone()], b.clone(), 2);
         self.float_neg_fn_id = Some(self.functions.len());
-        self.register_native_chunk("__float_neg", 1);
-
-        let s = TyType::String;
-        let i = TyType::Int;
-        let f = TyType::Float;
-        let u = TyType::Unit;
+        self.register_typed_native("__float_neg", vec![f.clone()], f.clone(), 1);
         // Console
         self.register_typed_native("print",    vec![s.clone()],            u.clone(), 1);
         self.register_typed_native("println",  vec![s.clone()],            u.clone(), 1);
@@ -42,21 +44,30 @@ impl Compiler {
         self.register_typed_native("sin",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("sqrt",     vec![f.clone()],            f.clone(), 1);
         // Method-body native chunks for built-in traits
-        self.register_native_chunk("max",         2);
-        self.register_native_chunk("min",         2);
-        self.register_native_chunk("abs",         1);
-        self.register_native_chunk("__float_max", 2);
-        self.register_native_chunk("__float_min", 2);
-        self.register_native_chunk("__float_abs", 1);
+        self.register_typed_native("max",         vec![i.clone(), i.clone()], i.clone(), 2);
+        self.register_typed_native("min",         vec![i.clone(), i.clone()], i.clone(), 2);
+        self.register_typed_native("abs",         vec![i.clone()],            i.clone(), 1);
+        self.register_typed_native("__float_max", vec![f.clone(), f.clone()], f.clone(), 2);
+        self.register_typed_native("__float_min", vec![f.clone(), f.clone()], f.clone(), 2);
+        self.register_typed_native("__float_abs", vec![f.clone()],            f.clone(), 1);
         // Type conversions
-        for name in &[
-            "__int_to_f", "__char_to_f", "__bool_to_f",
-            "__float_to_i", "__char_to_i", "__bool_to_i",
-            "__int_to_c",
-            "__int_to_s", "__float_to_s", "__bool_to_s",
-            "__char_to_s", "__string_to_s", "__unit_to_s",
-        ] {
-            self.register_native_chunk(name, 1);
+        let conv: &[(&str, TyType, TyType)] = &[
+            ("__int_to_f",    i.clone(), f.clone()),
+            ("__char_to_f",   c.clone(), f.clone()),
+            ("__bool_to_f",   b.clone(), f.clone()),
+            ("__float_to_i",  f.clone(), i.clone()),
+            ("__char_to_i",   c.clone(), i.clone()),
+            ("__bool_to_i",   b.clone(), i.clone()),
+            ("__int_to_c",    i.clone(), c.clone()),
+            ("__int_to_s",    i.clone(), s.clone()),
+            ("__float_to_s",  f.clone(), s.clone()),
+            ("__bool_to_s",   b.clone(), s.clone()),
+            ("__char_to_s",   c.clone(), s.clone()),
+            ("__string_to_s", s.clone(), s.clone()),
+            ("__unit_to_s",   u.clone(), s.clone()),
+        ];
+        for (name, p, r) in conv {
+            self.register_typed_native(name, vec![p.clone()], r.clone(), 1);
         }
         // System
         self.register_typed_native("halt",  vec![i.clone()], u.clone(), 1);

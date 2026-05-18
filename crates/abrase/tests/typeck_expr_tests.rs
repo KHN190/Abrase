@@ -3095,3 +3095,75 @@ fn verify_move_closure_is_valid() {
     assert!(checker.errors.is_empty(), "move closure must not produce errors; got {:?}", checker.errors);
     assert!(matches!(ty, Type::Function { .. }), "move closure must produce Function type; got {:?}", ty);
 }
+
+#[test]
+fn closure_cannot_capture_mutable_binding() {
+    // { let mut x = 0; |y: Int| y + x }  must reject capture of mut x
+    let mut checker = Checker::new();
+    let let_stmt = sp(ast::Stmt::Let {
+        pattern: sp(Pattern::Bind("x".into())),
+        is_mut: true,
+        ty: Some(ast::Type::Named("Int".into())),
+        value: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+    });
+    let closure = sp(ast::Expr::Closure {
+        is_move: false,
+        params: vec![ast::ClosureParam {
+            pattern: sp(ast::Pattern::Bind("y".into())),
+            ty: Some(ast::Type::Named("Int".into())),
+        }],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        body: Box::new(sp(ast::Expr::Binary {
+            op: ast::BinaryOp::Add,
+            left: Box::new(sp(ast::Expr::Identifier("y".into()))),
+            right: Box::new(sp(ast::Expr::Identifier("x".into()))),
+        })),
+    });
+    let block = ast::Block {
+        stmts: vec![let_stmt],
+        ret: Some(Box::new(closure)),
+    };
+    let _ = checker.infer_expr(&sp(ast::Expr::Block(block)));
+    assert!(
+        checker.errors.iter().any(|e|
+            e.message.contains("mutable binding 'x' cannot be captured by a closure")
+        ),
+        "expected mut-capture error; got {:?}", checker.errors
+    );
+}
+
+#[test]
+fn closure_capturing_immutable_let_is_valid() {
+    // { let x = 0; |y: Int| y + x }  must be accepted
+    let mut checker = Checker::new();
+    let let_stmt = sp(ast::Stmt::Let {
+        pattern: sp(Pattern::Bind("x".into())),
+        is_mut: false,
+        ty: Some(ast::Type::Named("Int".into())),
+        value: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+    });
+    let closure = sp(ast::Expr::Closure {
+        is_move: false,
+        params: vec![ast::ClosureParam {
+            pattern: sp(ast::Pattern::Bind("y".into())),
+            ty: Some(ast::Type::Named("Int".into())),
+        }],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        body: Box::new(sp(ast::Expr::Binary {
+            op: ast::BinaryOp::Add,
+            left: Box::new(sp(ast::Expr::Identifier("y".into()))),
+            right: Box::new(sp(ast::Expr::Identifier("x".into()))),
+        })),
+    });
+    let block = ast::Block {
+        stmts: vec![let_stmt],
+        ret: Some(Box::new(closure)),
+    };
+    let _ = checker.infer_expr(&sp(ast::Expr::Block(block)));
+    assert!(
+        checker.errors.is_empty(),
+        "immutable capture must be valid; got {:?}", checker.errors
+    );
+}

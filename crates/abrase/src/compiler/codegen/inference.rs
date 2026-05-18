@@ -37,13 +37,17 @@ impl Compiler {
                 _ => self.infer_expr_type(right),
             },
             ast::Expr::Call { callee, args: _ } => {
-                // Calls to named fns: look up the fn's return type via the
-                // compiler's recorded signatures. Allow overloading.
-                if let ast::Expr::Identifier(name) = &callee.node {
-                    let fid = self.func_map.get(name).copied()?;
-                    let (_, ret) = self.fn_signatures.get(&fid)?;
-                    ty_to_ast(ret)
-                } else { None }
+                let fid = match &callee.node {
+                    ast::Expr::Identifier(name) => self.func_map.get(name).copied()?,
+                    ast::Expr::FieldAccess { base, field } => {
+                        let recv = receiver_name_of(&self.infer_expr_type(base)?)?;
+                        let mangled = self.method_dispatch.get(&(recv, field.clone()))?;
+                        self.func_map.get(mangled).copied()?
+                    }
+                    _ => return None,
+                };
+                let (_, ret) = self.fn_signatures.get(&fid)?;
+                ty_to_ast(ret)
             }
             ast::Expr::Binary { op, left, right } => {
                 use ast::BinaryOp as B;

@@ -696,7 +696,7 @@ impl<'a> Parser<'a> {
             {
                 let tok = self.current_token.clone();
                 self.report_error(
-                    format!("Unexpected token {:?}; expected ';', '}}', or statement", tok),
+                    format!("Unexpected token {:?}; expected ';', '}}', or statement", tok.display()),
                     self.current_span,
                 );
                 self.synchronize();

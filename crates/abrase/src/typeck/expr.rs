@@ -1043,6 +1043,16 @@ impl Checker {
                                     body.span,
                                 );
                             }
+                            if let Some(true) = self.peek_var_is_mut(name) {
+                                self.report_error(
+                                    format!(
+                                        "mutable binding '{}' cannot be captured by a closure; \
+                                         rebind as immutable, or model mutation through the `state` effect",
+                                        name
+                                    ),
+                                    body.span,
+                                );
+                            }
                         }
                     }
                 }
