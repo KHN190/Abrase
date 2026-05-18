@@ -163,13 +163,22 @@ fn built_ins() {
     assert!(out.contains("hello, myriad"),    "missing greeting in: {:?}", out);
     assert!(out.contains("slept ~"),          "missing sleep line in: {:?}", out);
     assert!(out.contains("rand = "),          "missing rand line in: {:?}", out);
-    assert!(out.contains("min=3? 3"),         "math min broken in: {:?}", out);
-    assert!(out.contains("max=7? 7"),         "math max broken in: {:?}", out);
-    assert!(out.contains("abs=9? 9"),         "math abs broken in: {:?}", out);
+    assert!(out.contains("7.min(3)=3"),       "Int .min() broken in: {:?}", out);
+    assert!(out.contains("7.max(3)=7"),       "Int .max() broken in: {:?}", out);
+    assert!(out.contains("(-9).abs()=9"),     "Int .abs() broken in: {:?}", out);
     assert!(out.contains("sqrt(16)=4"),       "sqrt broken in: {:?}", out);
     assert!(out.contains("ceil(2.3)=3"),      "ceil broken in: {:?}", out);
     assert!(out.contains("flr(2.7)=2"),       "flr broken in: {:?}", out);
-    assert!(out.contains("fabs(3.5)=3.5"),    "abs(Float) overload broken in: {:?}", out);
-    assert!(out.contains("fmax(2.5)=2.5"),    "max(Float) overload broken in: {:?}", out);
-    assert!(out.contains("fmin(1.5)=1.5"),    "min(Float) overload broken in: {:?}", out);
+    assert!(out.contains("(-3.5).abs()=3.5"), "Float .abs() broken in: {:?}", out);
+    assert!(out.contains("1.5.max(2.5)=2.5"), "Float .max() broken in: {:?}", out);
+    assert!(out.contains("1.5.min(2.5)=1.5"), "Float .min() broken in: {:?}", out);
+    assert!(out.contains("7.to_f()=7"),       ".to_f() broken in: {:?}", out);
+    assert!(out.contains("3.9.to_i()=3"),     ".to_i() (Float→Int trunc) broken in: {:?}", out);
+    assert!(out.contains("'A'.to_i()=65"),    ".to_i() (Char→Int) broken in: {:?}", out);
+    assert!(out.contains("66.to_c()=B"),      ".to_c() (Int→Char) broken in: {:?}", out);
+    assert!(out.contains("true.to_i()=1"),    "Bool→Int broken in: {:?}", out);
+    assert!(out.contains("42.to_s()=42"),     "Int.to_s broken in: {:?}", out);
+    assert!(out.contains("3.14.to_s()=3.14"), "Float.to_s broken in: {:?}", out);
+    assert!(out.contains("false.to_s()=false"),"Bool.to_s broken in: {:?}", out);
+    assert!(out.contains("'Z'.to_s()=Z"),     "Char.to_s broken in: {:?}", out);
 }

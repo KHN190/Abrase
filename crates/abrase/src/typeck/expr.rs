@@ -637,9 +637,18 @@ impl Checker {
                     };
 
                     if let Some(rname) = receiver_name {
+                        let receiver_ty: Type = match rname.as_str() {
+                            "Int"    => Type::Int,
+                            "Float"  => Type::Float,
+                            "Bool"   => Type::Bool,
+                            "Char"   => Type::Char,
+                            "String" => Type::String,
+                            "Unit"   => Type::Unit,
+                            _        => Type::Named(rname.clone()),
+                        };
                         let sub_self = |t: &Type| -> Type {
                             match t {
-                                Type::Named(n) if n == "Self" => Type::Named(rname.clone()),
+                                Type::Named(n) if n == "Self" => receiver_ty.clone(),
                                 Type::Reference { is_mut, inner } => {
                                     let inner_new = if let Type::Named(n) = inner.as_ref() {
                                         if n == "Self" { Type::Named(rname.clone()) }
@@ -1257,7 +1266,18 @@ impl Checker {
                     // Validate arm pattern if present (introduces binder visible to body)
                     if let Some(pat) = &arm.pattern {
                         if let ast::Pattern::Bind(name) = &pat.node {
-                            self.insert_var(name.clone(), Type::Unknown, false, pat.span);
+                            let pat_ty = if let ast::HandleArmKind::Effect(path) = &arm.kind {
+                                if path.len() >= 2 {
+                                    let op_key = path.join(".");
+                                    self.effect_ops_registry.get(&op_key).cloned()
+                                        .unwrap_or(Type::Unknown)
+                                } else {
+                                    Type::Unknown
+                                }
+                            } else {
+                                Type::Unknown
+                            };
+                            self.insert_var(name.clone(), pat_ty, false, pat.span);
                         }
                     }
 

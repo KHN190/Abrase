@@ -43,6 +43,20 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("__float_abs", float_abs_native());
     reg.register("__float_max", float_max_native());
     reg.register("__float_min", float_min_native());
+    // Type conversion natives (method bodies for ToF / ToI / ToC / ToS traits).
+    reg.register("__int_to_f",    int_to_f_native());
+    reg.register("__char_to_f",   char_to_f_native());
+    reg.register("__bool_to_f",   bool_to_f_native());
+    reg.register("__float_to_i",  float_to_i_native());
+    reg.register("__char_to_i",   char_to_i_native());
+    reg.register("__bool_to_i",   bool_to_i_native());
+    reg.register("__int_to_c",    int_to_c_native());
+    reg.register("__int_to_s",    int_to_s_native());
+    reg.register("__float_to_s",  float_to_s_native());
+    reg.register("__bool_to_s",   bool_to_s_native());
+    reg.register("__char_to_s",   char_to_s_native());
+    reg.register("__string_to_s", string_to_s_native());
+    reg.register("__unit_to_s",   unit_to_s_native());
 
     // Console
     reg.register("print",       print_native());
@@ -309,6 +323,120 @@ fn float_min_native() -> NativeFn {
     Rc::new(|_ctx, args| {
         let (a, b) = float_pair(args, "__float_min")?;
         Ok(Value::from_float(a.min(b)))
+    })
+}
+
+// Type conversion natives.
+
+fn int_to_f_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let n = ctx.pool.read_int(args[0])
+            .ok_or_else(|| format!("__int_to_f: arg0 not Int: {:?}", args[0]))?;
+        Ok(Value::from_float(n as f64))
+    })
+}
+
+fn char_to_f_native() -> NativeFn {
+    Rc::new(|_ctx, args| {
+        let c = args[0].as_char()
+            .ok_or_else(|| format!("__char_to_f: arg0 not Char: {:?}", args[0]))?;
+        Ok(Value::from_float(c as u32 as f64))
+    })
+}
+
+fn bool_to_f_native() -> NativeFn {
+    Rc::new(|_ctx, args| {
+        let b = args[0].as_bool()
+            .ok_or_else(|| format!("__bool_to_f: arg0 not Bool: {:?}", args[0]))?;
+        Ok(Value::from_float(if b { 1.0 } else { 0.0 }))
+    })
+}
+
+fn float_to_i_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let f = args[0].as_float()
+            .ok_or_else(|| format!("__float_to_i: arg0 not Float: {:?}", args[0]))?;
+        Ok(ctx.pool.intern_int(f as i64))
+    })
+}
+
+fn char_to_i_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let c = args[0].as_char()
+            .ok_or_else(|| format!("__char_to_i: arg0 not Char: {:?}", args[0]))?;
+        Ok(ctx.pool.intern_int(c as i64))
+    })
+}
+
+fn bool_to_i_native() -> NativeFn {
+    Rc::new(|_ctx, args| {
+        let b = args[0].as_bool()
+            .ok_or_else(|| format!("__bool_to_i: arg0 not Bool: {:?}", args[0]))?;
+        Ok(Value::from_int(if b { 1 } else { 0 }))
+    })
+}
+
+fn int_to_c_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let n = ctx.pool.read_int(args[0])
+            .ok_or_else(|| format!("__int_to_c: arg0 not Int: {:?}", args[0]))?;
+        let u = u32::try_from(n).map_err(|_| format!("abort: invalid codepoint {}", n))?;
+        let c = char::from_u32(u).ok_or_else(|| format!("abort: invalid codepoint U+{:X}", u))?;
+        Ok(Value::from_char(c))
+    })
+}
+
+fn intern_str(pool: &mut BoxPool, s: String) -> Value {
+    let idx = pool.intern(BoxedValue::String(s));
+    Value::from_box(idx)
+}
+
+fn int_to_s_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let n = ctx.pool.read_int(args[0])
+            .ok_or_else(|| format!("__int_to_s: arg0 not Int: {:?}", args[0]))?;
+        Ok(intern_str(ctx.pool, n.to_string()))
+    })
+}
+
+fn float_to_s_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let f = args[0].as_float()
+            .ok_or_else(|| format!("__float_to_s: arg0 not Float: {:?}", args[0]))?;
+        Ok(intern_str(ctx.pool, f.to_string()))
+    })
+}
+
+fn bool_to_s_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let b = args[0].as_bool()
+            .ok_or_else(|| format!("__bool_to_s: arg0 not Bool: {:?}", args[0]))?;
+        Ok(intern_str(ctx.pool, b.to_string()))
+    })
+}
+
+fn char_to_s_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let c = args[0].as_char()
+            .ok_or_else(|| format!("__char_to_s: arg0 not Char: {:?}", args[0]))?;
+        Ok(intern_str(ctx.pool, c.to_string()))
+    })
+}
+
+fn string_to_s_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let s = extract_string(ctx.pool, &args[0])
+            .ok_or_else(|| format!("__string_to_s: arg0 not String: {:?}", args[0]))?;
+        Ok(intern_str(ctx.pool, s))
+    })
+}
+
+fn unit_to_s_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        if !args[0].is_unit() {
+            return Err(format!("__unit_to_s: arg0 not Unit: {:?}", args[0]));
+        }
+        Ok(intern_str(ctx.pool, "()".into()))
     })
 }
 

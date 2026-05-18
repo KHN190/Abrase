@@ -40,7 +40,7 @@ fn random_walk(steps: Int) -> <Metric> Int {
 
   let t1 = now();
   Metric.record("time: {t1}");
-  let d = abs(pos);
+  let d = pos.abs();
   Metric.record("I am at: {d}");
   pos
 }

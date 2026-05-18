@@ -279,46 +279,11 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
-        // Builtins must be before user fns
         self.register_builtins();
-
-        // Refuses to compile with type errors
         let mut checker = crate::typeck::Checker::new();
-        for decl in self.host_fns.values() {
-            let fn_ty = TyType::Function {
-                params: decl.params.clone(),
-                effects: vec![],
-                ret: Box::new(decl.ret.clone()),
-            };
-            checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
-        }
-        for (name, (params, ret)) in &self.builtin_types {
-            let fn_ty = TyType::Function {
-                params: params.clone(),
-                effects: vec![],
-                ret: Box::new(ret.clone()),
-            };
-            checker.insert_var(name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
-        }
-        // Surface the full overload table to the checker so Call resolution can
-        // pick by arg types. The single-overload `insert_var` path above covers
-        // the common case; this lets max/min/abs etc. expose multiple sigs.
-        for (name, fn_ids) in &self.fn_overloads {
-            let mut sigs: Vec<(Vec<TyType>, TyType)> = Vec::new();
-            if let Some(primary) = self.func_map.get(name) {
-                if let Some(sig) = self.fn_signatures.get(primary) {
-                    sigs.push(sig.clone());
-                }
-            }
-            for id in fn_ids {
-                if let Some(sig) = self.fn_signatures.get(id) {
-                    sigs.push(sig.clone());
-                }
-            }
-            if !sigs.is_empty() {
-                checker.fn_overloads.insert(name.clone(), sigs);
-            }
-        }
+        self.register_builtins_to_checker(&mut checker);
+        self.register_builtin_overloads_to_checker(&mut checker);
+
         checker.check_program(ast);
         if !checker.errors.is_empty() {
             self.errors.extend(checker.errors.iter().map(|te| Error::new(
@@ -331,6 +296,7 @@ impl Compiler {
 
         // Impl-lift pass: synthesise concrete FnDecls and build method dispatch table.
         let mut impl_lowering = impls::ImplLowering::new();
+        Self::seed_builtin_method_dispatch(&mut impl_lowering.method_dispatch);
         impl_lowering.lower(ast);
         if !impl_lowering.errors.is_empty() {
             for msg in impl_lowering.errors {
@@ -355,7 +321,7 @@ impl Compiler {
         };
         let ast: &[ast::Decl] = &owned;
 
-        // Pre-pass: lift closure expressions to synthetic top-level FnDecls
+        // lift closure expressions to synthetic top-level FnDecls
         // with an env-handle first parameter.
         let mut closure_lowering = closures::ClosureLowering::new();
         closure_lowering.lower(ast);
@@ -366,7 +332,7 @@ impl Compiler {
         }
         let ast: &[ast::Decl] = &decls_with_closures;
 
-        // Pre-pass: lift handler arms to synthetic top-level FnDecls.
+        // lift handler arms to synthetic top-level FnDecls.
         let mut handler_lowering = handlers::HandleLowering::new();
         if self.debug_sink.is_some() {
             handler_lowering = handler_lowering.with_debug_sink(debug::stderr_sink());
@@ -613,8 +579,7 @@ impl Compiler {
     }
 
     fn register_builtins(&mut self) {
-        // Compiler-internal — invoked by string `+` and `"{x}"` interp; not
-        // typed, not user-callable by name.
+        // Compiler-internal, not user-callable by name.
         let cid = self.register_native_chunk("__concat", 2);
         self.concat_fn_id = Some(cid);
         let tid = self.register_native_chunk("__to_str", 1);
@@ -632,7 +597,6 @@ impl Compiler {
         self.float_neg_fn_id = Some(self.functions.len());
         self.register_native_chunk("__float_neg", 1);
 
-        // myriad::builtins::register_default_builtins.
         let s = TyType::String;
         let i = TyType::Int;
         let f = TyType::Float;
@@ -646,22 +610,29 @@ impl Compiler {
         // Random
         self.register_typed_native("rand",     vec![],                     f.clone(), 0);
         self.register_typed_native("srand",    vec![f.clone()],            u.clone(), 1);
-        // Math
-        self.register_typed_native("abs",      vec![i.clone()],            i.clone(), 1);
+        // Float-only math
         self.register_typed_native("ceil",     vec![f.clone()],            i.clone(), 1);
         self.register_typed_native("flr",      vec![f.clone()],            i.clone(), 1);
         self.register_typed_native("cos",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("sin",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("sqrt",     vec![f.clone()],            f.clone(), 1);
-        self.register_typed_native("max",      vec![i.clone(), i.clone()], i.clone(), 2);
-        self.register_typed_native("min",      vec![i.clone(), i.clone()], i.clone(), 2);
-        // Math (Float overloads — same user name, distinct chunk name)
-        // Float overloads route to dedicated `__float_*` chunks — overload
-        // resolution does the type dispatch at compile time; each native is
-        // type-specific (no runtime tag check).
-        self.register_typed_native_overload("abs", "__float_abs", vec![f.clone()],            f.clone(), 1);
-        self.register_typed_native_overload("max", "__float_max", vec![f.clone(), f.clone()], f.clone(), 2);
-        self.register_typed_native_overload("min", "__float_min", vec![f.clone(), f.clone()], f.clone(), 2);
+        // Method-body native chunks for the built-in.
+        self.register_native_chunk("max",         2);
+        self.register_native_chunk("min",         2);
+        self.register_native_chunk("abs",         1);
+        self.register_native_chunk("__float_max", 2);
+        self.register_native_chunk("__float_min", 2);
+        self.register_native_chunk("__float_abs", 1);
+        // Type conversions (ToF / ToI / ToC / ToS method bodies).
+        for name in &[
+            "__int_to_f", "__char_to_f", "__bool_to_f",
+            "__float_to_i", "__char_to_i", "__bool_to_i",
+            "__int_to_c",
+            "__int_to_s", "__float_to_s", "__bool_to_s",
+            "__char_to_s", "__string_to_s", "__unit_to_s",
+        ] {
+            self.register_native_chunk(name, 1);
+        }
         // System
         self.register_typed_native("halt",     vec![i.clone()],            u.clone(), 1);
         self.register_typed_native("abort",    vec![s.clone()],            u.clone(), 1);
@@ -710,7 +681,155 @@ impl Compiler {
         self.fn_signatures.insert(id, (params, ret));
     }
 
-    // Overload-aware variant.
+    fn register_builtin_traits(&self, checker: &mut crate::typeck::Checker) {
+        let self_ty = TyType::Named("Self".into());
+        let ord_methods = vec!["max".into(), "min".into()];
+        let abs_methods = vec!["abs".into()];
+        checker.register_trait("Ord".into(), ord_methods);
+        checker.register_trait("Abs".into(), abs_methods);
+        checker.register_trait_method_sig(
+            "Ord", "max",
+            vec![self_ty.clone(), self_ty.clone()],
+            self_ty.clone(),
+        );
+        checker.register_trait_method_sig(
+            "Ord", "min",
+            vec![self_ty.clone(), self_ty.clone()],
+            self_ty.clone(),
+        );
+        checker.register_trait_method_sig(
+            "Abs", "abs",
+            vec![self_ty.clone()],
+            self_ty.clone(),
+        );
+        let i = TyType::Int;
+        let f = TyType::Float;
+        let c = TyType::Char;
+        let s = TyType::String;
+        checker.register_trait("ToF".into(), vec!["to_f".into()]);
+        checker.register_trait("ToI".into(), vec!["to_i".into()]);
+        checker.register_trait("ToC".into(), vec!["to_c".into()]);
+        checker.register_trait("ToS".into(), vec!["to_s".into()]);
+        checker.register_trait_method_sig("ToF", "to_f", vec![self_ty.clone()], f.clone());
+        checker.register_trait_method_sig("ToI", "to_i", vec![self_ty.clone()], i.clone());
+        checker.register_trait_method_sig("ToC", "to_c", vec![self_ty.clone()], c.clone());
+        checker.register_trait_method_sig("ToS", "to_s", vec![self_ty.clone()], s.clone());
+
+        for &(ty, mx, mn, ab) in &[
+            ("Int",   "max",         "min",         "abs"),
+            ("Float", "__float_max", "__float_min", "__float_abs"),
+        ] {
+            checker.register_impl_method("Ord", ty, "max", mx.into());
+            checker.register_impl_method("Ord", ty, "min", mn.into());
+            checker.register_impl_method("Abs", ty, "abs", ab.into());
+        }
+        for &(ty, mangled) in &[
+            ("Int",  "__int_to_f"),
+            ("Char", "__char_to_f"),
+            ("Bool", "__bool_to_f"),
+        ] {
+            checker.register_impl_method("ToF", ty, "to_f", mangled.into());
+        }
+        for &(ty, mangled) in &[
+            ("Float", "__float_to_i"),
+            ("Char",  "__char_to_i"),
+            ("Bool",  "__bool_to_i"),
+        ] {
+            checker.register_impl_method("ToI", ty, "to_i", mangled.into());
+        }
+        checker.register_impl_method("ToC", "Int", "to_c", "__int_to_c".into());
+        for &(ty, mangled) in &[
+            ("Int",    "__int_to_s"),
+            ("Float",  "__float_to_s"),
+            ("Bool",   "__bool_to_s"),
+            ("Char",   "__char_to_s"),
+            ("String", "__string_to_s"),
+            ("Unit",   "__unit_to_s"),
+        ] {
+            checker.register_impl_method("ToS", ty, "to_s", mangled.into());
+        }
+    }
+
+    fn register_builtins_to_checker(&self, checker: &mut crate::typeck::Checker) {
+        for decl in self.host_fns.values() {
+            let fn_ty = TyType::Function {
+                params: decl.params.clone(),
+                effects: vec![],
+                ret: Box::new(decl.ret.clone()),
+            };
+            checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+        }
+        for (name, (params, ret)) in &self.builtin_types {
+            let fn_ty = TyType::Function {
+                params: params.clone(),
+                effects: vec![],
+                ret: Box::new(ret.clone()),
+            };
+            checker.insert_var(name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+        }
+        self.register_builtin_traits(checker);
+        self.register_builtin_effects(checker);
+    }
+
+    fn register_builtin_overloads_to_checker(&self, checker: &mut crate::typeck::Checker) {
+        for (name, fn_ids) in &self.fn_overloads {
+            let mut sigs: Vec<(Vec<TyType>, TyType)> = Vec::new();
+            if let Some(primary) = self.func_map.get(name) {
+                if let Some(sig) = self.fn_signatures.get(primary) {
+                    sigs.push(sig.clone());
+                }
+            }
+            for id in fn_ids {
+                if let Some(sig) = self.fn_signatures.get(id) {
+                    sigs.push(sig.clone());
+                }
+            }
+            if !sigs.is_empty() {
+                checker.fn_overloads.insert(name.clone(), sigs);
+            }
+        }
+    }
+
+    fn register_builtin_effects(&self, checker: &mut crate::typeck::Checker) {
+        let io = vec![ast::EffectItem { name: vec!["IO".into()], arg: None }];
+        let nondet = vec![ast::EffectItem { name: vec!["nondet".into()], arg: None }];
+        for name in &["now", "sleep_ms"] {
+            checker.register_function_effects(name.to_string(), io.clone());
+        }
+        for name in &["rand", "srand"] {
+            checker.register_function_effects(name.to_string(), nondet.clone());
+        }
+    }
+
+    fn seed_builtin_method_dispatch(
+        dispatch: &mut std::collections::HashMap<(String, String), String>,
+    ) {
+        let entries: &[(&str, &str, &str)] = &[
+            ("Int",    "max",  "max"),
+            ("Int",    "min",  "min"),
+            ("Int",    "abs",  "abs"),
+            ("Float",  "max",  "__float_max"),
+            ("Float",  "min",  "__float_min"),
+            ("Float",  "abs",  "__float_abs"),
+            ("Int",    "to_f", "__int_to_f"),
+            ("Char",   "to_f", "__char_to_f"),
+            ("Bool",   "to_f", "__bool_to_f"),
+            ("Float",  "to_i", "__float_to_i"),
+            ("Char",   "to_i", "__char_to_i"),
+            ("Bool",   "to_i", "__bool_to_i"),
+            ("Int",    "to_c", "__int_to_c"),
+            ("Int",    "to_s", "__int_to_s"),
+            ("Float",  "to_s", "__float_to_s"),
+            ("Bool",   "to_s", "__bool_to_s"),
+            ("Char",   "to_s", "__char_to_s"),
+            ("String", "to_s", "__string_to_s"),
+            ("Unit",   "to_s", "__unit_to_s"),
+        ];
+        for &(ty, m, mangled) in entries {
+            dispatch.insert((ty.into(), m.into()), mangled.into());
+        }
+    }
+
     fn register_typed_native_overload(
         &mut self,
         user_name: &str,

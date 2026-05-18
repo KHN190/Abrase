@@ -10,21 +10,36 @@ fn main() -> Int {
   let r = rand();
   println("rand = {r}");
 
-  let lo = min(7, 3);
-  let hi = max(7, 3);
-  let a = abs(0 - 9);
-  println("min=3? {lo}, max=7? {hi}, abs=9? {a}");
+  let lo = 7.min(3);
+  let hi = 7.max(3);
+  let a = (0 - 9).abs();
+  println("7.min(3)={lo}, 7.max(3)={hi}, (-9).abs()={a}");
 
   let s = sqrt(16.0);
   let c = ceil(2.3);
   let fl = flr(2.7);
   println("sqrt(16)={s}, ceil(2.3)={c}, flr(2.7)={fl}");
 
-  // Overloads: max/min/abs work for Float too.
-  let fa = abs(0.0 - 3.5);
-  let fmx = max(1.5, 2.5);
-  let fmn = min(1.5, 2.5);
-  println("fabs(3.5)={fa}, fmax(2.5)={fmx}, fmin(1.5)={fmn}");
+  // Same syntax for Float — trait method dispatched by receiver type.
+  let fa = (0.0 - 3.5).abs();
+  let fmx = 1.5.max(2.5);
+  let fmn = 1.5.min(2.5);
+  println("(-3.5).abs()={fa}, 1.5.max(2.5)={fmx}, 1.5.min(2.5)={fmn}");
+
+  // Type conversion traits (ToF / ToI / ToC / ToS).
+  let if_ = 7.to_f();
+  let fi = 3.9.to_i();
+  let ci = 'A'.to_i();
+  let ic = 66.to_c();
+  let bi = true.to_i();
+  println("7.to_f()={if_}, 3.9.to_i()={fi}, 'A'.to_i()={ci}, 66.to_c()={ic}, true.to_i()={bi}");
+
+  // ToS — every primitive stringifies via .to_s().
+  let ss = 42.to_s();
+  let sf = 3.14.to_s();
+  let sb = false.to_s();
+  let sc = 'Z'.to_s();
+  println("42.to_s()={ss}, 3.14.to_s()={sf}, false.to_s()={sb}, 'Z'.to_s()={sc}");
 
   0
 }
