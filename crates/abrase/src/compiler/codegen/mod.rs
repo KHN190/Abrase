@@ -21,6 +21,11 @@ impl Compiler {
         expr: &ast::Spanned<ast::Expr>,
     ) -> Result<Register, String> {
         self.current_span = expr.span;
+        if matches!(expr.node, ast::Expr::Unary { .. } | ast::Expr::Binary { .. }) {
+            if let Some(lit) = self.try_const_fold(expr) {
+                return self.compile_literal(&lit);
+            }
+        }
         match &expr.node {
             ast::Expr::Error => Err(
                 "Compilation aborted: parser error was not recovered; fix parser errors first"
@@ -104,6 +109,7 @@ impl Compiler {
                         src_reg
                     };
                     self.var_to_reg.insert(name.clone(), bound_reg);
+                    self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
                     if let Some(t) = inferred_ty {
                         self.var_types.insert(name.clone(), t);
                     }

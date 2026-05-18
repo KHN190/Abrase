@@ -54,6 +54,11 @@ impl Compiler {
         condition: &ast::Spanned<ast::Expr>,
         body: &ast::Block,
     ) -> Result<Register, String> {
+        let outer_scope: std::collections::HashSet<String> = self.var_to_reg.keys().cloned().collect();
+        let (hoisted, filtered_body) = crate::compiler::licm::hoist_invariants(body, &outer_scope);
+        for stmt in &hoisted {
+            self.compile_stmt(stmt)?;
+        }
         // Per-iteration region: cond check sits before the push so each iter
         // gets a fresh region. break/continue emit their own pop before Jmp
         // (see compile_break / compile_continue) — that keeps push/pop balanced.
@@ -81,7 +86,7 @@ impl Compiler {
             handler_depth_at_entry,
         });
 
-        self.compile_block(body)?;
+        self.compile_block(&filtered_body)?;
 
         // Normal iter end: pop the region, jump back to cond check.
         self.emit_region_pop()?;

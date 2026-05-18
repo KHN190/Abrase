@@ -170,7 +170,7 @@ fn verify_compile_string_interp_with_int_var_concat() {
 }
 
 #[test]
-fn verify_compile_unsupported_binary_op_and_errors() {
+fn verify_compile_and_literal_folds() {
     let mut compiler = Compiler::new();
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
@@ -201,11 +201,11 @@ fn verify_compile_unsupported_binary_op_and_errors() {
     })];
 
     let result = compiler.compile(&ast);
-    assert!(result.is_err(), "Expected error for unsupported And operator");
+    assert!(result.is_ok(), "Literal And should const-fold to Bool literal");
 }
 
 #[test]
-fn verify_compile_unsupported_binary_op_or_errors() {
+fn verify_compile_or_literal_folds() {
     let mut compiler = Compiler::new();
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
@@ -236,7 +236,7 @@ fn verify_compile_unsupported_binary_op_or_errors() {
     })];
 
     let result = compiler.compile(&ast);
-    assert!(result.is_err(), "Expected error for unsupported Or operator");
+    assert!(result.is_ok(), "Literal Or should const-fold to Bool literal");
 }
 
 #[test]

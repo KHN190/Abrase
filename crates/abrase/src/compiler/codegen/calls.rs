@@ -46,6 +46,11 @@ impl Compiler {
             CallTarget::SharedCtor => self.emit_shared_ctor(args),
             CallTarget::HostFn { fn_id } => self.emit_host_fn_call(fn_id, args),
             CallTarget::VariantCtor { tag } => self.emit_variant_ctor(tag, args),
+            CallTarget::Function { func_id, env: CallEnv::None }
+                if Some(func_id) == self.current_self_fn_id
+                && self.tail_call_spans.contains(&call_span) => {
+                self.emit_tail_self_call(args)
+            }
             CallTarget::Function { func_id, env } => self.emit_func_call(func_id, env, args),
             CallTarget::Method { func_id, receiver } => self.emit_method_call(func_id, receiver, args),
             CallTarget::DeviceIn => self.emit_device_in(args),
@@ -395,6 +400,40 @@ impl Compiler {
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id));
         Ok(dest)
+    }
+
+    fn emit_tail_self_call(
+        &mut self,
+        args: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Register, String> {
+        let mut temps: Vec<Register> = Vec::with_capacity(args.len());
+        for arg in args {
+            let src = self.compile_expr(arg)?;
+            let want_move = self.arg_should_move(arg);
+            let t = self.alloc_register()?;
+            if want_move {
+                self.emit(OpCode::Move(t, src));
+            } else {
+                self.emit(OpCode::Copy(t, src));
+            }
+            temps.push(t);
+        }
+        self.emit_drops_to_exit_fn(None)?;
+        self.emit_pops_to_exit_fn()?;
+        for (i, t) in temps.iter().enumerate() {
+            let slot = super::scaffold::to_u8(i, "TCO param slot")?;
+            self.emit(OpCode::Move(Register(slot), *t));
+        }
+        let p = self.code.len();
+        let off = -((p as i64) + 1);
+        if off < i16::MIN as i64 {
+            return Err(format!("TCO jump offset {} out of i16 range", off));
+        }
+        self.emit(OpCode::Jmp(off as i16));
+        let dummy = self.alloc_register()?;
+        let idx = self.add_constant(Value::UNIT)?;
+        self.emit(OpCode::PushConst(dummy, idx));
+        Ok(dummy)
     }
 
     fn emit_method_call(

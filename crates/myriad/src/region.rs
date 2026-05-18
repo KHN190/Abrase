@@ -35,22 +35,19 @@ impl RegionTable {
         Ok(())
     }
 
-    // Drop all bookkeeping without force-freeing. Called by run_module_inner
-    // at entry so leftover frames from a prior (aborted or buggy) run don't
-    // see slots reused by the new run as their own.
+    // Drop all bookkeeping without force-freeing.
     pub fn clear(&mut self) {
         self.stack.clear();
     }
 
-    // Remove a (slot, generation) from every active region. Used by
-    // break/return/throw codegen to "promote" the carried value past the
-    // upcoming region pops so its heap cell isn't force-freed. A handle can
-    // only have been recorded in one region (the topmost at alloc time), but
-    // walking the whole stack is cheap and removes the need for codegen to
-    // know which depth it lived in.
-    pub fn forget(&mut self, slot: u32, generation: u32) {
+    // Remove a (slot, generation) from every active region. 
+    pub fn forget(&mut self, slot: u32, generation: u32) -> bool {
+        let mut removed = false;
         for region in &mut self.stack {
+            let before = region.len();
             region.retain(|(s, g)| !(*s == slot && *g == generation));
+            if region.len() < before { removed = true; }
         }
+        removed
     }
 }

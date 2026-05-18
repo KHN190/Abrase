@@ -16,7 +16,12 @@ impl Compiler {
                 ast::Literal::Unit => ast::Type::Tuple(vec![]),
                 _ => return None,
             }),
-            ast::Expr::Identifier(name) => self.var_types.get(name).cloned(),
+            ast::Expr::Identifier(name) => {
+                if let Some(ty) = self.var_types.get(name) { return Some(ty.clone()); }
+                // Zero-ary variant ctor used as a bare identifier (e.g. `Nil`).
+                self.layouts.variants.get(name)
+                    .map(|info| ast::Type::Named(info.type_name.clone()))
+            }
             ast::Expr::Record { ty, .. } => ty.last().map(|n| ast::Type::Named(n.clone())),
             ast::Expr::Variant { ty, .. } => ty.last().and_then(|vname| {
                 self.layouts.variants.get(vname).map(|info| ast::Type::Named(info.type_name.clone()))
@@ -72,6 +77,65 @@ impl Compiler {
     pub(in crate::compiler) fn receiver_type_name(&self, base: &ast::Spanned<ast::Expr>) -> Option<String> {
         let ty = self.infer_expr_type(base)?;
         receiver_name_of(&ty)
+    }
+
+    pub(in crate::compiler) fn try_const_fold(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Literal> {
+        match &expr.node {
+            ast::Expr::Literal(lit) => Some(lit.clone()),
+            ast::Expr::Unary { op: ast::UnaryOp::Neg, right } => {
+                match self.try_const_fold(right)? {
+                    ast::Literal::Int(n) => Some(ast::Literal::Int(n.wrapping_neg())),
+                    ast::Literal::Float(f) => Some(ast::Literal::Float(-f)),
+                    _ => None,
+                }
+            }
+            ast::Expr::Unary { op: ast::UnaryOp::Not, right } => {
+                match self.try_const_fold(right)? {
+                    ast::Literal::Bool(b) => Some(ast::Literal::Bool(!b)),
+                    _ => None,
+                }
+            }
+            ast::Expr::Binary { op, left, right } => {
+                let l = self.try_const_fold(left)?;
+                let r = self.try_const_fold(right)?;
+                use ast::BinaryOp as B;
+                use ast::Literal as L;
+                match (l, r) {
+                    (L::Int(a), L::Int(b)) => match op {
+                        B::Add => Some(L::Int(a.wrapping_add(b))),
+                        B::Sub => Some(L::Int(a.wrapping_sub(b))),
+                        B::Mul => Some(L::Int(a.wrapping_mul(b))),
+                        B::Div if b != 0 => Some(L::Int(a.wrapping_div(b))),
+                        B::Mod if b != 0 => Some(L::Int(a.wrapping_rem(b))),
+                        B::Eq  => Some(L::Bool(a == b)),
+                        B::Neq => Some(L::Bool(a != b)),
+                        B::Lt  => Some(L::Bool(a < b)),
+                        B::Gt  => Some(L::Bool(a > b)),
+                        B::Lte => Some(L::Bool(a <= b)),
+                        B::Gte => Some(L::Bool(a >= b)),
+                        _ => None,
+                    },
+                    (L::Float(a), L::Float(b)) => match op {
+                        B::Add => Some(L::Float(a + b)),
+                        B::Sub => Some(L::Float(a - b)),
+                        B::Mul => Some(L::Float(a * b)),
+                        B::Div if b != 0.0 => Some(L::Float(a / b)),
+                        B::Lt  => Some(L::Bool(a < b)),
+                        B::Gt  => Some(L::Bool(a > b)),
+                        _ => None,
+                    },
+                    (L::Bool(a), L::Bool(b)) => match op {
+                        B::And => Some(L::Bool(a && b)),
+                        B::Or  => Some(L::Bool(a || b)),
+                        B::Eq  => Some(L::Bool(a == b)),
+                        B::Neq => Some(L::Bool(a != b)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 }
 

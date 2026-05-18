@@ -550,9 +550,11 @@ impl VirtualMachine {
                 polka::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
                 polka::REGION_PORT_POP  => self.region_pop(),
                 polka::REGION_PORT_FORGET => {
-                    // Callers may emit forget unconditionally; skip non-handle values.
+                    // Recursive walk: a variant/list payload may chain into other
+                    // region-tracked cells. Visited set guards against cyclic refs.
                     if let Some((slot, gen_)) = v.as_handle() {
-                        self.region_table.forget(slot, gen_);
+                        let mut visited: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+                        self.deep_forget(slot, gen_, &mut visited)?;
                     }
                     Ok(())
                 }
@@ -562,6 +564,28 @@ impl VirtualMachine {
         let dev = self.devices.get_mut(device_id)
             .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
         dev.write_with_pool(port, v, &mut self.box_pool)
+    }
+
+    fn deep_forget(
+        &mut self,
+        slot: u32,
+        generation: u32,
+        visited: &mut std::collections::HashSet<(u32, u32)>,
+    ) -> Result<(), String> {
+        if !visited.insert((slot, generation)) { return Ok(()); }
+        if !self.region_table.forget(slot, generation) { return Ok(()); }
+        let size = match self.heap.size(slot, generation) {
+            Ok(n) => n,
+            Err(_) => return Ok(()),
+        };
+        for off in 0..size {
+            if let Ok(v) = self.heap.ld(slot, generation, off) {
+                if let Some((s, g)) = v.as_handle() {
+                    self.deep_forget(s, g, visited)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn do_resume(&mut self, module: &Module, dest_reg: Register, val_reg: Register) -> Result<(), String> {

@@ -8,6 +8,7 @@ pub mod effects;
 pub mod handlers;
 pub mod debug;
 pub mod liveness;
+pub mod licm;
 pub mod builtins;
 
 use crate::ast;
@@ -47,6 +48,10 @@ pub struct Compiler {
     pub(super) next_reg: u16,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
+    // Compiler_region_depth at each binding.
+    pub(super) var_bound_at_region: HashMap<String, usize>,
+    pub(super) current_self_fn_id: Option<u16>,
+    pub(super) tail_call_spans: std::collections::HashSet<ast::Span>,
     pub(super) func_map: HashMap<String, usize>,
     pub(super) functions: Vec<Chunk>,
     pub(super) layouts: LayoutCtx,
@@ -127,6 +132,9 @@ impl Compiler {
             next_reg: 0,
             var_to_reg: HashMap::new(),
             var_types: HashMap::new(),
+            var_bound_at_region: HashMap::new(),
+            current_self_fn_id: None,
+            tail_call_spans: std::collections::HashSet::new(),
             func_map: HashMap::new(),
             functions: Vec::new(),
             layouts: {
@@ -448,6 +456,9 @@ impl Compiler {
         let saved_next_reg = self.next_reg;
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
+        let saved_var_bound_at_region = std::mem::take(&mut self.var_bound_at_region);
+        let saved_current_self_fn_id = self.current_self_fn_id.take();
+        let saved_tail_call_spans = std::mem::take(&mut self.tail_call_spans);
         let saved_fallible = self.current_fn_fallible;
         let saved_fn_name = std::mem::take(&mut self.current_fn_name);
         let saved_compiler_region_depth = self.compiler_region_depth;
@@ -461,6 +472,9 @@ impl Compiler {
         self.remaining_uses = liveness::count_uses(&fn_decl.body);
         self.current_fn_fallible = effects::fn_is_fallible(fn_decl);
         self.current_fn_name = fn_decl.name.clone();
+        self.current_self_fn_id = self.func_map.get(&fn_decl.name)
+            .and_then(|id| u16::try_from(*id).ok());
+        self.tail_call_spans = collect_tail_self_calls(&fn_decl.body, &fn_decl.name);
         self.next_reg = 0;
         // Each fn starts with a fresh region tally + block stack;
         // return/throw unwind back to this baseline (0).
@@ -567,6 +581,9 @@ impl Compiler {
         self.next_reg = saved_next_reg;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
+        self.var_bound_at_region = saved_var_bound_at_region;
+        self.current_self_fn_id = saved_current_self_fn_id;
+        self.tail_call_spans = saved_tail_call_spans;
         self.current_fn_fallible = saved_fallible;
         self.current_fn_name = saved_fn_name;
         self.compiler_region_depth = saved_compiler_region_depth;
@@ -580,4 +597,41 @@ impl Compiler {
         Ok(chunk)
     }
 
+}
+
+fn collect_tail_self_calls(block: &ast::Block, self_name: &str) -> std::collections::HashSet<ast::Span> {
+    let mut out = std::collections::HashSet::new();
+    walk_tail_block(block, self_name, &mut out);
+    out
+}
+
+fn walk_tail_block(block: &ast::Block, self_name: &str, out: &mut std::collections::HashSet<ast::Span>) {
+    if let Some(ret) = &block.ret {
+        walk_tail_expr(ret, self_name, out);
+    }
+}
+
+fn walk_tail_expr(expr: &ast::Spanned<ast::Expr>, self_name: &str, out: &mut std::collections::HashSet<ast::Span>) {
+    match &expr.node {
+        ast::Expr::Call { callee, .. } => {
+            if let ast::Expr::Identifier(n) = &callee.node {
+                if n == self_name {
+                    out.insert(expr.span);
+                }
+            }
+        }
+        ast::Expr::If { consequence, alternative, .. } => {
+            walk_tail_expr(consequence, self_name, out);
+            if let Some(a) = alternative.as_deref() {
+                walk_tail_expr(a, self_name, out);
+            }
+        }
+        ast::Expr::Match { arms, .. } => {
+            for arm in arms {
+                walk_tail_expr(&arm.body, self_name, out);
+            }
+        }
+        ast::Expr::Block(block) => walk_tail_block(block, self_name, out),
+        _ => {}
+    }
 }

@@ -72,7 +72,16 @@ impl Compiler {
             ast::BinaryOp::Assign => {
                 if let ast::Expr::Identifier(name) = &left.node {
                     let rr = self.compile_expr(right)?;
-                    let is_heap = self.var_types.get(name).map(is_move_type).unwrap_or(false);
+                    let ty = self.var_types.get(name).cloned();
+                    let is_heap = ty.as_ref().map(is_move_type).unwrap_or(false);
+                    // Crossing into an outer region. Forget the cell so region.pop
+                    // doesn't force-free what the binding still references.
+                    let bound_depth = self.var_bound_at_region.get(name).copied().unwrap_or(0);
+                    if is_heap && bound_depth < self.compiler_region_depth {
+                        if let Some(t) = ty.as_ref() {
+                            self.emit_region_forget_typed(rr, t)?;
+                        }
+                    }
                     let dest_reg = match self.var_to_reg.get(name).copied() {
                         Some(r) => {
                             if is_heap { self.emit(OpCode::Drop(r)); }
@@ -80,10 +89,10 @@ impl Compiler {
                             r
                         }
                         None => {
-                            // Var was moved earlier; rebind into a fresh register.
                             let r = self.alloc_register()?;
                             self.emit(OpCode::Copy(r, rr));
                             self.var_to_reg.insert(name.clone(), r);
+                            self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
                             r
                         }
                     };
