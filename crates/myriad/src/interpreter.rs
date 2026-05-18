@@ -412,9 +412,17 @@ impl VirtualMachine {
         let route_through_return_arm = (frame.cont.is_some() || is_body_frame)
             && self.handlers.last().map_or(false, |h| h.pending_return_arm_fn.is_some());
 
+        let dbg = std::env::var("TRACE_RET").is_ok();
+        if dbg {
+            eprintln!("[do_ret_slow] fn={} base_reg={} cont={} is_body_frame={} pending_arm={} pc-before={}",
+                frame.func_id, frame.base_reg, frame.cont.is_some(), is_body_frame,
+                self.handlers.last().map_or(false, |h| h.pending_return_arm_fn.is_some()),
+                self.pc);
+        }
         if !route_through_return_arm {
             if let Some(cont) = frame.cont.as_ref() {
                 if cont.snapshot_count > 0 {
+                    if dbg { eprintln!("  non-route: restore_registers slot={} gen={}", cont.snapshot_slot, cont.snapshot_gen); }
                     let snap = crate::snapshot::SnapshotHandle {
                         slot: cont.snapshot_slot,
                         generation: cont.snapshot_gen,
@@ -433,6 +441,7 @@ impl VirtualMachine {
 
         if let Some(cont) = frame.cont.as_ref() {
             if cont.snapshot_count > 0 {
+                if dbg { eprintln!("  route: restore_registers slot={} gen={}", cont.snapshot_slot, cont.snapshot_gen); }
                 let snap = crate::snapshot::SnapshotHandle {
                     slot: cont.snapshot_slot,
                     generation: cont.snapshot_gen,
@@ -620,7 +629,7 @@ impl VirtualMachine {
         dev.write_with_pool(port, v, &mut self.box_pool)
     }
 
-    fn deep_forget(
+    pub(crate) fn deep_forget(
         &mut self,
         slot: u32,
         generation: u32,
@@ -837,6 +846,9 @@ impl VirtualMachine {
     #[inline(always)]
     pub(crate) fn value_rc_dec(&mut self, v: &Value) -> Result<(), String> {
         if let Some((slot, generation)) = v.as_handle() {
+            if std::env::var("TRACE_SLOT").map(|t| t.parse::<u32>().ok() == Some(slot)).unwrap_or(false) {
+                eprintln!("[value_rc_dec] slot {} gen {} from fn {} pc {}", slot, generation, self.current_func, self.pc);
+            }
             self.heap.rc_dec(slot, generation, &mut self.box_pool).map(|_| ())
         } else if let Some(idx) = v.as_box() {
             self.box_pool.dec(idx);
@@ -849,6 +861,7 @@ impl VirtualMachine {
     #[inline(always)]
     fn read_i64(&self, r: Register) -> Result<i64, String> {
         let v = self.read_abs(self.abs(r));
+        if let Some(n) = v.as_int() { return Ok(n); }
         if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
         self.box_pool.read_int(v).ok_or_else(|| format!("expected i64, got {:?}", v))
     }
@@ -885,8 +898,9 @@ impl VirtualMachine {
     #[inline(always)]
     fn read_handle(&self, r: Register) -> Result<(u32, u32), String> {
         let v = self.read_abs(self.abs(r));
+        if let Some(h) = v.as_handle() { return Ok(h); }
         if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
-        v.as_handle().ok_or_else(|| format!("expected handle, got {:?}", v))
+        Err(format!("expected handle, got {:?}", v))
     }
 
     #[inline(always)]
@@ -901,8 +915,10 @@ impl VirtualMachine {
 
     #[inline(always)]
     fn read_f64(&self, r: Register) -> Result<f64, String> {
-        let v = self.read(r)?;
-        v.as_float().ok_or_else(|| format!("expected Float in r{}, got {:?}", r.to_usize(), v))
+        let v = self.read_abs(self.abs(r));
+        if let Some(f) = v.as_float() { return Ok(f); }
+        if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
+        Err(format!("expected Float in r{}, got {:?}", r.to_usize(), v))
     }
 
     #[inline(always)]

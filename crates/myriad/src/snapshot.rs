@@ -82,7 +82,14 @@ impl VirtualMachine {
         for i in 0..snapshot.count {
             let new_val = self.heap.ld(snapshot.slot, snapshot.generation, i)?;
             let old = std::mem::replace(&mut self.registers[base + i], Value::NONE);
-            self.value_rc_dec(&old)?;
+            // OLD may be a stale leftover written by an intermediate frame that
+            // borrowed this physical address (arm_continuation: solve's nested
+            // calls overlap arm's window). Such a handle's cell was force-freed
+            // by region_pop and has no rc to decrement.
+            let stale = matches!(old.as_handle(), Some((s, g)) if !self.heap.is_live(s, g));
+            if !stale {
+                self.value_rc_dec(&old)?;
+            }
             self.value_rc_inc(&new_val)?;
             self.registers[base + i] = new_val;
         }

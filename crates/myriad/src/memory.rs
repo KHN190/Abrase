@@ -26,7 +26,7 @@ impl Heap {
     pub fn alloc(&mut self, size: usize) -> (u32, u32) {
         let slot = vec![Value::NONE; size];
         self.bytes_used = self.bytes_used.saturating_add(size * HEAP_BYTES_PER_VALUE);
-        if let Some(h) = self.free_list.pop() {
+        let (h, g) = if let Some(h) = self.free_list.pop() {
             let idx = h as usize;
             self.cells[idx] = Some(slot);
             self.rc[idx] = 1;
@@ -38,7 +38,11 @@ impl Heap {
             self.generation.push(0);
             let h = (self.cells.len() - 1) as u32;
             (h, 0)
+        };
+        if std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(h)).unwrap_or(false) {
+            eprintln!("[ALLOC] slot {} gen {} size {}", h, g, size);
         }
+        (h, g)
     }
 
     fn check(&self, slot: u32, generation: u32, op: &str) -> Result<usize, String> {
@@ -85,28 +89,52 @@ impl Heap {
         Ok(self.cells[idx].as_ref().unwrap().len())
     }
 
+    #[inline]
+    pub fn is_live(&self, slot: u32, generation: u32) -> bool {
+        let idx = slot as usize;
+        idx < self.cells.len()
+            && self.cells[idx].is_some()
+            && self.generation[idx] == generation
+    }
+
     pub fn rc_inc(&mut self, slot: u32, generation: u32) -> Result<(), String> {
+        let trace = std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(slot)).unwrap_or(false);
         let idx = self.check(slot, generation, "rc_inc")?;
         self.rc[idx] = self.rc[idx]
             .checked_add(1)
             .ok_or_else(|| format!("rc_inc: refcount overflow on slot {}", slot))?;
+        if trace {
+            eprintln!("[RC_INC] slot {} gen {} -> rc {}", slot, generation, self.rc[idx]);
+        }
         Ok(())
     }
 
     // At rc=0: recursively rc_dec child handles AND box_pool.dec child boxes,
     // then reclaim. Returns whether reclaimed.
     pub fn rc_dec(&mut self, slot: u32, generation: u32, pool: &mut BoxPool) -> Result<bool, String> {
+        let trace = std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(slot)).unwrap_or(false);
+        if trace {
+            let live_gen = self.generation.get(slot as usize).copied().unwrap_or(0);
+            let is_live = self.cells.get(slot as usize).map(|c| c.is_some()).unwrap_or(false);
+            eprintln!("[RC_DEC] slot {} gen {} (live_gen {} live={})", slot, generation, live_gen, is_live);
+        }
         let idx = self.check(slot, generation, "rc_dec")?;
         if self.rc[idx] == 0 {
             return Err(format!("rc_dec: refcount underflow on slot {}", slot));
         }
         self.rc[idx] -= 1;
+        if trace {
+            eprintln!("[RC_DEC] slot {} -> rc {}", slot, self.rc[idx]);
+        }
         if self.rc[idx] != 0 {
             return Ok(false);
         }
         let cell = self.cells[idx].take().unwrap();
         self.bytes_used = self.bytes_used.saturating_sub(cell.len() * HEAP_BYTES_PER_VALUE);
         self.free_list.push(slot);
+        if trace {
+            eprintln!("[RC_DEC] slot {} FREED via rc_dec", slot);
+        }
         for v in cell {
             if let Some((s, g)) = v.as_handle() {
                 self.rc_dec(s, g, pool)?;
@@ -119,10 +147,20 @@ impl Heap {
 
     // Idempotent against ordinary rc=0 reclaim. Used by region_pop.
     pub fn force_free(&mut self, slot: u32, generation: u32, pool: &mut BoxPool) -> Result<(), String> {
+        let trace = std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(slot)).unwrap_or(false);
         let idx = slot as usize;
         if idx >= self.cells.len() { return Ok(()); }
-        if self.cells[idx].is_none() { return Ok(()); }
-        if self.generation[idx] != generation { return Ok(()); }
+        if self.cells[idx].is_none() {
+            if trace { eprintln!("[FORCE_FREE] slot {} gen {} -- already none", slot, generation); }
+            return Ok(());
+        }
+        if self.generation[idx] != generation {
+            if trace { eprintln!("[FORCE_FREE] slot {} gen {} -- generation mismatch (live {})", slot, generation, self.generation[idx]); }
+            return Ok(());
+        }
+        if trace {
+            eprintln!("[FORCE_FREE] slot {} gen {} rc was {}", slot, generation, self.rc[idx]);
+        }
         let cell = self.cells[idx].take().unwrap();
         self.bytes_used = self.bytes_used.saturating_sub(cell.len() * HEAP_BYTES_PER_VALUE);
         self.rc[idx] = 0;

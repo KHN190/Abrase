@@ -149,8 +149,11 @@ impl VirtualMachine {
         self.region_table.depth()
     }
 
+    #[inline]
     pub fn region_record_alloc(&mut self, slot: u32, generation: u32) {
-        self.region_table.record_alloc(slot, generation);
+        if self.region_table.is_active() {
+            self.region_table.record_alloc(slot, generation);
+        }
     }
 
     pub fn heap_live_count(&self) -> usize {

@@ -14,6 +14,10 @@ impl RegionTable {
         self.stack.push(Vec::new());
     }
 
+    #[inline]
+    pub fn is_active(&self) -> bool { !self.stack.is_empty() }
+
+    #[inline]
     pub fn record_alloc(&mut self, slot: u32, generation: u32) {
         if let Some(top) = self.stack.last_mut() {
             top.push((slot, generation));
