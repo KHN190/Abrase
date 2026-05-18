@@ -218,7 +218,7 @@ impl<'a> Parser<'a> {
         self.no_record_literal = true;
         let condition = Box::new(self.parse_expr(Precedence::Lowest));
         self.no_record_literal = prev;
-        if !self.expect_peek(Token::LBrace) {
+        if self.current_token != Token::LBrace && !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' after if condition".into());
         }
         let consequence = Box::new(Spanned { node: Expr::Block(self.parse_block()?), span: self.current_span });
@@ -316,7 +316,7 @@ impl<'a> Parser<'a> {
         self.no_record_literal = true;
         let condition = Box::new(self.parse_expr(Precedence::Lowest));
         self.no_record_literal = prev;
-        if !self.expect_peek(Token::LBrace) {
+        if self.current_token != Token::LBrace && !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' in while loop".into());
         }
         let body = self.parse_block()?;
@@ -443,7 +443,9 @@ impl<'a> Parser<'a> {
         self.no_record_literal = true;
         let expr = Box::new(self.parse_expr(Precedence::Lowest));
         self.no_record_literal = prev;
-        if !self.expect_peek(Token::LBrace) {
+        // match/handle prefix parsers exit one-past their own `}`. When the
+        // body is one of them, current already sits at the outer `{`.
+        if self.current_token != Token::LBrace && !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' in handle".into());
         }
         let mut arms = Vec::new();
