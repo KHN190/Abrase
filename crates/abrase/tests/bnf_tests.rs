@@ -1026,3 +1026,15 @@ fn error_attribute_numeric_name() {
     let e = errs("@123 fn foo() -> Int { 0 }");
     assert!(!e.is_empty(), "expected error: attribute name is a number, got none");
 }
+
+#[test]
+fn literal_int_hex() {
+    let e = expr("0xFF");
+    assert!(matches!(e, Expr::Literal(Literal::Int(255))));
+}
+
+#[test]
+fn literal_int_binary() {
+    let e = expr("0b1010");
+    assert!(matches!(e, Expr::Literal(Literal::Int(10))));
+}

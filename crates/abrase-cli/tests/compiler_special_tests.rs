@@ -79,7 +79,7 @@ fn verify_compile_non_bind_pattern_errors() {
 }
 
 #[test]
-fn verify_compile_unsupported_literal_char_errors() {
+fn verify_compile_char_literal_succeeds() {
     let mut compiler = Compiler::new();
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
@@ -100,7 +100,7 @@ fn verify_compile_unsupported_literal_char_errors() {
     })];
 
     let result = compiler.compile(&ast);
-    assert!(result.is_err(), "Expected error for unsupported Char literal");
+    assert!(result.is_ok(), "Char literal should now compile (err: {:?})", result.err());
 }
 
 #[test]

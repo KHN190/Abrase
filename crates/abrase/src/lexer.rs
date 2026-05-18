@@ -220,6 +220,27 @@ impl<'a> Lexer<'a> {
         let mut number = String::new();
         let mut is_float = false;
 
+        if self.current_char == Some('0') && matches!(self.peek_char, Some('x' | 'X' | 'b' | 'B')) {
+            self.read_char();
+            let radix = match self.current_char {
+                Some('x' | 'X') => 16,
+                _               => 2,
+            };
+            self.read_char();
+            let mut digits = String::new();
+            while let Some(c) = self.current_char {
+                if c == '_' { self.read_char(); continue; }
+                let valid = if radix == 16 { c.is_ascii_hexdigit() } else { c == '0' || c == '1' };
+                if !valid { break; }
+                digits.push(c);
+                self.read_char();
+            }
+            return match i64::from_str_radix(&digits, radix) {
+                Ok(n) => (Token::Int(n), span),
+                Err(_) => (Token::Illegal(format!("integer literal out of range (radix {}): {}", radix, digits)), span),
+            };
+        }
+
         while let Some(c) = self.current_char {
             if c.is_ascii_digit() {
                 number.push(c);

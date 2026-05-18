@@ -34,6 +34,7 @@ impl Compiler {
             ast::Literal::Int(n)    => self.add_constant(Value::from_int(*n))?,
             ast::Literal::Float(f)  => self.add_constant(Value::from_float(*f))?,
             ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
+            ast::Literal::Char(c)   => self.add_constant(Value::from_char(*c))?,
             ast::Literal::String(s) => self.add_string_constant(s)?,
             ast::Literal::Unit      => self.add_constant(Value::UNIT)?,
             _ => return Err("Unsupported literal".to_string()),

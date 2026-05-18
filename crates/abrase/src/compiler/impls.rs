@@ -19,7 +19,21 @@ impl ImplLowering {
 
     pub fn lower(&mut self, decls: &[Decl]) {
         for decl in decls {
-            if let Decl::Impl { methods, for_type, trait_name, .. } = decl {
+            if let Decl::Impl { methods, for_type, trait_name, generics, where_clause, .. } = decl {
+                if !generics.is_empty() {
+                    self.errors.push(format!(
+                        "generic `impl<...>` not yet implemented (parser accepts, lowering does not); \
+                         drop the generic params or specialise the impl"
+                    ));
+                    continue;
+                }
+                if !where_clause.is_empty() {
+                    self.errors.push(format!(
+                        "`where` clauses on impl not yet implemented (parser accepts, lowering does not); \
+                         drop the where-clause"
+                    ));
+                    continue;
+                }
                 let type_name = match for_type {
                     Type::Named(n) => n.clone(),
                     Type::Qualified(parts) => parts.join("::"),
