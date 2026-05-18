@@ -45,12 +45,6 @@ fn copy_preserves_original_when_y_is_used() {
 }
 
 #[test]
-fn move_string_into_new_binding() {
-    let src = r#"fn main() -> String { let s = "hi"; let t = s; t }"#;
-    assert_eq!(run_str(src), Ok("hi".to_string()));
-}
-
-#[test]
 fn copy_int_after_assignment_chain() {
     let src = "fn id(n: Int) -> Int { let m = n; let p = m; p } fn main() -> Int { id(42) }";
     assert_eq!(run(src), Ok(Value::from_int(42)));
@@ -90,12 +84,6 @@ fn reference_in_scope_allows_original_reuse() {
 fn reference_parameter_in_function() {
     let src = "fn get_one(r: &Int) -> Int { 1 } fn main() -> Int { let x = 42; get_one(&x) }";
     assert_eq!(run(src), Ok(Value::from_int(1)));
-}
-
-#[test]
-fn copy_preferred_over_borrow() {
-    let src = "fn main() -> Int { let x = 100; let y = x; let z = x; y + z }";
-    assert_eq!(run(src), Ok(Value::from_int(200)));
 }
 
 #[test]

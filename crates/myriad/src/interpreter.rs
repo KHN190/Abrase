@@ -110,10 +110,6 @@ impl VirtualMachine {
                 let r = self.checked_int_or_box(v.wrapping_neg())?;
                 self.write(*d, r)
             }
-            OpCode::FAdd(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x + y),
-            OpCode::FSub(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x - y),
-            OpCode::FMul(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x * y),
-            OpCode::FDiv(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x / y),
 
             OpCode::Eq(d, a, b)  => self.bin_cmp(*d, *a, *b, |x, y| x == y),
             OpCode::Neq(d, a, b) => self.bin_cmp(*d, *a, *b, |x, y| x != y),
@@ -121,12 +117,6 @@ impl VirtualMachine {
             OpCode::Gt(d, a, b)  => self.bin_i64_cmp(*d, *a, *b, |x, y| x > y),
             OpCode::Lte(d, a, b) => self.bin_i64_cmp(*d, *a, *b, |x, y| x <= y),
             OpCode::Gte(d, a, b) => self.bin_i64_cmp(*d, *a, *b, |x, y| x >= y),
-            OpCode::FLt(d, a, b) => {
-                let x = self.read_f64(*a)?;
-                let y = self.read_f64(*b)?;
-                let r = if x.is_nan() || y.is_nan() { false } else { x < y };
-                self.write(*d, Value::from_bool(r))
-            }
 
             OpCode::And(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x & y),
             OpCode::Or(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x | y),
@@ -633,13 +623,6 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    fn read_f64(&self, r: Register) -> Result<f64, String> {
-        let v = self.read_abs(self.abs(r));
-        if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
-        v.as_float().ok_or_else(|| format!("expected f64, got {:?}", v))
-    }
-
-    #[inline(always)]
     pub(crate) fn mem_used(&self) -> usize {
         self.heap.bytes_used().saturating_add(self.box_pool.bytes_used())
     }
@@ -694,13 +677,6 @@ impl VirtualMachine {
         let r = f(x, y).ok_or_else(|| msg.to_string())?;
         let v = self.checked_int_or_box(r)?;
         self.write(d, v)
-    }
-
-    #[inline(always)]
-    fn bin_f64<F: Fn(f64, f64) -> f64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
-        let x = self.read_f64(a)?;
-        let y = self.read_f64(b)?;
-        self.write(d, Value::from_float(f(x, y)))
     }
 
     #[inline(always)]

@@ -194,13 +194,19 @@ impl<'a> Parser<'a> {
             };
         }
         let mut items = vec![first];
-        while self.peek_token == Token::Comma {
-            self.next_token();
-            if self.peek_token == Token::RBracket { break; }
-            self.next_token();
+        loop {
+            if self.current_token == Token::Comma {
+                self.next_token();
+            } else if self.peek_token == Token::Comma {
+                self.next_token();
+                self.next_token();
+            } else { break; }
+            if self.current_token == Token::RBracket { break; }
             items.push(self.parse_expr(Precedence::Lowest));
         }
-        if !self.expect_peek(Token::RBracket) {
+        if self.current_token == Token::RBracket {
+            // already there (last item was block-terminated)
+        } else if !self.expect_peek(Token::RBracket) {
             self.report_error("Expected ']' in array literal".into(), self.current_span);
         }
         Spanned { node: Expr::Array(items), span }
@@ -618,15 +624,22 @@ impl<'a> Parser<'a> {
         }
 
         self.next_token();
-        loop {
-            args.push(self.parse_expr(Precedence::Lowest));
-            if self.peek_token == Token::Comma {
+        let last_block = loop {
+            let arg = self.parse_expr(Precedence::Lowest);
+            let is_block = is_block_terminated(&arg.node);
+            args.push(arg);
+            if self.current_token == Token::Comma {
+                self.next_token();
+            } else if self.peek_token == Token::Comma {
                 self.next_token();
                 self.next_token();
-            } else { break; }
-        }
+            } else { break is_block; }
+            if self.current_token == Token::RParen { break is_block; }
+        };
 
-        self.expect_peek(Token::RParen);
+        if !(last_block && self.current_token == Token::RParen) {
+            self.expect_peek(Token::RParen);
+        }
         Spanned { node: Expr::Call { callee: Box::new(callee), args }, span }
     }
 

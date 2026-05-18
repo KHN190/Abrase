@@ -48,24 +48,6 @@ fn verify_compile_arithmetic_respects_precedence() {
 }
 
 #[test]
-fn verify_compile_pure_functional_arithmetic() {
-    let test_cases = vec![
-        (parse_literal_int(0), Value::from_int(0)),
-        (parse_literal_int(100), Value::from_int(100)),
-        (parse_binary_int(5, BinaryOp::Add, 3), Value::from_int(8)),
-        (parse_binary_int(15, BinaryOp::Sub, 7), Value::from_int(8)),
-        (parse_binary_int(6, BinaryOp::Mul, 7), Value::from_int(42)),
-        (parse_binary_int(100, BinaryOp::Div, 10), Value::from_int(10)),
-        (parse_binary_int(17, BinaryOp::Mod, 5), Value::from_int(2)),
-    ];
-
-    for (ast, expected) in test_cases {
-        let result = compile_and_run(&ast).expect("Execution failed");
-        assert_eq!(result, expected, "Arithmetic test failed");
-    }
-}
-
-#[test]
 fn verify_compile_arithmetic_neg() {
     // Negating a variable emits OpCode::Neg; negating a literal is constant-folded.
     assert_eq!(

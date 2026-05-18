@@ -84,6 +84,12 @@ pub struct Compiler {
     pub(super) loop_stack: Vec<LoopCtx>,
     pub(super) concat_fn_id: Option<usize>,
     pub(super) to_str_fn_id: Option<usize>,
+    pub(super) float_add_fn_id: Option<usize>,
+    pub(super) float_sub_fn_id: Option<usize>,
+    pub(super) float_mul_fn_id: Option<usize>,
+    pub(super) float_div_fn_id: Option<usize>,
+    pub(super) float_lt_fn_id: Option<usize>,
+    pub(super) float_neg_fn_id: Option<usize>,
     pub(super) host_fns: HashMap<String, HostFnDecl>,
     // Builtin natives registered by `register_builtins`: name -> (params, ret).
     // Kept for legacy single-overload typechecker plumbing; see also fn_overloads.
@@ -163,6 +169,12 @@ impl Compiler {
             loop_stack: Vec::new(),
             concat_fn_id: None,
             to_str_fn_id: None,
+            float_add_fn_id: None,
+            float_sub_fn_id: None,
+            float_mul_fn_id: None,
+            float_div_fn_id: None,
+            float_lt_fn_id: None,
+            float_neg_fn_id: None,
             host_fns: HashMap::new(),
             builtin_types: HashMap::new(),
             fn_overloads: HashMap::new(),
@@ -607,6 +619,18 @@ impl Compiler {
         self.concat_fn_id = Some(cid);
         let tid = self.register_native_chunk("__to_str", 1);
         self.to_str_fn_id = Some(tid);
+        self.float_add_fn_id = Some(self.functions.len());
+        self.register_native_chunk("__float_add", 2);
+        self.float_sub_fn_id = Some(self.functions.len());
+        self.register_native_chunk("__float_sub", 2);
+        self.float_mul_fn_id = Some(self.functions.len());
+        self.register_native_chunk("__float_mul", 2);
+        self.float_div_fn_id = Some(self.functions.len());
+        self.register_native_chunk("__float_div", 2);
+        self.float_lt_fn_id = Some(self.functions.len());
+        self.register_native_chunk("__float_lt", 2);
+        self.float_neg_fn_id = Some(self.functions.len());
+        self.register_native_chunk("__float_neg", 1);
 
         // myriad::builtins::register_default_builtins.
         let s = TyType::String;
@@ -632,9 +656,12 @@ impl Compiler {
         self.register_typed_native("max",      vec![i.clone(), i.clone()], i.clone(), 2);
         self.register_typed_native("min",      vec![i.clone(), i.clone()], i.clone(), 2);
         // Math (Float overloads — same user name, distinct chunk name)
-        self.register_typed_native_overload("abs", "fabs", vec![f.clone()],            f.clone(), 1);
-        self.register_typed_native_overload("max", "fmax", vec![f.clone(), f.clone()], f.clone(), 2);
-        self.register_typed_native_overload("min", "fmin", vec![f.clone(), f.clone()], f.clone(), 2);
+        // Float overloads route to dedicated `__float_*` chunks — overload
+        // resolution does the type dispatch at compile time; each native is
+        // type-specific (no runtime tag check).
+        self.register_typed_native_overload("abs", "__float_abs", vec![f.clone()],            f.clone(), 1);
+        self.register_typed_native_overload("max", "__float_max", vec![f.clone(), f.clone()], f.clone(), 2);
+        self.register_typed_native_overload("min", "__float_min", vec![f.clone(), f.clone()], f.clone(), 2);
         // System
         self.register_typed_native("halt",     vec![i.clone()],            u.clone(), 1);
         self.register_typed_native("abort",    vec![s.clone()],            u.clone(), 1);

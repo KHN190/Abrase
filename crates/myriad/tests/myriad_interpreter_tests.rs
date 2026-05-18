@@ -1078,3 +1078,142 @@ fn test_sub_imm() {
     );
     assert_eq!(result, Ok(Value::from_int(16)));
 }
+
+#[test]
+fn test_and() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::And(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::from_int(0b1100), Value::from_int(0b1010)],
+    );
+    assert_eq!(result, Ok(Value::from_int(0b1000)));
+}
+
+#[test]
+fn test_or() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Or(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::from_int(0b1100), Value::from_int(0b1010)],
+    );
+    assert_eq!(result, Ok(Value::from_int(0b1110)));
+}
+
+#[test]
+fn test_xor() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Xor(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::from_int(0b1100), Value::from_int(0b1010)],
+    );
+    assert_eq!(result, Ok(Value::from_int(0b0110)));
+}
+
+#[test]
+fn test_shl() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Shl(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::from_int(1), Value::from_int(4)],
+    );
+    assert_eq!(result, Ok(Value::from_int(16)));
+}
+
+#[test]
+fn test_shr() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Shr(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::from_int(64), Value::from_int(3)],
+    );
+    assert_eq!(result, Ok(Value::from_int(8)));
+}
+
+#[test]
+fn test_shl_wrapping_mask() {
+    // shift amount is masked to 63 bits; shifting by 64 is equivalent to 0
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Shl(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::from_int(1), Value::from_int(64)],
+    );
+    assert_eq!(result, Ok(Value::from_int(1)));
+}
+
+#[test]
+fn test_stidx_writes_element() {
+    // alloc 2-slot block, write 99 at index 1, read back
+    // constants: [99, 1]  (value, index)
+    let result = run(
+        vec![
+            OpCode::Alloc(r(0), 2),
+            OpCode::PushConst(r(1), 0),    // r1 = 99
+            OpCode::PushConst(r(2), 1),    // r2 = 1  (index)
+            OpCode::StIdx(r(1), r(0), r(2)),
+            OpCode::LdIdx(r(3), r(0), r(2)),
+            OpCode::Ret(r(3)),
+        ],
+        vec![Value::from_int(99), Value::from_int(1)],
+    );
+    assert_eq!(result, Ok(Value::from_int(99)));
+}
+
+#[test]
+fn test_stidx_overwrites_previous_value() {
+    // write 10 then overwrite with 20 at index 0; StIdx reads index non-destructively
+    // constants: [0, 10, 20]
+    let result = run(
+        vec![
+            OpCode::Alloc(r(0), 2),
+            OpCode::PushConst(r(1), 0),    // r1 = 0  (index, stays alive)
+            OpCode::PushConst(r(2), 1),    // r2 = 10
+            OpCode::StIdx(r(2), r(0), r(1)),
+            OpCode::PushConst(r(3), 2),    // r3 = 20
+            OpCode::StIdx(r(3), r(0), r(1)),
+            OpCode::LdIdx(r(4), r(0), r(1)),
+            OpCode::Ret(r(4)),
+        ],
+        vec![Value::from_int(0), Value::from_int(10), Value::from_int(20)],
+    );
+    assert_eq!(result, Ok(Value::from_int(20)));
+}
+
+#[test]
+fn test_stidx_negative_index_traps() {
+    let result = run(
+        vec![
+            OpCode::Alloc(r(0), 2),
+            OpCode::PushConst(r(1), 0),
+            OpCode::PushConst(r(2), 1),
+            OpCode::StIdx(r(2), r(0), r(1)),
+            OpCode::Ret(r(0)),
+        ],
+        vec![Value::from_int(-1), Value::from_int(42)],
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("stidx: negative index"));
+}

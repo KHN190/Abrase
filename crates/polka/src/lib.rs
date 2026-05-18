@@ -1,3 +1,6 @@
+// Rule 1: OpCode design is frozen, DO NOT add new.
+// Rule 2: Bytecode is type agnostic. Thus no value tag or complex data structure.
+
 pub mod value;
 pub mod cartridge;
 
@@ -34,10 +37,6 @@ pub enum OpCode {
     Div(Register, Register, Register),
     Mod(Register, Register, Register),
     Neg(Register, Register),
-    FAdd(Register, Register, Register),
-    FSub(Register, Register, Register),
-    FMul(Register, Register, Register),
-    FDiv(Register, Register, Register),
 
     Eq(Register, Register, Register),
     Neq(Register, Register, Register),
@@ -45,7 +44,6 @@ pub enum OpCode {
     Gt(Register, Register, Register),
     Lte(Register, Register, Register),
     Gte(Register, Register, Register),
-    FLt(Register, Register, Register),
 
     And(Register, Register, Register),
     Or(Register, Register, Register),

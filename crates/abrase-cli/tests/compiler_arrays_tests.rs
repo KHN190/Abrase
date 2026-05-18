@@ -6,190 +6,59 @@ use myriad::Value;
 
 #[test]
 fn verify_compile_array_literal_construction() {
-    let ast = vec![Decl::Fn(FnDecl {
-        attrs: vec![],
-        is_pub: false,
-        name: "main".to_string(),
-        generics: vec![],
-        params: vec![],
-        effects: vec![],
-        return_type: Some(Type::Named("Int".to_string())),
-        where_clause: vec![],
-        body: Block {
-            stmts: vec![],
-            ret: Some(Box::new(Spanned {
-                node: Expr::Literal(Literal::Int(3)),
-                span: Span::new(0, 0),
-            })),
-        },
-    })];
-    let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::from_int(3)));
+    assert_eq!(
+        run_source("fn main() -> Int { let a = [1, 2, 3]; a[1] }"),
+        Ok(Value::from_int(2))
+    );
 }
 
 #[test]
 fn verify_compile_array_repeat_construction() {
-    let ast = vec![Decl::Fn(FnDecl {
-        attrs: vec![],
-        is_pub: false,
-        name: "main".to_string(),
-        generics: vec![],
-        params: vec![],
-        effects: vec![],
-        return_type: Some(Type::Named("Int".to_string())),
-        where_clause: vec![],
-        body: Block {
-            stmts: vec![],
-            ret: Some(Box::new(Spanned {
-                node: Expr::Literal(Literal::Int(10)),
-                span: Span::new(0, 0),
-            })),
-        },
-    })];
-    let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::from_int(10)));
+    assert_eq!(
+        run_source("fn main() -> Int { let a = [7; 4]; a[2] }"),
+        Ok(Value::from_int(7))
+    );
 }
 
 #[test]
 fn verify_compile_array_indexing_constant() {
-    let ast = vec![Decl::Fn(FnDecl {
-        attrs: vec![],
-        is_pub: false,
-        name: "main".to_string(),
-        generics: vec![],
-        params: vec![],
-        effects: vec![],
-        return_type: Some(Type::Named("Int".to_string())),
-        where_clause: vec![],
-        body: Block {
-            stmts: vec![],
-            ret: Some(Box::new(Spanned {
-                node: Expr::Literal(Literal::Int(20)),
-                span: Span::new(0, 0),
-            })),
-        },
-    })];
-    let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::from_int(20)));
+    assert_eq!(
+        run_source("fn main() -> Int { let a = [10, 20, 30]; a[2] }"),
+        Ok(Value::from_int(30))
+    );
 }
 
 #[test]
+#[ignore = "codegen: can't infer record element type from Array<Pt> indexing → `.x` lookup fails"]
 fn verify_compile_nested_record_in_array() {
-    let ast = vec![
-        Decl::Type {
-            name: "Pos".to_string(),
-            generics: vec![],
-            attrs: vec![],
-            is_pub: false,
-            ownership: None,
-            body: TypeBody::Record(vec![
-                RecordField {
-                    is_pub: true,
-                    name: "a".to_string(),
-                    ty: Type::Named("Int".to_string()),
-                },
-            ]),
-        },
-        Decl::Fn(FnDecl {
-            attrs: vec![],
-            is_pub: false,
-            name: "main".to_string(),
-            generics: vec![],
-            params: vec![],
-            effects: vec![],
-            return_type: Some(Type::Named("Int".to_string())),
-            where_clause: vec![],
-            body: Block {
-                stmts: vec![],
-                ret: Some(Box::new(Spanned {
-                    node: Expr::Literal(Literal::Int(44)),
-                    span: Span::new(0, 0),
-                })),
-            },
-        }),
-    ];
-    let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::from_int(44)));
+    let src = r#"
+        type Pt = { x: Int, y: Int }
+        fn main() -> Int { let a = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]; a[1].x }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_int(3)));
 }
 
 #[test]
+#[ignore = "ownership: Array<Move-type> indexing moves the binding; second index triggers use-after-move"]
 fn verify_compile_array_of_records_type() {
-    let ast = vec![
-        Decl::Type {
-            name: "Elem".to_string(),
-            generics: vec![],
-            attrs: vec![],
-            is_pub: false,
-            ownership: None,
-            body: TypeBody::Record(vec![
-                RecordField {
-                    is_pub: true,
-                    name: "val".to_string(),
-                    ty: Type::Named("Int".to_string()),
-                },
-            ]),
-        },
-        Decl::Fn(FnDecl {
-            attrs: vec![],
-            is_pub: false,
-            name: "main".to_string(),
-            generics: vec![],
-            params: vec![],
-            effects: vec![],
-            return_type: Some(Type::Named("Int".to_string())),
-            where_clause: vec![],
-            body: Block {
-                stmts: vec![],
-                ret: Some(Box::new(Spanned {
-                    node: Expr::Literal(Literal::Int(88)),
-                    span: Span::new(0, 0),
-                })),
-            },
-        }),
-    ];
-    let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::from_int(88)));
+    let src = r#"
+        type Val = { n: Int }
+        fn main() -> Int { let a = [Val { n: 5 }, Val { n: 10 }]; a[0].n + a[1].n }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_int(15)));
 }
 
 #[test]
 fn verify_compile_array_of_variants_type() {
-    let ast = vec![
-        Decl::Type {
-            name: "Val".to_string(),
-            generics: vec![],
-            attrs: vec![],
-            is_pub: false,
-            ownership: None,
-            body: TypeBody::Variant(vec![
-                VariantCase::Unit("A".to_string()),
-                VariantCase::Unit("B".to_string()),
-            ]),
-        },
-        Decl::Fn(FnDecl {
-            attrs: vec![],
-            is_pub: false,
-            name: "main".to_string(),
-            generics: vec![],
-            params: vec![],
-            effects: vec![],
-            return_type: Some(Type::Named("Int".to_string())),
-            where_clause: vec![],
-            body: Block {
-                stmts: vec![],
-                ret: Some(Box::new(Spanned {
-                    node: Expr::Literal(Literal::Int(55)),
-                    span: Span::new(0, 0),
-                })),
-            },
-        }),
-    ];
-    let result = compile_module_and_run(&ast);
-    assert_eq!(result, Ok(Value::from_int(55)));
+    let src = r#"
+        type Dir = | Left | Right
+        fn main() -> Dir { let a = [Dir.Left, Dir.Right]; a[1] }
+    "#;
+    assert!(run_source(src).is_ok());
 }
 
 #[test]
 fn verify_codegen_array_repeat_element_value() {
-    // `[7; 4]` should create four copies of 7; all elements equal 7.
     let src = "fn main() -> Int { let a = [7; 4]; a[0] + a[3] }";
     assert_eq!(run_source(src), Ok(Value::from_int(14)));
 }

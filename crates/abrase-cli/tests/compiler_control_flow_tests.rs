@@ -556,12 +556,6 @@ fn tuple_construction_and_index() {
 }
 
 #[test]
-fn array_repeat_literal() {
-    let src = "fn main() -> Int { let a = [7; 4]; a[0] + a[3] }";
-    assert_eq!(run(src), Ok(Value::from_int(14)));
-}
-
-#[test]
 fn loop_with_break_value() {
     let src = r#"
         fn main() -> Int {

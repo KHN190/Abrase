@@ -6,7 +6,7 @@ use crate::compiler::codegen::scaffold::{to_u8, to_u16};
 use crate::bytecode::Value;
 
 impl Compiler {
-    fn emit_builtin_call(
+    pub(in crate::compiler) fn emit_builtin_call(
         &mut self,
         fn_id: usize,
         arg_srcs: &[Register],

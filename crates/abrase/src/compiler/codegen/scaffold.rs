@@ -38,10 +38,8 @@ impl Compiler {
         let d: &mut Register = match last {
             OpCode::Add(d, _, _) | OpCode::Sub(d, _, _) | OpCode::Mul(d, _, _) |
             OpCode::Div(d, _, _) | OpCode::Mod(d, _, _) | OpCode::Neg(d, _) |
-            OpCode::FAdd(d, _, _) | OpCode::FSub(d, _, _) | OpCode::FMul(d, _, _) | OpCode::FDiv(d, _, _) |
             OpCode::Eq(d, _, _) | OpCode::Neq(d, _, _) |
             OpCode::Lt(d, _, _) | OpCode::Gt(d, _, _) | OpCode::Lte(d, _, _) | OpCode::Gte(d, _, _) |
-            OpCode::FLt(d, _, _) |
             OpCode::And(d, _, _) | OpCode::Or(d, _, _) | OpCode::Xor(d, _, _) |
             OpCode::Shl(d, _, _) | OpCode::Shr(d, _, _) |
             OpCode::PushConst(d, _) |
