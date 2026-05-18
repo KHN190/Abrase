@@ -3,7 +3,14 @@ use super::{Value, BoxPool};
 pub trait Device {
     fn read(&mut self, port: u8) -> Result<Value, String>;
     fn write(&mut self, port: u8, val: Value) -> Result<(), String>;
-    fn write_with_pool(&mut self, port: u8, val: Value, _pool: &mut BoxPool) -> Result<(), String> {
+    // Default forwards to write(). Override when the device needs the box
+    // pool (e.g. to invoke a registered host fn whose signature takes it).
+    fn write_with_pool(
+        &mut self,
+        port: u8,
+        val: Value,
+        _pool: &mut BoxPool,
+    ) -> Result<(), String> {
         self.write(port, val)
     }
 }

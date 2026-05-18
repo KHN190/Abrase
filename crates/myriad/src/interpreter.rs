@@ -404,16 +404,10 @@ impl VirtualMachine {
             (fn_id, env)
         };
 
-        // Push a "post-return-arm" frame so when the return arm Rets, the
-        // runtime restores the popped frame's state and delivers the return
-        // arm's result to its dest_reg.
         self.frames.push(super::Frame::normal(
             frame.func_id, frame.ip, frame.base_reg, frame.dest_reg,
         ));
 
-        // Set up the call to the return arm. new_base sits just past the
-        // popped frame's caller window — same allocation a regular Call from
-        // that function would compute.
         let caller_reg_count = match module.functions.get(frame.func_id) {
             Some(Chunk::Bytecode(b)) => b.reg_count,
             _ => return Err(format!("return-arm: popped frame func {} is not bytecode", frame.func_id)),
@@ -435,13 +429,6 @@ impl VirtualMachine {
         if needed > self.registers.len() {
             self.registers.resize(needed, Value::NONE);
         }
-
-        // Args: (env, return_env, value). Layout matches the handle codegen.
-        // Normal callee-arg staging uses Copy (rc_inc); mirror that here so the
-        // return arm owns its own refs and balanced drops won't underflow.
-        // `ra_env` was stashed without rc_inc at DEO install time; `return_val`
-        // was just taken from a register (ref transferred in, no new ref to
-        // create). Box and handle values get rc_inc'd; primitives are no-ops.
         self.value_rc_inc(&ra_env)?;
         self.write_abs(new_base, ra_env);
         self.write_abs(new_base + 1, Value::from_int(0));
@@ -609,19 +596,11 @@ impl VirtualMachine {
         };
         let suspended_snapshot = self.read_snapshot_from_cell(cell_slot, cell_gen)?;
 
-        // Mark the continuation consumed. With single-shot semantics in place,
-        // a second resume from the same cell would also fail at "no arm-call
-        // frame on stack" below — but flipping ALIVE here gives the clearer
-        // diagnostic and matches the cont-slot contract.
         self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE,
             Value::from_int(0))?;
 
         let val = self.read(val_reg)?;
 
-        // NOTE: pop happens before snapshot_registers / push / restore. If any
-        // of those allocs fails (OOM in current Myriad spec is fatal), the
-        // VM state is left partial. Acceptable today because OOM halts the VM;
-        // revisit if recovery becomes a goal.
         let arm_call_frame = self.frames.pop()
             .ok_or("resume: no arm-call frame on stack")?;
         let yield_result_abs = arm_call_frame.dest_reg;
@@ -751,7 +730,7 @@ impl VirtualMachine {
         if let Some((slot, generation)) = v.as_handle() {
             self.heap.rc_dec(slot, generation, &mut self.box_pool).map(|_| ())
         } else if let Some(idx) = v.as_box() {
-            self.box_pool.dec_cascade(idx, &mut self.heap);
+            self.box_pool.dec(idx);
             Ok(())
         } else {
             Ok(())

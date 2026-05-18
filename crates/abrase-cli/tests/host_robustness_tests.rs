@@ -23,7 +23,7 @@ fn println_host_returns_err_on_non_box_arg() {
 #[test]
 fn println_host_returns_err_on_wrong_box_type() {
     let mut pool = BoxPool::new();
-    let idx = pool.intern(BoxedValue::Closure { func_id: 0, env_slot: 0, env_gen: 0 });
+    let idx = pool.intern(BoxedValue::Int(42));
     let result = println_like(&mut pool, &[Value::from_box(idx)]);
     assert!(result.is_err(), "must return Err, not panic");
     assert!(result.unwrap_err().contains("box holds"));

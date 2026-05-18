@@ -491,10 +491,6 @@ impl<'a> Parser<'a> {
             } else if body_is_block && self.current_token != Token::RBrace {
                 continue;
             } else if !body_is_block && self.peek_token != Token::RBrace {
-                self.report_error(
-                    format!("Expected ',' or '}}' in handle arms, got {:?}", self.peek_token),
-                    self.peek_span,
-                );
                 self.next_token();
             } else {
                 break;

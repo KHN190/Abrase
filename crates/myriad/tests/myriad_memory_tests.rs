@@ -164,8 +164,7 @@ fn test_handle_without_dispatch_allocates_no_cell() {
 }
 
 #[test]
-fn test_dispatch_lookup_allocates_one_cell() {
-    // dispatch.lookup (not Handle) is the point at which exactly one continuation cell is allocated.
+fn test_dispatch_lookup_allocates_cont_and_snapshot() {
     let lookup_port = Value::from_int(
         (polka::DISPATCH_ID as i64) << 8 | polka::DISPATCH_PORT_LOOKUP as i64
     );
@@ -175,7 +174,7 @@ fn test_dispatch_lookup_allocates_one_cell() {
             OpCode::PushConst(r(0), 0),        // r(0) = 0  (lookup key)
             OpCode::PushConst(r(2), 1),        // r(2) = dispatch.lookup port
             OpCode::Handle(r(3), r(1), 0),     // push handler frame (r(1) uninit → no table)
-            OpCode::Deo(r(0), r(2)),           // dispatch.lookup → alloc 1 cell
+            OpCode::Deo(r(0), r(2)),           // dispatch.lookup → alloc cont + snapshot
             OpCode::Ret(r(0)),
         ],
         constants: vec![Value::from_int(0), lookup_port],
@@ -183,8 +182,8 @@ fn test_dispatch_lookup_allocates_one_cell() {
         param_count: 0, string_constants: Vec::new(),
     });
     let _ = vm.run(&chunk);
-    assert_eq!(vm.heap_live_count(), 1,
-        "dispatch.lookup must allocate exactly one continuation cell");
+    assert_eq!(vm.heap_live_count(), 2,
+        "dispatch.lookup must allocate one cont cell + one register snapshot");
 }
 
 #[test]

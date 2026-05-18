@@ -55,7 +55,12 @@ impl Device for HostFuncDevice {
         }
     }
 
-    fn write_with_pool(&mut self, port: u8, val: Value, pool: &mut BoxPool) -> Result<(), String> {
+    fn write_with_pool(
+        &mut self,
+        port: u8,
+        val: Value,
+        pool: &mut BoxPool,
+    ) -> Result<(), String> {
         if port != PORT_TRIGGER { return self.write(port, val); }
         let fn_id = match val.as_int() {
             Some(n) if n >= 0 => n as usize,

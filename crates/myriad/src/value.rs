@@ -3,14 +3,12 @@ use polka::Value;
 #[derive(Clone, Debug)]
 pub enum BoxedValue {
     String(String),
-    Closure { func_id: usize, env_slot: u32, env_gen: u32 },
-    Reference(Value),
     // i64 values outside the inline i48 range. Result of arithmetic that
     // overflows the NaN-box int payload.
     Int(i64),
 }
 
-// TODO: per-VM pool; module-owned; process-shared? still on the table 
+// TODO: per-VM pool; module-owned; process-shared?
 pub struct BoxPool {
     slots: Vec<Option<BoxedValue>>,
     rc: Vec<u32>,
@@ -101,35 +99,6 @@ impl BoxPool {
         } else {
             false
         }
-    }
-
-    // rc-dec a box
-    #[inline]
-    pub fn dec_cascade(&mut self, idx: u32, heap: &mut super::memory::Heap) -> bool {
-        let i = idx as usize;
-        if i >= self.rc.len() || self.rc[i] == 0 { return false; }
-        self.rc[i] -= 1;
-        if self.rc[i] != 0 { return false; }
-        let taken = self.slots[i].take();
-        self.bytes_used = self.bytes_used.saturating_sub(self.bytes[i]);
-        self.bytes[i] = 0;
-        self.free_list.push(idx);
-        if let Some(b) = taken {
-            match b {
-                BoxedValue::Closure { env_slot, env_gen, .. } => {
-                    let _ = heap.rc_dec(env_slot, env_gen, self);
-                }
-                BoxedValue::Reference(v) => {
-                    if let Some((s, g)) = v.as_handle() {
-                        let _ = heap.rc_dec(s, g, self);
-                    } else if let Some(b_idx) = v.as_box() {
-                        self.dec_cascade(b_idx, heap);
-                    }
-                }
-                _ => {}
-            }
-        }
-        true
     }
 
     pub fn free(&mut self, idx: u32) {

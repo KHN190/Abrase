@@ -1,0 +1,67 @@
+// Mergesort on a linked list.
+// Input:  [5, 2, 8, 1, 9, 3, 7, 4]
+// Sorted: [1, 2, 3, 4, 5, 7, 8, 9]
+// main() returns last element: 9
+
+type List  = Nil | Cons(Int, List)
+type Split = Split(List, List)
+
+fn split_alt(lst: List, a: List, b: List, flip: Bool) -> Split {
+  match lst {
+    Nil           => Split(a, b)
+    Cons(x, rest) => if flip {
+      split_alt(rest, Cons(x, a), b, false)
+    } else {
+      split_alt(rest, a, Cons(x, b), true)
+    }
+    _ => Split(a, b)
+  }
+}
+
+fn merge_with(x: Int, rest_a: List, b: List) -> List {
+  match b {
+    Nil             => Cons(x, rest_a)
+    Cons(y, rest_b) => if x <= y {
+      Cons(x, merge(rest_a, Cons(y, rest_b)))
+    } else {
+      Cons(y, merge(Cons(x, rest_a), rest_b))
+    }
+    _ => Cons(x, rest_a)
+  }
+}
+
+fn merge(a: List, b: List) -> List {
+  match a {
+    Nil             => b
+    Cons(x, rest_a) => merge_with(x, rest_a, b)
+    _ => b
+  }
+}
+
+fn sort(lst: List) -> List {
+  match lst {
+    Nil           => Nil
+    Cons(x, rest) => match rest {
+      Nil   => Cons(x, Nil)
+      other => match split_alt(Cons(x, other), Nil, Nil, true) {
+        Split(a, b) => merge(sort(a), sort(b))
+        _ => Nil
+      }
+    }
+    _ => Nil
+  }
+}
+
+fn last_of(lst: List, acc: Int) -> Int {
+  match lst {
+    Nil           => acc
+    Cons(x, rest) => last_of(rest, x)
+    _ => acc
+  }
+}
+
+fn main() -> Int {
+  let lst = Cons(5, Cons(2, Cons(8, Cons(1, Cons(9, Cons(3, Cons(7, Cons(4, Nil))))))));
+  let sorted = sort(lst);
+  last_of(sorted, 0)
+}

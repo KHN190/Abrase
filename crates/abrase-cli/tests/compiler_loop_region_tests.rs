@@ -344,9 +344,10 @@ fn break_drops_all_move_typed_binders_in_layer() {
     assert_eq!(live, 0, "every binder in layer must be Dropped; live = {}", live);
 }
 
-// Closure boxes own a heap env cell via env_slot/env_gen. BoxPool::dec_cascade
-// rc_decs that cell when the closure's box reaches rc=0; without the cascade
-// the env cell would linger until the next eval clears the whole heap.
+// Closures are lowered to a heap env cell + a separate fn_id; the closure
+// "value" in registers is a raw handle to the env cell. When the binding
+// goes out of scope, the env cell's rc reaches 0 and recursive rc_dec
+// reclaims everything it stored. The test ensures live==0 at exit.
 #[test]
 fn closure_box_cascade_frees_env_cell() {
     let src = r#"
