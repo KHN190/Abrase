@@ -533,12 +533,12 @@ impl Checker {
                     );
                     return false;
                 }
+                // Mutual recursion through ADTs is safe: every variant/record
+                // payload is a heap handle (pointer-sized), and per-type base
+                // case checks run independently. If we've already started
+                // checking this name on the current path, just skip.
                 if visited.contains(name) {
-                    self.report_error(
-                        format!("Type '{}' has recursive cycle detected", self_type),
-                        span,
-                    );
-                    return false;
+                    return true;
                 }
                 if let Some(body) = self.get_type(name) {
                     if !self.check_type_recursion(name, &body, visited, span) {
