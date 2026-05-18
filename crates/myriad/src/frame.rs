@@ -17,6 +17,7 @@ pub struct Frame {
 }
 
 impl Frame {
+    #[inline]
     pub fn normal(func_id: usize, ip: usize, base_reg: usize, dest_reg: usize) -> Self {
         Self {
             func_id,

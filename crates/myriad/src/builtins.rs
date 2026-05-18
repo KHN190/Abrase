@@ -34,12 +34,6 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     // Compiler-internal. Compiler decides fn by type signature.
     reg.register("__concat",    concat_native());
     reg.register("__to_str",    to_str_native());
-    reg.register("__float_add", float_add_native());
-    reg.register("__float_sub", float_sub_native());
-    reg.register("__float_mul", float_mul_native());
-    reg.register("__float_div", float_div_native());
-    reg.register("__float_lt",  float_lt_native());
-    reg.register("__float_neg", float_neg_native());
     reg.register("__float_abs", float_abs_native());
     reg.register("__float_max", float_max_native());
     reg.register("__float_min", float_min_native());
@@ -127,49 +121,6 @@ fn float_pair(args: &[Value], op: &str) -> Result<(f64, f64), String> {
     let a = args[0].as_float().ok_or_else(|| format!("{}: arg0 not Float: {:?}", op, args[0]))?;
     let b = args[1].as_float().ok_or_else(|| format!("{}: arg1 not Float: {:?}", op, args[1]))?;
     Ok((a, b))
-}
-
-fn float_add_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let (a, b) = float_pair(args, "__float_add")?;
-        Ok(Value::from_float(a + b))
-    })
-}
-
-fn float_sub_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let (a, b) = float_pair(args, "__float_sub")?;
-        Ok(Value::from_float(a - b))
-    })
-}
-
-fn float_mul_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let (a, b) = float_pair(args, "__float_mul")?;
-        Ok(Value::from_float(a * b))
-    })
-}
-
-fn float_div_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let (a, b) = float_pair(args, "__float_div")?;
-        Ok(Value::from_float(a / b))
-    })
-}
-
-fn float_lt_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let (a, b) = float_pair(args, "__float_lt")?;
-        let r = if a.is_nan() || b.is_nan() { false } else { a < b };
-        Ok(Value::from_bool(r))
-    })
-}
-
-fn float_neg_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let f = args[0].as_float().ok_or_else(|| format!("__float_neg: arg0 not Float: {:?}", args[0]))?;
-        Ok(Value::from_float(-f))
-    })
 }
 
 fn print_native() -> NativeFn {

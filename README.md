@@ -56,55 +56,15 @@ fn main() -> Int {
 
 ## Benchmarks
 
-### Naive recursive
+Generally better than CPython. On smaller tasks, could be ~10x faster.
 
-```rust
-fn fib(n: Int) -> Int {
-  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
-}
+* _Compiler passes wired: constant folding, loop-invariant code motion, tail-call optimization, etc. See `wiki/14-Optimizations.md`._
 
-fn main() -> Int {
-  fib(30)
-}
-```
-
-| Runtime | Time | vs. |
-|---|---|---|
-| Abrase | _137 ms_ | 3.2× |
-| Python 3 (CPython) | _131 ms_ | _3.1x_ |
-| Node.js (V8) | _41.9 ms_ | _1.0x_ |
-
-### String Operation
-
-```rust
-fn build(n: Int) -> String {
-  let mut result = "x";
-  let mut i = n;
-  while i > 0 {
-    result = "{result}y";
-    i = i - 1;
-  }
-  return result
-}
-
-fn main() -> String {
-  let s = build(10000);
-  return s
-}
-```
-
-| Runtime | Time | vs. |
-|---|---|---|
-| Abrase | _19.3 ms_ | 1× |
-| Python 3 (CPython) | _22.7 ms_ | _1.2x_ |
-| Node.js (V8) | _34.1 ms_ | _1.7x_ |
-
-* _The experimental version has zero compiler optimization._
 * _Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine)_.
 
 ## Polka — bytecode design
 
-* 38 opcodes, 4 bytes each.
+* 46 opcodes, 4 bytes each (Int + Float arithmetic dedicated; comparisons, bitwise, control flow, memory, region, device, effect ops).
 * 256 registers per frame, 64-bit each.
 * Device interaction through ports definition.
 

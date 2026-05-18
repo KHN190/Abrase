@@ -109,6 +109,27 @@ impl VirtualMachine {
                 self.write(*d, r)
             }
 
+            OpCode::FAdd(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x + y),
+            OpCode::FSub(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x - y),
+            OpCode::FMul(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x * y),
+            OpCode::FDiv(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x / y),
+            OpCode::FNeg(d, a)    => {
+                let x = self.read_f64(*a)?;
+                self.write(*d, Value::from_float(-x))
+            }
+            OpCode::FLt(d, a, b)  => {
+                let x = self.read_f64(*a)?;
+                let y = self.read_f64(*b)?;
+                let r = if x.is_nan() || y.is_nan() { false } else { x < y };
+                self.write(*d, Value::from_bool(r))
+            }
+            OpCode::FEq(d, a, b)  => {
+                let x = self.read_f64(*a)?;
+                let y = self.read_f64(*b)?;
+                let r = if x.is_nan() || y.is_nan() { false } else { x == y };
+                self.write(*d, Value::from_bool(r))
+            }
+
             OpCode::Eq(d, a, b)  => self.bin_cmp(*d, *a, *b, |x, y| x == y),
             OpCode::Neq(d, a, b) => self.bin_cmp(*d, *a, *b, |x, y| x != y),
             OpCode::Lt(d, a, b)  => self.bin_i64_cmp(*d, *a, *b, |x, y| x < y),
@@ -271,10 +292,6 @@ impl VirtualMachine {
             return Err(format!("call: unknown fn_id {}", fn_id));
         }
         let caller_reg_count = caller_bc.reg_count;
-        let callee_reg_count = match &module.functions[fn_id] {
-            Chunk::Bytecode(b) => b.reg_count,
-            Chunk::Native(_) => 0,
-        };
         if dest.to_usize() >= caller_reg_count {
             return Err(format!(
                 "call: dest r{} out of caller window (reg_count {})",
@@ -283,9 +300,7 @@ impl VirtualMachine {
         }
         let dest_abs = self.base_reg + dest.to_usize();
         let new_base = self.base_reg + caller_reg_count;
-        // Reserve at least FRAME_REGS even if the callee declares fewer
-        let window = callee_reg_count.max(FRAME_REGS);
-        let needed = new_base + window;
+        let needed = new_base + FRAME_REGS;
         if needed > MAX_REGISTERS {
             return Err(format!(
                 "Stack overflow: register window {} exceeds limit {}",
@@ -297,16 +312,20 @@ impl VirtualMachine {
         }
 
         if let Chunk::Native(n) = &module.functions[fn_id] {
-            let func = self.natives.get(&n.name)
-                .ok_or_else(|| format!("native call: '{}' not registered", n.name))?
-                .clone();
-            let mut args: Vec<Value> = Vec::with_capacity(n.param_count);
-            for i in 0..n.param_count {
+            let param_count = n.param_count;
+            const MAX_NATIVE_ARGS: usize = 8;
+            if param_count > MAX_NATIVE_ARGS {
+                return Err(format!("native call: param_count {} exceeds buffer size {}", param_count, MAX_NATIVE_ARGS));
+            }
+            let func = self.resolved_natives.get(fn_id).and_then(|f| f.clone())
+                .ok_or_else(|| format!("native call: fn_id {} not resolved", fn_id))?;
+            let mut buf: [Value; MAX_NATIVE_ARGS] = [Value::NONE; MAX_NATIVE_ARGS];
+            for i in 0..param_count {
                 let v = self.read_abs(new_base + i);
                 if v.is_none() {
                     return Err(format!("native call: arg {} (r{}) is empty", i, i));
                 }
-                args.push(v);
+                buf[i] = v;
             }
             let mut ctx = super::NativeCtx {
                 pool: &mut self.box_pool,
@@ -314,7 +333,7 @@ impl VirtualMachine {
                 halted: &mut self.halted,
                 exit_code: &mut self.exit_code,
             };
-            let result = func(&mut ctx, &args)?;
+            let result = func(&mut ctx, &buf[..param_count])?;
             self.write_abs(dest_abs, result);
             return Ok(());
         }
@@ -329,7 +348,8 @@ impl VirtualMachine {
         let new_frame_index = self.frames.len();
         self.frames.push(Frame::normal(self.current_func, self.pc, self.base_reg, dest_abs));
         // Mark the first call after Handle install as the body frame — the boundary do_ret looks for.
-        if let Some(handler) = self.handlers.last_mut() {
+        if !self.handlers.is_empty() {
+            let handler = self.handlers.last_mut().unwrap();
             if handler.body_frame_index.is_none() {
                 handler.body_frame_index = Some(new_frame_index);
             }
@@ -353,6 +373,14 @@ impl VirtualMachine {
                 return Ok(());
             }
         };
+
+        if self.handlers.is_empty() && !frame.is_arm_continuation {
+            self.pc = frame.ip;
+            self.base_reg = frame.base_reg;
+            self.current_func = frame.func_id;
+            self.write_abs(frame.dest_reg, return_val);
+            return Ok(());
+        }
 
         // Deep-handler routing: body frame or arm-continuation + pending arm → run value through return arm.
         let is_body_frame = self.handlers.last()
@@ -829,6 +857,21 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
+    fn read_f64(&self, r: Register) -> Result<f64, String> {
+        let v = self.read(r)?;
+        v.as_float().ok_or_else(|| format!("expected Float in r{}, got {:?}", r.to_usize(), v))
+    }
+
+    #[inline(always)]
+    fn bin_f64<F: Fn(f64, f64) -> f64>(&mut self, d: Register, a: Register, b: Register, f: F)
+        -> Result<(), String>
+    {
+        let x = self.read_f64(a)?;
+        let y = self.read_f64(b)?;
+        self.write(d, Value::from_float(f(x, y)))
+    }
+
+    #[inline(always)]
     fn bin_i64_checked<F: Fn(i64, i64) -> Option<i64>>(
         &mut self, d: Register, a: Register, b: Register, msg: &str, f: F,
     ) -> Result<(), String> {
@@ -883,6 +926,15 @@ impl VirtualMachine {
                 Chunk::Native(_) => Vec::new(),
             };
             self.resolved_constants.push(resolved);
+        }
+        self.resolved_natives.clear();
+        self.resolved_natives.reserve(module.functions.len());
+        for chunk in &module.functions {
+            let entry = match chunk {
+                Chunk::Native(n) => self.natives.get(&n.name).cloned(),
+                Chunk::Bytecode(_) => None,
+            };
+            self.resolved_natives.push(entry);
         }
         Ok(())
     }

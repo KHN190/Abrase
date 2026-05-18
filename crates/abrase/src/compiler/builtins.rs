@@ -16,18 +16,6 @@ impl Compiler {
         self.concat_fn_id = Some(cid);
         let tid = self.register_native_chunk("__to_str", 1);
         self.to_str_fn_id = Some(tid);
-        self.float_add_fn_id = Some(self.functions.len());
-        self.register_typed_native("__float_add", vec![f.clone(), f.clone()], f.clone(), 2);
-        self.float_sub_fn_id = Some(self.functions.len());
-        self.register_typed_native("__float_sub", vec![f.clone(), f.clone()], f.clone(), 2);
-        self.float_mul_fn_id = Some(self.functions.len());
-        self.register_typed_native("__float_mul", vec![f.clone(), f.clone()], f.clone(), 2);
-        self.float_div_fn_id = Some(self.functions.len());
-        self.register_typed_native("__float_div", vec![f.clone(), f.clone()], f.clone(), 2);
-        self.float_lt_fn_id = Some(self.functions.len());
-        self.register_typed_native("__float_lt", vec![f.clone(), f.clone()], b.clone(), 2);
-        self.float_neg_fn_id = Some(self.functions.len());
-        self.register_typed_native("__float_neg", vec![f.clone()], f.clone(), 1);
         // Console
         self.register_typed_native("print",    vec![s.clone()],            u.clone(), 1);
         self.register_typed_native("println",  vec![s.clone()],            u.clone(), 1);

@@ -40,6 +40,14 @@ pub enum OpCode {
     Mod(Register, Register, Register),
     Neg(Register, Register),
 
+    FAdd(Register, Register, Register),
+    FSub(Register, Register, Register),
+    FMul(Register, Register, Register),
+    FDiv(Register, Register, Register),
+    FNeg(Register, Register),
+    FLt(Register, Register, Register),
+    FEq(Register, Register, Register),
+
     Eq(Register, Register, Register),
     Neq(Register, Register, Register),
     Lt(Register, Register, Register),
