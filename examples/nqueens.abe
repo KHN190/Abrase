@@ -1,0 +1,68 @@
+// N-Queens backtracking: count all ways to place N non-attacking queens on an N×N board.
+// Each complete placement fires Collect.found via algebraic effect; handler tallies the count.
+// count_queens(6) => 4
+
+// Abrase is move-by-default. `queens` has to live across multiple call sites
+// per recursion frame, so we pass &Queens everywhere and use a clone helper
+// when we actually need to grow the list for a deeper search branch.
+type Queens = Nil | Cons(Int, Queens)
+
+effect Collect { op found() -> Unit }
+
+fn abs_diff(a: Int, b: Int) -> Int {
+  if a > b { a - b } else { b - a }
+}
+
+fn clone_q(q: &Queens) -> Queens {
+  match *q {
+    Nil => Nil
+    Cons(c, rest) => Cons(c, clone_q(&rest))
+    _ => Nil
+  }
+}
+
+fn is_safe(col: Int, queens: &Queens, dist: Int) -> Bool {
+  match *queens {
+    Nil => true
+    Cons(c, rest) =>
+      if c == col { false } else {
+        if abs_diff(c, col) == dist { false } else {
+          is_safe(col, &rest, dist + 1)
+        }
+      }
+    _ => true
+  }
+}
+
+fn try_col(n: Int, queens: &Queens, row: Int, col: Int) -> <Collect> Unit {
+  if col >= n { () } else {
+    if is_safe(col, queens, 1) {
+      let extended = Cons(col, clone_q(queens));
+      solve(n, &extended, row + 1)
+    };
+    try_col(n, queens, row, col + 1)
+  }
+}
+
+fn solve(n: Int, queens: &Queens, row: Int) -> <Collect> Unit {
+  if row == n {
+    Collect.found()
+  } else {
+    try_col(n, queens, row, 0)
+  }
+}
+
+fn count_queens(n: Int) -> Int {
+  let q0 = Nil;
+  // Handler arm syntax: no `()` after the op name (`Collect.found` not `Collect.found()`);
+  // for ops with a payload bind directly (`gen.yield v` not `gen.yield(v)`);
+  // arms separated by `,`.
+  handle solve(n, &q0, 0) {
+    return _      => 0,
+    Collect.found => 1 + resume(())
+  }
+}
+
+fn main() -> Int {
+  count_queens(6)
+}
