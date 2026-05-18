@@ -33,6 +33,103 @@ pub enum Token {
     Illegal(String),
 }
 
+impl Token {
+    pub fn display(&self) -> String {
+        match self {
+            Token::Fn => "fn".into(),
+            Token::Let => "let".into(),
+            Token::Const => "const".into(),
+            Token::If => "if".into(),
+            Token::Else => "else".into(),
+            Token::Match => "match".into(),
+            Token::For => "for".into(),
+            Token::While => "while".into(),
+            Token::Loop => "loop".into(),
+            Token::Break => "break".into(),
+            Token::Continue => "continue".into(),
+            Token::Return => "return".into(),
+            Token::Type => "type".into(),
+            Token::Trait => "trait".into(),
+            Token::Impl => "impl".into(),
+            Token::Import => "import".into(),
+            Token::Mod => "mod".into(),
+            Token::Pub => "pub".into(),
+            Token::Region => "region".into(),
+            Token::Handle => "handle".into(),
+            Token::Resume => "resume".into(),
+            Token::Throw => "throw".into(),
+            Token::True => "true".into(),
+            Token::False => "false".into(),
+            Token::Where => "where".into(),
+            Token::In => "in".into(),
+            Token::As => "as".into(),
+            Token::SelfKW => "self".into(),
+            Token::SelfUpper => "Self".into(),
+            Token::Mut => "mut".into(),
+            Token::Move => "move".into(),
+            Token::Thread => "thread".into(),
+            Token::Effect => "effect".into(),
+            Token::Underscore => "_".into(),
+            Token::Ident(s) => s.clone(),
+            Token::Int(n) => n.to_string(),
+            Token::Float(f) => f.to_string(),
+            Token::String(s) => format!("\"{}\"", s),
+            Token::StringInterp(_) => "string literal".into(),
+            Token::Char(c) => format!("'{}'", c),
+            Token::Assign => "=".into(),
+            Token::Plus => "+".into(),
+            Token::Minus => "-".into(),
+            Token::Asterisk => "*".into(),
+            Token::Slash => "/".into(),
+            Token::Percent => "%".into(),
+            Token::Eq => "==".into(),
+            Token::NotEq => "!=".into(),
+            Token::Lt => "<".into(),
+            Token::Gt => ">".into(),
+            Token::Lte => "<=".into(),
+            Token::Gte => ">=".into(),
+            Token::And => "&&".into(),
+            Token::Or => "||".into(),
+            Token::Bang => "!".into(),
+            Token::PlusAssign => "+=".into(),
+            Token::MinusAssign => "-=".into(),
+            Token::MulAssign => "*=".into(),
+            Token::DivAssign => "/=".into(),
+            Token::ModAssign => "%=".into(),
+            Token::Range => "..".into(),
+            Token::RangeInclusive => "..=".into(),
+            Token::Arrow => "->".into(),
+            Token::FatArrow => "=>".into(),
+            Token::Comma => ",".into(),
+            Token::Colon => ":".into(),
+            Token::Semicolon => ";".into(),
+            Token::Dot => ".".into(),
+            Token::Question => "?".into(),
+            Token::LParen => "(".into(),
+            Token::RParen => ")".into(),
+            Token::LBrace => "{".into(),
+            Token::RBrace => "}".into(),
+            Token::LBracket => "[".into(),
+            Token::RBracket => "]".into(),
+            Token::Ampersand => "&".into(),
+            Token::Pipe => "|".into(),
+            Token::At => "@".into(),
+            Token::Eof => "end of input".into(),
+            Token::Illegal(s) => format!("illegal token `{}`", s),
+        }
+    }
+
+    pub fn is_statement_keyword(&self) -> bool {
+        matches!(
+            self,
+            Token::Handle | Token::Resume | Token::If | Token::Match
+            | Token::While | Token::For | Token::Loop | Token::Break
+            | Token::Continue | Token::Return | Token::Let | Token::Throw
+            | Token::Region
+        )
+    }
+}
+
 pub struct Lexer<'a> {
     input: std::str::Chars<'a>,
     current_char: Option<char>,

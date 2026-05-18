@@ -14,7 +14,7 @@ impl<'a> Parser<'a> {
                     decls.push(decl);
                     if self.current_token != Token::Eof &&
                        !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Import | Token::Effect | Token::Mod | Token::Pub) {
-                        self.report_error(format!("Unexpected token after declaration: {:?}", self.current_token), self.current_span);
+                        self.report_error(top_level_token_error(&self.current_token), self.current_span);
                         self.synchronize();
                     }
                 }
@@ -83,7 +83,7 @@ impl<'a> Parser<'a> {
                 self.next_token();
                 Ok(Decl::Mod(path.join(".")))
             }
-            _ => Err(format!("Unexpected declaration token: {:?}", self.current_token)),
+            _ => Err(top_level_token_error(&self.current_token)),
         }
     }
 
@@ -792,5 +792,16 @@ impl<'a> Parser<'a> {
             return Err("Expected ')'".into());
         }
         Ok(params)
+    }
+}
+
+fn top_level_token_error(tok: &Token) -> String {
+    if tok.is_statement_keyword() {
+        format!(
+            "`{}` is a statement; place it inside a function body",
+            tok.display()
+        )
+    } else {
+        format!("Unexpected token at top level: `{}`", tok.display())
     }
 }

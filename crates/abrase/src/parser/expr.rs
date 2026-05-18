@@ -465,7 +465,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Err("Expected 'return', 'exn', or effect name in handle arm".into()),
             };
-            let pattern = if matches!(self.peek_token, Token::Ident(_)) {
+            let pattern = if matches!(self.peek_token, Token::Ident(_) | Token::Underscore) {
                 self.next_token();
                 Some(self.parse_pattern()?)
             } else { None };

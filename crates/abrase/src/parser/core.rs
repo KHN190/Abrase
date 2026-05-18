@@ -85,9 +85,14 @@ impl<'a> Parser<'a> {
     pub(crate) fn synchronize(&mut self) {
         self.next_token();
         while self.current_token != Token::Eof {
-            if self.current_token == Token::Semicolon {
-                self.next_token();
-                return;
+            // Stop AT a token that starts a top-level declaration, so the
+            // outer loop can resume parsing it instead of consuming past it.
+            match self.current_token {
+                Token::Fn | Token::Type | Token::Trait | Token::Impl
+                | Token::Const | Token::Import | Token::Effect | Token::Mod
+                | Token::Pub | Token::At => return,
+                Token::Semicolon => { self.next_token(); return; }
+                _ => {}
             }
             match self.peek_token {
                 Token::Fn | Token::Let | Token::If | Token::Return

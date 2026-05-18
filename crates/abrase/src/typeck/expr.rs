@@ -1301,9 +1301,16 @@ impl Checker {
                         if let ast::Pattern::Bind(name) = &pat.node {
                             let pat_ty = if let ast::HandleArmKind::Effect(path) = &arm.kind {
                                 if path.len() >= 2 {
-                                    let op_key = path.join(".");
-                                    self.effect_ops_registry.get(&op_key).cloned()
-                                        .unwrap_or(Type::Unknown)
+                                    let op_key = format!("{}::{}", path[0], path[1]);
+                                    match self.effect_ops_registry.get(&op_key).cloned() {
+                                        Some(Type::Function { params, .. }) if params.len() == 1 => {
+                                            params.into_iter().next().unwrap()
+                                        }
+                                        Some(Type::Function { params, .. }) if params.is_empty() => {
+                                            Type::Unit
+                                        }
+                                        _ => Type::Unknown,
+                                    }
                                 } else {
                                     Type::Unknown
                                 }
