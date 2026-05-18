@@ -124,7 +124,7 @@ fn multishot_resume_two_calls_compiles() {
 }
 
 #[test]
-#[should_panic(expected = "Multi-shot resume")]
+#[should_panic(expected = "multi-shot resume not yet supported")]
 fn multishot_resume_captures_multiple_values() {
     // effect Counter { op next() -> Int }
     // fn work() -> <Counter> Int { Counter.next; Counter.next; 0 }
@@ -248,7 +248,7 @@ fn multishot_resume_captures_multiple_values() {
 }
 
 #[test]
-#[should_panic(expected = "Multi-shot resume")]
+#[should_panic(expected = "multi-shot resume not yet supported")]
 fn multishot_resume_three_calls() {
     // effect Counter { op next() -> Int }
     // fn work() -> <Counter> Int { Counter.next; Counter.next; Counter.next; 0 }

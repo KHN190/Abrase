@@ -1,20 +1,18 @@
-// Handler persistent across multiple effect calls
-// Handler frame should stay alive across multiple suspension points
+// Handler frame persists across multiple suspensions.
+// scale.apply doubles each input; transform sums two scaled values.
+// 3*2 + 7*2 = 6 + 14 = 20
 
-effect E { op f(x: Int) -> Int }
+effect scale { op apply(x: Int) -> Int }
 
-fn work() -> <E> Int {
-  let a = E.f(1);
-  let b = E.f(2);
-  a + b
+fn transform(a: Int, b: Int) -> <scale> Int {
+  let x = scale.apply(a);
+  let y = scale.apply(b);
+  x + y
 }
 
 fn main() -> Int {
-  handle work() {
-    E.f => {
-      let r = resume(10);
-      r
-    }
-    return v => v
+  handle transform(3, 7) {
+    scale.apply x => resume(x * 2)
+    return v      => v
   }
 }

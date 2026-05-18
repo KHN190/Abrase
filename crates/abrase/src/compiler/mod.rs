@@ -59,6 +59,7 @@ pub struct Compiler {
     pub(super) effect_op_to_arm: HashMap<(String, String), String>,
     pub(super) effect_arms_by_handle: HashMap<ast::Span, HashMap<(String, String), String>>,
     pub(super) arm_resume_counts: HashMap<String, usize>,
+    pub(super) arm_resume_in_tail: HashMap<String, bool>,
     // Per-call-site op dispatch: handle nested effects before global fallback.
     pub(super) op_call_to_arm: HashMap<ast::Span, String>,
     // Handle expression span -> synthesised return-arm fn name.
@@ -90,32 +91,19 @@ pub struct Compiler {
     // Builtin natives registered by `register_builtins`: name -> (params, ret).
     // Kept for legacy single-overload typechecker plumbing; see also fn_overloads.
     pub(super) builtin_types: HashMap<String, (Vec<TyType>, TyType)>,
-    // Overload table: user-facing name -> list of fn_ids beyond the primary in
-    // `func_map`. `func_map[name]` is the first overload; additional overloads
-    // sharing that name live here. Used by call resolution to dispatch on arg
-    // types.
+    // Overload table: user-facing name.`func_map[name]` is the first overload; 
+    // additional overloads sharing that name live here. 
     pub(super) fn_overloads: HashMap<String, Vec<usize>>,
-    // Signature per fn_id (parallel to `functions`). Populated for natives and
-    // host fns at registration time; for user fns, populated from FnDecl during
-    // compile_module. Codegen overload resolution reads this.
+    // Signature per fn_id (parallel to `functions`). 
     pub(super) fn_signatures: HashMap<usize, (Vec<TyType>, TyType)>,
     pub(super) device_mask: [u8; 32],
     pub(super) current_span: ast::Span,
     // Count of regions currently active inside the function being compiled.
-    // Bumped by every emit_region_push / emit_region_pop — counts user
-    // `region { ... }` blocks the same as compiler-inserted ones (loop bodies,
-    // statement-position blocks). break/continue/return/throw unwind all of
-    // them by depth diff.
     pub(super) compiler_region_depth: usize,
     // Compiler-region depth at function entry. return/throw emits
     // (compiler_region_depth - fn_compiler_depth_baseline) pops before exiting.
     pub(super) fn_compiler_depth_baseline: usize,
     // Per-block stack of binder registers introduced by `let` bindings.
-    // ALL bindings (Move and Copy) are pushed — Drop on a non-heap Value is
-    // a no-op, but Drop on a Copy register that happens to hold a boxed Int
-    // (i48 overflow) properly rc-dec's the box. Normal block exit and every
-    // abnormal exit (break/continue/return/throw/?/resume) emit Drop for
-    // every reg in the layers being unwound, skipping the carried value.
     pub(super) block_locals_stack: Vec<Vec<Register>>,
     // block_locals_stack.len() at function entry. return/throw/? unwind back
     // to this baseline.
@@ -155,6 +143,7 @@ impl Compiler {
             effect_op_to_arm: HashMap::new(),
             effect_arms_by_handle: HashMap::new(),
             arm_resume_counts: HashMap::new(),
+            arm_resume_in_tail: HashMap::new(),
             op_call_to_arm: HashMap::new(),
             return_arm_by_handle: HashMap::new(),
             arm_captures: HashMap::new(),
@@ -190,9 +179,6 @@ impl Compiler {
         }
     }
 
-    // Decrement the remaining-use counter for `name`. Returns `true` when the
-    // count reaches zero, meaning this is the last use and Move can be emitted
-    // instead of Copy for Share-type values.
     pub(super) fn consume_use(&mut self, name: &str) -> bool {
         match self.remaining_uses.get_mut(name) {
             Some(c) if *c > 0 && *c != usize::MAX => {
@@ -341,6 +327,7 @@ impl Compiler {
         self.effect_arms_by_handle = handler_lowering.effect_arms_by_handle;
         self.arm_captures = handler_lowering.arm_captures;
         self.arm_resume_counts = handler_lowering.arm_resume_counts;
+        self.arm_resume_in_tail = handler_lowering.arm_resume_in_tail;
         self.effect_ids = handler_lowering.effect_ids;
         self.op_ids = handler_lowering.op_ids;
         self.effect_op_counts = handler_lowering.effect_op_counts;
@@ -385,11 +372,8 @@ impl Compiler {
             fn_decls.push((idx, arm_fn));
         }
 
-        // Sanity: a name registered both in func_map and fn_overloads must NOT
-        // mix generic with non-generic (or two generic) fns. Mono mangles by
-        // (name, type_args); if two overloads have the same name and one is
-        // generic, specialisations could collide. User-fn overloading is not
-        // wired today, so this fires nowhere — kept as a safeguard if it lands.
+        // A name registered both in func_map and fn_overloads must NOT
+        // mix generic with non-generic (or two generic) fns.
         for (name, extras) in &self.fn_overloads {
             let mut all_ids = vec![*self.func_map.get(name).unwrap_or(&usize::MAX)];
             all_ids.extend(extras.iter().copied());

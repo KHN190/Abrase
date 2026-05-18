@@ -15,16 +15,17 @@ fn handler_frame_basic_structure() {
 
     let frame = HandlerFrame {
         effect_id: 123,
-        handler_fn: 5,
         dispatch_table_slot: Some(slot),
         dispatch_table_gen: generation,
         cell_slot: slot,
         cell_gen: generation,
         cells_allocated: vec![(slot, generation)],
+        body_frame_index: None,
+        pending_return_arm_fn: None,
+        pending_return_arm_env: Value::NONE,
     };
 
     assert_eq!(frame.effect_id, 123);
-    assert_eq!(frame.handler_fn, 5);
     assert_eq!(frame.dispatch_table_slot, Some(42));
     assert_eq!(frame.dispatch_table_gen, 7);
 }
@@ -36,12 +37,14 @@ fn handler_frame_push_succeeds() {
     let (slot, generation) = vm.heap_alloc(4);
     vm.push_handler(HandlerFrame {
         effect_id: 123,
-        handler_fn: 5,
         dispatch_table_slot: Some(slot),
         dispatch_table_gen: generation,
         cell_slot: slot,
         cell_gen: generation,
         cells_allocated: vec![(slot, generation)],
+        body_frame_index: None,
+        pending_return_arm_fn: None,
+        pending_return_arm_env: Value::NONE,
     });
 
     assert!(true, "push_handler succeeded without error");
@@ -54,12 +57,14 @@ fn handle_with_dispatch_table_handle_value() {
 
     let frame = HandlerFrame {
         effect_id: 42,
-        handler_fn: 0,
         dispatch_table_slot: Some(table_slot),
         dispatch_table_gen: table_gen,
         cell_slot: cont_slot,
         cell_gen: cont_gen,
         cells_allocated: vec![(cont_slot, cont_gen)],
+        body_frame_index: None,
+        pending_return_arm_fn: None,
+        pending_return_arm_env: Value::NONE,
     };
 
     assert_eq!(frame.dispatch_table_slot, Some(table_slot));
@@ -68,22 +73,23 @@ fn handle_with_dispatch_table_handle_value() {
 }
 
 #[test]
-fn handle_with_fallback_handler_function() {
-    // When the handle expression is a unit (no dispatch table),
-    // the handler_fn field stores the fallback handler index
+fn handler_frame_with_pending_return_arm() {
     let (cont_slot, cont_gen) = (102u32, 12u32);
 
     let frame = HandlerFrame {
-        effect_id: 0,
-        handler_fn: 7, // fallback handler function index
+        effect_id: 1,
         dispatch_table_slot: None,
         dispatch_table_gen: 0,
         cell_slot: cont_slot,
         cell_gen: cont_gen,
         cells_allocated: vec![(cont_slot, cont_gen)],
+        body_frame_index: Some(3),
+        pending_return_arm_fn: Some(42),
+        pending_return_arm_env: Value::from_int(0),
     };
 
-    assert_eq!(frame.handler_fn, 7);
+    assert_eq!(frame.body_frame_index, Some(3));
+    assert_eq!(frame.pending_return_arm_fn, Some(42));
     assert_eq!(frame.dispatch_table_slot, None);
 }
 
@@ -129,12 +135,14 @@ fn multiple_handler_frames_creation() {
     let frames: Vec<_> = (0..3)
         .map(|i| HandlerFrame {
             effect_id: i as u16,
-            handler_fn: i as usize,
             dispatch_table_slot: Some(i as u32),
             dispatch_table_gen: i as u32,
             cell_slot: i as u32 + 100,
             cell_gen: i as u32,
             cells_allocated: vec![(i as u32 + 100, i as u32)],
+            body_frame_index: None,
+            pending_return_arm_fn: None,
+            pending_return_arm_env: Value::NONE,
         })
         .collect();
 
@@ -142,22 +150,20 @@ fn multiple_handler_frames_creation() {
     assert_eq!(frames[0].effect_id, 0);
     assert_eq!(frames[1].effect_id, 1);
     assert_eq!(frames[2].effect_id, 2);
-    assert_eq!(frames[0].handler_fn, 0);
-    assert_eq!(frames[2].handler_fn, 2);
 }
 
 #[test]
 fn handler_with_invalid_generation_structure() {
-    // Test that a handler frame can be created with invalid generation
-    // (The runtime would detect this when accessing the heap)
     let frame = HandlerFrame {
         effect_id: 1,
-        handler_fn: 0,
         dispatch_table_slot: Some(100),
         dispatch_table_gen: 999,
         cell_slot: 100,
         cell_gen: 999,
         cells_allocated: vec![(100, 999)],
+        body_frame_index: None,
+        pending_return_arm_fn: None,
+        pending_return_arm_env: Value::NONE,
     };
 
     assert_eq!(frame.dispatch_table_gen, 999);

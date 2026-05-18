@@ -104,12 +104,7 @@ fn test_chunk_reg_count() {
 
 #[test]
 fn test_frame_dest_reg() {
-    let frame = myriad::frame::Frame {
-        func_id: 1,
-        ip: 10,
-        base_reg: 64,
-        dest_reg: 5,
-    };
+    let frame = myriad::frame::Frame::normal(1, 10, 64, 5);
     assert_eq!(frame.func_id, 1);
     assert_eq!(frame.ip, 10);
     assert_eq!(frame.base_reg, 64);

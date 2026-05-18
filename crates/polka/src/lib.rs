@@ -12,6 +12,8 @@ pub const DISPATCH_ID: u8 = 0xE0;
 pub const DISPATCH_PORT_LOOKUP: u8 = 0x00;
 pub const DISPATCH_PORT_POP_HANDLER: u8 = 0x01;
 pub const DISPATCH_PORT_ENV: u8 = 0x02;
+pub const DISPATCH_PORT_RETURN_FN: u8 = 0x03;
+pub const DISPATCH_PORT_RETURN_ENV: u8 = 0x04;
 pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
 
 pub const REGION_ID: u8 = 0xE1;

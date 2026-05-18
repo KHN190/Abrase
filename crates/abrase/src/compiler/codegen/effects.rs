@@ -73,9 +73,14 @@ impl Compiler {
             .get(&self.current_fn_name)
             .copied()
             .unwrap_or(0);
-        let is_multishot = resume_count > 1;
+        let in_tail = self.arm_resume_in_tail
+            .get(&self.current_fn_name)
+            .copied()
+            .unwrap_or(true);
+        // Tail-call optimization when `resume` is the last eval
+        let tail_optimize = in_tail && resume_count <= 1;
 
-        if is_multishot {
+        if !tail_optimize {
             let dest = self.alloc_register()?;
             self.emit(OpCode::Resume(dest, val_reg));
             Ok(dest)
@@ -106,28 +111,34 @@ impl Compiler {
 
         let installed_frame = self.emit_handle_install(handle_span, arms)?;
 
+        // Install the return arm fn_id + env onto the active handler frame
+        // via dispatch ports. The runtime applies either on exit or via the
+        // arm-continuation on resume.
+        let ret_arm_name = self.return_arm_by_handle.get(&handle_span).cloned()
+            .ok_or_else(|| format!(
+                "internal: no return arm registered for handle at {:?}", handle_span
+            ))?;
+        let return_arm_fn_id = *self.func_map.get(&ret_arm_name)
+            .ok_or_else(|| format!("internal: return arm '{}' not in fn table", ret_arm_name))?;
+        let return_arm_env_reg = self.arm_env_stack.last()
+            .and_then(|envs| envs.get(&ret_arm_name).copied())
+            .ok_or_else(|| format!("internal: no env packed for return arm '{}'", ret_arm_name))?;
+
+        if installed_frame {
+            self.emit_install_return_arm(return_arm_fn_id, return_arm_env_reg)?;
+        }
+
         let body_reg = self.compile_expr(body)?;
         let arm_envs = self.arm_env_stack.pop()
             .ok_or_else(|| "internal: arm_env_stack underflow at compile_handle".to_string())?;
 
         if installed_frame {
             self.emit_handle_pop()?;
+            return Ok(body_reg);
         }
 
-        let ret_arm_name = self.return_arm_by_handle.get(&handle_span).cloned()
-            .ok_or_else(|| format!(
-                "internal: no return arm registered for handle at {:?}", handle_span
-            ))?;
-        let func_id = *self.func_map.get(&ret_arm_name)
-            .ok_or_else(|| format!("internal: return arm '{}' not in fn table", ret_arm_name))?;
         let env_reg = arm_envs.get(&ret_arm_name).copied()
             .ok_or_else(|| format!("internal: no env packed for return arm '{}'", ret_arm_name))?;
-
-        //   PushConst(r7, 0)           # Load 0 into return_env_reg
-        //   Copy(r0, r5)               # arg 0: __env → r0
-        //   Copy(r0, r7)               # arg 1: __return_env → r0
-        //   Copy(r0, r6)               # arg 2: body_result → r0
-        //   Call(r8, 6)                # Call function_id=6, result → r8
 
         let pos = self.code.len();
         self.emit(OpCode::Copy(Register(0), env_reg));
@@ -145,9 +156,35 @@ impl Compiler {
         self.pending_arg_patches.push((pos, 2));
 
         let dest = self.alloc_register()?;
-        let fid = super::scaffold::to_u16(func_id, "Handler arm fn_id")?;
+        let fid = super::scaffold::to_u16(return_arm_fn_id, "Handler arm fn_id")?;
         self.emit(OpCode::Call(dest, fid));
         Ok(dest)
+    }
+
+    fn emit_install_return_arm(
+        &mut self,
+        return_arm_fn_id: usize,
+        return_arm_env_reg: Register,
+    ) -> Result<(), String> {
+        let fn_id_i64 = super::scaffold::to_u16(return_arm_fn_id, "Return arm fn_id")? as i64;
+        let fn_port = ((crate::bytecode::DISPATCH_ID as i64) << 8)
+            | (crate::bytecode::DISPATCH_PORT_RETURN_FN as i64);
+        let env_port = ((crate::bytecode::DISPATCH_ID as i64) << 8)
+            | (crate::bytecode::DISPATCH_PORT_RETURN_ENV as i64);
+
+        let fn_id_reg = self.alloc_register()?;
+        let fn_id_idx = self.add_constant(Value::from_int(fn_id_i64))?;
+        self.emit(OpCode::PushConst(fn_id_reg, fn_id_idx));
+        let fn_port_reg = self.alloc_register()?;
+        let fn_port_idx = self.add_constant(Value::from_int(fn_port))?;
+        self.emit(OpCode::PushConst(fn_port_reg, fn_port_idx));
+        self.emit(OpCode::Deo(fn_id_reg, fn_port_reg));
+
+        let env_port_reg = self.alloc_register()?;
+        let env_port_idx = self.add_constant(Value::from_int(env_port))?;
+        self.emit(OpCode::PushConst(env_port_reg, env_port_idx));
+        self.emit(OpCode::Deo(return_arm_env_reg, env_port_reg));
+        Ok(())
     }
 
     fn emit_handle_install(&mut self, handle_span: ast::Span, arms: &[ast::HandleArm]) -> Result<bool, String> {

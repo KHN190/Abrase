@@ -8,7 +8,7 @@ use crate::frame::Frame;
 const MAX_REGISTERS: usize = 1 << 16;
 const MAX_RECURSION_DEPTH: usize = 2048;
 
-// Hard cap on VM-managed memory (heap cells + boxed values).
+// Hard cap on VM memory (heap cells + boxed values).
 pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
 impl VirtualMachine {
@@ -29,8 +29,6 @@ impl VirtualMachine {
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
         validate_module_register_budget(module)?;
         self.validate_module_devices(module)?;
-        // Reset all VM state before resolve_constants
-        // Resolve intern string constants into the box_pool.
         self.frames.clear();
         self.handlers.clear();
         self.region_table.clear();
@@ -141,7 +139,7 @@ impl VirtualMachine {
                 }
                 self.do_call(module, bc, *dest, fn_id as usize)
             }
-            OpCode::Ret(reg) => self.do_ret(*reg),
+            OpCode::Ret(reg) => self.do_ret(module, *reg),
 
             OpCode::PushConst(reg, pool_idx) => {
                 let idx = *pool_idx as usize;
@@ -238,7 +236,7 @@ impl VirtualMachine {
             // Write to a device port. Handles system exit, effect dispatch (snapshot + cell
             // allocation + handler resolution), handler pop, and region management. All other
             // ports delegate to the device registry.
-            OpCode::Deo(src, port_reg) => self.do_deo(*src, *port_reg),
+            OpCode::Deo(src, port_reg) => self.do_deo(module, *src, *port_reg),
             // Push a handler frame bound to effect_id. The dispatch table is a heap array of
             // (fn_id, env) pairs indexed by operation. Continuation cells are allocated lazily
             // on the first DEO dispatch, not here.
@@ -250,19 +248,21 @@ impl VirtualMachine {
                 };
                 self.handlers.push(super::HandlerFrame {
                     effect_id: *effect_id,
-                    handler_fn: 0,
                     dispatch_table_slot: table_slot,
                     dispatch_table_gen: table_gen,
                     cell_slot: 0,
                     cell_gen: 0,
                     cells_allocated: Vec::new(),
+                    body_frame_index: None,
+                    pending_return_arm_fn: None,
+                    pending_return_arm_env: polka::Value::NONE,
                 });
                 Ok(())
             }
             // Restore a continuation: write the resume value into the work frame's dest register,
             // push the current (handler) frame so it returns after the work completes, then jump
             // to saved_pc + 2 (the instruction after the suspending DEO).
-            OpCode::Resume(dest_reg, val_reg) => self.do_resume(*dest_reg, *val_reg),
+            OpCode::Resume(dest_reg, val_reg) => self.do_resume(module, *dest_reg, *val_reg),
         }
     }
 
@@ -326,12 +326,15 @@ impl VirtualMachine {
                 MAX_RECURSION_DEPTH
             ));
         }
-        self.frames.push(Frame {
-            func_id: self.current_func,
-            ip: self.pc,
-            base_reg: self.base_reg,
-            dest_reg: dest_abs,
-        });
+        let new_frame_index = self.frames.len();
+        self.frames.push(Frame::normal(self.current_func, self.pc, self.base_reg, dest_abs));
+        // The first call after a `Handle` install is the handle body call —
+        // record its frame index so do_ret can recognise the boundary.
+        if let Some(handler) = self.handlers.last_mut() {
+            if handler.body_frame_index.is_none() {
+                handler.body_frame_index = Some(new_frame_index);
+            }
+        }
         self.base_reg = new_base;
         self.current_func = fn_id;
         self.pc = 0;
@@ -339,21 +342,115 @@ impl VirtualMachine {
     }
 
     #[inline]
-    fn do_ret(&mut self, reg: Register) -> Result<(), String> {
+    fn do_ret(&mut self, module: &Module, reg: Register) -> Result<(), String> {
         let abs = self.abs(reg);
         let return_val = self.take_abs(abs);
         if return_val.is_none() { return Err("Return register is empty".to_string()); }
-        if let Some(frame) = self.frames.pop() {
+        let frame = match self.frames.pop() {
+            Some(f) => f,
+            None => {
+                self.write_abs(self.base_reg, return_val);
+                self.halted = true;
+                return Ok(());
+            }
+        };
+
+        // if the popped frame is a handle body's call frame, or an arm-
+        // continuation, and the active handler still has a pending return 
+        // arm, route `return_val` through the return arm
+        let is_body_frame = self.handlers.last()
+            .and_then(|h| h.body_frame_index)
+            .map_or(false, |idx| idx == self.frames.len());
+        let route_through_return_arm = (frame.is_arm_continuation || is_body_frame)
+            && self.handlers.last().map_or(false, |h| h.pending_return_arm_fn.is_some());
+
+        if !route_through_return_arm {
+            // Normal Ret.
+            if frame.is_arm_continuation && frame.arm_snapshot_count > 0 {
+                let snap = crate::snapshot::SnapshotHandle {
+                    slot: frame.arm_snapshot_slot,
+                    generation: frame.arm_snapshot_gen,
+                    count: frame.arm_snapshot_count,
+                };
+                self.restore_registers(frame.base_reg, snap)?;
+                // Single-shot: snapshot consumed, drop the off-region cell.
+                self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
+            }
             self.pc = frame.ip;
             self.base_reg = frame.base_reg;
             self.current_func = frame.func_id;
             self.write_abs(frame.dest_reg, return_val);
-            Ok(())
-        } else {
-            self.write_abs(self.base_reg, return_val);
-            self.halted = true;
-            Ok(())
+            return Ok(());
         }
+
+        // Restore arm's snapshot before invoking the return arm (so when
+        // the return arm Rets back, the arm body sees its own state).
+        if frame.is_arm_continuation && frame.arm_snapshot_count > 0 {
+            let snap = crate::snapshot::SnapshotHandle {
+                slot: frame.arm_snapshot_slot,
+                generation: frame.arm_snapshot_gen,
+                count: frame.arm_snapshot_count,
+            };
+            self.restore_registers(frame.base_reg, snap)?;
+            self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
+        }
+
+        // Take the return arm info; clear pending so subsequent pops in
+        // this handler don't re-apply it.
+        let (ra_fn, ra_env) = {
+            let h = self.handlers.last_mut().unwrap();
+            let fn_id = h.pending_return_arm_fn.take().unwrap();
+            let env = std::mem::replace(&mut h.pending_return_arm_env, Value::NONE);
+            (fn_id, env)
+        };
+
+        // Push a "post-return-arm" frame so when the return arm Rets, the
+        // runtime restores the popped frame's state and delivers the return
+        // arm's result to its dest_reg.
+        self.frames.push(super::Frame::normal(
+            frame.func_id, frame.ip, frame.base_reg, frame.dest_reg,
+        ));
+
+        // Set up the call to the return arm. new_base sits just past the
+        // popped frame's caller window — same allocation a regular Call from
+        // that function would compute.
+        let caller_reg_count = match module.functions.get(frame.func_id) {
+            Some(Chunk::Bytecode(b)) => b.reg_count,
+            _ => return Err(format!("return-arm: popped frame func {} is not bytecode", frame.func_id)),
+        };
+        let callee_reg_count = match module.functions.get(ra_fn) {
+            Some(Chunk::Bytecode(b)) => b.reg_count,
+            Some(Chunk::Native(_)) => return Err("return-arm: native return arm not supported".into()),
+            None => return Err(format!("return-arm: unknown fn_id {}", ra_fn)),
+        };
+        let new_base = frame.base_reg + caller_reg_count;
+        let window = callee_reg_count.max(polka::FRAME_REGS);
+        let needed = new_base + window;
+        if needed > MAX_REGISTERS {
+            return Err(format!(
+                "Stack overflow setting up return arm: window {} exceeds limit {}",
+                needed, MAX_REGISTERS
+            ));
+        }
+        if needed > self.registers.len() {
+            self.registers.resize(needed, Value::NONE);
+        }
+
+        // Args: (env, return_env, value). Layout matches the handle codegen.
+        // Normal callee-arg staging uses Copy (rc_inc); mirror that here so the
+        // return arm owns its own refs and balanced drops won't underflow.
+        // `ra_env` was stashed without rc_inc at DEO install time; `return_val`
+        // was just taken from a register (ref transferred in, no new ref to
+        // create). Box and handle values get rc_inc'd; primitives are no-ops.
+        self.value_rc_inc(&ra_env)?;
+        self.write_abs(new_base, ra_env);
+        self.write_abs(new_base + 1, Value::from_int(0));
+        self.write_abs(new_base + 2, return_val);
+
+        self.base_reg = new_base;
+        self.current_func = ra_fn;
+        self.pc = 0;
+        Ok(())
     }
 
     fn do_dei(&mut self, d: Register, port_reg: Register) -> Result<(), String> {
@@ -385,7 +482,7 @@ impl VirtualMachine {
         self.write(d, v)
     }
 
-    fn do_deo(&mut self, src: Register, port_reg: Register) -> Result<(), String> {
+    fn do_deo(&mut self, module: &Module, src: Register, port_reg: Register) -> Result<(), String> {
         let v = self.read(src)?;
         let port_val = self.read_i64(port_reg)?;
         let (device_id, port) = split_port(port_val)?;
@@ -423,6 +520,12 @@ impl VirtualMachine {
                 Value::from_int(self.current_func as i64))?;
             self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE,
                 Value::from_int(1))?;
+
+            // Snapshot the suspended function's register window
+            let reg_count = self.current_fn_reg_count(module);
+            let snapshot = self.snapshot_registers(self.base_reg, reg_count)?;
+            self.write_snapshot_into_cell(cell_slot, cell_gen, snapshot)?;
+
             if let Some(handler_frame) = self.handlers.last_mut() {
                 handler_frame.cells_allocated.push((cell_slot, cell_gen));
                 handler_frame.cell_slot = cell_slot;
@@ -431,8 +534,11 @@ impl VirtualMachine {
             let (fn_id, env) = self.resolve_dispatch(key);
             self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_FN_ID,
                 Value::from_int(fn_id as i64))?;
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV,
-                env.unwrap_or(Value::NONE))?;
+            // The cont cell takes a new ref to env: cascade rc_dec on cell
+            // free will balance with this rc_inc on store.
+            let env_val = env.unwrap_or(Value::NONE);
+            self.value_rc_inc(&env_val)?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV, env_val)?;
             self.dispatch_last_result = Some(fn_id);
             self.dispatch_last_env = env;
             return Ok(());
@@ -443,6 +549,20 @@ impl VirtualMachine {
             for (slot, generation) in frame.cells_allocated.iter() {
                 self.region_table.forget(*slot, *generation);
             }
+            return Ok(());
+        }
+        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_RETURN_FN {
+            let fn_id = v.as_int()
+                .ok_or_else(|| format!("dispatch.return_fn: expected int, got {:?}", v))?;
+            let handler = self.handlers.last_mut()
+                .ok_or("dispatch.return_fn: no active handler frame")?;
+            handler.pending_return_arm_fn = Some(fn_id as usize);
+            return Ok(());
+        }
+        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_RETURN_ENV {
+            let handler = self.handlers.last_mut()
+                .ok_or("dispatch.return_env: no active handler frame")?;
+            handler.pending_return_arm_env = v;
             return Ok(());
         }
         if device_id == polka::REGION_ID {
@@ -464,62 +584,85 @@ impl VirtualMachine {
         dev.write_with_pool(port, v, &mut self.box_pool)
     }
 
-    fn do_resume(&mut self, dest_reg: Register, val_reg: Register) -> Result<(), String> {
-        let frame = self.handlers.last_mut()
-            .ok_or("Resume outside an active handler frame")?;
-        let alive = self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::ALIVE)?;
+    fn do_resume(&mut self, module: &Module, dest_reg: Register, val_reg: Register) -> Result<(), String> {
+        let (cell_slot, cell_gen) = {
+            let h = self.handlers.last()
+                .ok_or("Resume outside an active handler frame")?;
+            (h.cell_slot, h.cell_gen)
+        };
+        let alive = self.heap.ld(cell_slot, cell_gen, super::cont_slot::ALIVE)?;
         match alive.as_int() {
             Some(1) => {}
             Some(0) => return Err("resume: continuation already consumed".to_string()),
             _ => return Err(format!(
                 "resume: continuation cell corrupted (alive slot = {:?})", alive)),
         }
-        let saved_pc = match self.heap.ld(frame.cell_slot, frame.cell_gen,
-            super::cont_slot::SUSPEND_PC)?.as_int() {
-            Some(n) if n >= 0 => n as usize,
-            _ => return Err("resume: continuation cell has invalid pc".to_string()),
-        };
-        let saved_base = match self.heap.ld(frame.cell_slot, frame.cell_gen,
+        let saved_base = match self.heap.ld(cell_slot, cell_gen,
             super::cont_slot::SUSPEND_BASE)?.as_int() {
             Some(n) if n >= 0 => n as usize,
             _ => return Err("resume: continuation cell has invalid base".to_string()),
         };
-        let saved_func = match self.heap.ld(frame.cell_slot, frame.cell_gen,
+        let saved_func = match self.heap.ld(cell_slot, cell_gen,
             super::cont_slot::SUSPEND_FUNC)?.as_int() {
             Some(n) if n >= 0 => n as usize,
             _ => return Err("resume: continuation cell has invalid func".to_string()),
         };
-        self.heap.st(frame.cell_slot, frame.cell_gen, super::cont_slot::DEST_REG,
-            Value::from_int(dest_reg.to_usize() as i64))?;
-        let cell_dest_reg = dest_reg.to_usize();
+        let suspended_snapshot = self.read_snapshot_from_cell(cell_slot, cell_gen)?;
+
+        // Mark the continuation consumed. With single-shot semantics in place,
+        // a second resume from the same cell would also fail at "no arm-call
+        // frame on stack" below — but flipping ALIVE here gives the clearer
+        // diagnostic and matches the cont-slot contract.
+        self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE,
+            Value::from_int(0))?;
+
         let val = self.read(val_reg)?;
-        if let Some(top_frame) = self.frames.last() {
-            let work_dest = saved_base + cell_dest_reg;
-            if top_frame.dest_reg == work_dest && top_frame.base_reg == saved_base {
-                let _ = self.frames.pop();
-            }
-        }
-        let handler_dest_abs = self.base_reg + dest_reg.to_usize();
+
+        // NOTE: pop happens before snapshot_registers / push / restore. If any
+        // of those allocs fails (OOM in current Myriad spec is fatal), the
+        // VM state is left partial. Acceptable today because OOM halts the VM;
+        // revisit if recovery becomes a goal.
+        let arm_call_frame = self.frames.pop()
+            .ok_or("resume: no arm-call frame on stack")?;
+        let yield_result_abs = arm_call_frame.dest_reg;
+        let resume_ip = arm_call_frame.ip;
+
+        // Snapshot the arm's register window. Off-region so a suspended
+        // function's REGION.pop on the path back to its Ret can't free it.
+        let arm_reg_count = self.current_fn_reg_count(module);
+        let arm_snapshot = self.snapshot_registers_off_region(self.base_reg, arm_reg_count)?;
+
+        // Push the continuation frame. Pop when the continuation Rets.
+        let arm_resume_dest_abs = self.base_reg + dest_reg.to_usize();
         self.frames.push(super::Frame {
+            func_id: self.current_func,
             ip: self.pc,
             base_reg: self.base_reg,
-            dest_reg: handler_dest_abs,
-            func_id: self.current_func,
+            dest_reg: arm_resume_dest_abs,
+            is_arm_continuation: true,
+            arm_snapshot_slot: arm_snapshot.slot,
+            arm_snapshot_gen: arm_snapshot.generation,
+            arm_snapshot_count: arm_snapshot.count,
         });
-        self.pc = saved_pc + 2;
+
+        // Restore suspended fn register window.
         self.base_reg = saved_base;
         self.current_func = saved_func;
-        let abs = saved_base + cell_dest_reg;
-        if abs >= self.registers.len() {
+        self.pc = resume_ip;
+        self.restore_registers(saved_base, suspended_snapshot)?;
+
+        if yield_result_abs >= self.registers.len() {
             return Err(format!(
-                "resume: dest abs {} out of registers (len {})", abs, self.registers.len()));
+                "resume: yield dest abs {} out of registers (len {})",
+                yield_result_abs, self.registers.len()));
         }
-        self.write_abs(abs, val);
+        self.write_abs(yield_result_abs, val);
+
         if self.debug_sink.is_some() {
             let event = DebugEvent::Resume {
-                saved_pc,
+                saved_pc: resume_ip,
                 saved_base,
-                cell_dest: cell_dest_reg,
+                cell_dest: yield_result_abs - saved_base,
                 val,
                 handler_dest: dest_reg.to_usize(),
                 alive,
@@ -593,7 +736,7 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    fn value_rc_inc(&mut self, v: &Value) -> Result<(), String> {
+    pub(crate) fn value_rc_inc(&mut self, v: &Value) -> Result<(), String> {
         if let Some((slot, generation)) = v.as_handle() {
             self.heap.rc_inc(slot, generation)
         } else if let Some(idx) = v.as_box() {
@@ -604,7 +747,7 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    fn value_rc_dec(&mut self, v: &Value) -> Result<(), String> {
+    pub(crate) fn value_rc_dec(&mut self, v: &Value) -> Result<(), String> {
         if let Some((slot, generation)) = v.as_handle() {
             self.heap.rc_dec(slot, generation, &mut self.box_pool).map(|_| ())
         } else if let Some(idx) = v.as_box() {
@@ -627,7 +770,7 @@ impl VirtualMachine {
         self.heap.bytes_used().saturating_add(self.box_pool.bytes_used())
     }
 
-    fn mem_charge(&mut self, bytes: usize) -> Result<(), String> {
+    pub(crate) fn mem_charge(&mut self, bytes: usize) -> Result<(), String> {
         let projected = self.mem_used().saturating_add(bytes);
         if projected <= MAX_RAM { return Ok(()); }
         Err(format!(
@@ -705,10 +848,6 @@ impl VirtualMachine {
                             let s = bc.string_constants.get(sidx as usize)
                                 .cloned().unwrap_or_default();
                             let pending = BoxedValue::String(s);
-                            // Module load happens before user code can install
-                            // an OOM handler, so we just check the cap inline
-                            // and report a hard error if a giant string constant
-                            // wouldn't fit.
                             let cost = BoxPool::pending_bytes(&pending);
                             if self.mem_used().saturating_add(cost) > MAX_RAM {
                                 return Err(format!(
@@ -764,9 +903,6 @@ impl VirtualMachine {
                     }
                 }
             }
-            if op_id == 0 && h.handler_fn <= 0xFFFF {
-                return (h.handler_fn as u16, None);
-            }
         }
         (polka::DISPATCH_NO_MATCH, None)
     }
@@ -796,7 +932,6 @@ fn split_port(port_val: i64) -> Result<(u8, u8), String> {
     Ok((device_id, port))
 }
 
-// Reject chunks declaring more than FRAME_REGS registers.
 fn validate_module_register_budget(module: &Module) -> Result<(), String> {
     for (i, chunk) in module.functions.iter().enumerate() {
         if let Chunk::Bytecode(b) = chunk {

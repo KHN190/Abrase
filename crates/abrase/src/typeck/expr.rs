@@ -1331,6 +1331,13 @@ impl Checker {
                         self.push_region(region_name);
                     }
 
+                    if let Some(nested_span) = Self::find_nested_handle(&arm.body) {
+                        self.report_error(
+                            "nested `handle` inside a handler arm body is not yet supported".into(),
+                            nested_span,
+                        );
+                    }
+
                     let arm_ty = self.infer_expr(&arm.body);
                     arm_types.push(arm_ty);
 
@@ -1555,5 +1562,81 @@ impl Checker {
             }
             _ => false,
         }
+    }
+
+    fn find_nested_handle(expr: &ast::Spanned<ast::Expr>) -> Option<ast::Span> {
+        match &expr.node {
+            ast::Expr::Handle { .. } => Some(expr.span),
+            ast::Expr::Block(b) => {
+                for stmt in &b.stmts {
+                    let inner = match &stmt.node {
+                        ast::Stmt::Expr(e) => Self::find_nested_handle(e),
+                        ast::Stmt::Let { value, .. } => Self::find_nested_handle(value),
+                        ast::Stmt::Empty => None,
+                    };
+                    if inner.is_some() { return inner; }
+                }
+                b.ret.as_deref().and_then(Self::find_nested_handle)
+            }
+            ast::Expr::If { condition, consequence, alternative } => {
+                Self::find_nested_handle(condition)
+                    .or_else(|| Self::find_nested_handle(consequence))
+                    .or_else(|| alternative.as_deref().and_then(Self::find_nested_handle))
+            }
+            ast::Expr::Match { scrutinee, arms } => {
+                Self::find_nested_handle(scrutinee)
+                    .or_else(|| arms.iter().find_map(|a| Self::find_nested_handle(&a.body)))
+            }
+            ast::Expr::Binary { left, right, .. } => {
+                Self::find_nested_handle(left).or_else(|| Self::find_nested_handle(right))
+            }
+            ast::Expr::Unary { right, .. } => Self::find_nested_handle(right),
+            ast::Expr::Call { callee, args } => {
+                Self::find_nested_handle(callee)
+                    .or_else(|| args.iter().find_map(Self::find_nested_handle))
+            }
+            ast::Expr::Index { base, index } => {
+                Self::find_nested_handle(base).or_else(|| Self::find_nested_handle(index))
+            }
+            ast::Expr::FieldAccess { base, .. } => Self::find_nested_handle(base),
+            ast::Expr::Tuple(items) | ast::Expr::Array(items) => {
+                items.iter().find_map(Self::find_nested_handle)
+            }
+            ast::Expr::ArrayRepeat { elem, count } => {
+                Self::find_nested_handle(elem).or_else(|| Self::find_nested_handle(count))
+            }
+            ast::Expr::Variant { args, .. } => args.iter().find_map(Self::find_nested_handle),
+            ast::Expr::Resume(Some(e)) => Self::find_nested_handle(e),
+            ast::Expr::Return(Some(e)) | ast::Expr::Throw(e) | ast::Expr::Question(e) => {
+                Self::find_nested_handle(e)
+            }
+            ast::Expr::Break(Some(e)) => Self::find_nested_handle(e),
+            ast::Expr::While { condition, body } => {
+                Self::find_nested_handle(condition).or_else(|| Self::find_nested_handle_block(body))
+            }
+            ast::Expr::For { iter, body, .. } => {
+                Self::find_nested_handle(iter).or_else(|| Self::find_nested_handle_block(body))
+            }
+            ast::Expr::Loop { body } => Self::find_nested_handle_block(body),
+            ast::Expr::Region { body, .. } => Self::find_nested_handle_block(body),
+            ast::Expr::Closure { body, .. } => Self::find_nested_handle(body),
+            ast::Expr::Range { start, end, .. } => {
+                start.as_deref().and_then(Self::find_nested_handle)
+                    .or_else(|| end.as_deref().and_then(Self::find_nested_handle))
+            }
+            _ => None,
+        }
+    }
+
+    fn find_nested_handle_block(block: &ast::Block) -> Option<ast::Span> {
+        for stmt in &block.stmts {
+            let inner = match &stmt.node {
+                ast::Stmt::Expr(e) => Self::find_nested_handle(e),
+                ast::Stmt::Let { value, .. } => Self::find_nested_handle(value),
+                ast::Stmt::Empty => None,
+            };
+            if inner.is_some() { return inner; }
+        }
+        block.ret.as_deref().and_then(Self::find_nested_handle)
     }
 }

@@ -15,6 +15,7 @@ pub struct HandleLowering {
     pub effect_op_counts: HashMap<String, u8>,
     pub arm_to_handle: HashMap<String, Span>,
     pub arm_resume_counts: HashMap<String, usize>,
+    pub arm_resume_in_tail: HashMap<String, bool>,
     pub errors: Vec<String>,
     next_id: usize,
     handle_stack: Vec<HashMap<(String, String), String>>,
@@ -35,6 +36,7 @@ impl HandleLowering {
             effect_op_counts: HashMap::new(),
             arm_to_handle: HashMap::new(),
             arm_resume_counts: HashMap::new(),
+            arm_resume_in_tail: HashMap::new(),
             errors: Vec::new(),
             next_id: 0,
             handle_stack: Vec::new(),
@@ -209,6 +211,7 @@ impl HandleLowering {
                     if resume_count > 1 {
                         self.errors.push("Multiple resume calls in one handler arm not yet implemented".to_string());
                     }
+                    let resume_in_tail = self.all_resumes_in_tail(&arm.body);
                     let (params, body) = self.build_arm_fn(
                         &fn_name,
                         handle_span,
@@ -218,6 +221,7 @@ impl HandleLowering {
                         scope,
                     );
                     self.arm_resume_counts.insert(fn_name.clone(), resume_count);
+                    self.arm_resume_in_tail.insert(fn_name.clone(), resume_in_tail);
                     self.synthetic_fns.push(FnDecl {
                         attrs: vec![],
                         is_pub: false,
@@ -250,8 +254,12 @@ impl HandleLowering {
                     });
                     let resume_count = self.count_resumes_in_expr(&arm.body);
                     if resume_count > 1 {
-                        self.errors.push("Multi-shot resume (multiple resume calls in one handler arm) not yet implemented".to_string());
+                        self.errors.push(format!(
+                            "multi-shot resume not yet supported: handler arm for `{}.{}` calls `resume` {} times",
+                            effect_name, op_name, resume_count
+                        ));
                     }
+                    let resume_in_tail = self.all_resumes_in_tail(&arm.body);
                     let (params, body) = self.build_arm_fn(
                         &fn_name,
                         handle_span,
@@ -261,6 +269,7 @@ impl HandleLowering {
                         scope,
                     );
                     self.arm_resume_counts.insert(fn_name.clone(), resume_count);
+                    self.arm_resume_in_tail.insert(fn_name.clone(), resume_in_tail);
                     self.synthetic_fns.push(FnDecl {
                         attrs: vec![],
                         is_pub: false,
@@ -426,6 +435,34 @@ impl HandleLowering {
             Stmt::Let { value, .. } => self.count_resumes_in_expr(value),
             Stmt::Expr(e) => self.count_resumes_in_expr(e),
             Stmt::Empty => 0,
+        }
+    }
+
+    // True when every `resume(...)` inside `expr` is in tail position of the
+    // arm body. Tail-position resume can lower to a direct `Ret`; non-tail
+    // resume must capture the continuation so the arm body can keep computing
+    // with resume's return value (e.g. `v + resume(())`).
+    fn all_resumes_in_tail(&self, expr: &Spanned<Expr>) -> bool {
+        match &expr.node {
+            Expr::Resume(_) => true,
+            Expr::Block(b) => {
+                b.stmts.iter().all(|s| self.count_resumes_in_stmt(s) == 0)
+                    && b.ret.as_ref().map_or(true, |r| self.all_resumes_in_tail(r))
+            }
+            Expr::If { condition, consequence, alternative } => {
+                self.count_resumes_in_expr(condition) == 0
+                    && self.all_resumes_in_tail(consequence)
+                    && alternative.as_ref().map_or(true, |a| self.all_resumes_in_tail(a))
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.count_resumes_in_expr(scrutinee) == 0
+                    && arms.iter().all(|a| self.all_resumes_in_tail(&a.body))
+            }
+            Expr::Region { body, .. } => {
+                body.stmts.iter().all(|s| self.count_resumes_in_stmt(s) == 0)
+                    && body.ret.as_ref().map_or(true, |r| self.all_resumes_in_tail(r))
+            }
+            _ => self.count_resumes_in_expr(expr) == 0,
         }
     }
 }

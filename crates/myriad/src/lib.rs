@@ -9,6 +9,7 @@ pub mod region;
 pub mod builtins;
 pub mod debug;
 pub mod host;
+pub mod snapshot;
 
 pub use polka::Value;
 pub use value::{BoxPool, BoxedValue};
@@ -55,12 +56,22 @@ pub struct VirtualMachine {
 
 pub struct HandlerFrame {
     pub effect_id: u16,
-    pub handler_fn: usize,
     pub dispatch_table_slot: Option<u32>,
     pub dispatch_table_gen: u32,
-    pub cell_slot: u32,      // 当前活跃 cell
+    pub cell_slot: u32,
     pub cell_gen: u32,
-    pub cells_allocated: Vec<(u32, u32)>,  // 所有 cells (slot, gen)
+    pub cells_allocated: Vec<(u32, u32)>,
+    // Index in `self.frames` of the frame pushed by the handle body's call
+    // (e.g. `Call(range)`). Set when do_call fires for the first time after
+    // this handler is installed. Used to identify the "boundary" frame whose
+    // pop signals the handle body has returned without intermediate Resume.
+    pub body_frame_index: Option<usize>,
+    // Return-arm function id + env, captured at handle install via the
+    // INSTALL_RETURN_ARM dispatch ports. Cleared the first time it's
+    // applied (either when the body frame pops without resume, or when the
+    // topmost arm-continuation pops via Resume's deep-handler path).
+    pub pending_return_arm_fn: Option<usize>,
+    pub pending_return_arm_env: Value,
 }
 
 pub mod cont_slot {
@@ -71,7 +82,9 @@ pub mod cont_slot {
     pub const SUSPEND_FUNC: usize = 4;
     pub const DISPATCH_FN_ID: usize = 5;
     pub const DISPATCH_ENV: usize = 6;
-    pub const SIZE: usize = 7;
+    pub const REGS_SNAPSHOT_SLOT: usize = 7;
+    pub const REGS_COUNT: usize = 8;
+    pub const SIZE: usize = 9;
 }
 
 impl VirtualMachine {
