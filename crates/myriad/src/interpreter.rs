@@ -383,9 +383,6 @@ impl VirtualMachine {
         let abs = self.abs(reg);
         let return_val = self.take_abs(abs);
         if return_val.is_none() { return Err("Return register is empty".to_string()); }
-
-        self.reclaim_callee_window(module, abs);
-
         let frame = match self.frames.pop() {
             Some(f) => f,
             None => {
@@ -404,24 +401,6 @@ impl VirtualMachine {
         }
 
         self.do_ret_slow(module, frame, return_val)
-    }
-
-    // Drop anything the compiler left non-NONE in the callee's window (compiler
-    // emits Drop for bound locals but not staged-arg / variant-load temps).
-    // Otherwise the leftover handle sits at that physical address; a later
-    // frame whose window overlaps inherits it, and arm-continuation
-    // restore_registers later dec's a cell that region_pop has since killed.
-    #[inline]
-    fn reclaim_callee_window(&mut self, module: &Module, ret_abs: usize) {
-        let count = self.current_fn_reg_count(module);
-        for i in 0..count {
-            let r = self.base_reg + i;
-            if r == ret_abs { continue; }
-            let v = std::mem::replace(&mut self.registers[r], Value::NONE);
-            if v.is_none() { continue; }
-            let stale = matches!(v.as_handle(), Some((s, g)) if !self.heap.is_live(s, g));
-            if !stale { let _ = self.value_rc_dec(&v); }
-        }
     }
 
     #[cold]
