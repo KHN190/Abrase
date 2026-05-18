@@ -20,5 +20,11 @@ fn main() -> Int {
   let fl = flr(2.7);
   println("sqrt(16)={s}, ceil(2.3)={c}, flr(2.7)={fl}");
 
+  // Overloads: max/min/abs work for Float too.
+  let fa = abs(0.0 - 3.5);
+  let fmx = max(1.5, 2.5);
+  let fmn = min(1.5, 2.5);
+  println("fabs(3.5)={fa}, fmax(2.5)={fmx}, fmin(1.5)={fmn}");
+
   0
 }

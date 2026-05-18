@@ -14,103 +14,42 @@ We also include Myriad as a safe sandbox environment, which can later compile to
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
-## Syntax
+## Language Overview
 
 ```rust
-// Types, values, control flow
-
-fn main() -> Int {
-  let x = 5;
-  let mut y = 10;
-  y = y + x;
-
-  if y > 12 { y } else { 0 }
+effect Metric {
+  op record(msg: String) -> Unit
 }
 
-// Records, variants, pattern matching
+fn random_walk(steps: Int) -> <Metric> Int {
+  let t0 = now();
+  Metric.record("start: {t0}");
+  srand(0.42);
 
-type Tree = Leaf | Node(Int, Tree, Tree)
+  let mut pos = 0;
+  let mut i = 0;
+  while i < steps {
+    let r = rand();
+    pos = pos + if r < 0.5 { 2 } else { -1 };
+    i = i + 1
+  };
 
-fn insert(t: Tree, x: Int) -> Tree {
-  match t {
-    Leaf            => Node(x, Leaf, Leaf)
-    Node(v, l, r)   => if x < v { Node(v, insert(l, x), r) }
-                       else     { Node(v, l, insert(r, x)) }
-    _ => t
+  let t1 = now();
+  Metric.record("time: {t1}");
+  let d = abs(pos);
+  Metric.record("I am at: {d}");
+  pos
+}
+
+fn main() -> Int {
+  handle random_walk(1000) {
+    return pos => pos,
+    Metric.record msg => {
+      println(msg);
+      resume(())
+    }
   }
 }
-
-// Closures with capture-by-value and `move`
-
-fn main() -> Int {
-  let bump = 5;
-  let add_bump = |n: Int| n + bump;   // bump is cloned into the env
-  add_bump(3) + bump                  // bump still usable here
-}
-
-// Exceptions via `<exn>` effect
-// Syntax: fn name(params) -> <effects> ReturnType
-
-fn div(a: Int, b: Int) -> <exn<Int>> Int {
-  if b == 0 { throw 99 } else { a / b }
-}
-
-fn pipeline(a: Int, b: Int) -> <exn<Int>> Int {
-  let v = div(a, b)?;                  // propagate Err, unwrap Ok
-  v + 1
-}
-
-fn main() -> Int {  // main() must be pure (no effects)
-  match pipeline(20, 4) { Ok(v) => v, Err(_) => -1, _ => 0 }
-}
-
-// Effect handlers
-
-effect Logger { op log(s: String) -> Unit }
-
-fn work() -> <Logger> Int {
-  Logger.log("starting");
-  42
-}
-
-fn main() -> Int {
-  handle work() {
-    return v       => v,
-    Logger.log(_)  => resume(())
-  }
-}
-
-// Generators by effect system
-
-effect gen { op yield(v: Int) -> Unit }
-
-fn produce() -> <gen> Unit { gen.yield(10); gen.yield(20) }
-
-fn sum() -> Int {
-  handle produce() {
-    return _      => 0,
-    gen.yield v   => v + resume(())   // resume continues the producer
-  }
-}
-
-// Regions — bulk free on scope exit
-
-fn main() -> Int {
-  region cache {
-    let s = Shared(42);     // allocation tagged with region `cache`
-    *s
-  }                          // region exit force-frees `s` regardless of rc
-}
-
-// String interpolation
-
-fn greet(name: String) -> String { "hello {name}" }
-
-// Ownership annotations
-
-@copy  type Pt    = { x: Int, y: Int }       // bitwise copy on assign
-@move  type Buf   = { data: [Int; 1024] }    // ownership transfers
-@share type Cfg   = { host: String }         // refcounted
 ```
 
 ## Benchmarks

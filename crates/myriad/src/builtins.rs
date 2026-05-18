@@ -48,7 +48,7 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("rand",        rand_native());
     reg.register("srand",       srand_native());
 
-    // Math
+    // Math (Int variants — primary)
     reg.register("abs",         abs_native());
     reg.register("ceil",        ceil_native());
     reg.register("flr",         flr_native());
@@ -57,6 +57,10 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("sqrt",        sqrt_native());
     reg.register("max",         max_native());
     reg.register("min",         min_native());
+    // Math (Float overloads — abrase compiler routes max/min/abs(Float,...) here)
+    reg.register("fabs",        fabs_native());
+    reg.register("fmax",        fmax_native());
+    reg.register("fmin",        fmin_native());
 
     // System
     reg.register("halt",        halt_native());
@@ -205,8 +209,36 @@ fn abort_native() -> NativeFn {
     })
 }
 
-// abs / max / min — Int variants. Float variants can be added later if needed
-// (fabs / fmax / fmin); user can write `if a > b { a } else { b }` inline for now.
+// abs / max / min — Int variants (primary). Float variants below; abrase
+// compiler routes by arg-type overload to the right native.
+
+fn fabs_native() -> NativeFn {
+    Rc::new(|_ctx: &mut NativeCtx<'_>, args: &[Value]| {
+        let f = args[0].as_float()
+            .ok_or_else(|| format!("fabs: arg0 not Float: {:?}", args[0]))?;
+        Ok(Value::from_float(f.abs()))
+    })
+}
+
+fn fmax_native() -> NativeFn {
+    Rc::new(|_ctx: &mut NativeCtx<'_>, args: &[Value]| {
+        let a = args[0].as_float()
+            .ok_or_else(|| format!("fmax: arg0 not Float: {:?}", args[0]))?;
+        let b = args[1].as_float()
+            .ok_or_else(|| format!("fmax: arg1 not Float: {:?}", args[1]))?;
+        Ok(Value::from_float(a.max(b)))
+    })
+}
+
+fn fmin_native() -> NativeFn {
+    Rc::new(|_ctx: &mut NativeCtx<'_>, args: &[Value]| {
+        let a = args[0].as_float()
+            .ok_or_else(|| format!("fmin: arg0 not Float: {:?}", args[0]))?;
+        let b = args[1].as_float()
+            .ok_or_else(|| format!("fmin: arg1 not Float: {:?}", args[1]))?;
+        Ok(Value::from_float(a.min(b)))
+    })
+}
 
 fn abs_native() -> NativeFn {
     Rc::new(|ctx: &mut NativeCtx<'_>, args: &[Value]| {

@@ -107,21 +107,33 @@ impl Compiler {
                         return Ok(dr);
                     }
                 }
+                // Decide Int vs Float opcode before compile
+                let is_float = matches!(self.infer_expr_type(left),
+                                Some(ast::Type::Named(ref n)) if n == "Float")
+                    && matches!(self.infer_expr_type(right),
+                                Some(ast::Type::Named(ref n)) if n == "Float");
                 let lr = self.compile_expr(left)?;
                 let rr = self.compile_expr(right)?;
                 let dr = self.alloc_register()?;
-                let instr = match op {
-                    ast::BinaryOp::Add => OpCode::Add(dr, lr, rr),
-                    ast::BinaryOp::Sub => OpCode::Sub(dr, lr, rr),
-                    ast::BinaryOp::Mul => OpCode::Mul(dr, lr, rr),
-                    ast::BinaryOp::Div => OpCode::Div(dr, lr, rr),
-                    ast::BinaryOp::Mod => OpCode::Mod(dr, lr, rr),
-                    ast::BinaryOp::Eq => OpCode::Eq(dr, lr, rr),
-                    ast::BinaryOp::Neq => OpCode::Neq(dr, lr, rr),
-                    ast::BinaryOp::Lt => OpCode::Lt(dr, lr, rr),
-                    ast::BinaryOp::Gt => OpCode::Gt(dr, lr, rr),
-                    ast::BinaryOp::Lte => OpCode::Lte(dr, lr, rr),
-                    ast::BinaryOp::Gte => OpCode::Gte(dr, lr, rr),
+                let instr = match (op, is_float) {
+                    (ast::BinaryOp::Add, true)  => OpCode::FAdd(dr, lr, rr),
+                    (ast::BinaryOp::Sub, true)  => OpCode::FSub(dr, lr, rr),
+                    (ast::BinaryOp::Mul, true)  => OpCode::FMul(dr, lr, rr),
+                    (ast::BinaryOp::Div, true)  => OpCode::FDiv(dr, lr, rr),
+                    (ast::BinaryOp::Lt,  true)  => OpCode::FLt(dr, lr, rr),
+                    // Float `>` -> `<` with swapped operands (no FGt opcode).
+                    (ast::BinaryOp::Gt,  true)  => OpCode::FLt(dr, rr, lr),
+                    (ast::BinaryOp::Add, false) => OpCode::Add(dr, lr, rr),
+                    (ast::BinaryOp::Sub, false) => OpCode::Sub(dr, lr, rr),
+                    (ast::BinaryOp::Mul, false) => OpCode::Mul(dr, lr, rr),
+                    (ast::BinaryOp::Div, false) => OpCode::Div(dr, lr, rr),
+                    (ast::BinaryOp::Mod, _)     => OpCode::Mod(dr, lr, rr),
+                    (ast::BinaryOp::Eq,  _)     => OpCode::Eq(dr, lr, rr),
+                    (ast::BinaryOp::Neq, _)     => OpCode::Neq(dr, lr, rr),
+                    (ast::BinaryOp::Lt,  false) => OpCode::Lt(dr, lr, rr),
+                    (ast::BinaryOp::Gt,  false) => OpCode::Gt(dr, lr, rr),
+                    (ast::BinaryOp::Lte, _)     => OpCode::Lte(dr, lr, rr),
+                    (ast::BinaryOp::Gte, _)     => OpCode::Gte(dr, lr, rr),
                     _ => return Err(format!("Unsupported binary op: {:?}", op)),
                 };
                 self.emit(instr);

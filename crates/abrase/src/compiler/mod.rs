@@ -86,7 +86,17 @@ pub struct Compiler {
     pub(super) to_str_fn_id: Option<usize>,
     pub(super) host_fns: HashMap<String, HostFnDecl>,
     // Builtin natives registered by `register_builtins`: name -> (params, ret).
+    // Kept for legacy single-overload typechecker plumbing; see also fn_overloads.
     pub(super) builtin_types: HashMap<String, (Vec<TyType>, TyType)>,
+    // Overload table: user-facing name -> list of fn_ids beyond the primary in
+    // `func_map`. `func_map[name]` is the first overload; additional overloads
+    // sharing that name live here. Used by call resolution to dispatch on arg
+    // types.
+    pub(super) fn_overloads: HashMap<String, Vec<usize>>,
+    // Signature per fn_id (parallel to `functions`). Populated for natives and
+    // host fns at registration time; for user fns, populated from FnDecl during
+    // compile_module. Codegen overload resolution reads this.
+    pub(super) fn_signatures: HashMap<usize, (Vec<TyType>, TyType)>,
     pub(super) device_mask: [u8; 32],
     pub(super) current_span: ast::Span,
     // Count of regions currently active inside the function being compiled.
@@ -155,6 +165,8 @@ impl Compiler {
             to_str_fn_id: None,
             host_fns: HashMap::new(),
             builtin_types: HashMap::new(),
+            fn_overloads: HashMap::new(),
+            fn_signatures: HashMap::new(),
             device_mask: [0; 32],
             current_span: ast::Span::new(0, 0),
             compiler_region_depth: 0,
@@ -255,7 +267,7 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
-        // Builtins must be before user fns 
+        // Builtins must be before user fns
         self.register_builtins();
 
         // Refuses to compile with type errors
@@ -275,6 +287,25 @@ impl Compiler {
                 ret: Box::new(ret.clone()),
             };
             checker.insert_var(name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+        }
+        // Surface the full overload table to the checker so Call resolution can
+        // pick by arg types. The single-overload `insert_var` path above covers
+        // the common case; this lets max/min/abs etc. expose multiple sigs.
+        for (name, fn_ids) in &self.fn_overloads {
+            let mut sigs: Vec<(Vec<TyType>, TyType)> = Vec::new();
+            if let Some(primary) = self.func_map.get(name) {
+                if let Some(sig) = self.fn_signatures.get(primary) {
+                    sigs.push(sig.clone());
+                }
+            }
+            for id in fn_ids {
+                if let Some(sig) = self.fn_signatures.get(id) {
+                    sigs.push(sig.clone());
+                }
+            }
+            if !sigs.is_empty() {
+                checker.fn_overloads.insert(name.clone(), sigs);
+            }
         }
         checker.check_program(ast);
         if !checker.errors.is_empty() {
@@ -600,17 +631,40 @@ impl Compiler {
         self.register_typed_native("sqrt",     vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("max",      vec![i.clone(), i.clone()], i.clone(), 2);
         self.register_typed_native("min",      vec![i.clone(), i.clone()], i.clone(), 2);
+        // Math (Float overloads — same user name, distinct chunk name)
+        self.register_typed_native_overload("abs", "fabs", vec![f.clone()],            f.clone(), 1);
+        self.register_typed_native_overload("max", "fmax", vec![f.clone(), f.clone()], f.clone(), 2);
+        self.register_typed_native_overload("min", "fmin", vec![f.clone(), f.clone()], f.clone(), 2);
         // System
         self.register_typed_native("halt",     vec![i.clone()],            u.clone(), 1);
         self.register_typed_native("abort",    vec![s.clone()],            u.clone(), 1);
     }
 
     fn register_native_chunk(&mut self, name: &str, param_count: usize) -> usize {
+        self.register_native_chunk_aliased(name, name, param_count)
+    }
+
+    // Aliased variant: `user_name` is what the user types in source; `chunk_name`
+    // is the NativeChunk's name (what myriad's NativeRegistry keys on at runtime).
+    // For overloads the user_name is shared but each variant needs a distinct
+    // chunk_name (e.g. user_name="max", chunk_name="fmax" for the Float overload).
+    fn register_native_chunk_aliased(
+        &mut self,
+        user_name: &str,
+        chunk_name: &str,
+        param_count: usize,
+    ) -> usize {
         use crate::bytecode::NativeChunk;
         let id = self.functions.len();
-        self.func_map.insert(name.into(), id);
+        // First registration with this user-facing name → primary in func_map.
+        // Subsequent registrations → appended to fn_overloads.
+        if self.func_map.contains_key(user_name) {
+            self.fn_overloads.entry(user_name.into()).or_default().push(id);
+        } else {
+            self.func_map.insert(user_name.into(), id);
+        }
         self.functions.push(Chunk::Native(NativeChunk {
-            name: name.into(),
+            name: chunk_name.into(),
             param_count,
         }));
         id
@@ -623,7 +677,22 @@ impl Compiler {
         ret: TyType,
         param_count: usize,
     ) {
-        self.register_native_chunk(name, param_count);
-        self.builtin_types.insert(name.into(), (params, ret));
+        let id = self.register_native_chunk(name, param_count);
+        // builtin_types retained for back-compat with single-overload code paths.
+        self.builtin_types.insert(name.into(), (params.clone(), ret.clone()));
+        self.fn_signatures.insert(id, (params, ret));
+    }
+
+    // Overload-aware variant.
+    fn register_typed_native_overload(
+        &mut self,
+        user_name: &str,
+        chunk_name: &str,
+        params: Vec<TyType>,
+        ret: TyType,
+        param_count: usize,
+    ) {
+        let id = self.register_native_chunk_aliased(user_name, chunk_name, param_count);
+        self.fn_signatures.insert(id, (params, ret));
     }
 }

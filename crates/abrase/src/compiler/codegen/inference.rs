@@ -1,4 +1,4 @@
-// Compile-time type inference for codegen: best-effort moves vs copies and method dispatch.
+// Compile-time type inference for: best-effort moves vs copies and method dispatch.
 // The real type system lives in `typeck`.
 
 use crate::ast;
@@ -36,16 +36,54 @@ impl Compiler {
                 }
                 _ => self.infer_expr_type(right),
             },
+            ast::Expr::Call { callee, args: _ } => {
+                // Calls to named fns: look up the fn's return type via the
+                // compiler's recorded signatures. Allow overloading.
+                if let ast::Expr::Identifier(name) = &callee.node {
+                    let fid = self.func_map.get(name).copied()?;
+                    let (_, ret) = self.fn_signatures.get(&fid)?;
+                    ty_to_ast(ret)
+                } else { None }
+            }
+            ast::Expr::Binary { op, left, right } => {
+                use ast::BinaryOp as B;
+                match op {
+                    B::Add | B::Sub | B::Mul | B::Div | B::Mod
+                    | B::AddAssign | B::SubAssign | B::MulAssign
+                    | B::DivAssign | B::ModAssign => {
+                        let lt = self.infer_expr_type(left)?;
+                        let rt = self.infer_expr_type(right)?;
+                        if lt == rt { Some(lt) } else { None }
+                    }
+                    B::Eq | B::Neq | B::Lt | B::Gt | B::Lte | B::Gte
+                    | B::And | B::Or => Some(ast::Type::Named("Bool".into())),
+                    B::Assign => None,
+                }
+            }
             _ => None,
         }
     }
 
-    // Pull a receiver type name out of a method-call base expression.
     // Handles literals, identifiers, and references (`&x`).
     pub(in crate::compiler) fn receiver_type_name(&self, base: &ast::Spanned<ast::Expr>) -> Option<String> {
         let ty = self.infer_expr_type(base)?;
         receiver_name_of(&ty)
     }
+}
+
+// Primitive ty::Type -> ast::Type bridge. Only the cases that show up as fn
+// return types in current builtins; complex returns yield None.
+fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
+    use crate::ty::Type as T;
+    Some(match ty {
+        T::Int    => ast::Type::Named("Int".into()),
+        T::Float  => ast::Type::Named("Float".into()),
+        T::Bool   => ast::Type::Named("Bool".into()),
+        T::Char   => ast::Type::Named("Char".into()),
+        T::String => ast::Type::Named("String".into()),
+        T::Unit   => ast::Type::Tuple(vec![]),
+        _ => return None,
+    })
 }
 
 fn receiver_name_of(ty: &ast::Type) -> Option<String> {

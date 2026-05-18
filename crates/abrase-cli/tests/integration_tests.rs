@@ -111,7 +111,7 @@ fn effect_dispatch_runs() {
 
 #[test]
 fn multiple_suspension_points() {
-    let v = run_file("tests/scripts/multi_effect_handler.abe")
+    let v = run_file("tests/scripts/multi_effect.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(20));
 }
@@ -149,13 +149,6 @@ fn string_interp_with_records_recursion_and_closures() {
 }
 
 #[test]
-fn handler_persistent_across_calls() {
-    let v = run_file("tests/scripts/multi_effect_handler.abe")
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v.as_int(), Some(20));
-}
-
-#[test]
 fn built_ins() {
     // The bare `run_file` helper uses a no-device VirtualMachine; native fns
     // like print / now / rand need Console + Clock + Random installed, so we
@@ -176,4 +169,7 @@ fn built_ins() {
     assert!(out.contains("sqrt(16)=4"),       "sqrt broken in: {:?}", out);
     assert!(out.contains("ceil(2.3)=3"),      "ceil broken in: {:?}", out);
     assert!(out.contains("flr(2.7)=2"),       "flr broken in: {:?}", out);
+    assert!(out.contains("fabs(3.5)=3.5"),    "abs(Float) overload broken in: {:?}", out);
+    assert!(out.contains("fmax(2.5)=2.5"),    "max(Float) overload broken in: {:?}", out);
+    assert!(out.contains("fmin(1.5)=1.5"),    "min(Float) overload broken in: {:?}", out);
 }

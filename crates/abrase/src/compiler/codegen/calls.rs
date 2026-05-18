@@ -87,10 +87,62 @@ impl Compiler {
         let ast::Expr::Identifier(name) = &callee.node else {
             return Err("Call target must be a function identifier".to_string());
         };
-        let func_id = self.func_map.get(name).copied()
-            .ok_or_else(|| format!("Undefined function: {}", name))?;
+        // Overload dispatch: if the name has additional overloads beyond the
+        // primary, infer arg types and pick the matching fn_id. Falls back to
+        // primary when nothing matches (typechecker should have already rejected
+        // a real mismatch).
+        let func_id = if self.fn_overloads.contains_key(name) {
+            self.resolve_overload_fn_id(name, args)?
+        } else {
+            self.func_map.get(name).copied()
+                .ok_or_else(|| format!("Undefined function: {}", name))?
+        };
         let fid = super::scaffold::to_u16(func_id, &format!("Function id for '{}'", name))?;
         Ok(CallTarget::Function { func_id: fid, env: CallEnv::None })
+    }
+
+    // Pick a fn_id from the overload set whose param types match the args. Args
+    // typed via existing `infer_expr_type` (returns ast::Type). Signature params
+    // are ty::Type — we compare via a small bridge.
+    fn resolve_overload_fn_id(
+        &self,
+        name: &str,
+        args: &[ast::Spanned<ast::Expr>],
+    ) -> Result<usize, String> {
+        let arg_tys: Vec<Option<ast::Type>> =
+            args.iter().map(|a| self.infer_expr_type(a)).collect();
+        let mut candidates: Vec<usize> = Vec::new();
+        if let Some(&primary) = self.func_map.get(name) { candidates.push(primary); }
+        if let Some(extras) = self.fn_overloads.get(name) { candidates.extend(extras); }
+        for fid in &candidates {
+            let Some((params, _)) = self.fn_signatures.get(fid) else { continue };
+            if params.len() != arg_tys.len() { continue; }
+            let ok = params.iter().zip(&arg_tys).all(|(p, a)| match a {
+                Some(t) => Self::ty_matches_ast_type(p, t),
+                None => false,
+            });
+            if ok { return Ok(*fid); }
+        }
+        // No match — fall back to primary so codegen can proceed; typechecker
+        // is responsible for the user-facing error.
+        candidates.first().copied()
+            .ok_or_else(|| format!("Undefined function: {}", name))
+    }
+
+    // ty::Type vs ast::Type bridge for overload param comparison. Only the
+    // primitive cases (Int/Float/Bool/Char/String/Unit) are handled; anything
+    // else returns false and lets codegen fall back to the primary overload.
+    fn ty_matches_ast_type(ty: &crate::ty::Type, ast_ty: &ast::Type) -> bool {
+        use crate::ty::Type as T;
+        match (ty, ast_ty) {
+            (T::Int,    ast::Type::Named(n)) if n == "Int"    => true,
+            (T::Float,  ast::Type::Named(n)) if n == "Float"  => true,
+            (T::Bool,   ast::Type::Named(n)) if n == "Bool"   => true,
+            (T::Char,   ast::Type::Named(n)) if n == "Char"   => true,
+            (T::String, ast::Type::Named(n)) if n == "String" => true,
+            (T::Unit,   ast::Type::Tuple(v)) if v.is_empty()  => true,
+            _ => false,
+        }
     }
 
     fn resolve_env_load<'a>(

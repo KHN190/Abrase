@@ -19,8 +19,8 @@ impl<'a> Parser<'a> {
             }
         };
         if is_block_terminated(&left.node)
-            && matches!(self.current_token,
-                Token::Semicolon | Token::RBrace | Token::RParen | Token::RBracket | Token::Comma | Token::Eof)
+            && !matches!(self.current_token,
+                Token::Dot | Token::LParen | Token::LBracket | Token::Question)
         {
             return left;
         }
@@ -466,7 +466,11 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        if !self.expect_peek(Token::RBrace) {
+        // The loop exits with `current` either AT the handle's closing `}`
+        // (last arm had a block body — parse_block already advanced past the
+        // body's `}` onto the handle's `}`) or BEFORE it (last arm had a
+        // non-block body). Both must end with `current` ONE past `}`.
+        if self.current_token != Token::RBrace && !self.expect_peek(Token::RBrace) {
             return Err("Expected '}' in handle".into());
         }
         self.next_token();

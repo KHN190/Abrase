@@ -6,7 +6,7 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use myriad::{BoxedValue, Value, VirtualMachine};
+use myriad::{BoxedValue, Host, Value, VirtualMachine};
 
 const USAGE: &str = "\
 Abrase compiler & Myriad VM
@@ -66,17 +66,6 @@ fn parse(source: &str) -> Result<Vec<abrase::ast::Decl>, ExitCode> {
     Ok(ast)
 }
 
-fn frontend(source: &str) -> Result<Vec<abrase::ast::Decl>, ExitCode> {
-    let ast = parse(source)?;
-    let mut checker = Checker::new();
-    checker.check_program(&ast);
-    if !checker.errors.is_empty() {
-        eprint!("{}", checker.pretty_print_errors(source));
-        return Err(ExitCode::from(1));
-    }
-    Ok(ast)
-}
-
 fn cmd_run(source: &str, debug: bool) -> ExitCode {
     if debug {
         eprintln!("# debug fmt:");
@@ -84,7 +73,7 @@ fn cmd_run(source: &str, debug: bool) -> ExitCode {
         eprintln!("#   runtime trace: [<fn_name>#<fn_id>:<pc>] <op>");
         eprintln!("#   handler events: [handle] push ... / [resume] -> ...");
     }
-    let ast = match frontend(source) { Ok(a) => a, Err(c) => return c };
+    let ast = match parse(source) { Ok(a) => a, Err(c) => return c };
 
     let mut compiler = Compiler::new().with_source(source.to_string()).with_debug(debug);
     let module = match compiler.compile_module(&ast) {
@@ -99,6 +88,9 @@ fn cmd_run(source: &str, debug: bool) -> ExitCode {
     let mut vm = VirtualMachine::new()
         .with_debug(debug)
         .with_fn_names(fn_names);
+
+    // install built-ins
+    Host::default().install_into(&mut vm);
     match vm.run_module(&module) {
         Ok(v) => { print_result(&vm, v); ExitCode::SUCCESS }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
@@ -142,7 +134,7 @@ fn cmd_parse(source: &str) -> ExitCode {
 }
 
 fn cmd_disasm(source: &str) -> ExitCode {
-    let ast = match frontend(source) { Ok(a) => a, Err(c) => return c };
+    let ast = match parse(source) { Ok(a) => a, Err(c) => return c };
     let mut compiler = Compiler::new().with_source(source.to_string());
     let module = match compiler.compile_module(&ast) {
         Ok(m) => m,
