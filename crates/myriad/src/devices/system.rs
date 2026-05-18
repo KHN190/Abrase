@@ -9,13 +9,12 @@ pub const PORT_FLAGS: u8 = 0x03;
 pub const SPEC_VERSION: i64 = 1i64 << 32;
 
 pub struct SystemDevice {
-    pub last_exit: Option<i64>,
     pub flags: i64,
 }
 
 impl SystemDevice {
     pub fn new() -> Self {
-        Self { last_exit: None, flags: 0 }
+        Self { flags: 0 }
     }
 }
 
@@ -28,22 +27,9 @@ impl Device for SystemDevice {
         }
     }
 
-    fn write(&mut self, port: u8, val: Value) -> Result<(), String> {
-        match port {
-            PORT_HALT => {
-                let code = as_int(val, "system.halt")?;
-                self.last_exit = Some(code & 0xFFFF_FFFF);
-                Ok(())
-            }
-            PORT_PANIC => {
-                let idx = as_int(val, "system.panic")? as usize;
-                Err(format!("panic (pool idx {})", idx))
-            }
-            _ => Ok(()),
-        }
+    // Writes to halt (0x01) and panic (0x02) are intercepted by the interpreter
+    // before reaching here, since they are VM control flow, not device I/O.
+    fn write(&mut self, _port: u8, _val: Value) -> Result<(), String> {
+        Ok(())
     }
-}
-
-fn as_int(v: Value, op: &str) -> Result<i64, String> {
-    v.as_int().ok_or_else(|| format!("{}: expected Int, got {:?}", op, v))
 }

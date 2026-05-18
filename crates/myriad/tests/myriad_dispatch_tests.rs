@@ -76,7 +76,7 @@ fn test_call_reg_dispatches_to_native() {
         entry: 1, device_mask: [0; 32],
     };
     let mut vm = VirtualMachine::new();
-    vm.register_native("test_double", Rc::new(|_pool: &mut myriad::BoxPool, args: &[Value]| {
+    vm.register_native("test_double", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, args: &[Value]| {
         let n = args[0].as_int().ok_or("expected int")?;
         Ok(Value::from_int(n * 2))
     }));

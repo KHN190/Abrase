@@ -1,0 +1,24 @@
+fn main() -> Int {
+  println("hello, myriad");
+
+  let t0 = now();
+  sleep_ms(5);
+  let dt = now() - t0;
+  println("slept ~{dt} ms");
+
+  srand(0.42);
+  let r = rand();
+  println("rand = {r}");
+
+  let lo = min(7, 3);
+  let hi = max(7, 3);
+  let a = abs(0 - 9);
+  println("min=3? {lo}, max=7? {hi}, abs=9? {a}");
+
+  let s = sqrt(16.0);
+  let c = ceil(2.3);
+  let fl = flr(2.7);
+  println("sqrt(16)={s}, ceil(2.3)={c}, flr(2.7)={fl}");
+
+  0
+}

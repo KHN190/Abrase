@@ -154,3 +154,26 @@ fn handler_persistent_across_calls() {
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v.as_int(), Some(20));
 }
+
+#[test]
+fn built_ins() {
+    // The bare `run_file` helper uses a no-device VirtualMachine; native fns
+    // like print / now / rand need Console + Clock + Random installed, so we
+    // go through real VirtualMachine.
+    let src = fs::read_to_string("tests/scripts/built_ins.abe")
+        .expect("built_ins.abe missing");
+    let (mut rt, console) = abrase_cli::host::Runtime::new_for_tests();
+    let v = rt.eval(&src).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(0), "main should return 0");
+    let (out_handle, _) = console.handles();
+    let out = String::from_utf8(out_handle.borrow().clone()).expect("stdout utf-8");
+    assert!(out.contains("hello, myriad"),    "missing greeting in: {:?}", out);
+    assert!(out.contains("slept ~"),          "missing sleep line in: {:?}", out);
+    assert!(out.contains("rand = "),          "missing rand line in: {:?}", out);
+    assert!(out.contains("min=3? 3"),         "math min broken in: {:?}", out);
+    assert!(out.contains("max=7? 7"),         "math max broken in: {:?}", out);
+    assert!(out.contains("abs=9? 9"),         "math abs broken in: {:?}", out);
+    assert!(out.contains("sqrt(16)=4"),       "sqrt broken in: {:?}", out);
+    assert!(out.contains("ceil(2.3)=3"),      "ceil broken in: {:?}", out);
+    assert!(out.contains("flr(2.7)=2"),       "flr broken in: {:?}", out);
+}

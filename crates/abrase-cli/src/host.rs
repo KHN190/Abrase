@@ -8,6 +8,8 @@ use myriad::devices::{
     HostFuncDevice, HostImpl, HOSTFUNC_ID,
     Console, BufferConsole, StdoutConsole, CONSOLE_ID,
     SystemDevice, SYSTEM_ID,
+    Clock, SystemClock, CLOCK_ID,
+    Random, SystemRandom, RANDOM_ID,
 };
 
 pub struct Runtime {
@@ -22,6 +24,10 @@ impl Runtime {
         vm.install_device(SYSTEM_ID, Box::new(SystemDevice::new()));
         let console: Box<dyn Console> = Box::new(StdoutConsole);
         vm.install_device(CONSOLE_ID, Box::new(console));
+        let clock: Box<dyn Clock> = Box::new(SystemClock::new());
+        vm.install_device(CLOCK_ID, Box::new(clock));
+        let rng: Box<dyn Random> = Box::new(SystemRandom::new());
+        vm.install_device(RANDOM_ID, Box::new(rng));
         let mut rt = Self { vm, pending_host: Vec::new(), pending_impls: Vec::new() };
         rt.register_default_hosts();
         rt
@@ -38,6 +44,10 @@ impl Runtime {
         };
         let boxed: Box<dyn Console> = Box::new(console);
         vm.install_device(CONSOLE_ID, Box::new(boxed));
+        let clock: Box<dyn Clock> = Box::new(SystemClock::new());
+        vm.install_device(CLOCK_ID, Box::new(clock));
+        let rng: Box<dyn Random> = Box::new(SystemRandom::new());
+        vm.install_device(RANDOM_ID, Box::new(rng));
         let mut rt = Self { vm, pending_host: Vec::new(), pending_impls: Vec::new() };
         rt.register_default_hosts();
         (rt, console_clone)

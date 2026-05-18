@@ -85,6 +85,8 @@ pub struct Compiler {
     pub(super) concat_fn_id: Option<usize>,
     pub(super) to_str_fn_id: Option<usize>,
     pub(super) host_fns: HashMap<String, HostFnDecl>,
+    // Builtin natives registered by `register_builtins`: name -> (params, ret).
+    pub(super) builtin_types: HashMap<String, (Vec<TyType>, TyType)>,
     pub(super) device_mask: [u8; 32],
     pub(super) current_span: ast::Span,
     // Count of regions currently active inside the function being compiled.
@@ -152,6 +154,7 @@ impl Compiler {
             concat_fn_id: None,
             to_str_fn_id: None,
             host_fns: HashMap::new(),
+            builtin_types: HashMap::new(),
             device_mask: [0; 32],
             current_span: ast::Span::new(0, 0),
             compiler_region_depth: 0,
@@ -252,7 +255,10 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
-        // Enforce typeck before codegen. Refuses to compile with type errors
+        // Builtins must be before user fns 
+        self.register_builtins();
+
+        // Refuses to compile with type errors
         let mut checker = crate::typeck::Checker::new();
         for decl in self.host_fns.values() {
             let fn_ty = TyType::Function {
@@ -261,6 +267,14 @@ impl Compiler {
                 ret: Box::new(decl.ret.clone()),
             };
             checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+        }
+        for (name, (params, ret)) in &self.builtin_types {
+            let fn_ty = TyType::Function {
+                params: params.clone(),
+                effects: vec![],
+                ret: Box::new(ret.clone()),
+            };
+            checker.insert_var(name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
         }
         checker.check_program(ast);
         if !checker.errors.is_empty() {
@@ -333,15 +347,16 @@ impl Compiler {
         for decl in ast {
             match decl {
                 ast::Decl::Fn(fn_decl) => {
-                    // Host-registered fns own their names. User code may NOT
-                    // shadow them — that path produces too much name-resolution
-                    // ambiguity for too little value (`fn my_print(...)` works).
-                    if self.host_fns.contains_key(&fn_decl.name) {
+                    // Reserved names — host fns (device_in/out) and builtins
+                    // (print, println, …) — can't be shadowed.
+                    if self.host_fns.contains_key(&fn_decl.name)
+                        || self.func_map.contains_key(&fn_decl.name)
+                    {
                         self.errors.push(Error::new(
                             ErrorCode::TypeError,
                             ast::Span::new(0, 0),
                             format!(
-                                "cannot redefine host-registered fn `{}` — pick a different name",
+                                "cannot redefine fn `{}` — name is reserved or already declared",
                                 fn_decl.name
                             ),
                         ));
@@ -366,8 +381,6 @@ impl Compiler {
             self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
             fn_decls.push((idx, arm_fn));
         }
-
-        self.register_builtins();
 
         let entry = match self.func_map.get("main").copied() {
             Some(idx) => idx,
@@ -557,22 +570,60 @@ impl Compiler {
     }
 
     fn register_builtins(&mut self) {
-        use crate::bytecode::NativeChunk;
-
-        let cid = self.functions.len();
-        self.func_map.insert("__concat".into(), cid);
-        self.functions.push(Chunk::Native(NativeChunk {
-            name: "__concat".into(),
-            param_count: 2,
-        }));
+        // Compiler-internal — invoked by string `+` and `"{x}"` interp; not
+        // typed, not user-callable by name.
+        let cid = self.register_native_chunk("__concat", 2);
         self.concat_fn_id = Some(cid);
-
-        let tid = self.functions.len();
-        self.func_map.insert("__to_str".into(), tid);
-        self.functions.push(Chunk::Native(NativeChunk {
-            name: "__to_str".into(),
-            param_count: 1,
-        }));
+        let tid = self.register_native_chunk("__to_str", 1);
         self.to_str_fn_id = Some(tid);
+
+        // myriad::builtins::register_default_builtins.
+        let s = TyType::String;
+        let i = TyType::Int;
+        let f = TyType::Float;
+        let u = TyType::Unit;
+        // Console
+        self.register_typed_native("print",    vec![s.clone()],            u.clone(), 1);
+        self.register_typed_native("println",  vec![s.clone()],            u.clone(), 1);
+        // Clock
+        self.register_typed_native("now",      vec![],                     i.clone(), 0);
+        self.register_typed_native("sleep_ms", vec![i.clone()],            u.clone(), 1);
+        // Random
+        self.register_typed_native("rand",     vec![],                     f.clone(), 0);
+        self.register_typed_native("srand",    vec![f.clone()],            u.clone(), 1);
+        // Math
+        self.register_typed_native("abs",      vec![i.clone()],            i.clone(), 1);
+        self.register_typed_native("ceil",     vec![f.clone()],            i.clone(), 1);
+        self.register_typed_native("flr",      vec![f.clone()],            i.clone(), 1);
+        self.register_typed_native("cos",      vec![f.clone()],            f.clone(), 1);
+        self.register_typed_native("sin",      vec![f.clone()],            f.clone(), 1);
+        self.register_typed_native("sqrt",     vec![f.clone()],            f.clone(), 1);
+        self.register_typed_native("max",      vec![i.clone(), i.clone()], i.clone(), 2);
+        self.register_typed_native("min",      vec![i.clone(), i.clone()], i.clone(), 2);
+        // System
+        self.register_typed_native("halt",     vec![i.clone()],            u.clone(), 1);
+        self.register_typed_native("abort",    vec![s.clone()],            u.clone(), 1);
+    }
+
+    fn register_native_chunk(&mut self, name: &str, param_count: usize) -> usize {
+        use crate::bytecode::NativeChunk;
+        let id = self.functions.len();
+        self.func_map.insert(name.into(), id);
+        self.functions.push(Chunk::Native(NativeChunk {
+            name: name.into(),
+            param_count,
+        }));
+        id
+    }
+
+    fn register_typed_native(
+        &mut self,
+        name: &str,
+        params: Vec<TyType>,
+        ret: TyType,
+        param_count: usize,
+    ) {
+        self.register_native_chunk(name, param_count);
+        self.builtin_types.insert(name.into(), (params, ret));
     }
 }

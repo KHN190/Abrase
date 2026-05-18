@@ -836,7 +836,7 @@ fn test_call_dispatches_to_native_chunk() {
         entry: 0, device_mask: [0; 32]
     };
     let mut vm = VirtualMachine::new();
-    vm.register_native("test_add", Rc::new(|_pool: &mut myriad::BoxPool, args: &[Value]| {
+    vm.register_native("test_add", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, args: &[Value]| {
         let a = args[0].as_int().ok_or("expected int")?;
         let b = args[1].as_int().ok_or("expected int")?;
         Ok(Value::from_int(a + b))
@@ -867,7 +867,7 @@ fn test_native_chunk_propagates_error() {
         entry: 0, device_mask: [0; 32]
     };
     let mut vm = VirtualMachine::new();
-    vm.register_native("test_boom", Rc::new(|_pool: &mut myriad::BoxPool, _args: &[Value]| Err("boom".to_string())));
+    vm.register_native("test_boom", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, _args: &[Value]| Err("boom".to_string())));
     let result = vm.run_module(&module);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("boom"));

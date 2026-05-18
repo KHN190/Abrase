@@ -46,17 +46,19 @@ fn hostimpl_signature_compatibility() {
     assert!(res.is_err()); // UNIT is not a Box
 }
 
-// print is no longer host-registered. A user fn named `print` is just a
-// regular user function — no collision, no shadow rule.
+// `print` is now a built-in native (registered by myriad/builtins.rs and the
+// abrase compiler's register_builtins). User fns can't redefine it — this test
+// is intentionally inverted from its older form.
 #[test]
-fn user_can_define_print_when_host_does_not_register_it() {
+fn user_cannot_define_print() {
     let src = r#"
         fn print(s: String) -> Int { 42 }
-        fn main() -> Int { print("ignored") }
+        fn main() -> Int { 0 }
     "#;
     let mut rt = abrase_cli::host::Runtime::new();
-    let v = rt.eval(src).expect("eval should succeed");
-    assert_eq!(v, Value::from_int(42));
+    let err = rt.eval(src).expect_err("must reject user fn shadowing builtin `print`");
+    assert!(err.contains("print"),
+        "error should mention print; got: {}", err);
 }
 
 // device_in and device_out are mandatory host fns. User fns cannot reuse

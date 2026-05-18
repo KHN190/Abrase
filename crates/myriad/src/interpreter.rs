@@ -318,7 +318,13 @@ impl VirtualMachine {
                 }
                 args.push(v);
             }
-            let result = func(&mut self.box_pool, &args)?;
+            let mut ctx = super::NativeCtx {
+                pool: &mut self.box_pool,
+                devices: &mut self.devices,
+                halted: &mut self.halted,
+                exit_code: &mut self.exit_code,
+            };
+            let result = func(&mut ctx, &args)?;
             self.write_abs(dest_abs, result);
             return Ok(());
         }
@@ -393,11 +399,27 @@ impl VirtualMachine {
         let v = self.read(src)?;
         let port_val = self.read_i64(port_reg)?;
         let (device_id, port) = split_port(port_val)?;
-        if device_id == 0x00 && port == 0x01 {
-            if let Some(n) = v.as_int() {
-                self.exit_code = Some(n & 0xFFFF_FFFF);
+        if device_id == 0x00 {
+            match port {
+                0x01 => {
+                    if let Some(n) = v.as_int() {
+                        self.exit_code = Some(n & 0xFFFF_FFFF);
+                    }
+                    self.halted = true;
+                    return Ok(());
+                }
+                0x02 => {
+                    let msg = match v.as_int() {
+                        Some(n) if n >= 0 => match self.box_pool.get(n as u32) {
+                            Some(BoxedValue::String(s)) => s.clone(),
+                            _ => format!("(pool idx {})", n),
+                        },
+                        _ => format!("{:?}", v),
+                    };
+                    return Err(format!("panic: {}", msg));
+                }
+                _ => {}
             }
-            self.halted = true;
         }
         if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
             let key = decode_dispatch_key(v)?;

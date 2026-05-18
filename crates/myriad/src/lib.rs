@@ -8,16 +8,26 @@ pub mod loader;
 pub mod region;
 pub mod builtins;
 pub mod debug;
+pub mod host;
 
 pub use polka::Value;
 pub use value::{BoxPool, BoxedValue};
 pub use device::{Device, DeviceTable};
 pub use memory::Heap;
 pub use region::RegionTable;
-pub use builtins::{NativeFn, NativeRegistry};
+pub use builtins::{NativeCtx, NativeFn, NativeRegistry};
 pub use debug::{DebugEvent, DebugSink};
+pub use host::Host;
 
 use frame::Frame;
+
+pub fn run(module: polka::Module, host: Host) -> Result<i64, String> {
+    let loaded = loader::load(module)?;
+    let mut vm = VirtualMachine::new();
+    host.install_into(&mut vm);
+    let v = vm.run_module(&loaded.module)?;
+    Ok(vm.box_pool().read_int(v).unwrap_or(0))
+}
 
 pub struct VirtualMachine {
     pub(crate) registers: Vec<Value>,
