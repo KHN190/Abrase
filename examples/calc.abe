@@ -1,0 +1,19 @@
+// Arithmetic expression evaluator: variant-of-variant AST + recursive eval.
+// Builds `2 + 3*4 + (-5)` and evaluates → 9.
+
+type Expr = Num(Int) | Add(Expr, Expr) | Mul(Expr, Expr) | Neg(Expr)
+
+fn eval(e: &Expr) -> Int {
+  match *e {
+    Num(n)    => n
+    Add(a, b) => eval(&a) + eval(&b)
+    Mul(a, b) => eval(&a) * eval(&b)
+    Neg(x)    => 0 - eval(&x)
+    _         => 0
+  }
+}
+
+fn main() -> Int {
+  let e = Add(Num(2), Add(Mul(Num(3), Num(4)), Neg(Num(5))));
+  eval(&e)
+}

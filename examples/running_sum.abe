@@ -1,0 +1,17 @@
+// Sum via deep-handler fold: each Acc.add lifts (n + ...) over the rest of the
+// computation. The natural "let mut total" version needs &mut capture in arm
+// bodies, which the compiler doesn't support yet.
+// Acc.add(10), Acc.add(5), Acc.add(3) → 18.
+
+effect Acc { op add(n: Int) -> Unit }
+
+fn compute() -> <Acc> Unit {
+  Acc.add(10); Acc.add(5); Acc.add(3)
+}
+
+fn main() -> Int {
+  handle compute() {
+    return _   => 0,
+    Acc.add n  => n + resume(())
+  }
+}

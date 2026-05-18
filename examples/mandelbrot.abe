@@ -1,0 +1,45 @@
+// Mandelbrot point-count: for each (cx, cy) on a coarse grid, iterate
+// z' = z^2 + c up to max_iter; count points still bounded (in the set).
+// Stresses Float arithmetic + nested loops + Int<->Float conversions.
+// grid=8, max=15 → 23 inside points.
+
+fn iter(cx: Float, cy: Float, max: Int) -> Int {
+  let mut x = 0.0;
+  let mut y = 0.0;
+  let mut k = 0;
+  let mut escaped = false;
+  while k < max {
+    if escaped { k = max } else {
+      if x * x + y * y > 4.0 {
+        escaped = true
+      } else {
+        let nx = x * x - y * y + cx;
+        let ny = 2.0 * x * y + cy;
+        x = nx;
+        y = ny;
+        k = k + 1
+      }
+    }
+  };
+  if escaped { 0 } else { 1 }
+}
+
+fn count_inside(grid: Int, max: Int) -> Int {
+  let mut total = 0;
+  let mut i = 0;
+  while i < grid {
+    let mut j = 0;
+    while j < grid {
+      let cx = i.to_f() / grid.to_f() * 3.0 - 2.0;
+      let cy = j.to_f() / grid.to_f() * 2.0 - 1.0;
+      total = total + iter(cx, cy, max);
+      j = j + 1
+    };
+    i = i + 1
+  };
+  total
+}
+
+fn main() -> Int {
+  count_inside(8, 15)
+}

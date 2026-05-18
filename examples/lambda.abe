@@ -1,0 +1,47 @@
+// De Bruijn lambda calculus interpreter with closures.
+// Tests: nested variant types (Expr, Value, Env) + recursive eval through &refs.
+// (λ. λ. 1) applied to 7 applied to 99 = 7  (church-style: first arg, ignoring second)
+
+type Expr = Lit(Int) | Var(Int) | App(Expr, Expr) | Lam(Expr)
+type Value = VInt(Int) | VClos(Expr, Env)
+type Env   = ENil | ECons(Value, Env)
+
+fn lookup(env: &Env, i: Int) -> Value {
+  match *env {
+    ENil          => VInt(0 - 1)
+    ECons(v, rest) => if i == 0 { v } else { lookup(&rest, i - 1) }
+    _              => VInt(0 - 1)
+  }
+}
+
+fn eval(e: &Expr, env: &Env) -> Value {
+  match *e {
+    Lit(n)    => VInt(n)
+    Var(i)    => lookup(env, i)
+    Lam(body) => VClos(body, *env)
+    App(f, x) =>
+      match eval(&f, env) {
+        VClos(body, captured) => {
+          let arg = eval(&x, env);
+          let new_env = ECons(arg, captured);
+          eval(&body, &new_env)
+        }
+        _ => VInt(0 - 1)
+      }
+    _         => VInt(0 - 1)
+  }
+}
+
+fn unwrap(v: Value) -> Int {
+  match v {
+    VInt(n)     => n
+    VClos(_, _) => 0 - 1
+    _           => 0 - 1
+  }
+}
+
+fn main() -> Int {
+  let prog = App(App(Lam(Lam(Var(1))), Lit(7)), Lit(99));
+  let env0 = ENil;
+  unwrap(eval(&prog, &env0))
+}
