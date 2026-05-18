@@ -165,7 +165,7 @@ impl<'a> Parser<'a> {
                 self.next_token();
             }
         }
-        // expr as if/while/loop ends with `}` consumes `}`,
+        // consume ending `}`.
         if self.current_token == Token::RBrace {
             self.next_token();
         }
@@ -446,6 +446,8 @@ impl<'a> Parser<'a> {
             let kind = match &self.current_token {
                 Token::Return => HandleArmKind::Return,
                 Token::Throw => HandleArmKind::Exn,
+                // BNF reserves `exn` as a handle-arm keyword. 
+                Token::Ident(n) if n == "exn" => HandleArmKind::Exn,
                 Token::Ident(n) => {
                     let mut path = vec![n.clone()];
                     while self.peek_token == Token::Dot {
@@ -492,10 +494,8 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        // The loop exits with `current` either AT the handle's closing `}`
-        // (last arm had a block body — parse_block already advanced past the
-        // body's `}` onto the handle's `}`) or BEFORE it (last arm had a
-        // non-block body). Both must end with `current` ONE past `}`.
+        // The loop exits with `current` either at the handle's closing `}`
+        // or BEFORE it. Both must end with `current` ONE past `}`.
         if self.current_token != Token::RBrace && !self.expect_peek(Token::RBrace) {
             return Err("Expected '}' in handle".into());
         }
@@ -630,15 +630,21 @@ impl<'a> Parser<'a> {
         Spanned { node: Expr::Call { callee: Box::new(callee), args }, span }
     }
 
+    // Skip a run of `;` tokens. The lexer already eats whitespace.
+    fn skip_semicolons(&mut self) {
+        while self.current_token == Token::Semicolon {
+            self.next_token();
+        }
+    }
+
     pub fn parse_block(&mut self) -> Result<Block, String> {
         let mut stmts = Vec::new();
         self.next_token();
 
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
-            // Skip empty statements (`;` alone). BNF allows them; treat as no-op.
-            if self.current_token == Token::Semicolon {
-                self.next_token();
-                continue;
+            self.skip_semicolons();
+            if self.current_token == Token::RBrace || self.current_token == Token::Eof {
+                break;
             }
             let stmt_span = self.current_span;
             let was_block = match self.parse_stmt() {
@@ -673,9 +679,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            while self.current_token == Token::Semicolon {
-                self.next_token();
-            }
+            self.skip_semicolons();
 
             if self.current_token != Token::RBrace
                 && self.current_token != Token::Eof
@@ -693,6 +697,7 @@ impl<'a> Parser<'a> {
         if self.current_token == Token::Eof {
             self.report_error("Expected '}' in block".into(), self.current_span);
         }
+        // consume ending `}`.
         if self.current_token == Token::RBrace {
             self.next_token();
         }

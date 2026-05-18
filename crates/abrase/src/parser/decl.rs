@@ -91,8 +91,12 @@ impl<'a> Parser<'a> {
         let mut attrs = Vec::new();
         while self.current_token == Token::At {
             self.next_token();
-            let name = if let Token::Ident(n) = &self.current_token { n.clone() } else {
-                return Err("Expected attribute name after '@'".into());
+            // Attribute name may be an Ident or a keyword token whose spelling
+            // doubles as a reserved attribute name (e.g. `@move`).
+            let name = match &self.current_token {
+                Token::Ident(n) => n.clone(),
+                Token::Move => "move".into(),
+                _ => return Err("Expected attribute name after '@'".into()),
             };
             let mut args = Vec::new();
             if self.peek_token == Token::LParen {
@@ -160,7 +164,13 @@ impl<'a> Parser<'a> {
         let body = if self.current_token == Token::LBrace {
             self.next_token();
             let mut fields = Vec::new();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+                // Optional `pub` modifier on field.
+                let field_is_pub = if self.current_token == Token::Pub {
+                    self.next_token();
+                    true
+                } else { false };
                 if let Token::Ident(fname) = &self.current_token {
                     let fname = fname.clone();
                     if !self.expect_peek(Token::Colon) {
@@ -168,7 +178,10 @@ impl<'a> Parser<'a> {
                     }
                     self.next_token();
                     let ftype = self.parse_type()?;
-                    fields.push(RecordField { is_pub: false, name: fname, ty: ftype });
+                    if !seen.insert(fname.clone()) {
+                        return Err(format!("Duplicate field '{}' in record type", fname));
+                    }
+                    fields.push(RecordField { is_pub: field_is_pub, name: fname, ty: ftype });
                     if self.peek_token == Token::Comma {
                         self.next_token();
                         self.next_token();
@@ -180,7 +193,11 @@ impl<'a> Parser<'a> {
             }
             self.next_token();
             TypeBody::Record(fields)
-        } else if matches!(self.current_token, Token::Ident(_)) {
+        } else if matches!(self.current_token, Token::Ident(_) | Token::Pipe) {
+            // Optional leading `|` — `type X = | A | B` is sugar for `type X = A | B`.
+            if self.current_token == Token::Pipe {
+                self.next_token();
+            }
             let mut cases = Vec::new();
             loop {
                 let case_name = if let Token::Ident(n) = &self.current_token { n.clone() } else {
@@ -239,7 +256,18 @@ impl<'a> Parser<'a> {
             return Err("Expected type body".into());
         };
 
-        Ok(Decl::Type { attrs, is_pub, ownership: None, name, generics, body })
+        // Split ownership attrs out: `@copy` / `@move` / `@share` become the
+        // dedicated `ownership` field; other attrs stay in `attrs`.
+        let mut ownership: Option<OwnershipAttr> = None;
+        let attrs = attrs.into_iter().filter(|a| {
+            match a.name.as_str() {
+                "copy"  => { ownership = Some(OwnershipAttr::Copy);  false }
+                "move"  => { ownership = Some(OwnershipAttr::Move);  false }
+                "share" => { ownership = Some(OwnershipAttr::Share); false }
+                _ => true,
+            }
+        }).collect();
+        Ok(Decl::Type { attrs, is_pub, ownership, name, generics, body })
     }
 
     fn parse_trait_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
@@ -400,6 +428,12 @@ impl<'a> Parser<'a> {
             if let Token::Ident(op_name) = &self.current_token {
                 if op_name == "op" {
                     let sig = self.parse_fn_signature()?;
+                    // BNF requires `-> <type>` after the param list
+                    if sig.return_type.is_none() {
+                        return Err(format!(
+                            "effect op '{}' is missing return type — expected '->' after params",
+                            sig.name));
+                    }
                     ops.push(sig);
                 }
             }
