@@ -244,7 +244,6 @@ fn const_decl_pub() {
 
 // <trait-item> — required fn signature (no body)
 #[test]
-#[ignore = "parser: body-less fn signature inside trait not recognized"]
 fn trait_with_required_fn_signature() {
     let d = decl("trait Show { fn show(self) -> Int }");
     if let Decl::Trait { name, items, .. } = d {
@@ -269,7 +268,6 @@ fn trait_with_default_fn() {
 
 // Trait with both required and default items
 #[test]
-#[ignore = "parser: trait body with mixed required + default items not supported"]
 fn trait_mixed_items() {
     let d = decl("trait Foo { fn req(self) -> Int fn def() -> Int { 0 } }");
     if let Decl::Trait { items, .. } = d {
@@ -291,7 +289,6 @@ fn impl_decl_for_type() {
 
 // <impl-decl> with generic params
 #[test]
-#[ignore = "parser: `impl<T>` generic params not parsed"]
 fn impl_decl_with_generics() {
     let d = decl("impl<T> Container<T> { }");
     if let Decl::Impl { generics, .. } = d {
@@ -312,7 +309,6 @@ fn impl_decl_with_method() {
 
 // impl with where clause
 #[test]
-#[ignore = "parser: `where` clause on impl not parsed"]
 fn impl_decl_with_where_clause() {
     let d = decl("impl<T> Show for T where T: Debug { }");
     if let Decl::Impl { where_clause, .. } = d {
@@ -909,7 +905,7 @@ fn stmt_expr_with_block_no_semicolon() {
 fn stmt_empty_semicolon() {
     let ds = prog("fn f() -> Int { ; 0 }");
     if let Decl::Fn(f) = &ds[0] {
-        // empty stmt may be elided or kept — just verify no error and body returns 0
+        // empty stmt may be elided; body returns 0
         assert!(f.body.ret.is_some());
     } else { panic!("expected Fn"); }
 }
@@ -920,9 +916,7 @@ fn stmt_empty_semicolon() {
 #[test]
 fn error_variant_type_duplicate_case() {
     let e = errs("type X = | A | A");
-    // May or may not report an error at parse time — document current behaviour.
-    // If the parser defers duplicates to typeck, this test ensures no panic.
-    let _ = e; // no assertion: just verify no panic
+    assert!(!e.is_empty(), "expected error for duplicate variant case, got none");
 }
 
 // Record type with duplicate field

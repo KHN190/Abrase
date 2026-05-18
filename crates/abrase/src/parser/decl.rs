@@ -194,11 +194,11 @@ impl<'a> Parser<'a> {
             self.next_token();
             TypeBody::Record(fields)
         } else if matches!(self.current_token, Token::Ident(_) | Token::Pipe) {
-            // Optional leading `|` — `type X = | A | B` is sugar for `type X = A | B`.
             if self.current_token == Token::Pipe {
                 self.next_token();
             }
             let mut cases = Vec::new();
+            let mut seen_cases: std::collections::HashSet<String> = std::collections::HashSet::new();
             loop {
                 let case_name = if let Token::Ident(n) = &self.current_token { n.clone() } else {
                     return Err("Expected variant constructor name".into());
@@ -244,6 +244,14 @@ impl<'a> Parser<'a> {
                 } else {
                     VariantCase::Unit(case_name)
                 };
+                let case_name = match &case {
+                    VariantCase::Unit(n) => n.clone(),
+                    VariantCase::Tuple(n, _) => n.clone(),
+                    VariantCase::Record(n, _) => n.clone(),
+                };
+                if !seen_cases.insert(case_name.clone()) {
+                    return Err(format!("Duplicate variant case '{}'", case_name));
+                }
                 cases.push(case);
                 if self.peek_token == Token::Pipe {
                     self.next_token();
@@ -282,10 +290,7 @@ impl<'a> Parser<'a> {
         self.next_token();
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
             if self.current_token == Token::Fn {
-                let fn_decl = self.parse_fn_decl(false)?;
-                if let Decl::Fn(f) = fn_decl {
-                    items.push(TraitItem::Default(f));
-                }
+                items.push(self.parse_trait_item()?);
             }
             if self.current_token != Token::RBrace {
                 self.next_token();
@@ -297,8 +302,82 @@ impl<'a> Parser<'a> {
         Ok(Decl::Trait { is_pub, name, generics: vec![], where_clause: vec![], items })
     }
 
+    fn parse_trait_item(&mut self) -> Result<TraitItem, String> {
+        if let Token::Ident(_) = self.peek_token {
+            self.next_token();
+        } else {
+            return Err("Expected function name".into());
+        }
+        let name = if let Token::Ident(n) = &self.current_token {
+            n.clone()
+        } else {
+            return Err("Expected ident".into());
+        };
+
+        let generics = if self.peek_token == Token::Lt {
+            self.next_token();
+            self.parse_generic_params()?
+        } else { vec![] };
+
+        if !self.expect_peek(Token::LParen) {
+            return Err("Expected '('".into());
+        }
+        let params = self.parse_params()?;
+
+        let mut effects = Vec::new();
+        let mut return_type = None;
+        if self.peek_token == Token::Arrow {
+            self.next_token();
+            self.next_token();
+            if self.current_token == Token::Lt {
+                effects = self.parse_effect_set()?;
+                self.next_token();
+            }
+            return_type = Some(self.parse_type()?);
+        }
+
+        let where_clause = if self.peek_token == Token::Where {
+            self.next_token();
+            self.parse_where_clause()?
+        } else { vec![] };
+
+        if self.peek_token == Token::LBrace {
+            self.next_token();
+            let body = self.parse_block()?;
+            Ok(TraitItem::Default(FnDecl {
+                attrs: vec![],
+                is_pub: false,
+                name,
+                generics,
+                params,
+                effects,
+                return_type,
+                where_clause,
+                body,
+            }))
+        } else {
+            Ok(TraitItem::Required(FnSignature {
+                name,
+                generics,
+                params,
+                effects,
+                return_type,
+                where_clause,
+            }))
+        }
+    }
+
     fn parse_impl_decl(&mut self) -> Result<Decl, String> {
-        self.next_token();
+        let generics = if self.peek_token == Token::Lt {
+            self.next_token();
+            let g = self.parse_generic_params()?;
+            self.next_token();
+            g
+        } else {
+            self.next_token();
+            vec![]
+        };
+
         let head_type = self.parse_type()?;
 
         let (trait_name, for_type) = if self.peek_token == Token::For {
@@ -314,6 +393,11 @@ impl<'a> Parser<'a> {
         } else {
             (None, head_type)
         };
+
+        let where_clause = if self.peek_token == Token::Where {
+            self.next_token();
+            self.parse_where_clause()?
+        } else { vec![] };
 
         if !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' in impl".into());
@@ -335,7 +419,7 @@ impl<'a> Parser<'a> {
         if self.current_token == Token::RBrace {
             self.next_token();
         }
-        Ok(Decl::Impl { generics: vec![], trait_name, for_type, where_clause: vec![], methods })
+        Ok(Decl::Impl { generics, trait_name, for_type, where_clause, methods })
     }
 
     fn parse_const_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
