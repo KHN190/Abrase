@@ -48,13 +48,41 @@ impl<'a> Parser<'a> {
             Token::Float(v) => Expr::Literal(Literal::Float(*v)),
             Token::String(v) => Expr::Literal(Literal::String(v.clone())),
             Token::StringInterp(parts) => Expr::Literal(Literal::StringInterp(parts.clone())),
+            Token::Char(c) => Expr::Literal(Literal::Char(*c)),
             Token::True => Expr::Literal(Literal::Bool(true)),
             Token::False => Expr::Literal(Literal::Bool(false)),
+            // `..end` or `..=end`.
+            Token::Range | Token::RangeInclusive => {
+                let inclusive = self.current_token == Token::RangeInclusive;
+                if matches!(self.peek_token,
+                    Token::Semicolon | Token::RBrace | Token::RParen | Token::RBracket
+                        | Token::Comma | Token::LBrace | Token::Eof)
+                {
+                    return Some(Spanned {
+                        node: Expr::Range { start: None, end: None, inclusive },
+                        span,
+                    });
+                }
+                self.next_token();
+                let end = Box::new(self.parse_expr(Precedence::Range));
+                return Some(Spanned {
+                    node: Expr::Range { start: None, end: Some(end), inclusive },
+                    span,
+                });
+            }
             Token::Bang | Token::Minus | Token::Ampersand | Token::Asterisk => {
                 let op = match self.current_token {
                     Token::Bang => UnaryOp::Not,
                     Token::Minus => UnaryOp::Neg,
-                    Token::Ampersand => UnaryOp::Ref,
+                    Token::Ampersand => {
+                        // `&mut x` -> RefMut; plain `&x` -> Ref.
+                        if self.peek_token == Token::Mut {
+                            self.next_token();
+                            UnaryOp::RefMut
+                        } else {
+                            UnaryOp::Ref
+                        }
+                    }
                     Token::Asterisk => UnaryOp::Deref,
                     _ => {
                         self.report_error(
@@ -125,7 +153,6 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            // P2: silently-overridden duplicate fields are a footgun.
             if !seen.insert(fname.clone()) {
                 self.report_error(format!("Duplicate field '{}' in record literal", fname), fname_span);
             } else {
@@ -138,8 +165,7 @@ impl<'a> Parser<'a> {
                 self.next_token();
             }
         }
-        // 与 if/while/loop 等同样以 `}` 结尾的表达式一致:消耗掉记录字面量的 `}`,
-        // 避免被外层 parse_block 误当作块结束符。
+        // expr as if/while/loop ends with `}` consumes `}`,
         if self.current_token == Token::RBrace {
             self.next_token();
         }
@@ -479,16 +505,22 @@ impl<'a> Parser<'a> {
 
     pub fn parse_infix(&mut self, left: Spanned<Expr>) -> Spanned<Expr> {
         let span = left.span;
-        if matches!(self.current_token, Token::PlusAssign | Token::MinusAssign) {
-            let inner_op = if self.current_token == Token::PlusAssign {
-                BinaryOp::Add
-            } else {
-                BinaryOp::Sub
+        if matches!(self.current_token,
+            Token::PlusAssign | Token::MinusAssign
+            | Token::MulAssign | Token::DivAssign | Token::ModAssign)
+        {
+            let inner_op = match self.current_token {
+                Token::PlusAssign  => BinaryOp::Add,
+                Token::MinusAssign => BinaryOp::Sub,
+                Token::MulAssign   => BinaryOp::Mul,
+                Token::DivAssign   => BinaryOp::Div,
+                Token::ModAssign   => BinaryOp::Mod,
+                _ => unreachable!(),
             };
             let precedence = self.current_token.precedence();
             self.next_token();
             let right = self.parse_expr(precedence);
-            let sum = Spanned {
+            let inner = Spanned {
                 node: Expr::Binary {
                     op: inner_op,
                     left: Box::new(left.clone()),
@@ -500,7 +532,7 @@ impl<'a> Parser<'a> {
                 node: Expr::Binary {
                     op: BinaryOp::Assign,
                     left: Box::new(left),
-                    right: Box::new(sum),
+                    right: Box::new(inner),
                 },
                 span,
             };
@@ -517,6 +549,8 @@ impl<'a> Parser<'a> {
             Token::Gt => BinaryOp::Gt,
             Token::Lte => BinaryOp::Lte,
             Token::Gte => BinaryOp::Gte,
+            Token::Or => BinaryOp::Or,
+            Token::And => BinaryOp::And,
             Token::Assign => BinaryOp::Assign,
             Token::LParen => return self.parse_call_expr(left),
             Token::LBracket => {
@@ -601,6 +635,11 @@ impl<'a> Parser<'a> {
         self.next_token();
 
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
+            // Skip empty statements (`;` alone). BNF allows them; treat as no-op.
+            if self.current_token == Token::Semicolon {
+                self.next_token();
+                continue;
+            }
             let stmt_span = self.current_span;
             let was_block = match self.parse_stmt() {
                 Ok(stmt) => {

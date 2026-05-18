@@ -19,7 +19,9 @@ pub enum Precedence {
 impl Token {
     pub fn precedence(&self) -> Precedence {
         match self {
-            Token::Assign | Token::PlusAssign | Token::MinusAssign => Precedence::Assign,
+            Token::Assign
+            | Token::PlusAssign | Token::MinusAssign
+            | Token::MulAssign | Token::DivAssign | Token::ModAssign => Precedence::Assign,
             Token::Range | Token::RangeInclusive => Precedence::Range,
             Token::Or => Precedence::Or,
             Token::And => Precedence::And,

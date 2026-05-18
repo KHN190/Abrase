@@ -103,8 +103,7 @@ fn random_seeded_is_deterministic() {
 }
 
 // Calling a fn that is neither a builtin, host fn, nor user-defined must
-// surface a clean compile error — not a runtime panic. (`println` used to be
-// the example name here; now it's a builtin, so use a guaranteed-unknown name.)
+// surface a clean compile error.
 #[test]
 fn runtime_eval_unregistered_fn_errors_cleanly() {
     use abrase_cli::host::Runtime;
