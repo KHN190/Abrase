@@ -224,14 +224,19 @@ impl Compiler {
                 Ok(())
             }
 
-            // Named user types (record / variant): single-level forget for
-            // now. Per-field recursion requires keeping field TYPES (not just
-            // names) on `LayoutCtx`; deferred. The outer cell survives, but
-            // inner heap cells reachable through fields will be force-freed
-            // by region_pop. A user carrying a record-of-refs out of a
-            // region currently risks stale handles inside the record —
-            // typeck's `is_heap_typed` still rejects that path.
-            ast::Type::Named(_) => self.emit_region_forget(reg),
+            ast::Type::Named(n) => {
+                self.emit_region_forget(reg)?;
+                if let Some(layout) = self.layouts.records.get(n).cloned() {
+                    for (i, fty) in layout.field_types.iter().enumerate() {
+                        let inner = self.alloc_register()?;
+                        let offset = u16::try_from(i)
+                            .map_err(|_| "record field index exceeds u16".to_string())?;
+                        self.emit(OpCode::Ld(inner, reg, offset));
+                        self.emit_region_forget_typed_inner(inner, fty, depth + 1)?;
+                    }
+                }
+                Ok(())
+            }
 
             // Generics (Array<T>, Vec<T>, etc.): outer-only for now —
             // per-element forget needs runtime length probing.

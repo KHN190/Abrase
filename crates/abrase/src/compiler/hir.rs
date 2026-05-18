@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use crate::ast;
 
 #[derive(Clone, Debug)]
 pub struct RecordLayout {
     pub fields: Vec<String>,
+    pub field_types: Vec<ast::Type>,
 }
 
 impl RecordLayout {
@@ -12,6 +14,10 @@ impl RecordLayout {
 
     pub fn size(&self) -> u32 {
         self.fields.len() as u32
+    }
+
+    pub fn type_of(&self, field: &str) -> Option<&ast::Type> {
+        self.fields.iter().position(|f| f == field).and_then(|i| self.field_types.get(i))
     }
 }
 
@@ -54,8 +60,8 @@ impl LayoutCtx {
         Self::default()
     }
 
-    pub fn register_record(&mut self, name: String, fields: Vec<String>) {
-        self.records.insert(name, RecordLayout { fields });
+    pub fn register_record(&mut self, name: String, fields: Vec<String>, field_types: Vec<ast::Type>) {
+        self.records.insert(name, RecordLayout { fields, field_types });
     }
 
     pub fn register_variant(&mut self, ctor: String, layout: VariantLayout) {

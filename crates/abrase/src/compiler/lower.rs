@@ -15,7 +15,8 @@ pub fn register_type_decl(ctx: &mut LayoutCtx, name: &str, body: &ast::TypeBody)
     match body {
         ast::TypeBody::Record(fields) => {
             let names = fields.iter().map(|f| f.name.clone()).collect();
-            ctx.register_record(name.to_string(), names);
+            let types = fields.iter().map(|f| f.ty.clone()).collect();
+            ctx.register_record(name.to_string(), names, types);
         }
         ast::TypeBody::Variant(cases) => {
             for (tag, case) in cases.iter().enumerate() {
