@@ -107,19 +107,4 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn read_snapshot_from_cell(
-        &self,
-        cell_slot: u32,
-        cell_gen: u32,
-    ) -> Result<SnapshotHandle, String> {
-        let snap_val = self.heap.ld(cell_slot, cell_gen, cont_slot::REGS_SNAPSHOT_SLOT)?;
-        if snap_val.is_none() { return Ok(SnapshotHandle::EMPTY); }
-        let (slot, generation) = snap_val.as_handle()
-            .ok_or_else(|| format!("snapshot: bad handle in cell at slot {}", cell_slot))?;
-        let count = self.heap.ld(cell_slot, cell_gen, cont_slot::REGS_COUNT)?
-            .as_int()
-            .ok_or_else(|| format!("snapshot: bad reg count in cell at slot {}", cell_slot))?
-            as usize;
-        Ok(SnapshotHandle { slot, generation, count })
-    }
 }

@@ -45,6 +45,14 @@ impl VirtualMachine {
             self.registers.resize(needed, Value::NONE);
         }
 
+        if self.debug_sink.is_some() {
+            self.run_loop::<true>(module)
+        } else {
+            self.run_loop::<false>(module)
+        }
+    }
+
+    fn run_loop<const TRACE: bool>(&mut self, module: &Module) -> Result<Value, String> {
         'outer: loop {
             if self.halted {
                 if let Some(code) = self.exit_code {
@@ -79,16 +87,19 @@ impl VirtualMachine {
                         return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
                     }
                 }
-                let opcode = &bc.code[self.pc];
-                self.failing_pc = self.pc;
-                if self.debug_sink.is_some() {
+                let opcode_pc = self.pc;
+                let opcode = unsafe { bc.code.get_unchecked(opcode_pc) };
+                if TRACE {
                     let event = DebugEvent::Trace {
-                        func: self.current_func, pc: self.pc, op: opcode,
+                        func: self.current_func, pc: opcode_pc, op: opcode,
                     };
                     self.emit_debug(&event);
                 }
-                self.pc += 1;
-                self.exec(module, bc, opcode)?;
+                self.pc = opcode_pc + 1;
+                if let Err(e) = self.exec(module, bc, opcode) {
+                    self.failing_pc = opcode_pc;
+                    return Err(e);
+                }
                 if self.halted || self.current_func != entry_func {
                     continue 'outer;
                 }
@@ -311,14 +322,16 @@ impl VirtualMachine {
             self.registers.resize(needed, Value::NONE);
         }
 
-        if let Chunk::Native(n) = &module.functions[fn_id] {
+        let chunk = unsafe { module.functions.get_unchecked(fn_id) };
+        if let Chunk::Native(n) = chunk {
             let param_count = n.param_count;
             const MAX_NATIVE_ARGS: usize = 8;
             if param_count > MAX_NATIVE_ARGS {
                 return Err(format!("native call: param_count {} exceeds buffer size {}", param_count, MAX_NATIVE_ARGS));
             }
-            let func = self.resolved_natives.get(fn_id).and_then(|f| f.clone())
-                .ok_or_else(|| format!("native call: fn_id {} not resolved", fn_id))?;
+            let func = self.resolved_natives[fn_id].as_ref()
+                .ok_or_else(|| format!("native call: fn_id {} not resolved", fn_id))?
+                .clone();
             let mut buf: [Value; MAX_NATIVE_ARGS] = [Value::NONE; MAX_NATIVE_ARGS];
             for i in 0..param_count {
                 let v = self.read_abs(new_base + i);
@@ -345,19 +358,24 @@ impl VirtualMachine {
                 MAX_RECURSION_DEPTH
             ));
         }
-        let new_frame_index = self.frames.len();
         self.frames.push(Frame::normal(self.current_func, self.pc, self.base_reg, dest_abs));
-        // Mark the first call after Handle install as the body frame — the boundary do_ret looks for.
         if !self.handlers.is_empty() {
-            let handler = self.handlers.last_mut().unwrap();
-            if handler.body_frame_index.is_none() {
-                handler.body_frame_index = Some(new_frame_index);
-            }
+            self.maybe_mark_body_frame();
         }
         self.base_reg = new_base;
         self.current_func = fn_id;
         self.pc = 0;
         Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn maybe_mark_body_frame(&mut self) {
+        let new_frame_index = self.frames.len() - 1;
+        let handler = self.handlers.last_mut().unwrap();
+        if handler.body_frame_index.is_none() {
+            handler.body_frame_index = Some(new_frame_index);
+        }
     }
 
     #[inline]
@@ -374,7 +392,7 @@ impl VirtualMachine {
             }
         };
 
-        if self.handlers.is_empty() && !frame.is_arm_continuation {
+        if self.handlers.is_empty() && frame.cont.is_none() {
             self.pc = frame.ip;
             self.base_reg = frame.base_reg;
             self.current_func = frame.func_id;
@@ -382,22 +400,29 @@ impl VirtualMachine {
             return Ok(());
         }
 
-        // Deep-handler routing: body frame or arm-continuation + pending arm → run value through return arm.
+        self.do_ret_slow(module, frame, return_val)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn do_ret_slow(&mut self, module: &Module, frame: super::Frame, return_val: Value) -> Result<(), String> {
         let is_body_frame = self.handlers.last()
             .and_then(|h| h.body_frame_index)
             .map_or(false, |idx| idx == self.frames.len());
-        let route_through_return_arm = (frame.is_arm_continuation || is_body_frame)
+        let route_through_return_arm = (frame.cont.is_some() || is_body_frame)
             && self.handlers.last().map_or(false, |h| h.pending_return_arm_fn.is_some());
 
         if !route_through_return_arm {
-            if frame.is_arm_continuation && frame.arm_snapshot_count > 0 {
-                let snap = crate::snapshot::SnapshotHandle {
-                    slot: frame.arm_snapshot_slot,
-                    generation: frame.arm_snapshot_gen,
-                    count: frame.arm_snapshot_count,
-                };
-                self.restore_registers(frame.base_reg, snap)?;
-                self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
+            if let Some(cont) = frame.cont.as_ref() {
+                if cont.snapshot_count > 0 {
+                    let snap = crate::snapshot::SnapshotHandle {
+                        slot: cont.snapshot_slot,
+                        generation: cont.snapshot_gen,
+                        count: cont.snapshot_count,
+                    };
+                    self.restore_registers(frame.base_reg, snap)?;
+                    self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
+                }
             }
             self.pc = frame.ip;
             self.base_reg = frame.base_reg;
@@ -406,15 +431,16 @@ impl VirtualMachine {
             return Ok(());
         }
 
-        // Restore arm regs before invoking return arm so the arm body resumes with its own state.
-        if frame.is_arm_continuation && frame.arm_snapshot_count > 0 {
-            let snap = crate::snapshot::SnapshotHandle {
-                slot: frame.arm_snapshot_slot,
-                generation: frame.arm_snapshot_gen,
-                count: frame.arm_snapshot_count,
-            };
-            self.restore_registers(frame.base_reg, snap)?;
-            self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
+        if let Some(cont) = frame.cont.as_ref() {
+            if cont.snapshot_count > 0 {
+                let snap = crate::snapshot::SnapshotHandle {
+                    slot: cont.snapshot_slot,
+                    generation: cont.snapshot_gen,
+                    count: cont.snapshot_count,
+                };
+                self.restore_registers(frame.base_reg, snap)?;
+                self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
+            }
         }
 
         // Take + clear pending so subsequent arm-cont pops in this handler don't re-apply.
@@ -622,24 +648,37 @@ impl VirtualMachine {
                 .ok_or("Resume outside an active handler frame")?;
             (h.cell_slot, h.cell_gen)
         };
-        let alive = self.heap.ld(cell_slot, cell_gen, super::cont_slot::ALIVE)?;
+        let (alive, saved_base, saved_func, suspended_snapshot) = {
+            let cell = self.heap.cell(cell_slot, cell_gen)?;
+            debug_assert!(cell.len() >= super::cont_slot::SIZE);
+            let alive = cell[super::cont_slot::ALIVE];
+            let saved_base = match cell[super::cont_slot::SUSPEND_BASE].as_int() {
+                Some(n) if n >= 0 => n as usize,
+                _ => return Err("resume: continuation cell has invalid base".to_string()),
+            };
+            let saved_func = match cell[super::cont_slot::SUSPEND_FUNC].as_int() {
+                Some(n) if n >= 0 => n as usize,
+                _ => return Err("resume: continuation cell has invalid func".to_string()),
+            };
+            let snap_val = cell[super::cont_slot::REGS_SNAPSHOT_SLOT];
+            let snap = if snap_val.is_none() {
+                crate::snapshot::SnapshotHandle::EMPTY
+            } else {
+                let (s, g) = snap_val.as_handle()
+                    .ok_or_else(|| format!("snapshot: bad handle in cell at slot {}", cell_slot))?;
+                let count = cell[super::cont_slot::REGS_COUNT].as_int()
+                    .ok_or_else(|| format!("snapshot: bad reg count in cell at slot {}", cell_slot))?
+                    as usize;
+                crate::snapshot::SnapshotHandle { slot: s, generation: g, count }
+            };
+            (alive, saved_base, saved_func, snap)
+        };
         match alive.as_int() {
             Some(1) => {}
             Some(0) => return Err("resume: continuation already consumed".to_string()),
             _ => return Err(format!(
                 "resume: continuation cell corrupted (alive slot = {:?})", alive)),
         }
-        let saved_base = match self.heap.ld(cell_slot, cell_gen,
-            super::cont_slot::SUSPEND_BASE)?.as_int() {
-            Some(n) if n >= 0 => n as usize,
-            _ => return Err("resume: continuation cell has invalid base".to_string()),
-        };
-        let saved_func = match self.heap.ld(cell_slot, cell_gen,
-            super::cont_slot::SUSPEND_FUNC)?.as_int() {
-            Some(n) if n >= 0 => n as usize,
-            _ => return Err("resume: continuation cell has invalid func".to_string()),
-        };
-        let suspended_snapshot = self.read_snapshot_from_cell(cell_slot, cell_gen)?;
 
         self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE,
             Value::from_int(0))?;
@@ -662,21 +701,25 @@ impl VirtualMachine {
             let body_idx = self.handlers.last().and_then(|h| h.body_frame_index)
                 .ok_or("resume: active handler has no body frame index")?;
             let mut i = body_idx + 1;
-            while i < self.frames.len() && self.frames[i].is_arm_continuation {
+            while i < self.frames.len() && self.frames[i].is_arm_continuation() {
                 i += 1;
             }
             i
         };
-        self.frames.insert(insert_at, super::Frame {
-            func_id: self.current_func,
-            ip: self.pc,
-            base_reg: self.base_reg,
-            dest_reg: arm_resume_dest_abs,
-            is_arm_continuation: true,
-            arm_snapshot_slot: arm_snapshot.slot,
-            arm_snapshot_gen: arm_snapshot.generation,
-            arm_snapshot_count: arm_snapshot.count,
-        });
+        let new_frame = super::Frame::arm_continuation(
+            self.current_func,
+            self.pc,
+            self.base_reg,
+            arm_resume_dest_abs,
+            arm_snapshot.slot,
+            arm_snapshot.generation,
+            arm_snapshot.count,
+        );
+        if insert_at == self.frames.len() {
+            self.frames.push(new_frame);
+        } else {
+            self.frames.insert(insert_at, new_frame);
+        }
 
         // Restore suspended fn register window.
         self.base_reg = saved_base;

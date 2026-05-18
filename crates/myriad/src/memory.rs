@@ -65,6 +65,11 @@ impl Heap {
             .ok_or_else(|| format!("ld: offset {} out of bounds (size {})", offset, cell.len()))
     }
 
+    pub fn cell(&self, slot: u32, generation: u32) -> Result<&[Value], String> {
+        let idx = self.check(slot, generation, "cell")?;
+        Ok(self.cells[idx].as_ref().unwrap().as_slice())
+    }
+
     pub fn st(&mut self, slot: u32, generation: u32, offset: usize, val: Value) -> Result<Value, String> {
         let idx = self.check(slot, generation, "st")?;
         let cell = self.cells[idx].as_mut().unwrap();
