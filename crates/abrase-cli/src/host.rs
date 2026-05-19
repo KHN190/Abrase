@@ -3,7 +3,7 @@ use abrase::compiler::{Compiler, HostFnDecl};
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::ty::Type;
-use myriad::{BoxPool, Value, VirtualMachine};
+use myriad::{Heap, Value, VirtualMachine};
 use myriad::devices::{
     HostFuncDevice, HostImpl, HOSTFUNC_ID,
     Console, BufferConsole, StdoutConsole, CONSOLE_ID,
@@ -54,7 +54,7 @@ impl Runtime {
     }
 
     pub fn register_host<F>(&mut self, name: &str, params: Vec<Type>, ret: Type, func: F)
-    where F: Fn(&mut BoxPool, &[Value]) -> Result<Value, String> + 'static
+    where F: Fn(&mut Heap, &[u64]) -> Result<(u64, bool), String> + 'static
     {
         let fn_id = self.pending_host.len() as u16;
         self.pending_host.push(HostFnDecl {
@@ -67,18 +67,10 @@ impl Runtime {
     }
 
     fn register_default_hosts(&mut self) {
-        // `device_in` and `device_out` are the language contract — Myriad
-        // MUST register them at startup. 
-        //
-        //   device_in(port: Int, data: Int) -> Unit   // write to device
-        //   device_out(port: Int) -> Int              // read from device
-        //
-        // Any other host fn (print, circle, dot, ...) is optional. User fns
-        // are NOT allowed to redefine names that are registered as host fns.
-        self.register_host("device_in", vec![Type::Int, Type::Int], Type::Unit, |_pool, _args| {
+        self.register_host("device_in", vec![Type::Int, Type::Int], Type::Unit, |_heap, _args| {
             Err("device_in: must be lowered to Deo by codegen; closure should never run".into())
         });
-        self.register_host("device_out", vec![Type::Int], Type::Int, |_pool, _args| {
+        self.register_host("device_out", vec![Type::Int], Type::Int, |_heap, _args| {
             Err("device_out: must be lowered to Dei by codegen; closure should never run".into())
         });
     }

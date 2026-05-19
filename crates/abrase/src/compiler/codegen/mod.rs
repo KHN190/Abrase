@@ -64,10 +64,6 @@ impl Compiler {
                 self.compile_range(start.as_deref(), end.as_deref(), *inclusive)
             }
             ast::Expr::Region { body, .. } => {
-                // User-written `region { ... body }`. Body's value may be a
-                // heap handle alloc'd inside; promote it past pop via
-                // typed forget so the cell survives (same shape as break/
-                // return carrying a value).
                 let body_ty = body.ret.as_ref().and_then(|e| self.infer_expr_type(e));
                 self.emit_region_push()?;
                 let result = self.compile_block(body)?;
@@ -83,6 +79,36 @@ impl Compiler {
     }
 
     pub(in crate::compiler) fn compile_stmt(
+        &mut self,
+        stmt: &ast::Spanned<ast::Stmt>,
+    ) -> Result<(), String> {
+        let mark = self.snapshot_register_high_water();
+        let r = self.compile_stmt_inner(stmt);
+        self.reclaim_temp_regs_above(mark);
+        r
+    }
+
+    // Rewind next_reg but keep regs in long-lived structures.
+    pub(in crate::compiler) fn reclaim_temp_regs_above(&mut self, mark: u16) {
+        let mut protect = mark;
+        for reg in self.var_to_reg.values() {
+            protect = protect.max(reg.0 as u16 + 1);
+        }
+        for reg in &self.handler_table_stack {
+            protect = protect.max(reg.0 as u16 + 1);
+        }
+        for ctx in &self.loop_stack {
+            protect = protect.max(ctx.result_reg.0 as u16 + 1);
+        }
+        for envs in &self.arm_env_stack {
+            for reg in envs.values() {
+                protect = protect.max(reg.0 as u16 + 1);
+            }
+        }
+        self.restore_register_high_water(protect);
+    }
+
+    fn compile_stmt_inner(
         &mut self,
         stmt: &ast::Spanned<ast::Stmt>,
     ) -> Result<(), String> {
@@ -127,8 +153,6 @@ impl Compiler {
                 }
             }
             ast::Stmt::Expr(expr) => {
-                // every allocation it performs should be reclaimed at the
-                // statement boundary.
                 self.emit_region_push()?;
                 let reg = self.compile_expr(expr)?;
                 let needs_drop = self.infer_expr_type(expr)
@@ -150,6 +174,7 @@ impl Compiler {
         block: &ast::Block,
     ) -> Result<Register, String> {
         let pre_bindings: std::collections::HashSet<String> = self.var_to_reg.keys().cloned().collect();
+        let mark = self.snapshot_register_high_water();
         self.block_locals_stack.push(Vec::new());
         for stmt in &block.stmts {
             self.compile_stmt(stmt)?;
@@ -162,10 +187,8 @@ impl Compiler {
             self.emit(OpCode::PushConst(reg, idx));
             reg
         };
-        // Drop every binder in this layer except the result.
         self.emit_drops_for_exit(1, Some(result))?;
         self.block_locals_stack.pop();
-        // Drop the entries that were created inside this block.
         let new_bindings: Vec<String> = self.var_to_reg.keys()
             .filter(|k| !pre_bindings.contains(*k))
             .cloned()
@@ -174,11 +197,13 @@ impl Compiler {
             self.var_to_reg.remove(name);
             self.var_types.remove(name);
         }
+        let floor = mark.max(result.0 as u16 + 1);
+        self.reclaim_temp_regs_above(floor);
         Ok(result)
     }
 
     pub(in crate::compiler) fn finalize_arg_patches(&mut self) -> Result<(), String> {
-        let reg_count = self.next_reg as usize;
+        let reg_count = self.max_reg as usize;
         for (pos, slot) in std::mem::take(&mut self.pending_arg_patches) {
             let dst_idx = reg_count + slot as usize;
             if dst_idx > u8::MAX as usize {

@@ -1,12 +1,15 @@
-// Rule 1: OpCode design is frozen, DO NOT add new.
-// Rule 2: Bytecode is type agnostic. Thus no value tag or complex data structure.
+// Rule 1: OpCode design is frozen, do not add new.
+// Rule 2: Bytecode is type agnostic. No complex data structure.
+//   Type comes from OpCode itself + compiler-provided const_mask / frame mask.
 
 pub mod value;
 pub mod cartridge;
 
-pub use value::Value;
+pub use value::{Value, HANDLE_NONE, HANDLE_SLOT_MAX};
 
-pub const FRAME_REGS: usize = 256;
+// 64 fits frame handle-mask in one u64.
+pub const FRAME_REGS: usize = 64;
+pub const FRAME_MASK_WORDS: usize = FRAME_REGS / 64;
 
 pub const DISPATCH_ID: u8 = 0xE0;
 pub const DISPATCH_PORT_LOOKUP: u8 = 0x00;
@@ -19,7 +22,6 @@ pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
 pub const REGION_ID: u8 = 0xE1;
 pub const REGION_PORT_PUSH: u8 = 0x00;
 pub const REGION_PORT_POP: u8 = 0x01;
-// Used by break/return/throw to remove ref from region record list.
 pub const REGION_PORT_FORGET: u8 = 0x02;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -94,13 +96,24 @@ pub enum OpCode {
 #[derive(Clone, Default)]
 pub struct BytecodeChunk {
     pub code: Vec<OpCode>,
-    pub constants: Vec<Value>,
+    pub constants: Vec<u64>,
+    // Handle-bit constants store string_constants index; loader replaces with real heap handle.
+    pub const_mask: Vec<u64>,
     pub string_constants: Vec<String>,
     pub reg_count: usize,
     pub param_count: usize,
 }
 
-// Native (host-implemented) function slot
+impl BytecodeChunk {
+    #[inline]
+    pub fn const_is_handle(&self, idx: u16) -> bool {
+        let i = idx as usize;
+        let word = i / 64;
+        let bit = i % 64;
+        self.const_mask.get(word).map_or(false, |w| (w >> bit) & 1 == 1)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct NativeChunk {
     pub name: String,
@@ -139,5 +152,21 @@ impl Module {
 
     pub fn requires_device(&self, id: u8) -> bool {
         (self.device_mask[(id / 8) as usize] >> (id % 8)) & 1 == 1
+    }
+}
+
+#[inline(always)]
+pub fn mask_bit_set(mask: &[u64], idx: usize) -> bool {
+    let word = idx / 64;
+    let bit = idx % 64;
+    mask.get(word).map_or(false, |w| (w >> bit) & 1 == 1)
+}
+
+#[inline(always)]
+pub fn mask_set(mask: &mut [u64], idx: usize, on: bool) {
+    let word = idx / 64;
+    let bit = idx % 64;
+    if let Some(w) = mask.get_mut(word) {
+        if on { *w |= 1u64 << bit; } else { *w &= !(1u64 << bit); }
     }
 }

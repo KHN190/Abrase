@@ -5,8 +5,14 @@ use myriad::devices::{BufferConsole, Console, SystemDevice, CONSOLE_ID, SYSTEM_I
 fn r(n: u8) -> Register { Register(n) }
 
 fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize, mask: [u8; 32]) -> Module {
+    let raw: Vec<u64> = constants.iter().map(|v| v.raw()).collect();
     Module {
-        functions: vec![Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count: 0, string_constants: Vec::new() })],
+        functions: vec![Chunk::Bytecode(BytecodeChunk {
+            code, constants: raw,
+            const_mask: Vec::new(),
+            reg_count, param_count: 0,
+            string_constants: Vec::new(),
+        })],
         entry: 0,
         device_mask: mask,
     }
@@ -138,9 +144,7 @@ fn system_version_read() {
         mask_with(&[SYSTEM_ID]),
     );
     let v = vm.run_module(&module).unwrap();
-    if let Some(n) = v.as_int() {
-        assert!(n >= (1i64 << 32), "version must be at least major=1");
-    } else { panic!("expected Int, got {:?}", v); }
+    assert!(v.as_int() >= (1i64 << 32), "version must be at least major=1");
 }
 
 #[test]

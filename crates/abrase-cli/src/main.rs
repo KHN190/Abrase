@@ -6,7 +6,7 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use myriad::{BoxedValue, Host, Value, VirtualMachine};
+use myriad::{Host, Value, VirtualMachine, read_string};
 
 const USAGE: &str = "\
 Abrase compiler & Myriad VM
@@ -89,7 +89,6 @@ fn cmd_run(source: &str, debug: bool) -> ExitCode {
         .with_debug(debug)
         .with_fn_names(fn_names);
 
-    // install built-ins
     Host::default().install_into(&mut vm);
     match vm.run_module(&module) {
         Ok(v) => { print_result(&vm, v); ExitCode::SUCCESS }
@@ -98,14 +97,13 @@ fn cmd_run(source: &str, debug: bool) -> ExitCode {
 }
 
 fn print_result(vm: &VirtualMachine, v: Value) {
-    if let Some(idx) = v.as_box() {
-        match vm.box_pool().get(idx) {
-            Some(BoxedValue::String(s)) => { println!("{}", s); return; }
-            Some(b) => { println!("{:?}", b); return; }
-            None => {}
+    if !v.is_handle_none() {
+        if let Some(s) = read_string(vm.heap_ref(), v) {
+            println!("{}", s);
+            return;
         }
     }
-    println!("{:?}", v);
+    println!("{}", v.as_int());
 }
 
 fn cmd_check(source: &str) -> ExitCode {

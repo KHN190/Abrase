@@ -43,7 +43,13 @@ impl Compiler {
             },
             ast::Expr::Call { callee, args: _ } => {
                 let fid = match &callee.node {
-                    ast::Expr::Identifier(name) => self.func_map.get(name).copied()?,
+                    ast::Expr::Identifier(name) => {
+                        if let Some(info) = self.closure_by_var.get(name) {
+                            self.func_map.get(&info.lifted_fn).copied()?
+                        } else {
+                            self.func_map.get(name).copied()?
+                        }
+                    }
                     ast::Expr::FieldAccess { base, field } => {
                         let recv = receiver_name_of(&self.infer_expr_type(base)?)?;
                         let mangled = self.method_dispatch.get(&(recv, field.clone()))?;
@@ -53,6 +59,13 @@ impl Compiler {
                 };
                 let (_, ret) = self.fn_signatures.get(&fid)?;
                 ty_to_ast(ret)
+            }
+            ast::Expr::FieldAccess { base, field } => {
+                let base_ty = self.infer_expr_type(base)?;
+                let recv = receiver_name_of(&base_ty)?;
+                let layout = self.layouts.records.get(&recv)?;
+                let idx = layout.fields.iter().position(|n| n == field)?;
+                Some(layout.field_types.get(idx)?.clone())
             }
             ast::Expr::Binary { op, left, right } => {
                 use ast::BinaryOp as B;

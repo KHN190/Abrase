@@ -4,7 +4,7 @@ pub use abrase::ast::*;
 pub use abrase::compiler::Compiler;
 pub use abrase::lexer::Lexer;
 pub use abrase::parser::Parser;
-pub use myriad::{Value, VirtualMachine, BoxedValue};
+pub use myriad::{Value, VirtualMachine, read_string};
 
 pub fn compile_and_run(ast: &[Decl]) -> Result<Value, String> {
     let mut compiler = Compiler::new();
@@ -34,11 +34,7 @@ pub fn run_source_string(src: &str) -> Result<String, String> {
 }
 
 pub fn extract_string(vm: &VirtualMachine, v: Value) -> Result<String, String> {
-    let idx = v.as_box().ok_or_else(|| format!("expected box, got {:?}", v))?;
-    match vm.box_pool().get(idx) {
-        Some(BoxedValue::String(s)) => Ok(s.clone()),
-        other => Err(format!("expected string box, got {:?}", other)),
-    }
+    read_string(vm.heap_ref(), v).ok_or_else(|| format!("expected String handle, got {:?}", v))
 }
 
 pub fn compile_module_and_run_string(ast: &[Decl]) -> Result<String, String> {

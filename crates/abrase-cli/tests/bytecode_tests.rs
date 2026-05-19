@@ -29,7 +29,8 @@ fn test_chunk_construction() {
             OpCode::PushConst(Register(0), 0),
             OpCode::Ret(Register(0)),
         ],
-        constants: vec![Value::from_int(42)],
+        constants: vec![Value::from_int(42).raw()],
+        const_mask: Vec::new(),
         reg_count: 1,
         param_count: 0,
         string_constants: Vec::new(),
@@ -44,6 +45,7 @@ fn test_chunk_empty() {
     let chunk = bc(BytecodeChunk {
         code: vec![],
         constants: vec![],
+        const_mask: Vec::new(),
         reg_count: 0,
         param_count: 0,
         string_constants: Vec::new(),
@@ -94,7 +96,8 @@ fn test_call_opcode() {
 fn test_chunk_reg_count() {
     let chunk = bc(BytecodeChunk {
         code: vec![OpCode::PushConst(Register(0), 0)],
-        constants: vec![Value::from_int(10)],
+        constants: vec![Value::from_int(10).raw()],
+        const_mask: Vec::new(),
         reg_count: 42,
         param_count: 0,
         string_constants: Vec::new(),
@@ -186,7 +189,8 @@ fn test_memory_opcodes_in_chunk() {
             OpCode::Ld(Register(3), Register(1), 0),
             OpCode::Ret(Register(3)),
         ],
-        constants: vec![Value::from_int(42), Value::from_int(100)],
+        constants: vec![Value::from_int(42).raw(), Value::from_int(100).raw()],
+        const_mask: Vec::new(),
         reg_count: 4,
         param_count: 0,
         string_constants: Vec::new(),

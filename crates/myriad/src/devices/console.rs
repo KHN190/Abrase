@@ -28,10 +28,7 @@ impl Device for Box<dyn Console> {
     }
 
     fn write(&mut self, port: u8, val: Value) -> Result<(), String> {
-        let n = match val.as_int() {
-            Some(n) => n,
-            None => return Ok(()),
-        };
+        let n = val.as_int();
         match port {
             PORT_STDOUT => self.write_stdout((n & 0xFF) as u8),
             PORT_STDERR => self.write_stderr((n & 0xFF) as u8),

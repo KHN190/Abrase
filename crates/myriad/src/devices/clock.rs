@@ -24,7 +24,8 @@ impl Device for Box<dyn Clock> {
 
     fn write(&mut self, port: u8, val: Value) -> Result<(), String> {
         if port == PORT_SLEEP_MS {
-            let ms = match val.as_int() { Some(n) if n >= 0 => n as u64, _ => 0 };
+            let n = val.as_int();
+            let ms = if n >= 0 { n as u64 } else { 0 };
             self.sleep_ms(ms)?;
         }
         Ok(())
@@ -56,8 +57,6 @@ impl Clock for SystemClock {
     }
 }
 
-// Controllable clock for deterministic tests.
-// `advance` moves both wall and mono forward by the given ms.
 pub struct MockClock {
     wall_ms: Cell<i64>,
     mono_ns: Cell<i64>,

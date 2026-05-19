@@ -2,7 +2,7 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use myriad::{BoxedValue, Value, VirtualMachine};
+use myriad::{Value, VirtualMachine, read_string};
 use std::fs;
 
 fn run_file(path: &str) -> Result<Value, String> {
@@ -12,11 +12,7 @@ fn run_file(path: &str) -> Result<Value, String> {
 
 fn run_file_string(path: &str) -> Result<String, String> {
     let (v, vm) = run_file_full(path)?;
-    let idx = v.as_box().ok_or_else(|| format!("expected box, got {:?}", v))?;
-    match vm.box_pool().get(idx) {
-        Some(BoxedValue::String(s)) => Ok(s.clone()),
-        other => Err(format!("expected string, got {:?}", other)),
-    }
+    read_string(vm.heap_ref(), v).ok_or_else(|| format!("expected String handle, got {:?}", v))
 }
 
 fn run_file_full(path: &str) -> Result<(Value, VirtualMachine), String> {

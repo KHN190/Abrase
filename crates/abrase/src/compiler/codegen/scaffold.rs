@@ -24,14 +24,25 @@ impl Compiler {
         }
         let reg = Register(self.next_reg as u8);
         self.next_reg += 1;
+        if self.next_reg > self.max_reg { self.max_reg = self.next_reg; }
         Ok(reg)
+    }
+
+    // Safety: no reg allocated above snapshot must be referenced after restore.
+    pub(in crate::compiler) fn snapshot_register_high_water(&self) -> u16 {
+        self.next_reg
+    }
+
+    pub(in crate::compiler) fn restore_register_high_water(&mut self, mark: u16) {
+        if mark < self.next_reg {
+            self.next_reg = mark;
+        }
     }
 
     pub(in crate::compiler) fn emit(&mut self, op: OpCode) {
         self.code.push(op);
     }
 
-    // Peephole: if the last emitted op writes to `old`, retarget it to `new`.
     pub(in crate::compiler) fn try_redirect_last_dest(&mut self, old: Register, new: Register) -> bool {
         if old == new { return true; }
         let Some(last) = self.code.last_mut() else { return false; };
@@ -60,13 +71,16 @@ impl Compiler {
     }
 
     pub(in crate::compiler) fn add_constant(&mut self, val: Value) -> Result<u16, String> {
-        if let Some(i) = self.constants.iter().position(|c| *c == val) {
-            return Ok(i as u16);
+        for (i, c) in self.constants.iter().enumerate() {
+            if *c == val && !self.const_mask_bits[i] {
+                return Ok(i as u16);
+            }
         }
         if self.constants.len() >= u16::MAX as usize {
             return Err("Constant pool overflow (max 65535 entries)".to_string());
         }
         self.constants.push(val);
+        self.const_mask_bits.push(false);
         Ok((self.constants.len() - 1) as u16)
     }
 
@@ -80,14 +94,21 @@ impl Compiler {
             self.string_constants.push(s.to_string());
             (self.string_constants.len() - 1) as u32
         };
-        self.add_constant(Value::from_str_const(str_idx))
+        // Reuse an existing handle-tagged constant pointing to the same string.
+        let placeholder = Value::from_raw(str_idx as u64);
+        for (i, c) in self.constants.iter().enumerate() {
+            if *c == placeholder && self.const_mask_bits[i] {
+                return Ok(i as u16);
+            }
+        }
+        if self.constants.len() >= u16::MAX as usize {
+            return Err("Constant pool overflow (max 65535 entries)".to_string());
+        }
+        self.constants.push(placeholder);
+        self.const_mask_bits.push(true);
+        Ok((self.constants.len() - 1) as u16)
     }
 
-    // Region push/pop. Tracked in `compiler_region_depth` regardless of who
-    // opened the region — user-written `region { ... }` blocks count the same
-    // as compiler-inserted ones (loop bodies, statement-position blocks).
-    // break/continue/return/throw unwind ALL of them by depth diff, so
-    // `loop { region { return ... } }` properly pops the user region too.
     pub(in crate::compiler) fn emit_region_push(&mut self) -> Result<(), String> {
         self.emit_region_marker(crate::bytecode::REGION_PORT_PUSH)?;
         self.compiler_region_depth += 1;
@@ -102,17 +123,12 @@ impl Compiler {
         Ok(())
     }
 
-    // Bare pop that doesn't lower the static depth counter. Used by
-    // emit_region_pops_for_exit when the calling control-flow form (break,
-    // return, throw, `?`) won't fall through — subsequent codegen still sees
-    // itself at the pre-exit depth.
+    // Pop without updating static depth (for control-flow forms that don't fall through).
     fn emit_region_pop_unaccounted(&mut self) -> Result<(), String> {
         self.emit_region_marker(crate::bytecode::REGION_PORT_POP)
     }
 
-    // Emit N region pops without changing the static depth tracker. Used by
-    // break/continue/return/throw — those instructions don't fall through, so
-    // subsequent codegen still thinks of itself at the pre-exit depth.
+    // Emit N pops without updating static depth tracker (for break/continue/return/throw).
     pub(in crate::compiler) fn emit_region_pops_for_exit(&mut self, n: usize) -> Result<(), String> {
         for _ in 0..n {
             self.emit_region_pop_unaccounted()?;
@@ -144,11 +160,6 @@ impl Compiler {
         Ok(())
     }
 
-    // Emit a region_forget for `reg`: if at runtime `reg` holds a heap handle,
-    // strip it from every active region's record list so the subsequent
-    // region_pop force-frees don't reclaim it. No-op for non-handle values.
-    // Call this BEFORE emit_region_pops_for_exit on any value being carried
-    // out by break/return/throw.
     pub(in crate::compiler) fn emit_region_forget(&mut self, reg: Register) -> Result<(), String> {
         let port_val =
             ((crate::bytecode::REGION_ID as i64) << 8) | (crate::bytecode::REGION_PORT_FORGET as i64);
@@ -159,22 +170,7 @@ impl Compiler {
         Ok(())
     }
 
-    // Walk a carried value's type structure and emit region_forget for the
-    // outer cell plus any heap handles reachable through fields. Records and
-    // tuples have known layout — load each field and recurse. Variants do
-    // a single-level forget (their tag is only known at runtime; per-case
-    // recursive forget would need a tag-switch — deferred). Closures /
-    // functions: single-level. Recursive variants (List, Tree) terminate
-    // here too — they hit MAX_DEPTH and surface a compile error rather than
-    // overflowing the host stack.
-    //
-    // ORDER INVARIANT (applies to every abnormal exit site):
-    //   1. emit_region_forget_typed(carried_reg, &carried_ty)
-    //   2. emit_drops_for_exit(blocks_to_unwind, skip = Some(carried_reg))
-    //   3. emit_region_pops_for_exit(regions_to_unwind)
-    //   4. Jmp / Ret
-    // Drops MUST come before pops: pop force-frees cells, after which the
-    // Drop's rc_dec would observe a freed slot and err.
+    // Walk type structure emitting region_forget for carried value + reachable handles.
     pub(in crate::compiler) fn emit_region_forget_typed(
         &mut self,
         reg: Register,
@@ -199,19 +195,16 @@ impl Compiler {
             ));
         }
         match ty {
-            // Scalars: not heap, nothing to forget.
             ast::Type::Named(n) if matches!(
                 n.as_str(),
                 "Int" | "Float" | "Bool" | "Char" | "Unit" | "Never"
             ) => Ok(()),
 
-            // Single-level forget — handle wrapper, but inner not walked.
             ast::Type::Reference { .. }
             | ast::Type::Function { .. } => {
                 self.emit_region_forget(reg)
             }
 
-            // Tuples: known offsets. Forget outer, then Ld each field, recurse.
             ast::Type::Tuple(items) => {
                 self.emit_region_forget(reg)?;
                 for (i, t) in items.iter().enumerate() {
@@ -238,21 +231,14 @@ impl Compiler {
                 Ok(())
             }
 
-            // Generics (Array<T>, Vec<T>, etc.): outer-only for now —
-            // per-element forget needs runtime length probing.
             ast::Type::Generic { .. } => {
                 self.emit_region_forget(reg)
             }
 
-            // Anything else (unknown / future): conservative single forget.
             _ => self.emit_region_forget(reg),
         }
     }
 
-    // Emit OpCode::Drop for every binder reg in the top `n` block scopes,
-    // skipping `skip` if Some (the carried value being escaped). Used by
-    // every abnormal exit AND by the natural end-of-block path to keep
-    // both routes flowing the same Drops.
     pub(in crate::compiler) fn emit_drops_for_exit(
         &mut self,
         n_blocks: usize,
@@ -260,7 +246,6 @@ impl Compiler {
     ) -> Result<(), String> {
         let total = self.block_locals_stack.len();
         let start = total.saturating_sub(n_blocks);
-        // iterate top n layers (start..total) WITHOUT removing them
         for layer_idx in (start..total).rev() {
             let regs: Vec<Register> = self.block_locals_stack[layer_idx].clone();
             for reg in regs {

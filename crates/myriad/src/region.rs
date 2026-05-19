@@ -1,5 +1,4 @@
 use super::memory::Heap;
-use super::value::BoxPool;
 
 pub struct RegionTable {
     stack: Vec<Vec<(u32, u32)>>,
@@ -28,23 +27,21 @@ impl RegionTable {
         self.stack.len()
     }
 
-    pub fn pop_and_release(&mut self, heap: &mut Heap, pool: &mut BoxPool) -> Result<(), String> {
+    pub fn pop_and_release(&mut self, heap: &mut Heap) -> Result<(), String> {
         let allocs = self.stack.pop()
             .ok_or_else(|| "region_pop: no active region".to_string())?;
         for (slot, generation) in allocs {
-            if let Err(e) = heap.force_free(slot, generation, pool) {
+            if let Err(e) = heap.force_free(slot, generation) {
                 debug_assert!(false, "region pop force_free failed: {}", e);
             }
         }
         Ok(())
     }
 
-    // Drop all bookkeeping without force-freeing.
     pub fn clear(&mut self) {
         self.stack.clear();
     }
 
-    // Remove a (slot, generation) from every active region. 
     pub fn forget(&mut self, slot: u32, generation: u32) -> bool {
         let mut removed = false;
         for region in &mut self.stack {

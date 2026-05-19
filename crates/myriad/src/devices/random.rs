@@ -17,27 +17,19 @@ impl Device for Box<dyn Random> {
     fn read(&mut self, port: u8) -> Result<Value, String> {
         match port {
             PORT_BYTE => Ok(Value::from_int(self.next_byte() as i64)),
-            // Inline Value carries i48 only — return the low 47 bits of the PRNG.
-            PORT_U64 => {
-                let n = self.next_u64() & ((1u64 << 47) - 1);
-                Ok(Value::from_int(n as i64))
-            }
+            PORT_U64 => Ok(Value::from_raw(self.next_u64())),
             _ => Ok(Value::from_int(0)),
         }
     }
 
     fn write(&mut self, port: u8, val: Value) -> Result<(), String> {
         if port == PORT_SEED {
-            if let Some(n) = val.as_int() {
-                self.seed(n as u64);
-            }
+            self.seed(val.raw());
         }
         Ok(())
     }
 }
 
-// Xorshift64 PRNG. SystemRandom seeds from SystemTime at construction; SeededRandom
-// takes an explicit seed for deterministic test runs.
 struct Xorshift { state: Cell<u64> }
 
 impl Xorshift {

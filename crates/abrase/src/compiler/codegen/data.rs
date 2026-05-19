@@ -101,9 +101,24 @@ impl Compiler {
                         span,
                     };
                 }
+                let inferred = self.infer_expr_type(&expr);
                 let val_reg = self.compile_expr(&expr)?;
-                let to_str_id = self.to_str_fn_id
-                    .ok_or_else(|| "internal: __to_str builtin not registered".to_string())?;
+                let mangled = match &inferred {
+                    Some(ast::Type::Named(n)) => match n.as_str() {
+                        "Int"    => "__int_to_s",
+                        "Float"  => "__float_to_s",
+                        "Bool"   => "__bool_to_s",
+                        "Char"   => "__char_to_s",
+                        "String" => "__string_to_s",
+                        _ => "__to_str",
+                    },
+                    Some(ast::Type::Tuple(items)) if items.is_empty() => "__unit_to_s",
+                    _ => "__to_str",
+                };
+                let to_str_id = *self.func_map.get(mangled).unwrap_or(
+                    &self.to_str_fn_id
+                        .ok_or_else(|| "internal: __to_str builtin not registered".to_string())?
+                );
                 self.emit_builtin_call(to_str_id, &[val_reg])
             }
         }

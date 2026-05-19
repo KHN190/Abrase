@@ -1,6 +1,6 @@
 // Integration tests for the RegionTable runtime.
 
-use myriad::{BoxPool, BoxedValue, Heap, RegionTable, Value, VirtualMachine};
+use myriad::{Heap, RegionTable, Value, VirtualMachine};
 use polka::{BytecodeChunk, Chunk, OpCode, Register};
 
 #[cfg(test)]
@@ -9,6 +9,10 @@ mod tests {
 
     fn r(n: u8) -> Register { Register(n) }
     fn vm() -> VirtualMachine { VirtualMachine::new() }
+
+    fn raw_constants(consts: Vec<Value>) -> Vec<u64> {
+        consts.into_iter().map(|v| v.raw()).collect()
+    }
 
     fn region_port(port: u8) -> i64 {
         ((polka::REGION_ID as i64) << 8) | port as i64
@@ -39,9 +43,7 @@ mod tests {
         let mut v = vm();
         v.region_push();
         let _ = v.heap_alloc(2);
-         // recorded by VM only when going through OpCode::Alloc
         v.region_pop().expect("pop ok");
-        // direct heap_alloc isn't recorded — alloc survives.
         assert_eq!(v.heap_live_count(), 1);
     }
 
@@ -53,10 +55,9 @@ mod tests {
         rt.push();
         assert_eq!(rt.depth(), 2);
         let mut heap = Heap::new();
-        let mut pool = BoxPool::new();
-        rt.pop_and_release(&mut heap, &mut pool).unwrap();
+        rt.pop_and_release(&mut heap).unwrap();
         assert_eq!(rt.depth(), 1);
-        rt.pop_and_release(&mut heap, &mut pool).unwrap();
+        rt.pop_and_release(&mut heap).unwrap();
         assert_eq!(rt.depth(), 0);
     }
 
@@ -64,8 +65,7 @@ mod tests {
     fn pop_without_push_errs() {
         let mut rt = RegionTable::new();
         let mut heap = Heap::new();
-        let mut pool = BoxPool::new();
-        assert!(rt.pop_and_release(&mut heap, &mut pool).is_err());
+        assert!(rt.pop_and_release(&mut heap).is_err());
     }
 
     #[test]
@@ -78,7 +78,6 @@ mod tests {
     #[test]
     fn region_force_frees_recorded_slots() {
         let mut heap = Heap::new();
-        let mut pool = BoxPool::new();
         let (s1, g1) = heap.alloc(1);
         let (s2, g2) = heap.alloc(1);
         assert_eq!(heap.live_count(), 2);
@@ -87,68 +86,61 @@ mod tests {
         rt.push();
         rt.record_alloc(s1, g1);
         rt.record_alloc(s2, g2);
-        rt.pop_and_release(&mut heap, &mut pool).unwrap();
+        rt.pop_and_release(&mut heap).unwrap();
 
         assert_eq!(heap.live_count(), 0, "region exit must force-free both slots");
     }
 
     #[test]
-    fn region_force_free_cascades_to_box_pool() {
+    fn region_force_free_cascades_to_nested_handle() {
+        // A region-tracked cell holding a child handle must rc_dec the child
+        // when force-freed. With child rc=1 (single ref from parent), the
+        // cascade reclaims it.
         let mut heap = Heap::new();
-        let mut pool = BoxPool::new();
-        let box_idx = pool.intern(BoxedValue::String("hi".into()));
-        assert_eq!(pool.live_count(), 1);
-
-        let (slot, gen_) = heap.alloc(1);
-        heap.st(slot, gen_, 0, Value::from_box(box_idx)).unwrap();
+        let (child, cg) = heap.alloc(1);
+        let (parent, pg) = heap.alloc(1);
+        heap.st(parent, pg, 0, Value::from_handle(child, cg).raw(), true).unwrap();
 
         let mut rt = RegionTable::new();
         rt.push();
-        rt.record_alloc(slot, gen_);
-        rt.pop_and_release(&mut heap, &mut pool).unwrap();
+        rt.record_alloc(parent, pg);
+        rt.pop_and_release(&mut heap).unwrap();
 
-        assert_eq!(heap.live_count(), 0, "cell freed");
-        assert_eq!(pool.live_count(), 0, "boxed String inside cell must also be reclaimed");
+        assert_eq!(heap.live_count(), 0, "parent + child both reclaimed");
     }
 
     #[test]
-    fn rc_dec_cascades_to_box_pool() {
+    fn rc_dec_cascades_to_handle_child() {
         let mut heap = Heap::new();
-        let mut pool = BoxPool::new();
-        let box_idx = pool.intern(BoxedValue::String("hi".into()));
+        let (child, cg) = heap.alloc(1);
+        let (parent, pg) = heap.alloc(1);
+        heap.st(parent, pg, 0, Value::from_handle(child, cg).raw(), true).unwrap();
 
-        let (slot, gen_) = heap.alloc(1);
-        heap.st(slot, gen_, 0, Value::from_box(box_idx)).unwrap();
-        assert_eq!(pool.live_count(), 1);
-
-        // ordinary rc=0 drop
-        let _ = heap.rc_dec(slot, gen_, &mut pool).unwrap();
-        assert_eq!(heap.live_count(), 0);
-        assert_eq!(pool.live_count(), 0, "rc=0 cascade must reclaim Box child");
+        let _ = heap.rc_dec(parent, pg).unwrap();
+        assert_eq!(heap.live_count(), 0, "rc=0 cascade must reclaim handle child");
     }
 
     #[test]
     fn test_region_pop_force_frees_alloc_inside() {
-        // region push; alloc(4); region pop → heap_live_count should drop to 0
-        // even though the binding still has rc=1.
         let mut vm = VirtualMachine::new();
         let chunk = Chunk::Bytecode(BytecodeChunk {
             code: vec![
-                OpCode::PushConst(r(0), 0),                  // r0 = 0 (deo value)
-                OpCode::PushConst(r(1), 1),                  // r1 = push port
-                OpCode::Deo(r(0), r(1)),                     // region push
-                OpCode::Alloc(r(2), 4),                      // r2 = handle (rc=1)
-                OpCode::PushConst(r(3), 2),                  // r3 = pop port
-                OpCode::Deo(r(0), r(3)),                     // region pop → force free r2
-                OpCode::PushConst(r(4), 3),                  // r4 = return value 99
+                OpCode::PushConst(r(0), 0),
+                OpCode::PushConst(r(1), 1),
+                OpCode::Deo(r(0), r(1)),
+                OpCode::Alloc(r(2), 4),
+                OpCode::PushConst(r(3), 2),
+                OpCode::Deo(r(0), r(3)),
+                OpCode::PushConst(r(4), 3),
                 OpCode::Ret(r(4)),
             ],
-            constants: vec![
+            constants: raw_constants(vec![
                 Value::from_int(0),
                 Value::from_int(region_port(polka::REGION_PORT_PUSH)),
                 Value::from_int(region_port(polka::REGION_PORT_POP)),
                 Value::from_int(99),
-            ],
+            ]),
+            const_mask: Vec::new(),
             string_constants: vec![],
             reg_count: 8,
             param_count: 0,
@@ -165,21 +157,22 @@ mod tests {
             code: vec![
                 OpCode::PushConst(r(0), 0),
                 OpCode::PushConst(r(1), 1),
-                OpCode::Deo(r(0), r(1)),       // push
+                OpCode::Deo(r(0), r(1)),
                 OpCode::Alloc(r(2), 2),
                 OpCode::Alloc(r(3), 2),
                 OpCode::Alloc(r(4), 2),
                 OpCode::PushConst(r(5), 2),
-                OpCode::Deo(r(0), r(5)),       // pop
+                OpCode::Deo(r(0), r(5)),
                 OpCode::PushConst(r(6), 3),
                 OpCode::Ret(r(6)),
             ],
-            constants: vec![
+            constants: raw_constants(vec![
                 Value::from_int(0),
                 Value::from_int(region_port(polka::REGION_PORT_PUSH)),
                 Value::from_int(region_port(polka::REGION_PORT_POP)),
                 Value::from_int(7),
-            ],
+            ]),
+            const_mask: Vec::new(),
             string_constants: vec![],
             reg_count: 8,
             param_count: 0,
@@ -193,17 +186,17 @@ mod tests {
         let mut vm = VirtualMachine::new();
         let chunk = Chunk::Bytecode(BytecodeChunk {
             code: vec![
-                OpCode::Alloc(r(0), 2),  // no region active → not tracked
+                OpCode::Alloc(r(0), 2),
                 OpCode::PushConst(r(1), 0),
                 OpCode::Ret(r(1)),
             ],
-            constants: vec![Value::from_int(5)],
+            constants: raw_constants(vec![Value::from_int(5)]),
+            const_mask: Vec::new(),
             string_constants: vec![],
             reg_count: 4,
             param_count: 0,
         });
         vm.run(&chunk).unwrap();
-        // Handle still has rc=1, never dropped → still live.
         assert_eq!(vm.heap_live_count(), 1, "alloc outside region survives end of execution");
     }
 
@@ -214,21 +207,22 @@ mod tests {
             code: vec![
                 OpCode::PushConst(r(0), 0),
                 OpCode::PushConst(r(1), 1),
-                OpCode::Deo(r(0), r(1)),       // outer push
-                OpCode::Alloc(r(2), 2),        // belongs to outer
-                OpCode::Deo(r(0), r(1)),       // inner push
-                OpCode::Alloc(r(3), 2),        // belongs to inner
+                OpCode::Deo(r(0), r(1)),
+                OpCode::Alloc(r(2), 2),
+                OpCode::Deo(r(0), r(1)),
+                OpCode::Alloc(r(3), 2),
                 OpCode::PushConst(r(4), 2),
-                OpCode::Deo(r(0), r(4)),       // inner pop → frees only r3
+                OpCode::Deo(r(0), r(4)),
                 OpCode::PushConst(r(5), 3),
                 OpCode::Ret(r(5)),
             ],
-            constants: vec![
+            constants: raw_constants(vec![
                 Value::from_int(0),
                 Value::from_int(region_port(polka::REGION_PORT_PUSH)),
                 Value::from_int(region_port(polka::REGION_PORT_POP)),
                 Value::from_int(0),
-            ],
+            ]),
+            const_mask: Vec::new(),
             string_constants: vec![],
             reg_count: 8,
             param_count: 0,
@@ -244,14 +238,15 @@ mod tests {
         let chunk = Chunk::Bytecode(BytecodeChunk {
             code: vec![
                 OpCode::PushConst(r(0), 0),
-                OpCode::PushConst(r(1), 1),    // pop port
-                OpCode::Deo(r(0), r(1)),       // pop without push
+                OpCode::PushConst(r(1), 1),
+                OpCode::Deo(r(0), r(1)),
                 OpCode::Ret(r(0)),
             ],
-            constants: vec![
+            constants: raw_constants(vec![
                 Value::from_int(0),
                 Value::from_int(region_port(polka::REGION_PORT_POP)),
-            ],
+            ]),
+            const_mask: Vec::new(),
             string_constants: vec![],
             reg_count: 4,
             param_count: 0,
@@ -260,24 +255,25 @@ mod tests {
         assert!(err.contains("no active region"), "got error: {}", err);
     }
 
+    // i48 limit is gone; sub-imm of any i64 just wraps as plain u64.
     #[test]
-    fn test_sub_imm_boxes_overflow_below_i48() {
-        let i48_min: i64 = -(1i64 << 47);
-        let start = i48_min + 1;
+    fn test_sub_imm_full_i64_range() {
+        let start = i64::MIN + 5;
         let mut vm = VirtualMachine::new();
         let chunk = Chunk::Bytecode(BytecodeChunk {
             code: vec![
                 OpCode::PushConst(r(0), 0),
-                OpCode::SubImm(r(1), r(0), 5),  // start - 5 = i48_min - 4 → outside i48
+                OpCode::SubImm(r(1), r(0), 5),
                 OpCode::Ret(r(1)),
             ],
-            constants: vec![Value::from_int(start)],
+            constants: raw_constants(vec![Value::from_int(start)]),
+            const_mask: Vec::new(),
             string_constants: vec![],
             reg_count: 2,
             param_count: 0,
         });
-        let result = vm.run(&chunk).expect("vm should not panic on i48 underflow");
+        let result = vm.run(&chunk).expect("vm should not panic on i64 underflow");
         let expected = start.wrapping_sub(5);
-        assert_eq!(vm.box_pool().read_int(result), Some(expected));
+        assert_eq!(result.as_int(), expected);
     }
 }

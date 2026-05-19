@@ -3,146 +3,74 @@ use std::fmt;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Value(pub u64);
 
-const QNAN_MASK: u64    = 0x7FF8_0000_0000_0000;
-const TAG_SHIFT: u64    = 48;
-const TAG_MASK: u64     = 0x7 << TAG_SHIFT;
-const PAYLOAD_MASK: u64 = (1u64 << 48) - 1;
+pub const HANDLE_NONE: u64 = u64::MAX;
 
-const TAG_INT: u64       = 0;
-const TAG_BOOL: u64      = 1;
-const TAG_CHAR: u64      = 2;
-const TAG_UNIT: u64      = 3;
-const TAG_HANDLE: u64    = 4;
-const TAG_NONE: u64      = 5;
-const TAG_BOX: u64       = 6;
-const TAG_STR_CONST: u64 = 7;
-
-pub const I48_MIN: i64 = -(1i64 << 47);
-pub const I48_MAX: i64 = (1i64 << 47) - 1;
+const HANDLE_SLOT_BITS: u32 = 24;
+const HANDLE_SLOT_MASK: u64 = (1u64 << HANDLE_SLOT_BITS) - 1;
+const HANDLE_GEN_MASK:  u64 = (1u64 << HANDLE_SLOT_BITS) - 1;
+pub const HANDLE_SLOT_MAX: u32 = (1u32 << HANDLE_SLOT_BITS) - 2;
 
 impl Value {
-    pub const NONE:  Value = Value(QNAN_MASK | (TAG_NONE  << TAG_SHIFT));
-    pub const UNIT:  Value = Value(QNAN_MASK | (TAG_UNIT  << TAG_SHIFT));
-    pub const TRUE:  Value = Value(QNAN_MASK | (TAG_BOOL  << TAG_SHIFT) | 1);
-    pub const FALSE: Value = Value(QNAN_MASK | (TAG_BOOL  << TAG_SHIFT));
+    pub const ZERO: Value = Value(0);
+    pub const NONE: Value = Value(HANDLE_NONE);
+    // Unit / False / True are plain encodings. Same bit pattern as ZERO for
+    // unit and false — type comes from the consuming OpCode, not the bits.
+    pub const UNIT:  Value = Value(0);
+    pub const FALSE: Value = Value(0);
+    pub const TRUE:  Value = Value(1);
 
     #[inline(always)]
-    pub fn is_none(self) -> bool { self.0 == Self::NONE.0 }
+    pub fn raw(self) -> u64 { self.0 }
 
     #[inline(always)]
-    pub fn is_float(self) -> bool { (self.0 & QNAN_MASK) != QNAN_MASK }
+    pub fn from_raw(n: u64) -> Value { Value(n) }
 
     #[inline(always)]
-    fn tag(self) -> u64 { (self.0 & TAG_MASK) >> TAG_SHIFT }
+    pub fn from_int(n: i64) -> Value { Value(n as u64) }
 
     #[inline(always)]
-    pub fn fits_i48(n: i64) -> bool { (I48_MIN..=I48_MAX).contains(&n) }
-
-    // Inline Int constructor; caller must pre-check range (masked outside i48). Use BoxPool::intern_int for overflow.
-    #[inline(always)]
-    pub fn from_int(n: i64) -> Value {
-        debug_assert!(Self::fits_i48(n), "from_int: {} outside i48; use BoxPool::intern_int", n);
-        let payload = (n as u64) & PAYLOAD_MASK;
-        Value(QNAN_MASK | (TAG_INT << TAG_SHIFT) | payload)
-    }
+    pub fn from_float(f: f64) -> Value { Value(f.to_bits()) }
 
     #[inline(always)]
-    pub fn from_float(f: f64) -> Value {
-        if f.is_nan() {
-            Value(0x7FF0_0000_0000_0001)
-        } else {
-            Value(f.to_bits())
-        }
-    }
+    pub fn from_bool(b: bool) -> Value { Value(if b { 1 } else { 0 }) }
 
     #[inline(always)]
-    pub fn from_bool(b: bool) -> Value { if b { Self::TRUE } else { Self::FALSE } }
-
-    #[inline(always)]
-    pub fn from_char(c: char) -> Value {
-        Value(QNAN_MASK | (TAG_CHAR << TAG_SHIFT) | (c as u64))
-    }
+    pub fn from_char(c: char) -> Value { Value(c as u64) }
 
     #[inline(always)]
     pub fn from_handle(slot: u32, generation: u32) -> Value {
-        let s = (slot as u64) & 0x00FF_FFFF;
-        let g = (generation as u64) & 0x00FF_FFFF;
-        Value(QNAN_MASK | (TAG_HANDLE << TAG_SHIFT) | (s << 24) | g)
+        let s = (slot as u64) & HANDLE_SLOT_MASK;
+        let g = (generation as u64) & HANDLE_GEN_MASK;
+        Value((s << HANDLE_SLOT_BITS) | g)
     }
 
     #[inline(always)]
-    pub fn from_box(idx: u32) -> Value {
-        Value(QNAN_MASK | (TAG_BOX << TAG_SHIFT) | (idx as u64))
-    }
+    pub fn is_handle_none(self) -> bool { self.0 == HANDLE_NONE }
 
     #[inline(always)]
-    pub fn from_str_const(idx: u32) -> Value {
-        Value(QNAN_MASK | (TAG_STR_CONST << TAG_SHIFT) | (idx as u64))
-    }
+    pub fn as_int(self) -> i64 { self.0 as i64 }
 
     #[inline(always)]
-    pub fn as_int(self) -> Option<i64> {
-        if self.is_float() || self.tag() != TAG_INT { return None; }
-        let payload = self.0 & PAYLOAD_MASK;
-        Some(((payload as i64) << 16) >> 16)
-    }
+    pub fn as_float(self) -> f64 { f64::from_bits(self.0) }
 
     #[inline(always)]
-    pub fn as_float(self) -> Option<f64> {
-        if self.is_float() { Some(f64::from_bits(self.0)) } else { None }
-    }
+    pub fn as_bool(self) -> bool { self.0 != 0 }
 
     #[inline(always)]
-    pub fn as_bool(self) -> Option<bool> {
-        if !self.is_float() && self.tag() == TAG_BOOL { Some((self.0 & 1) != 0) } else { None }
-    }
+    pub fn as_char(self) -> Option<char> { char::from_u32(self.0 as u32) }
 
     #[inline(always)]
-    pub fn as_char(self) -> Option<char> {
-        if !self.is_float() && self.tag() == TAG_CHAR {
-            char::from_u32((self.0 & 0x1F_FFFF) as u32)
-        } else { None }
+    pub fn as_handle(self) -> (u32, u32) {
+        let slot = ((self.0 >> HANDLE_SLOT_BITS) & HANDLE_SLOT_MASK) as u32;
+        let gen_ = (self.0 & HANDLE_GEN_MASK) as u32;
+        (slot, gen_)
     }
-
-    #[inline(always)]
-    pub fn as_handle(self) -> Option<(u32, u32)> {
-        if !self.is_float() && self.tag() == TAG_HANDLE {
-            let p = self.0 & PAYLOAD_MASK;
-            Some((((p >> 24) & 0x00FF_FFFF) as u32, (p & 0x00FF_FFFF) as u32))
-        } else { None }
-    }
-
-    #[inline(always)]
-    pub fn as_box(self) -> Option<u32> {
-        if !self.is_float() && self.tag() == TAG_BOX {
-            Some((self.0 & PAYLOAD_MASK) as u32)
-        } else { None }
-    }
-
-    #[inline(always)]
-    pub fn as_str_const(self) -> Option<u32> {
-        if !self.is_float() && self.tag() == TAG_STR_CONST {
-            Some((self.0 & PAYLOAD_MASK) as u32)
-        } else { None }
-    }
-
-    #[inline(always)] pub fn is_unit(self)      -> bool { !self.is_float() && self.tag() == TAG_UNIT }
-    #[inline(always)] pub fn is_handle(self)    -> bool { !self.is_float() && self.tag() == TAG_HANDLE }
-    #[inline(always)] pub fn is_box(self)       -> bool { !self.is_float() && self.tag() == TAG_BOX }
-    #[inline(always)] pub fn is_str_const(self) -> bool { !self.is_float() && self.tag() == TAG_STR_CONST }
 }
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_none() { return write!(f, "None"); }
-        if let Some(n) = self.as_int()   { return write!(f, "Int({})", n); }
-        if let Some(x) = self.as_float() { return write!(f, "Float({})", x); }
-        if let Some(b) = self.as_bool()  { return write!(f, "Bool({})", b); }
-        if let Some(c) = self.as_char()  { return write!(f, "Char({:?})", c); }
-        if self.is_unit() { return write!(f, "Unit"); }
-        if let Some((s, g)) = self.as_handle() { return write!(f, "Ref({},{})", s, g); }
-        if let Some(i) = self.as_box() { return write!(f, "Box({})", i); }
-        write!(f, "Value({:#x})", self.0)
+        if self.is_handle_none() { return write!(f, "None"); }
+        write!(f, "Value({:#018x})", self.0)
     }
 }
 
@@ -154,49 +82,33 @@ mod tests {
 
     #[test]
     fn int_round_trip() {
-        for n in [0i64, 1, -1, 42, -42, I48_MAX, I48_MIN] {
-            let v = Value::from_int(n);
-            assert_eq!(v.as_int(), Some(n));
-            assert_eq!(v.as_float(), None);
+        for n in [0i64, 1, -1, 42, -42, i64::MAX, i64::MIN] {
+            assert_eq!(Value::from_int(n).as_int(), n);
         }
     }
 
     #[test]
     fn float_round_trip() {
         for f in [0.0, 1.5, -3.14, f64::INFINITY, -f64::INFINITY] {
-            assert_eq!(Value::from_float(f).as_float(), Some(f));
+            assert_eq!(Value::from_float(f).as_float(), f);
         }
     }
 
     #[test]
-    fn nan_is_float() {
+    fn nan_float() {
         let v = Value::from_float(f64::NAN);
-        assert!(v.as_float().unwrap().is_nan());
-        assert_eq!(v.as_int(), None);
-    }
-
-    #[test]
-    fn bool_round_trip() {
-        assert_eq!(Value::from_bool(true).as_bool(), Some(true));
-        assert_eq!(Value::from_bool(false).as_bool(), Some(false));
-    }
-
-    #[test]
-    fn char_round_trip() {
-        for c in ['a', '中', '🦀'] {
-            assert_eq!(Value::from_char(c).as_char(), Some(c));
-        }
+        assert!(v.as_float().is_nan());
     }
 
     #[test]
     fn handle_round_trip() {
         let v = Value::from_handle(0xABCDEF, 0x123456);
-        assert_eq!(v.as_handle(), Some((0xABCDEF, 0x123456)));
+        assert_eq!(v.as_handle(), (0xABCDEF, 0x123456));
     }
 
     #[test]
-    fn none_and_unit_distinct() {
-        assert!(Value::UNIT.is_unit() && !Value::UNIT.is_none());
-        assert!(Value::NONE.is_none() && !Value::NONE.is_unit());
+    fn handle_none_distinct() {
+        assert!(Value::NONE.is_handle_none());
+        assert!(!Value::from_handle(0, 0).is_handle_none());
     }
 }

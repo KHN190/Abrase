@@ -27,8 +27,6 @@ impl Device for SystemDevice {
         }
     }
 
-    // Writes to halt (0x01) and panic (0x02) are intercepted by the interpreter
-    // before reaching here, since they are VM control flow, not device I/O.
     fn write(&mut self, _port: u8, _val: Value) -> Result<(), String> {
         Ok(())
     }

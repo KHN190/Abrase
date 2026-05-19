@@ -1,14 +1,15 @@
 use super::{VirtualMachine, Value};
 use super::debug::DebugEvent;
-use super::memory::HEAP_BYTES_PER_VALUE;
-use super::value::{BoxPool, BoxedValue};
-use polka::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS};
+use polka::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS, HANDLE_NONE};
 use crate::frame::Frame;
+use crate::memory::mask_bit;
+use crate::value::alloc_string;
 
 const MAX_REGISTERS: usize = 1 << 16;
 const MAX_RECURSION_DEPTH: usize = 2048;
+// Slack for materializing param Moves before Call opcode (see stage_call_args).
+const STAGE_SLACK: usize = 32;
 
-// Hard cap on VM memory (heap cells + boxed values).
 pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
 impl VirtualMachine {
@@ -33,17 +34,15 @@ impl VirtualMachine {
         self.handlers.clear();
         self.region_table.clear();
         self.heap.clear();
-        self.box_pool.clear();
+        self.string_const_handles.clear();
         self.resolve_constants(module)?;
         self.pc = 0;
         self.base_reg = 0;
         self.current_func = module.entry;
         self.halted = false;
         self.exit_code = None;
-        let needed = FRAME_REGS;
-        if needed > self.registers.len() {
-            self.registers.resize(needed, Value::NONE);
-        }
+        let needed = FRAME_REGS + STAGE_SLACK;
+        self.ensure_registers(needed);
 
         if self.debug_sink.is_some() {
             self.run_loop::<true>(module)
@@ -58,12 +57,10 @@ impl VirtualMachine {
                 if let Some(code) = self.exit_code {
                     return Ok(Value::from_int(code));
                 }
-                let v = self.read_abs(self.base_reg);
-                return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
+                let v = self.read_abs_raw(self.base_reg);
+                return Ok(Value::from_raw(v));
             }
-            debug_assert!(self.current_func < module.functions.len(),
-                "current_func {} out of bounds (functions.len {})",
-                self.current_func, module.functions.len());
+            debug_assert!(self.current_func < module.functions.len());
 
             let bc = match unsafe { module.functions.get_unchecked(self.current_func) } {
                 Chunk::Bytecode(b) => b,
@@ -75,16 +72,16 @@ impl VirtualMachine {
             loop {
                 if self.pc >= bc.code.len() {
                     if let Some(frame) = self.frames.pop() {
-                        let return_val = self.read_abs(self.base_reg);
-                        if return_val.is_none() { return Err("Return register is empty".to_string()); }
+                        let return_raw = self.read_abs_raw(self.base_reg);
+                        let return_is_handle = self.reg_mask_bit(self.base_reg);
                         self.pc = frame.ip;
                         self.base_reg = frame.base_reg;
                         self.current_func = frame.func_id;
-                        self.write_abs(frame.dest_reg, return_val);
+                        self.write_abs(frame.dest_reg, return_raw, return_is_handle);
                         continue 'outer;
                     } else {
-                        let v = self.read_abs(self.base_reg);
-                        return if v.is_none() { Err("Return register is empty".to_string()) } else { Ok(v) };
+                        let v = self.read_abs_raw(self.base_reg);
+                        return Ok(Value::from_raw(v));
                     }
                 }
                 let opcode_pc = self.pc;
@@ -116,8 +113,7 @@ impl VirtualMachine {
             OpCode::Mod(d, a, b)  => self.bin_i64_checked(*d, *a, *b, "mod by zero", |x, y| x.checked_rem(y)),
             OpCode::Neg(d, a)     => {
                 let v = self.read_i64(*a)?;
-                let r = self.checked_int_or_box(v.wrapping_neg())?;
-                self.write(*d, r)
+                self.write(*d, v.wrapping_neg() as u64, false)
             }
 
             OpCode::FAdd(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x + y),
@@ -126,23 +122,23 @@ impl VirtualMachine {
             OpCode::FDiv(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x / y),
             OpCode::FNeg(d, a)    => {
                 let x = self.read_f64(*a)?;
-                self.write(*d, Value::from_float(-x))
+                self.write(*d, f64::to_bits(-x), false)
             }
             OpCode::FLt(d, a, b)  => {
                 let x = self.read_f64(*a)?;
                 let y = self.read_f64(*b)?;
                 let r = if x.is_nan() || y.is_nan() { false } else { x < y };
-                self.write(*d, Value::from_bool(r))
+                self.write(*d, bool_u64(r), false)
             }
             OpCode::FEq(d, a, b)  => {
                 let x = self.read_f64(*a)?;
                 let y = self.read_f64(*b)?;
                 let r = if x.is_nan() || y.is_nan() { false } else { x == y };
-                self.write(*d, Value::from_bool(r))
+                self.write(*d, bool_u64(r), false)
             }
 
-            OpCode::Eq(d, a, b)  => self.bin_cmp(*d, *a, *b, |x, y| x == y),
-            OpCode::Neq(d, a, b) => self.bin_cmp(*d, *a, *b, |x, y| x != y),
+            OpCode::Eq(d, a, b)  => self.bin_eq(*d, *a, *b, false),
+            OpCode::Neq(d, a, b) => self.bin_eq(*d, *a, *b, true),
             OpCode::Lt(d, a, b)  => self.bin_i64_cmp(*d, *a, *b, |x, y| x < y),
             OpCode::Gt(d, a, b)  => self.bin_i64_cmp(*d, *a, *b, |x, y| x > y),
             OpCode::Lte(d, a, b) => self.bin_i64_cmp(*d, *a, *b, |x, y| x <= y),
@@ -156,12 +152,12 @@ impl VirtualMachine {
 
             OpCode::Jmp(off) => self.branch(bc, *off),
             OpCode::Jz(r, off) => {
-                let v = self.read(*r)?;
-                if is_falsy(&v) { self.branch(bc, *off) } else { Ok(()) }
+                let v = self.read_raw(*r)?;
+                if v == 0 { self.branch(bc, *off) } else { Ok(()) }
             }
             OpCode::Jnz(r, off) => {
-                let v = self.read(*r)?;
-                if !is_falsy(&v) { self.branch(bc, *off) } else { Ok(()) }
+                let v = self.read_raw(*r)?;
+                if v != 0 { self.branch(bc, *off) } else { Ok(()) }
             }
             OpCode::Call(dest, fn_id) => self.do_call(module, bc, *dest, *fn_id as usize),
             OpCode::CallReg(dest, fn_id_reg) => {
@@ -175,109 +171,134 @@ impl VirtualMachine {
 
             OpCode::PushConst(reg, pool_idx) => {
                 let idx = *pool_idx as usize;
-                let resolved = &self.resolved_constants[self.current_func];
-                if idx >= resolved.len() {
+                let consts = &self.resolved_constants[self.current_func];
+                let mask  = &self.resolved_const_mask[self.current_func];
+                if idx >= consts.len() {
                     return Err("Constant index out of bounds".to_string());
                 }
-                let v = resolved[idx];
-                self.value_rc_inc(&v)?;
-                self.write(*reg, v)
+                let raw = consts[idx];
+                let is_handle = mask_bit(mask, idx);
+                if is_handle && raw != HANDLE_NONE {
+                    let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
+                    let g = (raw & 0x00FF_FFFF) as u32;
+                    self.heap.rc_inc(s, g)?;
+                }
+                self.write(*reg, raw, is_handle)
             }
             OpCode::Copy(d, s) => {
-                let v = self.read(*s)?;
-                self.value_rc_inc(&v)?;
-                self.write(*d, v)
+                let (v, is_handle) = self.read(*s)?;
+                if is_handle && v != HANDLE_NONE {
+                    let slot = ((v >> 24) & 0x00FF_FFFF) as u32;
+                    let gen_ = (v & 0x00FF_FFFF) as u32;
+                    self.heap.rc_inc(slot, gen_)?;
+                }
+                self.write(*d, v, is_handle)
             }
             OpCode::Move(d, s) => {
-                let v = self.take(*s)?;
-                self.write(*d, v)
+                let (v, is_handle) = self.take(*s)?;
+                self.write(*d, v, is_handle)
             }
 
             OpCode::Ld(d, b, off) => {
-                let (slot, generation) = self.read_handle(*b)?;
-                let v = self.heap.ld(slot, generation, *off as usize)?;
-                self.value_rc_inc(&v)?;
-                self.write(*d, v)
+                let (slot, gen_) = self.read_handle(*b)?;
+                let (raw, is_handle) = self.heap.ld(slot, gen_, *off as usize)?;
+                if is_handle && raw != HANDLE_NONE {
+                    let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
+                    let g = (raw & 0x00FF_FFFF) as u32;
+                    self.heap.rc_inc(s, g)?;
+                }
+                self.write(*d, raw, is_handle)
             }
             OpCode::St(src, b, off) => {
-                let (slot, generation) = self.read_handle(*b)?;
-                let v = self.take(*src)?;
-                let old = self.heap.st(slot, generation, *off as usize, v)?;
-                self.value_rc_dec(&old)?;
+                let (slot, gen_) = self.read_handle(*b)?;
+                let (raw, is_handle) = self.take(*src)?;
+                let (old_raw, old_is_handle) = self.heap.st(slot, gen_, *off as usize, raw, is_handle)?;
+                if old_is_handle && old_raw != HANDLE_NONE {
+                    let s = ((old_raw >> 24) & 0x00FF_FFFF) as u32;
+                    let g = (old_raw & 0x00FF_FFFF) as u32;
+                    self.heap.rc_dec(s, g)?;
+                }
                 Ok(())
             }
             OpCode::LdIdx(d, b, i) => {
-                let (slot, generation) = self.read_handle(*b)?;
+                let (slot, gen_) = self.read_handle(*b)?;
                 let off = self.read_i64(*i)?;
                 if off < 0 {
                     return Err(format!("ldidx: negative index {}", off));
                 }
-                let v = self.heap.ld(slot, generation, off as usize)?;
-                self.value_rc_inc(&v)?;
-                self.write(*d, v)
+                let (raw, is_handle) = self.heap.ld(slot, gen_, off as usize)?;
+                if is_handle && raw != HANDLE_NONE {
+                    let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
+                    let g = (raw & 0x00FF_FFFF) as u32;
+                    self.heap.rc_inc(s, g)?;
+                }
+                self.write(*d, raw, is_handle)
             }
             OpCode::StIdx(src, b, i) => {
-                let (slot, generation) = self.read_handle(*b)?;
+                let (slot, gen_) = self.read_handle(*b)?;
                 let off = self.read_i64(*i)?;
                 if off < 0 {
                     return Err(format!("stidx: negative index {}", off));
                 }
-                let v = self.take(*src)?;
-                let old = self.heap.st(slot, generation, off as usize, v)?;
-                self.value_rc_dec(&old)?;
+                let (raw, is_handle) = self.take(*src)?;
+                let (old_raw, old_is_handle) = self.heap.st(slot, gen_, off as usize, raw, is_handle)?;
+                if old_is_handle && old_raw != HANDLE_NONE {
+                    let s = ((old_raw >> 24) & 0x00FF_FFFF) as u32;
+                    let g = (old_raw & 0x00FF_FFFF) as u32;
+                    self.heap.rc_dec(s, g)?;
+                }
                 Ok(())
             }
             OpCode::Ref(d, s) => {
-                let v = self.read(*s)?;
-                self.value_rc_inc(&v)?;
-                let (slot, generation) = self.checked_heap_alloc(1)?;
-                // Record the enclosing region (if any), same as Alloc
-                // and Ref, so per-iter / stmt-position pops force-free the
-                // ref cell instead of leaking it.
+                let (v, is_handle) = self.read(*s)?;
+                if is_handle && v != HANDLE_NONE {
+                    let slot = ((v >> 24) & 0x00FF_FFFF) as u32;
+                    let gen_ = (v & 0x00FF_FFFF) as u32;
+                    self.heap.rc_inc(slot, gen_)?;
+                }
+                let init_mask: u64 = if is_handle { 1 } else { 0 };
+                let (slot, generation) = self.checked_heap_alloc_with_mask(1, &[init_mask])?;
                 self.region_record_alloc(slot, generation);
-                self.heap.st(slot, generation, 0, v)?;
-                self.write(*d, Value::from_handle(slot, generation))
+                self.heap.st(slot, generation, 0, v, is_handle)?;
+                let handle = Value::from_handle(slot, generation).raw();
+                self.write(*d, handle, true)
             }
 
             OpCode::AddImm(d, s, imm) => {
                 let x = self.read_i64(*s)?;
-                let v = self.checked_int_or_box(x.wrapping_add(*imm as i64))?;
-                self.write(*d, v)
+                self.write(*d, x.wrapping_add(*imm as i64) as u64, false)
             }
             OpCode::SubImm(d, s, imm) => {
                 let x = self.read_i64(*s)?;
-                let v = self.checked_int_or_box(x.wrapping_sub(*imm as i64))?;
-                self.write(*d, v)
+                self.write(*d, x.wrapping_sub(*imm as i64) as u64, false)
             }
 
             OpCode::Alloc(d, size) => {
                 let (slot, generation) = self.checked_heap_alloc(*size as usize)?;
                 self.region_record_alloc(slot, generation);
-                self.write(*d, Value::from_handle(slot, generation))
+                let handle = Value::from_handle(slot, generation).raw();
+                self.write(*d, handle, true)
             }
             OpCode::Drop(reg) => {
                 let abs = self.abs(*reg);
-                let v = self.take_abs(abs);
-                if !v.is_none() { self.value_rc_dec(&v)?; }
+                let (v, is_handle) = self.take_abs(abs);
+                if is_handle && v != HANDLE_NONE {
+                    let s = ((v >> 24) & 0x00FF_FFFF) as u32;
+                    let g = (v & 0x00FF_FFFF) as u32;
+                    self.heap.rc_dec(s, g)?;
+                }
                 Ok(())
             }
 
-            // Read from a device port. Virtual DISPATCH ports are served from the active handler
-            // cell instead of the device registry; falls through to the real device otherwise.
             OpCode::Dei(d, port_reg) => self.do_dei(*d, *port_reg),
-            // Write to a device port. Handles system exit, effect dispatch (snapshot + cell
-            // allocation + handler resolution), handler pop, and region management. All other
-            // ports delegate to the device registry.
             OpCode::Deo(src, port_reg) => self.do_deo(module, *src, *port_reg),
-            // Push a handler frame bound to effect_id. The dispatch table is a heap array of
-            // (fn_id, env) pairs indexed by operation. Continuation cells are allocated lazily
-            // on the first DEO dispatch, not here.
             OpCode::Handle(_dest, table_reg, effect_id) => {
-                let table_val = self.read_abs(self.abs(*table_reg));
-                let (table_slot, table_gen) = match table_val.as_handle() {
-                    Some((s, g)) => (Some(s), g),
-                    None => (None, 0),
-                };
+                let (table_raw, table_is_handle) = self.read_at(*table_reg);
+                let (table_slot, table_gen) = if table_is_handle && table_raw != HANDLE_NONE {
+                    let s = ((table_raw >> 24) & 0x00FF_FFFF) as u32;
+                    let g = (table_raw & 0x00FF_FFFF) as u32;
+                    (Some(s), g)
+                } else { (None, 0) };
                 self.handlers.push(super::HandlerFrame {
                     effect_id: *effect_id,
                     dispatch_table_slot: table_slot,
@@ -287,13 +308,11 @@ impl VirtualMachine {
                     cells_allocated: Vec::new(),
                     body_frame_index: None,
                     pending_return_arm_fn: None,
-                    pending_return_arm_env: polka::Value::NONE,
+                    pending_return_arm_env: HANDLE_NONE,
+                    pending_return_arm_env_is_handle: false,
                 });
                 Ok(())
             }
-            // Restore a continuation: write the resume value into the work frame's dest register,
-            // push the current (handler) frame so it returns after the work completes, then jump
-            // to saved_pc + 2 (the instruction after the suspending DEO).
             OpCode::Resume(dest_reg, val_reg) => self.do_resume(module, *dest_reg, *val_reg),
         }
     }
@@ -311,16 +330,14 @@ impl VirtualMachine {
         }
         let dest_abs = self.base_reg + dest.to_usize();
         let new_base = self.base_reg + caller_reg_count;
-        let needed = new_base + FRAME_REGS;
+        let needed = new_base + FRAME_REGS + STAGE_SLACK;
         if needed > MAX_REGISTERS {
             return Err(format!(
                 "Stack overflow: register window {} exceeds limit {}",
                 needed, MAX_REGISTERS
             ));
         }
-        if needed > self.registers.len() {
-            self.registers.resize(needed, Value::NONE);
-        }
+        self.ensure_registers(needed);
 
         let chunk = unsafe { module.functions.get_unchecked(fn_id) };
         if let Chunk::Native(n) = chunk {
@@ -332,22 +349,33 @@ impl VirtualMachine {
             let func = self.resolved_natives[fn_id].as_ref()
                 .ok_or_else(|| format!("native call: fn_id {} not resolved", fn_id))?
                 .clone();
-            let mut buf: [Value; MAX_NATIVE_ARGS] = [Value::NONE; MAX_NATIVE_ARGS];
+            let mut buf: [Value; MAX_NATIVE_ARGS] = [Value::ZERO; MAX_NATIVE_ARGS];
             for i in 0..param_count {
-                let v = self.read_abs(new_base + i);
-                if v.is_none() {
-                    return Err(format!("native call: arg {} (r{}) is empty", i, i));
-                }
-                buf[i] = v;
+                let raw = self.read_abs_raw(new_base + i);
+                buf[i] = Value::from_raw(raw);
             }
             let mut ctx = super::NativeCtx {
-                pool: &mut self.box_pool,
+                heap: &mut self.heap,
                 devices: &mut self.devices,
                 halted: &mut self.halted,
                 exit_code: &mut self.exit_code,
             };
-            let result = func(&mut ctx, &buf[..param_count])?;
-            self.write_abs(dest_abs, result);
+            let (result, result_is_handle) = func(&mut ctx, &buf[..param_count])?;
+            // Decrement rc of any handle args once the native fn consumed them.
+            for i in 0..param_count {
+                let abs = new_base + i;
+                if self.reg_mask_bit(abs) {
+                    let raw = self.read_abs_raw(abs);
+                    if raw != HANDLE_NONE {
+                        let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
+                        let g = (raw & 0x00FF_FFFF) as u32;
+                        self.heap.rc_dec(s, g)?;
+                    }
+                    self.set_reg_mask_bit(abs, false);
+                }
+                self.write_abs_raw(abs, HANDLE_NONE);
+            }
+            self.write_abs(dest_abs, result.raw(), result_is_handle);
             return Ok(());
         }
 
@@ -381,12 +409,11 @@ impl VirtualMachine {
     #[inline]
     fn do_ret(&mut self, module: &Module, reg: Register) -> Result<(), String> {
         let abs = self.abs(reg);
-        let return_val = self.take_abs(abs);
-        if return_val.is_none() { return Err("Return register is empty".to_string()); }
+        let (return_raw, return_is_handle) = self.take_abs(abs);
         let frame = match self.frames.pop() {
             Some(f) => f,
             None => {
-                self.write_abs(self.base_reg, return_val);
+                self.write_abs(self.base_reg, return_raw, return_is_handle);
                 self.halted = true;
                 return Ok(());
             }
@@ -396,68 +423,59 @@ impl VirtualMachine {
             self.pc = frame.ip;
             self.base_reg = frame.base_reg;
             self.current_func = frame.func_id;
-            self.write_abs(frame.dest_reg, return_val);
+            self.write_abs(frame.dest_reg, return_raw, return_is_handle);
             return Ok(());
         }
 
-        self.do_ret_slow(module, frame, return_val)
+        self.do_ret_slow(module, frame, return_raw, return_is_handle)
     }
 
     #[cold]
     #[inline(never)]
-    fn do_ret_slow(&mut self, module: &Module, frame: super::Frame, return_val: Value) -> Result<(), String> {
+    fn do_ret_slow(&mut self, module: &Module, frame: super::Frame, return_raw: u64, return_is_handle: bool) -> Result<(), String> {
         let is_body_frame = self.handlers.last()
             .and_then(|h| h.body_frame_index)
             .map_or(false, |idx| idx == self.frames.len());
         let route_through_return_arm = (frame.cont.is_some() || is_body_frame)
             && self.handlers.last().map_or(false, |h| h.pending_return_arm_fn.is_some());
 
-        let dbg = std::env::var("TRACE_RET").is_ok();
-        if dbg {
-            eprintln!("[do_ret_slow] fn={} base_reg={} cont={} is_body_frame={} pending_arm={} pc-before={}",
-                frame.func_id, frame.base_reg, frame.cont.is_some(), is_body_frame,
-                self.handlers.last().map_or(false, |h| h.pending_return_arm_fn.is_some()),
-                self.pc);
-        }
         if !route_through_return_arm {
             if let Some(cont) = frame.cont.as_ref() {
                 if cont.snapshot_count > 0 {
-                    if dbg { eprintln!("  non-route: restore_registers slot={} gen={}", cont.snapshot_slot, cont.snapshot_gen); }
                     let snap = crate::snapshot::SnapshotHandle {
                         slot: cont.snapshot_slot,
                         generation: cont.snapshot_gen,
                         count: cont.snapshot_count,
                     };
                     self.restore_registers(frame.base_reg, snap)?;
-                    self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
+                    self.heap.rc_dec(snap.slot, snap.generation)?;
                 }
             }
             self.pc = frame.ip;
             self.base_reg = frame.base_reg;
             self.current_func = frame.func_id;
-            self.write_abs(frame.dest_reg, return_val);
+            self.write_abs(frame.dest_reg, return_raw, return_is_handle);
             return Ok(());
         }
 
         if let Some(cont) = frame.cont.as_ref() {
             if cont.snapshot_count > 0 {
-                if dbg { eprintln!("  route: restore_registers slot={} gen={}", cont.snapshot_slot, cont.snapshot_gen); }
                 let snap = crate::snapshot::SnapshotHandle {
                     slot: cont.snapshot_slot,
                     generation: cont.snapshot_gen,
                     count: cont.snapshot_count,
                 };
                 self.restore_registers(frame.base_reg, snap)?;
-                self.heap.rc_dec(snap.slot, snap.generation, &mut self.box_pool)?;
+                self.heap.rc_dec(snap.slot, snap.generation)?;
             }
         }
 
-        // Take + clear pending so subsequent arm-cont pops in this handler don't re-apply.
-        let (ra_fn, ra_env) = {
+        let (ra_fn, ra_env_raw, ra_env_is_handle) = {
             let h = self.handlers.last_mut().unwrap();
             let fn_id = h.pending_return_arm_fn.take().unwrap();
-            let env = std::mem::replace(&mut h.pending_return_arm_env, Value::NONE);
-            (fn_id, env)
+            let env = std::mem::replace(&mut h.pending_return_arm_env, HANDLE_NONE);
+            let env_h = std::mem::replace(&mut h.pending_return_arm_env_is_handle, false);
+            (fn_id, env, env_h)
         };
 
         self.frames.push(super::Frame::normal(
@@ -475,21 +493,23 @@ impl VirtualMachine {
         };
         let new_base = frame.base_reg + caller_reg_count;
         let window = callee_reg_count.max(polka::FRAME_REGS);
-        let needed = new_base + window;
+        let needed = new_base + window + STAGE_SLACK;
         if needed > MAX_REGISTERS {
             return Err(format!(
                 "Stack overflow setting up return arm: window {} exceeds limit {}",
                 needed, MAX_REGISTERS
             ));
         }
-        if needed > self.registers.len() {
-            self.registers.resize(needed, Value::NONE);
+        self.ensure_registers(needed);
+
+        if ra_env_is_handle && ra_env_raw != HANDLE_NONE {
+            let s = ((ra_env_raw >> 24) & 0x00FF_FFFF) as u32;
+            let g = (ra_env_raw & 0x00FF_FFFF) as u32;
+            self.heap.rc_inc(s, g)?;
         }
-        // ra_env: install path didn't rc_inc, so do it here. return_val: ref already transferred via take_abs.
-        self.value_rc_inc(&ra_env)?;
-        self.write_abs(new_base, ra_env);
-        self.write_abs(new_base + 1, Value::from_int(0));
-        self.write_abs(new_base + 2, return_val);
+        self.write_abs(new_base, ra_env_raw, ra_env_is_handle);
+        self.write_abs(new_base + 1, 0, false);
+        self.write_abs(new_base + 2, return_raw, return_is_handle);
 
         self.base_reg = new_base;
         self.current_func = ra_fn;
@@ -501,51 +521,50 @@ impl VirtualMachine {
         let port_val = self.read_i64(port_reg)?;
         let (device_id, port) = split_port(port_val)?;
         if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
-            let fn_id = if let Some(frame) = self.handlers.last() {
+            let (raw, is_handle) = if let Some(frame) = self.handlers.last() {
                 self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::DISPATCH_FN_ID)?
             } else {
-                // No active handler: return cached result or DISPATCH_NO_MATCH.
-                Value::from_int(self.dispatch_last_result.take().unwrap_or(0xFFFF) as i64)
+                (self.dispatch_last_result.take().unwrap_or(0xFFFF) as u64, false)
             };
-            return self.write(d, fn_id);
+            return self.write(d, raw, is_handle);
         }
         if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_ENV {
-            let env_val = if let Some(frame) = self.handlers.last() {
+            let (raw, is_handle) = if let Some(frame) = self.handlers.last() {
                 self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::DISPATCH_ENV)?
             } else {
-                // No active handler: return cached env or NONE.
-                self.dispatch_last_env.take().unwrap_or(Value::NONE)
+                self.dispatch_last_env.take().unwrap_or((HANDLE_NONE, false))
             };
-            // NONE is the VM's uninitialized sentinel; Ret rejects it, so decode to 0.
-            let env_val = if env_val.is_none() { Value::from_int(0) } else { env_val };
-            return self.write(d, env_val);
+            let (raw, is_handle) = if raw == HANDLE_NONE && !is_handle { (0u64, false) } else { (raw, is_handle) };
+            if is_handle && raw != HANDLE_NONE {
+                let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
+                let g = (raw & 0x00FF_FFFF) as u32;
+                self.heap.rc_inc(s, g)?;
+            }
+            return self.write(d, raw, is_handle);
         }
         let dev = self.devices.get_mut(device_id)
             .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
         let v = dev.read(port)?;
-        self.write(d, v)
+        self.write(d, v.raw(), false)
     }
 
     fn do_deo(&mut self, module: &Module, src: Register, port_reg: Register) -> Result<(), String> {
-        let v = self.read(src)?;
+        let (raw, is_handle) = self.read(src)?;
         let port_val = self.read_i64(port_reg)?;
         let (device_id, port) = split_port(port_val)?;
         if device_id == 0x00 {
             match port {
                 0x01 => {
-                    if let Some(n) = v.as_int() {
-                        self.exit_code = Some(n & 0xFFFF_FFFF);
-                    }
+                    if !is_handle { self.exit_code = Some((raw as i64) & 0xFFFF_FFFF); }
                     self.halted = true;
                     return Ok(());
                 }
                 0x02 => {
-                    let msg = match v.as_int() {
-                        Some(n) if n >= 0 => match self.box_pool.get(n as u32) {
-                            Some(BoxedValue::String(s)) => s.clone(),
-                            _ => format!("(pool idx {})", n),
-                        },
-                        _ => format!("{:?}", v),
+                    let msg = if is_handle && raw != HANDLE_NONE {
+                        let v = Value::from_raw(raw);
+                        crate::value::read_string(&self.heap, v).unwrap_or_else(|| format!("(handle {:?})", v))
+                    } else {
+                        format!("{}", raw as i64)
                     };
                     return Err(format!("panic: {}", msg));
                 }
@@ -553,19 +572,16 @@ impl VirtualMachine {
             }
         }
         if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
-            let key = decode_dispatch_key(v)?;
-            let (cell_slot, cell_gen) = self.checked_heap_alloc(super::cont_slot::SIZE)?;
+            let key = decode_dispatch_key(raw)?;
+            let mut init_mask = vec![0u64; (super::cont_slot::SIZE + 63) / 64];
+            init_mask[0] = super::cont_slot::INIT_MASK_WORD0;
+            let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(super::cont_slot::SIZE, &init_mask)?;
             self.region_record_alloc(cell_slot, cell_gen);
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_PC,
-                Value::from_int((self.pc - 1) as i64))?;
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_BASE,
-                Value::from_int(self.base_reg as i64))?;
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_FUNC,
-                Value::from_int(self.current_func as i64))?;
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE,
-                Value::from_int(1))?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_PC, (self.pc - 1) as u64, false)?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_BASE, self.base_reg as u64, false)?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_FUNC, self.current_func as u64, false)?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE, 1, false)?;
 
-            // Snapshot the suspended function's register window
             let reg_count = self.current_fn_reg_count(module);
             let snapshot = self.snapshot_registers(self.base_reg, reg_count)?;
             self.write_snapshot_into_cell(cell_slot, cell_gen, snapshot)?;
@@ -576,12 +592,14 @@ impl VirtualMachine {
                 handler_frame.cell_gen = cell_gen;
             }
             let (fn_id, env) = self.resolve_dispatch(key);
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_FN_ID,
-                Value::from_int(fn_id as i64))?;
-            // rc_inc balances the cascade rc_dec when the cont cell is freed.
-            let env_val = env.unwrap_or(Value::NONE);
-            self.value_rc_inc(&env_val)?;
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV, env_val)?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_FN_ID, fn_id as u64, false)?;
+            let (env_raw, env_is_handle) = env.unwrap_or((HANDLE_NONE, false));
+            if env_is_handle && env_raw != HANDLE_NONE {
+                let s = ((env_raw >> 24) & 0x00FF_FFFF) as u32;
+                let g = (env_raw & 0x00FF_FFFF) as u32;
+                self.heap.rc_inc(s, g)?;
+            }
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
             self.dispatch_last_result = Some(fn_id);
             self.dispatch_last_env = env;
             return Ok(());
@@ -595,8 +613,7 @@ impl VirtualMachine {
             return Ok(());
         }
         if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_RETURN_FN {
-            let fn_id = v.as_int()
-                .ok_or_else(|| format!("dispatch.return_fn: expected int, got {:?}", v))?;
+            let fn_id = raw as i64;
             let handler = self.handlers.last_mut()
                 .ok_or("dispatch.return_fn: no active handler frame")?;
             handler.pending_return_arm_fn = Some(fn_id as usize);
@@ -605,7 +622,8 @@ impl VirtualMachine {
         if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_RETURN_ENV {
             let handler = self.handlers.last_mut()
                 .ok_or("dispatch.return_env: no active handler frame")?;
-            handler.pending_return_arm_env = v;
+            handler.pending_return_arm_env = raw;
+            handler.pending_return_arm_env_is_handle = is_handle;
             return Ok(());
         }
         if device_id == polka::REGION_ID {
@@ -613,9 +631,9 @@ impl VirtualMachine {
                 polka::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
                 polka::REGION_PORT_POP  => self.region_pop(),
                 polka::REGION_PORT_FORGET => {
-                    // Recursive walk: a variant/list payload may chain into other
-                    // region-tracked cells. Visited set guards against cyclic refs.
-                    if let Some((slot, gen_)) = v.as_handle() {
+                    if is_handle && raw != HANDLE_NONE {
+                        let slot = ((raw >> 24) & 0x00FF_FFFF) as u32;
+                        let gen_ = (raw & 0x00FF_FFFF) as u32;
                         let mut visited: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
                         self.deep_forget(slot, gen_, &mut visited)?;
                     }
@@ -624,9 +642,14 @@ impl VirtualMachine {
                 _ => Err(format!("region: unknown port {:#x}", port)),
             };
         }
+        if device_id == crate::devices::HOSTFUNC_ID && port == crate::devices::hostfunc::PORT_TRIGGER {
+            let dev = self.devices.get_mut(device_id)
+                .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
+            return dev.write_with_heap(port, Value::from_raw(raw), &mut self.heap);
+        }
         let dev = self.devices.get_mut(device_id)
             .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
-        dev.write_with_pool(port, v, &mut self.box_pool)
+        dev.write(port, Value::from_raw(raw))
     }
 
     pub(crate) fn deep_forget(
@@ -642,8 +665,10 @@ impl VirtualMachine {
             Err(_) => return Ok(()),
         };
         for off in 0..size {
-            if let Ok(v) = self.heap.ld(slot, generation, off) {
-                if let Some((s, g)) = v.as_handle() {
+            if let Ok((raw, is_handle)) = self.heap.ld(slot, generation, off) {
+                if is_handle && raw != HANDLE_NONE {
+                    let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
+                    let g = (raw & 0x00FF_FFFF) as u32;
                     self.deep_forget(s, g, visited)?;
                 }
             }
@@ -657,54 +682,43 @@ impl VirtualMachine {
                 .ok_or("Resume outside an active handler frame")?;
             (h.cell_slot, h.cell_gen)
         };
-        let (alive, saved_base, saved_func, suspended_snapshot) = {
-            let cell = self.heap.cell(cell_slot, cell_gen)?;
-            debug_assert!(cell.len() >= super::cont_slot::SIZE);
-            let alive = cell[super::cont_slot::ALIVE];
-            let saved_base = match cell[super::cont_slot::SUSPEND_BASE].as_int() {
-                Some(n) if n >= 0 => n as usize,
-                _ => return Err("resume: continuation cell has invalid base".to_string()),
-            };
-            let saved_func = match cell[super::cont_slot::SUSPEND_FUNC].as_int() {
-                Some(n) if n >= 0 => n as usize,
-                _ => return Err("resume: continuation cell has invalid func".to_string()),
-            };
-            let snap_val = cell[super::cont_slot::REGS_SNAPSHOT_SLOT];
-            let snap = if snap_val.is_none() {
+        let (alive_raw, saved_base, saved_func, suspended_snapshot) = {
+            let data = self.heap.cell_data(cell_slot, cell_gen)?;
+            let mask = self.heap.cell_mask(cell_slot, cell_gen)?;
+            debug_assert!(data.len() >= super::cont_slot::SIZE);
+            let alive = data[super::cont_slot::ALIVE];
+            let saved_base = data[super::cont_slot::SUSPEND_BASE] as usize;
+            let saved_func = data[super::cont_slot::SUSPEND_FUNC] as usize;
+            let snap_raw = data[super::cont_slot::REGS_SNAPSHOT_SLOT];
+            let snap_is_handle = mask_bit(mask, super::cont_slot::REGS_SNAPSHOT_SLOT);
+            let snap = if !snap_is_handle || snap_raw == HANDLE_NONE {
                 crate::snapshot::SnapshotHandle::EMPTY
             } else {
-                let (s, g) = snap_val.as_handle()
-                    .ok_or_else(|| format!("snapshot: bad handle in cell at slot {}", cell_slot))?;
-                let count = cell[super::cont_slot::REGS_COUNT].as_int()
-                    .ok_or_else(|| format!("snapshot: bad reg count in cell at slot {}", cell_slot))?
-                    as usize;
+                let s = ((snap_raw >> 24) & 0x00FF_FFFF) as u32;
+                let g = (snap_raw & 0x00FF_FFFF) as u32;
+                let count = data[super::cont_slot::REGS_COUNT] as usize;
                 crate::snapshot::SnapshotHandle { slot: s, generation: g, count }
             };
             (alive, saved_base, saved_func, snap)
         };
-        match alive.as_int() {
-            Some(1) => {}
-            Some(0) => return Err("resume: continuation already consumed".to_string()),
-            _ => return Err(format!(
-                "resume: continuation cell corrupted (alive slot = {:?})", alive)),
+        match alive_raw {
+            1 => {}
+            0 => return Err("resume: continuation already consumed".to_string()),
+            n => return Err(format!("resume: continuation cell corrupted (alive slot = {})", n)),
         }
 
-        self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE,
-            Value::from_int(0))?;
+        self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE, 0, false)?;
 
-        let val = self.read(val_reg)?;
+        let (val_raw, val_is_handle) = self.read(val_reg)?;
 
         let arm_call_frame = self.frames.pop()
             .ok_or("resume: no arm-call frame on stack")?;
         let yield_result_abs = arm_call_frame.dest_reg;
         let resume_ip = arm_call_frame.ip;
 
-        // Off-region: a suspended fn's REGION.pop on the way back to its Ret can't free this.
         let arm_reg_count = self.current_fn_reg_count(module);
         let arm_snapshot = self.snapshot_registers_off_region(self.base_reg, arm_reg_count)?;
 
-        // Insert above F1, past sibling arm-conts. Intermediate call frames stay on top so
-        // their Ret unwinds into the handle body; only the body's own Ret pops this.
         let arm_resume_dest_abs = self.base_reg + dest_reg.to_usize();
         let insert_at = {
             let body_idx = self.handlers.last().and_then(|h| h.body_frame_index)
@@ -730,22 +744,14 @@ impl VirtualMachine {
             self.frames.insert(insert_at, new_frame);
         }
 
-        // Restore suspended fn register window.
         self.base_reg = saved_base;
         self.current_func = saved_func;
         self.pc = resume_ip;
         self.restore_registers(saved_base, suspended_snapshot)?;
 
-        // Drop the snapshot now — it holds handles into region-tracked siblings; surviving
-        // until region pop would cascade rc_dec across already-freed cells. Clear the cont
-        // cell's pointer to it so its own later force_free doesn't cascade through dead memory.
         if !suspended_snapshot.is_empty() {
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::REGS_SNAPSHOT_SLOT, Value::NONE)?;
-            self.heap.rc_dec(
-                suspended_snapshot.slot,
-                suspended_snapshot.generation,
-                &mut self.box_pool,
-            )?;
+            self.heap.st(cell_slot, cell_gen, super::cont_slot::REGS_SNAPSHOT_SLOT, HANDLE_NONE, true)?;
+            self.heap.rc_dec(suspended_snapshot.slot, suspended_snapshot.generation)?;
         }
 
         if yield_result_abs >= self.registers.len() {
@@ -753,16 +759,16 @@ impl VirtualMachine {
                 "resume: yield dest abs {} out of registers (len {})",
                 yield_result_abs, self.registers.len()));
         }
-        self.write_abs(yield_result_abs, val);
+        self.write_abs(yield_result_abs, val_raw, val_is_handle);
 
         if self.debug_sink.is_some() {
             let event = DebugEvent::Resume {
                 saved_pc: resume_ip,
                 saved_base,
                 cell_dest: yield_result_abs - saved_base,
-                val,
+                val: Value::from_raw(val_raw),
                 handler_dest: dest_reg.to_usize(),
-                alive,
+                alive: Value::from_raw(alive_raw),
                 depth: self.handlers.len(),
             };
             self.emit_debug(&event);
@@ -792,83 +798,122 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    fn read_abs(&self, abs: usize) -> Value {
-        debug_assert!(abs < self.registers.len(),
-            "register abs {} out of bounds (len {})", abs, self.registers.len());
+    pub(crate) fn ensure_registers(&mut self, needed: usize) {
+        if needed > self.registers.len() {
+            self.registers.resize(needed, HANDLE_NONE);
+        }
+        let mask_words_needed = (needed + 63) / 64;
+        if mask_words_needed > self.register_mask.len() {
+            self.register_mask.resize(mask_words_needed, 0);
+        }
+    }
+
+    #[inline(always)]
+    fn read_abs_raw(&self, abs: usize) -> u64 {
+        debug_assert!(abs < self.registers.len());
         unsafe { *self.registers.get_unchecked(abs) }
     }
 
     #[inline(always)]
-    fn write_abs(&mut self, abs: usize, v: Value) {
-        debug_assert!(abs < self.registers.len(),
-            "register abs {} out of bounds (len {})", abs, self.registers.len());
+    fn write_abs_raw(&mut self, abs: usize, v: u64) {
+        debug_assert!(abs < self.registers.len());
         unsafe { *self.registers.get_unchecked_mut(abs) = v; }
     }
 
     #[inline(always)]
-    fn take_abs(&mut self, abs: usize) -> Value {
-        debug_assert!(abs < self.registers.len(),
-            "register abs {} out of bounds (len {})", abs, self.registers.len());
-        unsafe { std::mem::replace(self.registers.get_unchecked_mut(abs), Value::NONE) }
+    pub(crate) fn reg_mask_bit(&self, abs: usize) -> bool {
+        let w = abs / 64;
+        let b = abs % 64;
+        self.register_mask.get(w).map_or(false, |x| (x >> b) & 1 == 1)
     }
 
     #[inline(always)]
-    fn read(&self, r: Register) -> Result<Value, String> {
-        let v = self.read_abs(self.abs(r));
-        if v.is_none() { Err(format!("read: r{} is empty", r.0)) } else { Ok(v) }
+    pub(crate) fn set_reg_mask_bit(&mut self, abs: usize, on: bool) {
+        let w = abs / 64;
+        let b = abs % 64;
+        if let Some(x) = self.register_mask.get_mut(w) {
+            if on { *x |= 1u64 << b; } else { *x &= !(1u64 << b); }
+        }
     }
 
     #[inline(always)]
-    fn take(&mut self, r: Register) -> Result<Value, String> {
-        let v = self.take_abs(self.abs(r));
-        if v.is_none() {
-            Err(format!("move: r{} is empty (already moved?)", r.0))
-        } else { Ok(v) }
+    fn write_abs(&mut self, abs: usize, raw: u64, is_handle: bool) {
+        self.write_abs_raw(abs, raw);
+        self.set_reg_mask_bit(abs, is_handle);
     }
 
     #[inline(always)]
-    fn write(&mut self, r: Register, v: Value) -> Result<(), String> {
-        self.write_abs(self.abs(r), v);
+    fn take_abs(&mut self, abs: usize) -> (u64, bool) {
+        let v = self.read_abs_raw(abs);
+        let h = self.reg_mask_bit(abs);
+        self.write_abs_raw(abs, HANDLE_NONE);
+        self.set_reg_mask_bit(abs, false);
+        (v, h)
+    }
+
+    #[inline(always)]
+    fn read(&self, r: Register) -> Result<(u64, bool), String> {
+        let abs = self.abs(r);
+        let v = self.read_abs_raw(abs);
+        Ok((v, self.reg_mask_bit(abs)))
+    }
+
+    #[inline(always)]
+    fn read_at(&self, r: Register) -> (u64, bool) {
+        let abs = self.abs(r);
+        (self.read_abs_raw(abs), self.reg_mask_bit(abs))
+    }
+
+    #[inline(always)]
+    fn read_raw(&self, r: Register) -> Result<u64, String> {
+        Ok(self.read_abs_raw(self.abs(r)))
+    }
+
+    #[inline(always)]
+    fn take(&mut self, r: Register) -> Result<(u64, bool), String> {
+        let abs = self.abs(r);
+        let v = self.read_abs_raw(abs);
+        let h = self.reg_mask_bit(abs);
+        self.write_abs_raw(abs, HANDLE_NONE);
+        self.set_reg_mask_bit(abs, false);
+        Ok((v, h))
+    }
+
+    #[inline(always)]
+    fn write(&mut self, r: Register, raw: u64, is_handle: bool) -> Result<(), String> {
+        let abs = self.abs(r);
+        self.write_abs(abs, raw, is_handle);
         Ok(())
     }
 
     #[inline(always)]
-    pub(crate) fn value_rc_inc(&mut self, v: &Value) -> Result<(), String> {
-        if let Some((slot, generation)) = v.as_handle() {
-            self.heap.rc_inc(slot, generation)
-        } else if let Some(idx) = v.as_box() {
-            self.box_pool.inc(idx)
-        } else {
-            Ok(())
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn value_rc_dec(&mut self, v: &Value) -> Result<(), String> {
-        if let Some((slot, generation)) = v.as_handle() {
-            if std::env::var("TRACE_SLOT").map(|t| t.parse::<u32>().ok() == Some(slot)).unwrap_or(false) {
-                eprintln!("[value_rc_dec] slot {} gen {} from fn {} pc {}", slot, generation, self.current_func, self.pc);
-            }
-            self.heap.rc_dec(slot, generation, &mut self.box_pool).map(|_| ())
-        } else if let Some(idx) = v.as_box() {
-            self.box_pool.dec(idx);
-            Ok(())
-        } else {
-            Ok(())
-        }
-    }
-
-    #[inline(always)]
     fn read_i64(&self, r: Register) -> Result<i64, String> {
-        let v = self.read_abs(self.abs(r));
-        if let Some(n) = v.as_int() { return Ok(n); }
-        if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
-        self.box_pool.read_int(v).ok_or_else(|| format!("expected i64, got {:?}", v))
+        Ok(self.read_raw(r)? as i64)
+    }
+
+    #[inline(always)]
+    fn read_f64(&self, r: Register) -> Result<f64, String> {
+        Ok(f64::from_bits(self.read_raw(r)?))
+    }
+
+    #[inline(always)]
+    fn read_handle(&self, r: Register) -> Result<(u32, u32), String> {
+        let abs = self.abs(r);
+        let v = self.read_abs_raw(abs);
+        if !self.reg_mask_bit(abs) {
+            return Err(format!("expected handle, got plain {:#x} in r{}", v, r.0));
+        }
+        if v == HANDLE_NONE {
+            return Err(format!("expected handle, got None in r{}", r.0));
+        }
+        let slot = ((v >> 24) & 0x00FF_FFFF) as u32;
+        let gen_ = (v & 0x00FF_FFFF) as u32;
+        Ok((slot, gen_))
     }
 
     #[inline(always)]
     pub(crate) fn mem_used(&self) -> usize {
-        self.heap.bytes_used().saturating_add(self.box_pool.bytes_used())
+        self.heap.bytes_used()
     }
 
     pub(crate) fn mem_charge(&mut self, bytes: usize) -> Result<(), String> {
@@ -882,52 +927,28 @@ impl VirtualMachine {
 
     #[inline(always)]
     fn checked_heap_alloc(&mut self, size: usize) -> Result<(u32, u32), String> {
-        self.mem_charge(size.saturating_mul(HEAP_BYTES_PER_VALUE))?;
-        Ok(self.heap.alloc(size))
+        self.mem_charge(size.saturating_mul(8))?;
+        self.heap.try_alloc(size)
     }
 
     #[inline(always)]
-    fn checked_int_or_box(&mut self, n: i64) -> Result<Value, String> {
-        if Value::fits_i48(n) {
-            return Ok(Value::from_int(n));
-        }
-        self.mem_charge(BoxPool::pending_bytes(&BoxedValue::Int(n)))?;
-        Ok(self.box_pool.intern_int(n))
+    fn checked_heap_alloc_with_mask(&mut self, size: usize, init_mask: &[u64]) -> Result<(u32, u32), String> {
+        self.mem_charge(size.saturating_mul(8))?;
+        self.heap.try_alloc_with_mask(size, init_mask)
     }
 
     #[inline(always)]
-    fn read_handle(&self, r: Register) -> Result<(u32, u32), String> {
-        let v = self.read_abs(self.abs(r));
-        if let Some(h) = v.as_handle() { return Ok(h); }
-        if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
-        Err(format!("expected handle, got {:?}", v))
-    }
-
-    #[inline(always)]
-    fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F)
-        -> Result<(), String>
-    {
+    fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
-        let v = self.checked_int_or_box(f(x, y))?;
-        self.write(d, v)
+        self.write(d, f(x, y) as u64, false)
     }
 
     #[inline(always)]
-    fn read_f64(&self, r: Register) -> Result<f64, String> {
-        let v = self.read_abs(self.abs(r));
-        if let Some(f) = v.as_float() { return Ok(f); }
-        if v.is_none() { return Err(format!("read: r{} is empty", r.0)); }
-        Err(format!("expected Float in r{}, got {:?}", r.to_usize(), v))
-    }
-
-    #[inline(always)]
-    fn bin_f64<F: Fn(f64, f64) -> f64>(&mut self, d: Register, a: Register, b: Register, f: F)
-        -> Result<(), String>
-    {
+    fn bin_f64<F: Fn(f64, f64) -> f64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_f64(a)?;
         let y = self.read_f64(b)?;
-        self.write(d, Value::from_float(f(x, y)))
+        self.write(d, f64::to_bits(f(x, y)), false)
     }
 
     #[inline(always)]
@@ -937,54 +958,59 @@ impl VirtualMachine {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
         let r = f(x, y).ok_or_else(|| msg.to_string())?;
-        let v = self.checked_int_or_box(r)?;
-        self.write(d, v)
+        self.write(d, r as u64, false)
     }
 
     #[inline(always)]
-    fn bin_cmp<F: Fn(&Value, &Value) -> bool>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
-        let x = self.read(a)?;
-        let y = self.read(b)?;
-        self.write(d, Value::from_bool(f(&x, &y)))
+    fn bin_eq(&mut self, d: Register, a: Register, b: Register, negate: bool) -> Result<(), String> {
+        let xa = self.read_raw(a)?;
+        let xb = self.read_raw(b)?;
+        let r = (xa == xb) ^ negate;
+        self.write(d, bool_u64(r), false)
     }
 
     #[inline(always)]
     fn bin_i64_cmp<F: Fn(i64, i64) -> bool>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_i64(a)?;
         let y = self.read_i64(b)?;
-        self.write(d, Value::from_bool(f(x, y)))
+        self.write(d, bool_u64(f(x, y)), false)
     }
 
     fn resolve_constants(&mut self, module: &Module) -> Result<(), String> {
         self.resolved_constants.clear();
+        self.resolved_const_mask.clear();
         self.resolved_constants.reserve(module.functions.len());
+        self.resolved_const_mask.reserve(module.functions.len());
         for chunk in &module.functions {
-            let resolved: Vec<Value> = match chunk {
+            let (vals, mask): (Vec<u64>, Vec<u64>) = match chunk {
                 Chunk::Bytecode(bc) => {
-                    let mut out = Vec::with_capacity(bc.constants.len());
-                    for v in &bc.constants {
-                        if let Some(sidx) = v.as_str_const() {
-                            let s = bc.string_constants.get(sidx as usize)
-                                .cloned().unwrap_or_default();
-                            let pending = BoxedValue::String(s);
-                            let cost = BoxPool::pending_bytes(&pending);
-                            if self.mem_used().saturating_add(cost) > MAX_RAM {
-                                return Err(format!(
-                                    "out of memory at module load: string constant {} bytes, {} / {} in use",
-                                    cost, self.mem_used(), MAX_RAM
-                                ));
-                            }
-                            let bidx = self.box_pool.intern(pending);
-                            out.push(Value::from_box(bidx));
-                        } else {
-                            out.push(*v);
+                    let mut vals = bc.constants.clone();
+                    let mask = bc.const_mask.clone();
+                    // For each handle-bit constant, resolve the string-pool index it
+                    // carries into an actual heap handle (rc=1, module-lifetime).
+                    for i in 0..vals.len() {
+                        if !mask_bit(&mask, i) { continue; }
+                        let sidx = vals[i] as usize;
+                        let s = bc.string_constants.get(sidx)
+                            .cloned().unwrap_or_default();
+                        let needed = s.len() + 16; // crude upper bound
+                        if self.mem_used().saturating_add(needed) > MAX_RAM {
+                            return Err(format!(
+                                "out of memory at module load: string constant {} bytes",
+                                s.len()
+                            ));
                         }
+                        let v = alloc_string(&mut self.heap, &s)?;
+                        vals[i] = v.raw();
+                        let (slot, gen_) = v.as_handle();
+                        self.string_const_handles.push((slot, gen_));
                     }
-                    out
+                    (vals, mask)
                 }
-                Chunk::Native(_) => Vec::new(),
+                Chunk::Native(_) => (Vec::new(), Vec::new()),
             };
-            self.resolved_constants.push(resolved);
+            self.resolved_constants.push(vals);
+            self.resolved_const_mask.push(mask);
         }
         self.resolved_natives.clear();
         self.resolved_natives.reserve(module.functions.len());
@@ -1009,25 +1035,17 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn resolve_dispatch(&self, key: u16) -> (u16, Option<Value>) {
+    fn resolve_dispatch(&self, key: u16) -> (u16, Option<(u64, bool)>) {
         let effect_id = (key >> 8) as u16;
         let op_id = (key & 0xFF) as usize;
         for h in self.handlers.iter().rev() {
             if h.effect_id != effect_id { continue; }
             if let Some(slot) = h.dispatch_table_slot {
-                if let Ok(v) = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2) {
-                    if let Some(n) = v.as_int() {
-                        if (0..=0xFFFF).contains(&n) {
-                            let env = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2 + 1).ok();
-                            return (n as u16, env);
-                        }
-                    }
-                }
-                if let Ok(v) = self.heap.ld(slot, h.dispatch_table_gen, op_id) {
-                    if let Some(n) = v.as_int() {
-                        if (0..=0xFFFF).contains(&n) {
-                            return (n as u16, None);
-                        }
+                if let Ok((raw, _)) = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2) {
+                    let n = raw as i64;
+                    if (0..=0xFFFF).contains(&n) {
+                        let env = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2 + 1).ok();
+                        return (n as u16, env);
                     }
                 }
             }
@@ -1036,21 +1054,15 @@ impl VirtualMachine {
     }
 }
 
-// Validate and extract a dispatch key (effect_id << 8 | op_id) from a Value.
-fn decode_dispatch_key(v: Value) -> Result<u16, String> {
-    match v.as_int() {
-        Some(n) if (0..=0xFFFF).contains(&n) => Ok(n as u16),
-        _ => Err(format!("dispatch.lookup: bad key {:?}", v)),
-    }
+#[inline(always)]
+fn bool_u64(b: bool) -> u64 { if b { 1 } else { 0 } }
+
+fn decode_dispatch_key(raw: u64) -> Result<u16, String> {
+    let n = raw as i64;
+    if (0..=0xFFFF).contains(&n) { Ok(n as u16) }
+    else { Err(format!("dispatch.lookup: bad key {}", n)) }
 }
 
-fn is_falsy(val: &Value) -> bool {
-    if let Some(b) = val.as_bool() { return !b; }
-    if let Some(i) = val.as_int() { return i == 0; }
-    val.is_unit()
-}
-
-// 16-bit port = (device_id << 8) | port_offset
 fn split_port(port_val: i64) -> Result<(u8, u8), String> {
     if !(0..=0xFFFF).contains(&port_val) {
         return Err(format!("device port {:#x} out of 16-bit range", port_val));
