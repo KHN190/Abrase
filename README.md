@@ -56,10 +56,9 @@ fn main() -> Int {
 
 ## Benchmarks
 
-Generally better than CPython. On smaller tasks, could be ~10x faster.
+Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x faster.
 
-* _Compiler passes wired: constant folding, loop-invariant code motion, tail-call optimization, etc. See `wiki/14-Optimizations.md`._
-
+* _See `wiki/14-Optimizations.md`._
 * _Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine)_.
 
 ## Polka — bytecode design
