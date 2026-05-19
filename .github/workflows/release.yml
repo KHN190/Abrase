@@ -26,7 +26,11 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: abrase-aarch64-darwin
-          - os: macos-13
+          # Cross-compile to Intel from the Apple-Silicon runner. macos-13
+          # (native Intel) runner pool is tiny and queues 20+ min; the
+          # macos-latest runner ships an Xcode SDK that targets both arches,
+          # so we just install the rust target and `cargo build --target`.
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: abrase-x86_64-darwin
     steps:
