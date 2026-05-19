@@ -1,6 +1,6 @@
 # Myriad
 
-Myriad is the runtime for [Polka](https://crates.io/crates/polka) bytecode. 
+Myriad is the runtime for [Polka](https://crates.io/crates/polka-rs) bytecode. 
 
 This crate defines its computation core. The register machine interpreter features:
 

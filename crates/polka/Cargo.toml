@@ -1,5 +1,5 @@
 [package]
-name = "polka"
+name = "polka-rs"
 description = "Bytecode schema for the Myriad runtime (Abrase language)."
 keywords = ["bytecode", "vm", "compiler", "interpreter", "abrase"]
 categories = ["compilers", "encoding"]
@@ -12,7 +12,11 @@ authors.workspace      = true
 repository.workspace   = true
 homepage.workspace     = true
 
+# Registry name is `polka-rs` (the bare `polka` was taken). Rust import path
+# stays `polka` so downstream `use polka::*` and intra-workspace path deps
+# don't change — see each downstream Cargo.toml's `package = "polka-rs"`.
 [lib]
+name = "polka"
 doctest = false
 
 [dependencies]
