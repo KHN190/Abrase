@@ -1,6 +1,6 @@
 # Abrase (compiler)
 
-The Abrase language compiler. Produces [Polka](https://crates.io/crates/polka) bytecode that runs on [Myriad](https://crates.io/crates/myriad).
+The Abrase language compiler. Produces [Polka](https://crates.io/crates/polka-rs) bytecode that runs on [Myriad](https://crates.io/crates/myriad).
 
 Abrase (`.abe`) is a Rust-inspired language built around three ideas: static
 type checking, an algebraic effect system, and region-based memory

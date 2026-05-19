@@ -94,11 +94,11 @@ jobs:
             exit 0
           fi
 
-      - name: publish polka
+      - name: publish polka-rs
         if: env.CARGO_REGISTRY_TOKEN != ''
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: cargo publish -p polka
+        run: cargo publish -p polka-rs
       - name: settle index
         if: env.CARGO_REGISTRY_TOKEN != ''
         run: sleep 30
