@@ -16,4 +16,4 @@ homepage.workspace     = true
 doctest = false
 
 [dependencies]
-polka = { path = "../polka", version = "0.1.0" }
+polka = { path = "../polka", version = "=0.1.0-alpha.1" }
