@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main, pre-release]
+  pull_request:
+    branches: [main, pre-release]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo build (workspace)
+        run: cargo build --workspace --all-targets
+
+      - name: cargo test (workspace)
+        run: cargo test --workspace --no-fail-fast
+
+  release-build:
+    name: release build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p abrase-cli
+      - name: smoke test
+        run: |
+          for f in examples/*.abe; do
+            echo "→ $f"
+            ./target/release/abrase run "$f" > /dev/null || exit 1
+          done
+
+  publish-dry-run:
+    name: cargo publish --dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # polka-rs has no external deps, so the full verify (compile after
+      # packaging) works without crates.io having anything yet.
+      - run: cargo publish -p polka-rs --dry-run --allow-dirty
+
+      # Downstream crates need polka-rs / myriad-rs in the registry to even
+      # resolve dependencies (path deps are stripped at publish time, and
+      # `--no-verify` only skips the post-package compile, not resolution).
+      # `continue-on-error: true` unblocks first-time publish; after the
+      # initial release these steps pass cleanly.
+      - run: cargo publish -p myriad-rs  --dry-run --allow-dirty --no-verify
+        continue-on-error: true
+      - run: cargo publish -p abrase     --dry-run --allow-dirty --no-verify
+        continue-on-error: true
+      - run: cargo publish -p abrase-cli --dry-run --allow-dirty --no-verify
+        continue-on-error: true
