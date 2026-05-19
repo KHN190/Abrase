@@ -20,6 +20,6 @@ path = "src/main.rs"
 doctest = false
 
 [dependencies]
-abrase = { path = "../abrase", version = "0.1.0" }
-myriad = { path = "../myriad", version = "0.1.0" }
-polka  = { path = "../polka",  version = "0.1.0" }
+abrase = { path = "../abrase", version = "=0.1.0-alpha.1" }
+myriad = { path = "../myriad", version = "=0.1.0-alpha.1" }
+polka  = { path = "../polka",  version = "=0.1.0-alpha.1" }
