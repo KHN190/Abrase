@@ -1,5 +1,10 @@
 # Myriad
 
+> Published as `myriad-rs` (the bare `myriad` was taken). The Rust import
+> path stays `myriad` — add to your `Cargo.toml` as
+> `myriad = { package = "myriad-rs", version = "0.1.0-alpha.1" }` and keep
+> `use myriad::*;` unchanged.
+
 Myriad is the runtime for [Polka](https://crates.io/crates/polka-rs) bytecode. 
 
 This crate defines its computation core. The register machine interpreter features:
