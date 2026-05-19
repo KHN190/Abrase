@@ -1,8 +1,15 @@
+# Build artifacts
 target/
 
+# Claude Code
 .claude/
 
+# Local notes
 todo*.md
-*.md
 
+# Documentation (keep only essential docs)
+*.md
+!README.md
+
+# Wiki
 wiki
