@@ -2,6 +2,10 @@
 
 <img src="./abrase.png" alt="Abrase" width="100" style="float: right; margin-left: 20px;">
 
+[![CI](https://github.com/KHN190/Abrase/actions/workflows/ci.yml/badge.svg)](https://github.com/KHN190/Abrase/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/abrase-cli.svg?label=abrase-cli)](https://crates.io/crates/abrase-cli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language designed for code review, not just human authorship. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
 
 It features:
