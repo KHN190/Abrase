@@ -14,12 +14,12 @@ name = "abrase-cli"
 version = "0.1.0-alpha.1"
 dependencies = [
  "abrase",
- "myriad",
+ "myriad-rs",
  "polka-rs",
 ]
 
 [[package]]
-name = "myriad"
+name = "myriad-rs"
 version = "0.1.0-alpha.1"
 dependencies = [
  "polka-rs",

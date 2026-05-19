@@ -103,11 +103,11 @@ jobs:
         if: env.CARGO_REGISTRY_TOKEN != ''
         run: sleep 30
 
-      - name: publish myriad
+      - name: publish myriad-rs
         if: env.CARGO_REGISTRY_TOKEN != ''
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: cargo publish -p myriad
+        run: cargo publish -p myriad-rs
 
       - name: publish abrase
         if: env.CARGO_REGISTRY_TOKEN != ''

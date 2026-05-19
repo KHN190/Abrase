@@ -1,6 +1,6 @@
 # Polka
 
-Polka is the bytecode that runs on the [Myriad](https://crates.io/crates/myriad). It compiles from [Abrase](https://github.com/KHN190/Abrase) language.
+Polka is the bytecode that runs on the [Myriad](https://crates.io/crates/myriad-rs). It compiles from [Abrase](https://github.com/KHN190/Abrase) language.
 
 The crate defines:
 
