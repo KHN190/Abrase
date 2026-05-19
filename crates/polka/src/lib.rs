@@ -7,11 +7,8 @@ pub mod cartridge;
 
 pub use value::{Value, HANDLE_NONE, HANDLE_SLOT_MAX};
 
-// Per-fn register window cap. Plan §FRAME_REGS proposed 64 (1-u64 mask) but
-// audit of existing tests (built_ins.abe, region.abe, examples) showed bump-
-// only allocator routinely needs >100 regs in 40-line fns; kept at 256, mask
-// is held in vm.register_mask as a Vec<u64> sized to cover all live regs.
-pub const FRAME_REGS: usize = 256;
+// 64 fits frame handle-mask in one u64.
+pub const FRAME_REGS: usize = 64;
 pub const FRAME_MASK_WORDS: usize = FRAME_REGS / 64;
 
 pub const DISPATCH_ID: u8 = 0xE0;
@@ -25,7 +22,6 @@ pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
 pub const REGION_ID: u8 = 0xE1;
 pub const REGION_PORT_PUSH: u8 = 0x00;
 pub const REGION_PORT_POP: u8 = 0x01;
-// Used by break/return/throw to remove ref from region record list.
 pub const REGION_PORT_FORGET: u8 = 0x02;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -100,12 +96,8 @@ pub enum OpCode {
 #[derive(Clone, Default)]
 pub struct BytecodeChunk {
     pub code: Vec<OpCode>,
-    // Raw u64 values. Type is implicit from the consuming OpCode + const_mask.
     pub constants: Vec<u64>,
-    // Bit i (LSB) of const_mask[i / 64] = 1 iff constants[i] is a handle at
-    // runtime. At compile time, handle-bit constants store an index into
-    // string_constants; the loader replaces the slot with a real heap handle
-    // before execution.
+    // Handle-bit constants store string_constants index; loader replaces with real heap handle.
     pub const_mask: Vec<u64>,
     pub string_constants: Vec<String>,
     pub reg_count: usize,
@@ -122,7 +114,6 @@ impl BytecodeChunk {
     }
 }
 
-// Native (host-implemented) function slot
 #[derive(Clone, Debug)]
 pub struct NativeChunk {
     pub name: String,

@@ -7,6 +7,8 @@ use crate::value::alloc_string;
 
 const MAX_REGISTERS: usize = 1 << 16;
 const MAX_RECURSION_DEPTH: usize = 2048;
+// Slack for materializing param Moves before Call opcode (see stage_call_args).
+const STAGE_SLACK: usize = 32;
 
 pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
@@ -39,7 +41,7 @@ impl VirtualMachine {
         self.current_func = module.entry;
         self.halted = false;
         self.exit_code = None;
-        let needed = FRAME_REGS;
+        let needed = FRAME_REGS + STAGE_SLACK;
         self.ensure_registers(needed);
 
         if self.debug_sink.is_some() {
@@ -328,7 +330,7 @@ impl VirtualMachine {
         }
         let dest_abs = self.base_reg + dest.to_usize();
         let new_base = self.base_reg + caller_reg_count;
-        let needed = new_base + FRAME_REGS;
+        let needed = new_base + FRAME_REGS + STAGE_SLACK;
         if needed > MAX_REGISTERS {
             return Err(format!(
                 "Stack overflow: register window {} exceeds limit {}",
@@ -491,7 +493,7 @@ impl VirtualMachine {
         };
         let new_base = frame.base_reg + caller_reg_count;
         let window = callee_reg_count.max(polka::FRAME_REGS);
-        let needed = new_base + window;
+        let needed = new_base + window + STAGE_SLACK;
         if needed > MAX_REGISTERS {
             return Err(format!(
                 "Stack overflow setting up return arm: window {} exceeds limit {}",

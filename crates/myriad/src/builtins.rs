@@ -12,8 +12,7 @@ pub struct NativeCtx<'a> {
     pub exit_code: &'a mut Option<i64>,
 }
 
-// Returns (raw, is_handle) — interpreter writes value and updates caller's
-// frame mask bit from the second component.
+// (raw, is_handle) — interpreter updates caller's frame mask bit accordingly.
 pub type NativeFn = Rc<dyn for<'a> Fn(&mut NativeCtx<'a>, &[Value]) -> Result<(Value, bool), String>>;
 
 #[derive(Default, Clone)]
@@ -95,12 +94,13 @@ fn concat_native() -> NativeFn {
 }
 
 fn to_str_native() -> NativeFn {
-    // __to_str is monomorphized by the compiler into __int_to_s / etc; if it
-    // still gets called, fall back to treating arg0 as a String handle.
+    // Fallback when compile-time dispatch can't determine type (effect-op returns, etc).
     Rc::new(|ctx, args| {
-        let s = read_string(ctx.heap, args[0])
-            .ok_or_else(|| format!("__to_str: cannot convert {:?}", args[0]))?;
-        let v = alloc_string(ctx.heap, &s)?;
+        if let Some(s) = read_string(ctx.heap, args[0]) {
+            let v = alloc_string(ctx.heap, &s)?;
+            return Ok(handle(v));
+        }
+        let v = alloc_string(ctx.heap, &args[0].as_int().to_string())?;
         Ok(handle(v))
     })
 }
@@ -155,7 +155,6 @@ fn sleep_ms_native() -> NativeFn {
 fn rand_native() -> NativeFn {
     Rc::new(|ctx, _args| {
         let n = read_random_u64(ctx.devices)?;
-        // Mask to 53 bits (f64 mantissa width) to keep precision clean.
         let m = n & ((1u64 << 53) - 1);
         let f = (m as f64) / ((1u64 << 53) as f64);
         Ok(plain(Value::from_float(f)))
@@ -302,7 +301,6 @@ fn char_to_s_native() -> NativeFn {
 }
 
 fn string_to_s_native() -> NativeFn {
-    // Identity at type-conversion level; reads and re-emits a fresh String handle.
     Rc::new(|ctx, args| {
         let s = read_string(ctx.heap, args[0])
             .ok_or_else(|| format!("__string_to_s: arg0 not String: {:?}", args[0]))?;

@@ -89,7 +89,6 @@ fn cmd_run(source: &str, debug: bool) -> ExitCode {
         .with_debug(debug)
         .with_fn_names(fn_names);
 
-    // install built-ins
     Host::default().install_into(&mut vm);
     match vm.run_module(&module) {
         Ok(v) => { print_result(&vm, v); ExitCode::SUCCESS }
@@ -104,7 +103,7 @@ fn print_result(vm: &VirtualMachine, v: Value) {
             return;
         }
     }
-    println!("{:?}", v);
+    println!("{}", v.as_int());
 }
 
 fn cmd_check(source: &str) -> ExitCode {

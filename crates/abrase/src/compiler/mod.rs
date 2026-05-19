@@ -42,16 +42,13 @@ pub struct HostFnDecl {
 
 pub struct Compiler {
     pub(super) constants: Vec<Value>,
-    // Parallel: const_mask_bits[i] = true iff constants[i] is a handle at
-    // runtime (i.e. a string-pool index that the loader will materialize).
     pub(super) const_mask_bits: Vec<bool>,
     pub(super) string_constants: Vec<String>,
     pub(super) code: Vec<OpCode>,
-    // Next register to allocate. u16 so the "exhausted" state (256) fits.
     pub(super) next_reg: u16,
+    pub(super) max_reg: u16,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
-    // Compiler_region_depth at each binding.
     pub(super) var_bound_at_region: HashMap<String, usize>,
     pub(super) current_self_fn_id: Option<u16>,
     pub(super) tail_call_spans: std::collections::HashSet<ast::Span>,
@@ -68,55 +65,31 @@ pub struct Compiler {
     pub(super) effect_arms_by_handle: HashMap<ast::Span, HashMap<(String, String), String>>,
     pub(super) arm_resume_counts: HashMap<String, usize>,
     pub(super) arm_resume_in_tail: HashMap<String, bool>,
-    // Per-call-site op dispatch: handle nested effects before global fallback.
     pub(super) op_call_to_arm: HashMap<ast::Span, String>,
-    // Handle expression span -> synthesised return-arm fn name.
     pub(super) return_arm_by_handle: HashMap<ast::Span, String>,
-    // Captures per synthesised arm fn (return arms and op arms alike), as
-    // computed by the pre-pass.
     pub(super) arm_captures: HashMap<String, Vec<closures::CaptureInfo>>,
-    // Compile-time stack tracking `(arm fn name) -> env register` for each
-    // active `handle` expression being compiled.
     pub(super) arm_env_stack: Vec<HashMap<String, Register>>,
-    // (receiver_type_name, method_name) -> synthesised mangled fn name produced
-    // by the impl-lift pass. Used by codegen to rewrite `x.method(...)` calls.
     pub method_dispatch: HashMap<(String, String), String>,
-    // Closure expression spans -> the synthesised lifted fn name and capture
-    // layout. Built by the closures pre-pass.
     pub(super) closure_by_span: HashMap<ast::Span, closures::ClosureInfo>,
-    // Per-fn-body closure env mapping: enables direct calls to lifted fns.
     pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
     pub(super) loop_stack: Vec<LoopCtx>,
     pub(super) concat_fn_id: Option<usize>,
     pub(super) to_str_fn_id: Option<usize>,
     pub(super) host_fns: HashMap<String, HostFnDecl>,
-    // Builtin natives registered by `register_builtins`: name -> (params, ret).
-    // Kept for legacy single-overload typechecker plumbing; see also fn_overloads.
     pub(super) builtin_types: HashMap<String, (Vec<TyType>, TyType)>,
-    // Overload table: user-facing name.`func_map[name]` is the first overload; 
-    // additional overloads sharing that name live here. 
     pub(super) fn_overloads: HashMap<String, Vec<usize>>,
-    // Signature per fn_id (parallel to `functions`). 
     pub(super) fn_signatures: HashMap<usize, (Vec<TyType>, TyType)>,
     pub(super) device_mask: [u8; 32],
     pub(super) current_span: ast::Span,
-    // Count of regions currently active inside the function being compiled.
     pub(super) compiler_region_depth: usize,
-    // Compiler-region depth at function entry. return/throw emits
-    // (compiler_region_depth - fn_compiler_depth_baseline) pops before exiting.
     pub(super) fn_compiler_depth_baseline: usize,
-    // Per-block stack of binder registers introduced by `let` bindings.
     pub(super) block_locals_stack: Vec<Vec<Register>>,
-    // block_locals_stack.len() at function entry. return/throw/? unwind back
-    // to this baseline.
     pub(super) fn_block_baseline: usize,
     pub(super) handler_table_stack: Vec<Register>,
     pub(super) fn_handler_baseline: usize,
     pub errors: Vec<Error>,
     pub source: String,
     pub(super) debug_sink: Option<debug::CompileDebugSink>,
-    // Remaining use counts for each variable in the current function body,
-    // populated by liveness::count_uses before compiling each function.
     pub(super) remaining_uses: HashMap<String, usize>,
 }
 
@@ -128,6 +101,7 @@ impl Compiler {
             string_constants: Vec::new(),
             code: Vec::new(),
             next_reg: 0,
+            max_reg: 0,
             var_to_reg: HashMap::new(),
             var_types: HashMap::new(),
             var_bound_at_region: HashMap::new(),
@@ -225,8 +199,6 @@ impl Compiler {
         self.host_fns.insert(decl.name.clone(), decl);
     }
 
-    // Look up a user-defined fn by name. Used by the runtime to auto-install
-    // convention-named hooks (e.g. `oom_handler`).
     pub fn lookup_fn_id(&self, name: &str) -> Option<u16> {
         let id = *self.func_map.get(name)?;
         u16::try_from(id).ok()
@@ -254,7 +226,7 @@ impl Compiler {
             constants: self.constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&self.const_mask_bits),
             string_constants: self.string_constants.clone(),
-            reg_count: self.next_reg as usize,
+            reg_count: self.max_reg as usize,
             param_count: 0,
         }))
     }
@@ -275,7 +247,6 @@ impl Compiler {
             return Err(self.errors.clone());
         }
 
-        // Impl-lift pass: synthesise concrete FnDecls and build method dispatch table.
         let mut impl_lowering = impls::ImplLowering::new();
         Self::seed_builtin_method_dispatch(&mut impl_lowering.method_dispatch);
         impl_lowering.lower(ast);
@@ -291,8 +262,6 @@ impl Compiler {
             decls_with_impls.push(ast::Decl::Fn(fd));
         }
 
-        // Generic monomorphization (also rewrites `x.method()` calls so that
-        // method dispatch inside generic specialisations binds correctly).
         let owned = match mono::monomorphize_with_methods(decls_with_impls, self.method_dispatch.clone()) {
             Ok(o) => o,
             Err(es) => {
@@ -302,8 +271,6 @@ impl Compiler {
         };
         let ast: &[ast::Decl] = &owned;
 
-        // lift closure expressions to synthetic top-level FnDecls
-        // with an env-handle first parameter.
         let mut closure_lowering = closures::ClosureLowering::new();
         closure_lowering.lower(ast);
         self.closure_by_span = closure_lowering.by_span;
@@ -313,7 +280,6 @@ impl Compiler {
         }
         let ast: &[ast::Decl] = &decls_with_closures;
 
-        // lift handler arms to synthetic top-level FnDecls.
         let mut handler_lowering = handlers::HandleLowering::new();
         if self.debug_sink.is_some() {
             handler_lowering = handler_lowering.with_debug_sink(debug::stderr_sink());
@@ -338,8 +304,6 @@ impl Compiler {
         for decl in ast {
             match decl {
                 ast::Decl::Fn(fn_decl) => {
-                    // Reserved names — host fns (device_in/out) and builtins
-                    // (print, println, …) — can't be shadowed.
                     if self.host_fns.contains_key(&fn_decl.name)
                         || self.func_map.contains_key(&fn_decl.name)
                     {
@@ -366,7 +330,6 @@ impl Compiler {
             }
         }
 
-        // Register the synthetic arm fns in the function table.
         for arm_fn in handler_lowering.synthetic_fns {
             let idx = self.functions.len();
             self.func_map.insert(arm_fn.name.clone(), idx);
@@ -374,8 +337,6 @@ impl Compiler {
             fn_decls.push((idx, arm_fn));
         }
 
-        // A name registered both in func_map and fn_overloads must NOT
-        // mix generic with non-generic (or two generic) fns.
         for (name, extras) in &self.fn_overloads {
             let mut all_ids = vec![*self.func_map.get(name).unwrap_or(&usize::MAX)];
             all_ids.extend(extras.iter().copied());
@@ -449,6 +410,7 @@ impl Compiler {
         let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let saved_string_constants = std::mem::take(&mut self.string_constants);
         let saved_next_reg = self.next_reg;
+        let saved_max_reg = self.max_reg;
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
         let saved_var_bound_at_region = std::mem::take(&mut self.var_bound_at_region);
@@ -471,16 +433,12 @@ impl Compiler {
             .and_then(|id| u16::try_from(*id).ok());
         self.tail_call_spans = collect_tail_self_calls(&fn_decl.body, &fn_decl.name);
         self.next_reg = 0;
-        // Each fn starts with a fresh region tally + block stack;
-        // return/throw unwind back to this baseline (0).
+        self.max_reg = 0;
         self.compiler_region_depth = 0;
         self.fn_compiler_depth_baseline = 0;
         self.fn_block_baseline = 0;
         self.fn_handler_baseline = 0;
-        // Open a "params layer" on block_locals_stack so each param reg is
-        // Drop'd on natural fn exit AND on every abnormal exit. Without this,
-        // a param holding a heap handle (closure env, record, etc.) leaks
-        // because no one rc_decs it when the fn returns.
+        // Params layer ensures param regs are Dropped on exit (prevents handle leaks).
         self.block_locals_stack.push(Vec::new());
 
         for param in &fn_decl.params {
@@ -490,8 +448,6 @@ impl Compiler {
                         Ok(reg) => {
                             self.var_to_reg.insert(name.clone(), reg);
                             self.var_types.insert(name.clone(), ty.clone());
-                            // For handler arm functions, don't track __env and __return_env as
-                            // locals to drop, since they're shared resources managed by the caller
                             let is_handler_arm = fn_decl.name.starts_with("__handle_");
                             let skip_drop = is_handler_arm && (name == "__env" || name == "__return_env");
                             if !skip_drop {
@@ -531,10 +487,7 @@ impl Compiler {
                 } else {
                     result_reg
                 };
-                // Drop params (the layer pushed at fn entry), skipping ret.
-                // Mirrors what every abnormal exit already does via
-                // emit_drops_to_exit_fn — the natural fallthrough path must
-                // match, otherwise normal vs abnormal returns leak differently.
+                // Drop params layer, skip ret to match abnormal exit paths.
                 if let Err(msg) = self.emit_drops_for_exit(1, Some(ret_reg)) {
                     self.errors.push(Error::new(ErrorCode::CodegenError, self.current_span, msg));
                     return Err(self.errors.clone());
@@ -561,7 +514,7 @@ impl Compiler {
             return Err(self.errors.clone());
         }
 
-        let reg_count = self.next_reg as usize;
+        let reg_count = self.max_reg as usize;
         let taken_constants = std::mem::take(&mut self.constants);
         let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let chunk = Chunk::Bytecode(BytecodeChunk {
@@ -578,6 +531,7 @@ impl Compiler {
         self.const_mask_bits = saved_const_mask_bits;
         self.string_constants = saved_string_constants;
         self.next_reg = saved_next_reg;
+        self.max_reg = saved_max_reg;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
         self.var_bound_at_region = saved_var_bound_at_region;
