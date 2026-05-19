@@ -59,7 +59,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish -p polka-rs   --dry-run --allow-dirty
-      - run: cargo publish -p myriad     --dry-run --allow-dirty
-      - run: cargo publish -p abrase     --dry-run --allow-dirty
-      - run: cargo publish -p abrase-cli --dry-run --allow-dirty
+
+      # polka-rs has no external deps, so the full verify (compile after
+      # packaging) works without crates.io having anything yet.
+      - run: cargo publish -p polka-rs --dry-run --allow-dirty
+
+      # Downstream crates depend on polka-rs at the registry; until it's
+      # actually published, the post-package compile step has nothing to
+      # resolve. `--no-verify` skips that step while still validating
+      # manifest + file packaging (keywords / categories / readme / size).
+      - run: cargo publish -p myriad     --dry-run --allow-dirty --no-verify
+      - run: cargo publish -p abrase     --dry-run --allow-dirty --no-verify
+      - run: cargo publish -p abrase-cli --dry-run --allow-dirty --no-verify
