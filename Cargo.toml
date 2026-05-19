@@ -1,11 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-	"crates/abrase", 
-	"crates/polka", 
-	"crates/myriad", 
+	"crates/abrase",
+	"crates/polka",
+	"crates/myriad",
 	"crates/abrase-cli"
 ]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["knh190"]
+repository = "https://github.com/KHN190/Abrase"
+homepage = "https://github.com/KHN190/Abrase"
 
 [profile.dev]
 opt-level = 1

@@ -1,6 +1,11 @@
 # Abrase
 
-<img src="./abrase.png" alt="Abrase" width="100" style="float: right; margin-left: 20px;">
+[![CI](https://github.com/KHN190/Abrase/actions/workflows/ci.yml/badge.svg)](https://github.com/KHN190/Abrase/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/abrase-cli.svg?label=abrase)](https://crates.io/crates/abrase)
+[![crates.io](https://img.shields.io/crates/v/abrase-cli.svg?label=abrase-cli)](https://crates.io/crates/abrase-cli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+<img src="./abrase.png" alt="Abrase" width="100" align="right">
 
 Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language designed for code review, not just human authorship. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
 
@@ -54,10 +59,9 @@ fn main() -> Int {
 
 ## Benchmarks
 
-Generally better than CPython. On smaller tasks, could be ~10x faster.
+Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x faster.
 
-* _Compiler passes wired: constant folding, loop-invariant code motion, tail-call optimization, etc. See `wiki/14-Optimizations.md`._
-
+* _See `wiki/14-Optimizations.md`._
 * _Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine)_.
 
 ## Polka — bytecode design
