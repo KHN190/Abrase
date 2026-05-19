@@ -64,8 +64,8 @@ Generally better than CPython. On smaller tasks, could be ~10x faster.
 
 ## Polka — bytecode design
 
-* 46 opcodes, 4 bytes each (Int + Float arithmetic dedicated; comparisons, bitwise, control flow, memory, region, device, effect ops).
-* 256 registers per frame, 64-bit each.
+* 46 opcodes, 4 bytes each.
+* 64 registers per frame, 64-bit each.
 * Device interaction through ports definition.
 
 ```h
