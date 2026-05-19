@@ -131,7 +131,7 @@ fn verify_compile_float_div() {
 fn verify_compile_float_div_produces_infinity() {
     let result = run_source("fn main() -> Float { 1.0 / 0.0 }");
     assert!(result.is_ok());
-    assert!(result.unwrap().as_float().unwrap().is_infinite());
+    assert!(result.unwrap().as_float().is_infinite());
 }
 
 #[test]

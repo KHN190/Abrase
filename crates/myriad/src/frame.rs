@@ -3,6 +3,7 @@ pub struct Frame {
     pub ip: usize,
     pub base_reg: usize,
     pub dest_reg: usize,
+    pub dest_is_handle: bool,
     pub cont: Option<Box<ContinuationInfo>>,
 }
 
@@ -20,6 +21,7 @@ impl Frame {
             ip,
             base_reg,
             dest_reg,
+            dest_is_handle: false,
             cont: None,
         }
     }
@@ -39,6 +41,7 @@ impl Frame {
             ip,
             base_reg,
             dest_reg,
+            dest_is_handle: false,
             cont: Some(Box::new(ContinuationInfo {
                 snapshot_slot,
                 snapshot_gen,

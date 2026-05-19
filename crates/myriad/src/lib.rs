@@ -11,8 +11,8 @@ pub mod debug;
 pub mod host;
 pub mod snapshot;
 
-pub use polka::Value;
-pub use value::{BoxPool, BoxedValue};
+pub use polka::{Value, HANDLE_NONE};
+pub use value::{alloc_string, read_string};
 pub use device::{Device, DeviceTable};
 pub use memory::Heap;
 pub use region::RegionTable;
@@ -27,11 +27,13 @@ pub fn run(module: polka::Module, host: Host) -> Result<i64, String> {
     let mut vm = VirtualMachine::new();
     host.install_into(&mut vm);
     let v = vm.run_module(&loaded.module)?;
-    Ok(vm.box_pool().read_int(v).unwrap_or(0))
+    Ok(v.as_int())
 }
 
 pub struct VirtualMachine {
-    pub(crate) registers: Vec<Value>,
+    pub(crate) registers: Vec<u64>,
+    // Bit i (LSB of word i/64) = 1 iff registers[i] is a handle.
+    pub(crate) register_mask: Vec<u64>,
     pub(crate) frames: Vec<Frame>,
     pub(crate) pc: usize,
     pub(crate) base_reg: usize,
@@ -41,17 +43,18 @@ pub struct VirtualMachine {
     pub(crate) halted: bool,
     pub(crate) exit_code: Option<i64>,
     pub(crate) dispatch_last_result: Option<u16>,
-    pub(crate) dispatch_last_env: Option<Value>,
+    pub(crate) dispatch_last_env: Option<(u64, bool)>,
     pub(crate) devices: DeviceTable,
-    pub(crate) box_pool: BoxPool,
-    pub(crate) resolved_constants: Vec<Vec<Value>>,
+    // Constants resolved per-fn at module load. Value bits + parallel mask.
+    pub(crate) resolved_constants: Vec<Vec<u64>>,
+    pub(crate) resolved_const_mask: Vec<Vec<u64>>,
+    // Permanent heap handles for string constants; rc=1 module-lifetime.
+    pub(crate) string_const_handles: Vec<(u32, u32)>,
     pub(crate) resolved_natives: Vec<Option<NativeFn>>,
     pub(crate) region_table: RegionTable,
     pub(crate) natives: NativeRegistry,
     pub(crate) debug_sink: Option<DebugSink>,
     pub(crate) fn_names: Vec<String>,
-    // The step loop increments self.pc before exec(), 
-    // so a runtime error reporting uses this field instead.
     pub(crate) failing_pc: usize,
 }
 
@@ -62,17 +65,10 @@ pub struct HandlerFrame {
     pub cell_slot: u32,
     pub cell_gen: u32,
     pub cells_allocated: Vec<(u32, u32)>,
-    // Index in `self.frames` of the frame pushed by the handle body's call
-    // (e.g. `Call(range)`). Set when do_call fires for the first time after
-    // this handler is installed. Used to identify the "boundary" frame whose
-    // pop signals the handle body has returned without intermediate Resume.
     pub body_frame_index: Option<usize>,
-    // Return-arm function id + env, captured at handle install via the
-    // INSTALL_RETURN_ARM dispatch ports. Cleared the first time it's
-    // applied (either when the body frame pops without resume, or when the
-    // topmost arm-continuation pops via Resume's deep-handler path).
     pub pending_return_arm_fn: Option<usize>,
-    pub pending_return_arm_env: Value,
+    pub pending_return_arm_env: u64,
+    pub pending_return_arm_env_is_handle: bool,
 }
 
 pub mod cont_slot {
@@ -86,6 +82,10 @@ pub mod cont_slot {
     pub const REGS_SNAPSHOT_SLOT: usize = 7;
     pub const REGS_COUNT: usize = 8;
     pub const SIZE: usize = 9;
+
+    // Bits set = the slot holds a handle when written by do_yield.
+    pub const INIT_MASK_WORD0: u64 =
+        (1u64 << DISPATCH_ENV) | (1u64 << REGS_SNAPSHOT_SLOT);
 }
 
 impl VirtualMachine {
@@ -94,6 +94,7 @@ impl VirtualMachine {
         builtins::register_default_builtins(&mut natives);
         Self {
             registers: Vec::new(),
+            register_mask: Vec::new(),
             frames: Vec::new(),
             pc: 0,
             base_reg: 0,
@@ -105,8 +106,9 @@ impl VirtualMachine {
             dispatch_last_result: None,
             dispatch_last_env: None,
             devices: DeviceTable::new(),
-            box_pool: BoxPool::new(),
             resolved_constants: Vec::new(),
+            resolved_const_mask: Vec::new(),
+            string_const_handles: Vec::new(),
             resolved_natives: Vec::new(),
             region_table: RegionTable::new(),
             natives,
@@ -142,7 +144,7 @@ impl VirtualMachine {
     }
 
     pub fn region_pop(&mut self) -> Result<(), String> {
-        self.region_table.pop_and_release(&mut self.heap, &mut self.box_pool)
+        self.region_table.pop_and_release(&mut self.heap)
     }
 
     pub fn region_depth(&self) -> usize {
@@ -156,13 +158,22 @@ impl VirtualMachine {
         }
     }
 
+    // User-visible live count. Excludes module-lifetime string-constant cells,
+    // since they are owned by the loader, not by user code.
     pub fn heap_live_count(&self) -> usize {
+        let total = self.heap.live_count();
+        let const_live = self.string_const_handles.iter()
+            .filter(|(s, g)| self.heap.is_live(*s, *g))
+            .count();
+        total.saturating_sub(const_live)
+    }
+
+    pub fn heap_total_live_count(&self) -> usize {
         self.heap.live_count()
     }
 
-    pub fn box_pool(&self) -> &BoxPool {
-        &self.box_pool
-    }
+    pub fn heap_ref(&self) -> &Heap { &self.heap }
+    pub fn heap_mut(&mut self) -> &mut Heap { &mut self.heap }
 
     pub fn install_device(&mut self, id: u8, dev: Box<dyn Device>) {
         self.devices.install(id, dev);
@@ -180,8 +191,10 @@ impl VirtualMachine {
         self.heap.alloc(size)
     }
 
-    pub fn heap_st(&mut self, slot: u32, gen_: u32, offset: usize, val: Value) -> Result<Value, String> {
-        self.heap.st(slot, gen_, offset, val)
+    pub fn heap_st(
+        &mut self, slot: u32, gen_: u32, offset: usize, val: u64, is_handle: bool,
+    ) -> Result<(u64, bool), String> {
+        self.heap.st(slot, gen_, offset, val, is_handle)
     }
 
     pub fn push_handler(&mut self, h: HandlerFrame) {
@@ -201,28 +214,24 @@ mod region_tests {
         v.region_push();
         let (slot, gen_) = v.heap_alloc(1);
         v.region_record_alloc(slot, gen_);
-        v.heap.rc_inc(slot, gen_).unwrap(); // rc = 2
-        v.heap.rc_inc(slot, gen_).unwrap(); // rc = 3
+        v.heap.rc_inc(slot, gen_).unwrap();
+        v.heap.rc_inc(slot, gen_).unwrap();
         v.region_pop().expect("pop ok");
         assert_eq!(v.heap_live_count(), 0, "force_free ignores rc");
     }
 
     #[test]
     fn region_cascade_frees_handles_inside_cell() {
-        // A region-allocated cell that stores another handle to a non-region
-        // cell — force_free should cascade rc_dec to the child.
         let mut v = vm();
-        let (child_slot, child_gen) = v.heap_alloc(1); // outside region, rc=1
+        let (child_slot, child_gen) = v.heap_alloc(1);
         v.region_push();
         let (parent_slot, parent_gen) = v.heap_alloc(1);
         v.region_record_alloc(parent_slot, parent_gen);
-        v.heap.rc_inc(child_slot, child_gen).unwrap(); // child rc=2
-        v.heap_st(parent_slot, parent_gen, 0,
-                  Value::from_handle(child_slot, child_gen)).unwrap();
-        // live = parent + child
+        v.heap.rc_inc(child_slot, child_gen).unwrap();
+        let child_handle = Value::from_handle(child_slot, child_gen).raw();
+        v.heap_st(parent_slot, parent_gen, 0, child_handle, true).unwrap();
         assert_eq!(v.heap_live_count(), 2);
         v.region_pop().expect("pop ok");
-        // parent force-freed → cascade rc_dec on child (rc 2→1). Child still live.
         assert_eq!(v.heap_live_count(), 1, "child survives at rc=1; parent freed");
     }
 
@@ -261,13 +270,12 @@ mod region_tests {
     #[test]
     fn region_records_only_to_topmost_region() {
         let mut v = vm();
-        v.region_push();        // outer
-        v.region_push();        // inner
+        v.region_push();
+        v.region_push();
         let (slot, gen_) = v.heap_alloc(1);
         v.region_record_alloc(slot, gen_);
 
         v.region_pop().expect("inner pop");
-        // Was recorded to inner only — heap is free now.
         assert_eq!(v.heap_live_count(), 0);
         v.region_pop().expect("outer pop");
     }
@@ -275,11 +283,9 @@ mod region_tests {
     #[test]
     fn record_alloc_outside_region_is_noop() {
         let mut v = vm();
-        // No region pushed.
         let (slot, gen_) = v.heap_alloc(1);
-        v.region_record_alloc(slot, gen_); // silently dropped
+        v.region_record_alloc(slot, gen_);
         assert_eq!(v.heap_live_count(), 1);
-        // No region to pop.
         assert!(v.region_pop().is_err());
     }
 }

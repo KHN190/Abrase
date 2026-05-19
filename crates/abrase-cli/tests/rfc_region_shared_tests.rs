@@ -202,7 +202,7 @@ fn region_exit_force_frees_inner_alloc() {
     });
     let mut vm = VirtualMachine::new();
     let v = vm.run_module(&module).expect("runtime error");
-    assert_eq!(v.as_int(), Some(0));
+    assert_eq!(v.as_int(), 0);
     assert_eq!(vm.heap_live_count(), 0,
                "region exit must force-free all inner allocs, got live={}",
                vm.heap_live_count());
@@ -274,7 +274,7 @@ fn region_force_free_even_with_rc_above_one() {
     });
     let mut vm = VirtualMachine::new();
     let v = vm.run_module(&module).expect("runtime error");
-    assert_eq!(v.as_int(), Some(42));
+    assert_eq!(v.as_int(), 42);
     assert_eq!(vm.heap_live_count(), 0,
                "region exit must force-free even with surviving rc, got live={}",
                vm.heap_live_count());

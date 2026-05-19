@@ -7,10 +7,18 @@ use std::rc::Rc;
 
 fn r(n: u8) -> Register { Register(n) }
 
+fn raw_constants(consts: Vec<Value>) -> Vec<u64> {
+    consts.into_iter().map(|v| v.raw()).collect()
+}
+
 fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
-    let reg_count = 256;
+    let reg_count = 64;
     VirtualMachine::new().run(&Chunk::Bytecode(BytecodeChunk {
-        code: ops, constants, reg_count, param_count: 0, string_constants: Vec::new(),
+        code: ops,
+        constants: raw_constants(constants),
+        const_mask: Vec::new(),
+        reg_count, param_count: 0,
+        string_constants: Vec::new(),
     }))
 }
 
@@ -19,7 +27,13 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
     let chunks: Vec<Chunk> = functions
         .into_iter()
         .map(|(code, constants, reg_count, param_count)| {
-            Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count, string_constants: Vec::new() })
+            Chunk::Bytecode(BytecodeChunk {
+                code,
+                constants: raw_constants(constants),
+                const_mask: Vec::new(),
+                reg_count, param_count,
+                string_constants: Vec::new(),
+            })
         })
         .collect();
     let module = Module { functions: chunks, entry: num_functions - 1, device_mask: [0; 32] };
@@ -133,14 +147,17 @@ fn test_mod() {
 }
 
 #[test]
-fn test_empty_chunk_returns_unit() {
-    assert!(run(vec![], vec![]).is_err());
+fn test_empty_chunk_falls_through_to_zero() {
+    // With the no-tag Value model, "empty" registers are indistinguishable
+    // from a write of HANDLE_NONE. Fall-through yields raw u64 init value.
+    let result = run(vec![], vec![]);
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_ret_empty_register_errors() {
+fn test_ret_uninitialized_register_returns_init_sentinel() {
     let result = run(vec![OpCode::Ret(r(0))], vec![]);
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -505,8 +522,10 @@ fn test_jnz_falsy_int_zero() {
     assert_eq!(result, Ok(Value::from_int(99)));
 }
 
+// No-tag Value: uninit reads no longer trap. Original "empty register" check
+// was a safety net for compiler bugs; safety now lives at compile time only.
 #[test]
-fn test_mov_empty_source_register_errors() {
+fn test_mov_empty_source_register_does_not_trap() {
     let result = run(
         vec![
             OpCode::Copy(r(0), r(1)),
@@ -514,11 +533,11 @@ fn test_mov_empty_source_register_errors() {
         ],
         vec![],
     );
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_jz_empty_register_errors() {
+fn test_jz_empty_register_does_not_trap() {
     let result = run(
         vec![
             OpCode::Jz(r(0), 0),
@@ -526,7 +545,7 @@ fn test_jz_empty_register_errors() {
         ],
         vec![],
     );
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -574,7 +593,7 @@ fn test_mod_by_zero_traps() {
 }
 
 #[test]
-fn test_jnz_empty_register_errors() {
+fn test_jnz_empty_register_does_not_trap() {
     let result = run(
         vec![
             OpCode::Jnz(r(0), 0),
@@ -582,11 +601,11 @@ fn test_jnz_empty_register_errors() {
         ],
         vec![],
     );
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_add_empty_left_register_errors() {
+fn test_add_empty_left_register_does_not_trap() {
     let result = run(
         vec![
             OpCode::PushConst(r(1), 0),
@@ -595,11 +614,11 @@ fn test_add_empty_left_register_errors() {
         ],
         vec![Value::from_int(5)],
     );
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_add_empty_right_register_errors() {
+fn test_add_empty_right_register_does_not_trap() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -608,11 +627,11 @@ fn test_add_empty_right_register_errors() {
         ],
         vec![Value::from_int(5)],
     );
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_sub_empty_left_register_errors() {
+fn test_sub_empty_left_register_does_not_trap() {
     let result = run(
         vec![
             OpCode::PushConst(r(1), 0),
@@ -621,11 +640,11 @@ fn test_sub_empty_left_register_errors() {
         ],
         vec![Value::from_int(5)],
     );
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_mul_empty_right_register_errors() {
+fn test_mul_empty_right_register_does_not_trap() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
@@ -634,7 +653,7 @@ fn test_mul_empty_right_register_errors() {
         ],
         vec![Value::from_int(5)],
     );
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -754,8 +773,8 @@ fn test_alloc_and_free() {
     );
 
     match result {
-        Ok(v) if v.is_handle() => {},
-        _ => panic!("Expected Handle from Alloc, got {:?}", result),
+        Ok(v) if !v.is_handle_none() => {},
+        _ => panic!("Expected handle from Alloc, got {:?}", result),
     }
 }
 
@@ -796,11 +815,9 @@ fn test_store_multiple_fields() {
 #[test]
 fn test_heap_ld_rejects_stale_generation() {
     use myriad::memory::Heap;
-    use myriad::BoxPool;
     let mut heap = Heap::new();
-    let mut pool = BoxPool::new();
     let (slot, gen0) = heap.alloc(2);
-    heap.rc_dec(slot, gen0, &mut pool).unwrap();
+    heap.rc_dec(slot, gen0).unwrap();
     let (slot2, gen1) = heap.alloc(2);
     assert_eq!(slot2, slot, "free_list should reuse the slot");
     assert_ne!(gen0, gen1, "reused slot must bump its generation");
@@ -808,8 +825,8 @@ fn test_heap_ld_rejects_stale_generation() {
     let err = heap.ld(slot, gen0, 0).unwrap_err();
     assert!(err.contains("stale handle"), "got: {}", err);
 
-    heap.st(slot2, gen1, 0, Value::from_int(7)).unwrap();
-    assert_eq!(heap.ld(slot2, gen1, 0).unwrap(), Value::from_int(7));
+    heap.st(slot2, gen1, 0, Value::from_int(7).raw(), false).unwrap();
+    assert_eq!(heap.ld(slot2, gen1, 0).unwrap(), (Value::from_int(7).raw(), false));
 }
 
 #[test]
@@ -823,7 +840,8 @@ fn test_call_dispatches_to_native_chunk() {
             OpCode::Call(r(2), 1),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::from_int(7), Value::from_int(35)],
+        constants: raw_constants(vec![Value::from_int(7), Value::from_int(35)]),
+        const_mask: Vec::new(),
         reg_count: 3,
         param_count: 0, string_constants: Vec::new(),
     };
@@ -837,9 +855,9 @@ fn test_call_dispatches_to_native_chunk() {
     };
     let mut vm = VirtualMachine::new();
     vm.register_native("test_add", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, args: &[Value]| {
-        let a = args[0].as_int().ok_or("expected int")?;
-        let b = args[1].as_int().ok_or("expected int")?;
-        Ok(Value::from_int(a + b))
+        let a = args[0].as_int();
+        let b = args[1].as_int();
+        Ok((Value::from_int(a + b), false))
     }));
     let result = vm.run_module(&module);
     assert_eq!(result, Ok(Value::from_int(42)));
@@ -854,7 +872,8 @@ fn test_native_chunk_propagates_error() {
             OpCode::Call(r(1), 1),
             OpCode::Ret(r(1)),
         ],
-        constants: vec![Value::from_int(0)],
+        constants: raw_constants(vec![Value::from_int(0)]),
+        const_mask: Vec::new(),
         reg_count: 2,
         param_count: 0, string_constants: Vec::new(),
     };
@@ -935,6 +954,7 @@ fn test_module_load_rejects_oversize_reg_count() {
     let bad = BytecodeChunk {
         code: vec![OpCode::Ret(r(0))],
         constants: vec![],
+        const_mask: Vec::new(),
         reg_count: 257,
         param_count: 0, string_constants: Vec::new(),
     };
@@ -954,6 +974,7 @@ fn test_module_load_rejects_param_count_exceeds_reg_count() {
     let bad = BytecodeChunk {
         code: vec![OpCode::Ret(r(0))],
         constants: vec![],
+        const_mask: Vec::new(),
         reg_count: 2,
         param_count: 5, string_constants: Vec::new(),
     };
@@ -967,14 +988,14 @@ fn test_module_load_rejects_param_count_exceeds_reg_count() {
 
 #[test]
 fn test_module_load_accepts_exact_frame_budget() {
-    // reg_count == FRAME_REGS (256) is OK.
     let chunk = BytecodeChunk {
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::Ret(r(0)),
         ],
-        constants: vec![Value::from_int(7)],
-        reg_count: 256,
+        constants: raw_constants(vec![Value::from_int(7)]),
+        const_mask: Vec::new(),
+        reg_count: polka::FRAME_REGS,
         param_count: 0, string_constants: Vec::new(),
     };
     let module = Module {
@@ -1006,7 +1027,8 @@ fn test_call_reg_out_of_range_fn_id_traps() {
             OpCode::CallReg(r(2), r(1)),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::from_int(99999)],
+        constants: raw_constants(vec![Value::from_int(99999)]),
+        const_mask: Vec::new(),
         reg_count: 3,
         param_count: 0, string_constants: Vec::new(),
     };
@@ -1027,7 +1049,8 @@ fn test_call_reg_unknown_fn_id_traps() {
             OpCode::CallReg(r(2), r(1)),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::from_int(5)],
+        constants: raw_constants(vec![Value::from_int(5)]),
+        const_mask: Vec::new(),
         reg_count: 3,
         param_count: 0, string_constants: Vec::new(),
     };

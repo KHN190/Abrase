@@ -1,7 +1,7 @@
 use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
-use myriad::{BoxedValue, Value, VirtualMachine};
+use myriad::{Value, VirtualMachine, read_string};
 
 fn run(source: &str) -> Result<Value, String> {
     let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
@@ -25,11 +25,7 @@ fn run_str(source: &str) -> Result<String, String> {
     let module = compiler.compile_module(&ast).map_err(|_| compiler.pretty_print_errors())?;
     let mut vm = VirtualMachine::new();
     let v = vm.run_module(&module)?;
-    let idx = v.as_box().ok_or_else(|| format!("expected box, got {:?}", v))?;
-    match vm.box_pool().get(idx) {
-        Some(BoxedValue::String(s)) => Ok(s.clone()),
-        other => Err(format!("expected string, got {:?}", other)),
-    }
+    read_string(vm.heap_ref(), v).ok_or_else(|| format!("expected String handle, got {:?}", v))
 }
 
 #[test]

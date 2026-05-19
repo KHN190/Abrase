@@ -6,7 +6,7 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use myriad::{BoxedValue, Host, Value, VirtualMachine};
+use myriad::{Host, Value, VirtualMachine, read_string};
 
 const USAGE: &str = "\
 Abrase compiler & Myriad VM
@@ -98,11 +98,10 @@ fn cmd_run(source: &str, debug: bool) -> ExitCode {
 }
 
 fn print_result(vm: &VirtualMachine, v: Value) {
-    if let Some(idx) = v.as_box() {
-        match vm.box_pool().get(idx) {
-            Some(BoxedValue::String(s)) => { println!("{}", s); return; }
-            Some(b) => { println!("{:?}", b); return; }
-            None => {}
+    if !v.is_handle_none() {
+        if let Some(s) = read_string(vm.heap_ref(), v) {
+            println!("{}", s);
+            return;
         }
     }
     println!("{:?}", v);

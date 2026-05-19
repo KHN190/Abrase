@@ -9,8 +9,14 @@ use std::rc::Rc;
 fn r(n: u8) -> Register { Register(n) }
 
 fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize, mask: [u8; 32]) -> Module {
+    let raw: Vec<u64> = constants.iter().map(|v| v.raw()).collect();
     Module {
-        functions: vec![Chunk::Bytecode(BytecodeChunk { code, constants, reg_count, param_count: 0, string_constants: Vec::new() })],
+        functions: vec![Chunk::Bytecode(BytecodeChunk {
+            code, constants: raw,
+            const_mask: Vec::new(),
+            reg_count, param_count: 0,
+            string_constants: Vec::new(),
+        })],
         entry: 0,
         device_mask: mask,
     }
@@ -26,10 +32,10 @@ fn mask_with(ids: &[u8]) -> [u8; 32] {
 fn hostfunc_round_trip() {
     let mut vm = VirtualMachine::new();
     let mut dev = HostFuncDevice::new();
-    dev.register(Rc::new(|_pool: &mut myriad::BoxPool, args: &[Value]| {
-        let a = args[0].as_int().ok_or("expected int")?;
-        let b = args[1].as_int().ok_or("expected int")?;
-        Ok(Value::from_int(a + b))
+    dev.register(Rc::new(|_heap: &mut myriad::Heap, args: &[u64]| {
+        let a = args[0] as i64;
+        let b = args[1] as i64;
+        Ok((Value::from_int(a + b).raw(), false))
     }));
     vm.install_device(HOSTFUNC_ID, Box::new(dev));
 
@@ -76,7 +82,7 @@ fn clock_returns_monotonic_progress() {
         mask_with(&[CLOCK_ID]),
     );
     let v = vm.run_module(&module).unwrap();
-    assert!(matches!(v.as_int(), Some(n) if n >= 0));
+    assert!(v.as_int() >= 0);
 }
 
 #[test]
@@ -102,8 +108,6 @@ fn random_seeded_is_deterministic() {
     assert_eq!(v1, v2);
 }
 
-// Calling a fn that is neither a builtin, host fn, nor user-defined must
-// surface a clean compile error.
 #[test]
 fn runtime_eval_unregistered_fn_errors_cleanly() {
     use abrase_cli::host::Runtime;
@@ -122,9 +126,9 @@ fn runtime_user_registered_host_fn() {
     use abrase_cli::host::Runtime;
     use abrase::ty::Type;
     let (mut rt, _console) = Runtime::new_for_tests();
-    rt.register_host("triple", vec![Type::Int], Type::Int, |_pool, args| {
-        let n = args[0].as_int().ok_or("Int")?;
-        Ok(Value::from_int(n * 3))
+    rt.register_host("triple", vec![Type::Int], Type::Int, |_heap, args| {
+        let n = args[0] as i64;
+        Ok((Value::from_int(n * 3).raw(), false))
     });
     let src = r#"
         fn main() -> Int { triple(14) }
@@ -148,19 +152,17 @@ fn dispatch_no_matching_handler_returns_no_match() {
         [0; 32],
     );
     let v = vm.run_module(&module).unwrap();
-    assert_eq!(v, Value::from_int(0xFFFF), "dispatch with no handlers must return DISPATCH_NO_MATCH");
+    assert_eq!(v, Value::from_int(0xFFFF));
 }
 
 #[test]
 fn device_out_reads_back_dispatch_env() {
-    // 0xE0_02 is the dispatch device's env port. Without a prior write,
-    // device_out should return NONE (0)
     let src = r#"
         fn main() -> Int { device_out(57346) }
     "#;
     let mut rt = abrase_cli::host::Runtime::new();
     let result = rt.eval(src).expect("dispatch env without prior lookup returns NONE");
-    assert_eq!(result, Value::from_int(0), "dispatch env with no handler should return NONE");
+    assert_eq!(result, Value::from_int(0));
 }
 
 #[test]
@@ -174,6 +176,5 @@ fn dispatch_device_is_vm_intrinsic_not_a_device_mask_requirement() {
         1,
         mask,
     );
-    assert!(vm.run_module(&module).is_ok(),
-        "modules requiring 0xE0 should load without explicit install (it's intrinsic)");
+    assert!(vm.run_module(&module).is_ok());
 }

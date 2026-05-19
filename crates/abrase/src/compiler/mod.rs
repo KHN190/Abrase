@@ -42,6 +42,9 @@ pub struct HostFnDecl {
 
 pub struct Compiler {
     pub(super) constants: Vec<Value>,
+    // Parallel: const_mask_bits[i] = true iff constants[i] is a handle at
+    // runtime (i.e. a string-pool index that the loader will materialize).
+    pub(super) const_mask_bits: Vec<bool>,
     pub(super) string_constants: Vec<String>,
     pub(super) code: Vec<OpCode>,
     // Next register to allocate. u16 so the "exhausted" state (256) fits.
@@ -121,6 +124,7 @@ impl Compiler {
     pub fn new() -> Self {
         Self {
             constants: Vec::new(),
+            const_mask_bits: Vec::new(),
             string_constants: Vec::new(),
             code: Vec::new(),
             next_reg: 0,
@@ -247,7 +251,8 @@ impl Compiler {
         }
         Ok(Chunk::Bytecode(BytecodeChunk {
             code: self.code.clone(),
-            constants: self.constants.clone(),
+            constants: self.constants.iter().map(|v| v.raw()).collect(),
+            const_mask: pack_mask_bits(&self.const_mask_bits),
             string_constants: self.string_constants.clone(),
             reg_count: self.next_reg as usize,
             param_count: 0,
@@ -351,6 +356,7 @@ impl Compiler {
                     let idx = self.functions.len();
                     self.func_map.insert(fn_decl.name.clone(), idx);
                     self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
+                    register_user_fn_signature(&mut self.fn_signatures, idx, fn_decl);
                     fn_decls.push((idx, fn_decl.clone()));
                 }
                 ast::Decl::Type { name, body, .. } => {
@@ -440,6 +446,7 @@ impl Compiler {
     fn compile_fn(&mut self, fn_decl: &ast::FnDecl) -> Result<Chunk, Vec<Error>> {
         let saved_code = std::mem::take(&mut self.code);
         let saved_constants = std::mem::take(&mut self.constants);
+        let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let saved_string_constants = std::mem::take(&mut self.string_constants);
         let saved_next_reg = self.next_reg;
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
@@ -555,9 +562,12 @@ impl Compiler {
         }
 
         let reg_count = self.next_reg as usize;
+        let taken_constants = std::mem::take(&mut self.constants);
+        let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let chunk = Chunk::Bytecode(BytecodeChunk {
             code: std::mem::take(&mut self.code),
-            constants: std::mem::take(&mut self.constants),
+            constants: taken_constants.iter().map(|v| v.raw()).collect(),
+            const_mask: pack_mask_bits(&taken_mask_bits),
             string_constants: std::mem::take(&mut self.string_constants),
             reg_count,
             param_count,
@@ -565,6 +575,7 @@ impl Compiler {
 
         self.code = saved_code;
         self.constants = saved_constants;
+        self.const_mask_bits = saved_const_mask_bits;
         self.string_constants = saved_string_constants;
         self.next_reg = saved_next_reg;
         self.var_to_reg = saved_var_to_reg;
@@ -585,6 +596,48 @@ impl Compiler {
         Ok(chunk)
     }
 
+}
+
+fn register_user_fn_signature(
+    sigs: &mut HashMap<usize, (Vec<TyType>, TyType)>,
+    fn_id: usize,
+    fn_decl: &ast::FnDecl,
+) {
+    let params: Vec<TyType> = fn_decl.params.iter().filter_map(|p| {
+        if let ast::Param::Named { ty, .. } = p {
+            Some(ast_type_to_ty(ty))
+        } else { None }
+    }).collect();
+    let ret = fn_decl.return_type.as_ref()
+        .map(ast_type_to_ty)
+        .unwrap_or(TyType::Unit);
+    sigs.insert(fn_id, (params, ret));
+}
+
+fn ast_type_to_ty(t: &ast::Type) -> TyType {
+    match t {
+        ast::Type::Named(n) => match n.as_str() {
+            "Int"    => TyType::Int,
+            "Float"  => TyType::Float,
+            "Bool"   => TyType::Bool,
+            "Char"   => TyType::Char,
+            "String" => TyType::String,
+            "Unit"   => TyType::Unit,
+            "Never"  => TyType::Never,
+            _ => TyType::Named(n.clone()),
+        },
+        ast::Type::Tuple(items) if items.is_empty() => TyType::Unit,
+        _ => TyType::Unknown,
+    }
+}
+
+pub(super) fn pack_mask_bits(bits: &[bool]) -> Vec<u64> {
+    let nwords = (bits.len() + 63) / 64;
+    let mut out = vec![0u64; nwords];
+    for (i, &b) in bits.iter().enumerate() {
+        if b { out[i / 64] |= 1u64 << (i % 64); }
+    }
+    out
 }
 
 fn collect_tail_self_calls(block: &ast::Block, self_name: &str) -> std::collections::HashSet<ast::Span> {

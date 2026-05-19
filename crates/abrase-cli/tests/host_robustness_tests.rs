@@ -1,54 +1,38 @@
 // host code must never panic on user input.
-use myriad::{BoxPool, BoxedValue, Value};
+use myriad::{Heap, Value, alloc_string, read_string};
 use std::rc::Rc;
 
-fn println_like(pool: &mut BoxPool, args: &[Value]) -> Result<Value, String> {
-    let idx = args[0].as_box()
-        .ok_or_else(|| format!("println: internal: args[0] not a Box ({:?})", args[0]))?;
-    let s = match pool.get(idx) {
-        Some(BoxedValue::String(s)) => s,
-        other => return Err(format!("println: internal: box holds {:?}", other)),
-    };
-    Ok(Value::from_int(s.len() as i64))
+fn println_like(heap: &mut Heap, args: &[u64]) -> Result<(u64, bool), String> {
+    let v = Value::from_raw(args[0]);
+    let s = read_string(heap, v)
+        .ok_or_else(|| format!("println: internal: args[0] not a String handle ({:?})", v))?;
+    Ok((Value::from_int(s.len() as i64).raw(), false))
 }
 
 #[test]
-fn println_host_returns_err_on_non_box_arg() {
-    let mut pool = BoxPool::new();
-    let result = println_like(&mut pool, &[Value::from_int(42)]);
+fn println_host_returns_err_on_non_handle_arg() {
+    let mut heap = Heap::new();
+    let result = println_like(&mut heap, &[Value::from_int(42).raw()]);
     assert!(result.is_err(), "must return Err, not panic");
-    assert!(result.unwrap_err().contains("not a Box"));
 }
 
 #[test]
-fn println_host_returns_err_on_wrong_box_type() {
-    let mut pool = BoxPool::new();
-    let idx = pool.intern(BoxedValue::Int(42));
-    let result = println_like(&mut pool, &[Value::from_box(idx)]);
-    assert!(result.is_err(), "must return Err, not panic");
-    assert!(result.unwrap_err().contains("box holds"));
-}
-
-#[test]
-fn println_host_succeeds_on_string_box() {
-    let mut pool = BoxPool::new();
-    let idx = pool.intern(BoxedValue::String("hi".into()));
-    let result = println_like(&mut pool, &[Value::from_box(idx)]);
-    assert_eq!(result, Ok(Value::from_int(2)));
+fn println_host_succeeds_on_string_handle() {
+    let mut heap = Heap::new();
+    let v = alloc_string(&mut heap, "hi").unwrap();
+    let result = println_like(&mut heap, &[v.raw()]);
+    assert_eq!(result, Ok((Value::from_int(2).raw(), false)));
 }
 
 #[test]
 fn hostimpl_signature_compatibility() {
-    let f: Rc<dyn Fn(&mut BoxPool, &[Value]) -> Result<Value, String>>
+    let f: Rc<dyn Fn(&mut Heap, &[u64]) -> Result<(u64, bool), String>>
         = Rc::new(println_like);
-    let mut pool = BoxPool::new();
-    let res = f(&mut pool, &[Value::UNIT]);
-    assert!(res.is_err()); // UNIT is not a Box
+    let mut heap = Heap::new();
+    let res = f(&mut heap, &[Value::ZERO.raw()]);
+    assert!(res.is_err());
 }
 
-// `print` is now a built-in native (registered by myriad/builtins.rs and the
-// abrase compiler's register_builtins). User fns can't redefine it — this test
-// is intentionally inverted from its older form.
 #[test]
 fn user_cannot_define_print() {
     let src = r#"
@@ -61,8 +45,6 @@ fn user_cannot_define_print() {
         "error should mention print; got: {}", err);
 }
 
-// device_in and device_out are mandatory host fns. User fns cannot reuse
-// these names — compile_module rejects the decl.
 #[test]
 fn user_cannot_shadow_device_in() {
     let src = r#"
@@ -75,13 +57,11 @@ fn user_cannot_shadow_device_in() {
         "error should mention device_in; got: {}", err);
 }
 
-// End-to-end: .abe source calling device_in / device_out lowers to Deo / Dei
-// against the Runtime's installed devices. Stdout = port 0x10_01 (4097).
 #[test]
 fn device_in_writes_byte_to_console() {
     let src = r#"
         fn main() -> Int {
-            device_in(4097, 65);  // 'A' to stdout
+            device_in(4097, 65);
             0
         }
     "#;
@@ -95,14 +75,12 @@ fn device_in_writes_byte_to_console() {
 
 #[test]
 fn device_out_reads_back_dispatch_state() {
-    // 0xE0_00 is the dispatch device's lookup port. Without a prior write,
-    // device_out should return DISPATCH_NO_MATCH (0xFFFF)
     let src = r#"
         fn main() -> Int { device_out(57344) }
     "#;
     let mut rt = abrase_cli::host::Runtime::new();
     let result = rt.eval(src).expect("dispatch without prior lookup returns NO_MATCH");
-    assert_eq!(result, Value::from_int(0xFFFF), "dispatch with no handler should return DISPATCH_NO_MATCH (0xFFFF)");
+    assert_eq!(result, Value::from_int(0xFFFF));
 }
 
 #[test]

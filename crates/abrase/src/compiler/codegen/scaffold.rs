@@ -60,13 +60,16 @@ impl Compiler {
     }
 
     pub(in crate::compiler) fn add_constant(&mut self, val: Value) -> Result<u16, String> {
-        if let Some(i) = self.constants.iter().position(|c| *c == val) {
-            return Ok(i as u16);
+        for (i, c) in self.constants.iter().enumerate() {
+            if *c == val && !self.const_mask_bits[i] {
+                return Ok(i as u16);
+            }
         }
         if self.constants.len() >= u16::MAX as usize {
             return Err("Constant pool overflow (max 65535 entries)".to_string());
         }
         self.constants.push(val);
+        self.const_mask_bits.push(false);
         Ok((self.constants.len() - 1) as u16)
     }
 
@@ -80,7 +83,19 @@ impl Compiler {
             self.string_constants.push(s.to_string());
             (self.string_constants.len() - 1) as u32
         };
-        self.add_constant(Value::from_str_const(str_idx))
+        // Reuse an existing handle-tagged constant pointing to the same string.
+        let placeholder = Value::from_raw(str_idx as u64);
+        for (i, c) in self.constants.iter().enumerate() {
+            if *c == placeholder && self.const_mask_bits[i] {
+                return Ok(i as u16);
+            }
+        }
+        if self.constants.len() >= u16::MAX as usize {
+            return Err("Constant pool overflow (max 65535 entries)".to_string());
+        }
+        self.constants.push(placeholder);
+        self.const_mask_bits.push(true);
+        Ok((self.constants.len() - 1) as u16)
     }
 
     // Region push/pop. Tracked in `compiler_region_depth` regardless of who

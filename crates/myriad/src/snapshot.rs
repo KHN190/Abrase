@@ -1,7 +1,6 @@
-// Register-window snapshots for handler resume.
-
-use polka::{Chunk, Module, Value};
-use crate::{cont_slot, memory::HEAP_BYTES_PER_VALUE, VirtualMachine};
+use polka::{Chunk, Module, HANDLE_NONE};
+use crate::memory::mask_bit;
+use crate::{cont_slot, VirtualMachine};
 
 #[derive(Clone, Copy)]
 pub struct SnapshotHandle {
@@ -23,7 +22,6 @@ impl VirtualMachine {
         }
     }
 
-    // Region-tracked snapshot: lives as long as the surrounding region.
     pub(crate) fn snapshot_registers(
         &mut self,
         base: usize,
@@ -36,8 +34,6 @@ impl VirtualMachine {
         Ok(snap)
     }
 
-    // Off-region snapshot: not tracked by the region stack.
-    // Caller is responsible for rc_dec'ing the snapshot on consumption.
     pub(crate) fn snapshot_registers_off_region(
         &mut self,
         base: usize,
@@ -59,12 +55,23 @@ impl VirtualMachine {
                 base, end, self.registers.len()
             ));
         }
-        self.mem_charge(reg_count.saturating_mul(HEAP_BYTES_PER_VALUE))?;
-        let (slot, generation) = self.heap.alloc(reg_count);
+        self.mem_charge(reg_count.saturating_mul(8))?;
+        let mut init_mask = vec![0u64; (reg_count + 63) / 64];
         for i in 0..reg_count {
-            let val = self.registers[base + i];
-            self.value_rc_inc(&val)?;
-            self.heap.st(slot, generation, i, val)?;
+            if self.reg_mask_bit(base + i) {
+                init_mask[i / 64] |= 1u64 << (i % 64);
+            }
+        }
+        let (slot, generation) = self.heap.try_alloc_with_mask(reg_count, &init_mask)?;
+        for i in 0..reg_count {
+            let v = self.registers[base + i];
+            let is_handle = mask_bit(&init_mask, i);
+            if is_handle && v != HANDLE_NONE {
+                let s = ((v >> 24) & 0x00FF_FFFF) as u32;
+                let g = (v & 0x00FF_FFFF) as u32;
+                self.heap.rc_inc(s, g)?;
+            }
+            self.heap.st(slot, generation, i, v, is_handle)?;
         }
         Ok(SnapshotHandle { slot, generation, count: reg_count })
     }
@@ -77,18 +84,34 @@ impl VirtualMachine {
         if snapshot.is_empty() { return Ok(()); }
         let needed = base + snapshot.count;
         if needed > self.registers.len() {
-            self.registers.resize(needed, Value::NONE);
+            self.registers.resize(needed, HANDLE_NONE);
+            let mask_words_needed = (needed + 63) / 64;
+            if mask_words_needed > self.register_mask.len() {
+                self.register_mask.resize(mask_words_needed, 0);
+            }
         }
         for i in 0..snapshot.count {
-            let raw_new = self.heap.ld(snapshot.slot, snapshot.generation, i)?;
-            let new_val = match raw_new.as_handle() { Some((s, g)) if !self.heap.is_live(s, g) => Value::NONE, _ => raw_new };
-            let old = std::mem::replace(&mut self.registers[base + i], Value::NONE);
-            let stale = matches!(old.as_handle(), Some((s, g)) if !self.heap.is_live(s, g));
-            if !stale {
-                self.value_rc_dec(&old)?;
+            let (new_val, new_is_handle) = self.heap.ld(snapshot.slot, snapshot.generation, i)?;
+            let abs = base + i;
+            let old_val = self.registers[abs];
+            let old_is_handle = self.reg_mask_bit(abs);
+            let stale = if old_is_handle && old_val != HANDLE_NONE {
+                let s = ((old_val >> 24) & 0x00FF_FFFF) as u32;
+                let g = (old_val & 0x00FF_FFFF) as u32;
+                !self.heap.is_live(s, g)
+            } else { false };
+            if old_is_handle && !stale && old_val != HANDLE_NONE {
+                let s = ((old_val >> 24) & 0x00FF_FFFF) as u32;
+                let g = (old_val & 0x00FF_FFFF) as u32;
+                self.heap.rc_dec(s, g)?;
             }
-            self.value_rc_inc(&new_val)?;
-            self.registers[base + i] = new_val;
+            if new_is_handle && new_val != HANDLE_NONE {
+                let s = ((new_val >> 24) & 0x00FF_FFFF) as u32;
+                let g = (new_val & 0x00FF_FFFF) as u32;
+                self.heap.rc_inc(s, g)?;
+            }
+            self.registers[abs] = new_val;
+            self.set_reg_mask_bit(abs, new_is_handle);
         }
         Ok(())
     }
@@ -100,15 +123,13 @@ impl VirtualMachine {
         snapshot: SnapshotHandle,
     ) -> Result<(), String> {
         if snapshot.is_empty() {
-            self.heap.st(cell_slot, cell_gen, cont_slot::REGS_SNAPSHOT_SLOT, Value::NONE)?;
-            self.heap.st(cell_slot, cell_gen, cont_slot::REGS_COUNT, Value::from_int(0))?;
+            self.heap.st(cell_slot, cell_gen, cont_slot::REGS_SNAPSHOT_SLOT, HANDLE_NONE, true)?;
+            self.heap.st(cell_slot, cell_gen, cont_slot::REGS_COUNT, 0, false)?;
             return Ok(());
         }
-        self.heap.st(cell_slot, cell_gen, cont_slot::REGS_SNAPSHOT_SLOT,
-            Value::from_handle(snapshot.slot, snapshot.generation))?;
-        self.heap.st(cell_slot, cell_gen, cont_slot::REGS_COUNT,
-            Value::from_int(snapshot.count as i64))?;
+        let handle = polka::Value::from_handle(snapshot.slot, snapshot.generation).raw();
+        self.heap.st(cell_slot, cell_gen, cont_slot::REGS_SNAPSHOT_SLOT, handle, true)?;
+        self.heap.st(cell_slot, cell_gen, cont_slot::REGS_COUNT, snapshot.count as u64, false)?;
         Ok(())
     }
-
 }

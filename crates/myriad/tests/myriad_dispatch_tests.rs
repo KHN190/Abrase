@@ -4,9 +4,18 @@ use std::rc::Rc;
 
 fn r(n: u8) -> Register { Register(n) }
 
+fn raw_constants(consts: Vec<Value>) -> Vec<u64> {
+    consts.into_iter().map(|v| v.raw()).collect()
+}
+
 fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
     VirtualMachine::new().run(&Chunk::Bytecode(BytecodeChunk {
-        code: ops, constants, reg_count: 256, param_count: 0, string_constants: Vec::new(),
+        code: ops,
+        constants: raw_constants(constants),
+        const_mask: Vec::new(),
+        reg_count: 64,
+        param_count: 0,
+        string_constants: Vec::new(),
     }))
 }
 
@@ -30,7 +39,8 @@ fn test_call_reg_dispatches_to_bytecode() {
             OpCode::Add(r(0), r(0), r(1)),
             OpCode::Ret(r(0)),
         ],
-        constants: vec![Value::from_int(1)],
+        constants: raw_constants(vec![Value::from_int(1)]),
+        const_mask: Vec::new(),
         reg_count: 2,
         param_count: 1, string_constants: Vec::new(),
     };
@@ -42,7 +52,8 @@ fn test_call_reg_dispatches_to_bytecode() {
             OpCode::CallReg(r(2), r(1)),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::from_int(41), Value::from_int(0)],
+        constants: raw_constants(vec![Value::from_int(41), Value::from_int(0)]),
+        const_mask: Vec::new(),
         reg_count: 4,
         param_count: 0, string_constants: Vec::new(),
     };
@@ -67,7 +78,8 @@ fn test_call_reg_dispatches_to_native() {
             OpCode::CallReg(r(2), r(1)),
             OpCode::Ret(r(2)),
         ],
-        constants: vec![Value::from_int(21), Value::from_int(0)],
+        constants: raw_constants(vec![Value::from_int(21), Value::from_int(0)]),
+        const_mask: Vec::new(),
         reg_count: 4,
         param_count: 0, string_constants: Vec::new(),
     };
@@ -77,8 +89,8 @@ fn test_call_reg_dispatches_to_native() {
     };
     let mut vm = VirtualMachine::new();
     vm.register_native("test_double", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, args: &[Value]| {
-        let n = args[0].as_int().ok_or("expected int")?;
-        Ok(Value::from_int(n * 2))
+        let n = args[0].as_int();
+        Ok((Value::from_int(n * 2), false))
     }));
     assert_eq!(vm.run_module(&module), Ok(Value::from_int(42)));
 }
@@ -99,11 +111,12 @@ fn test_handle_records_dispatch_table() {
                 OpCode::Dei(r(4), r(3)),
                 OpCode::Ret(r(4)),
             ],
-            constants: vec![
+            constants: raw_constants(vec![
                 Value::from_int(99),
                 Value::from_int(dispatch_key(7, 0)),
                 Value::from_int(dispatch_port_lookup()),
-            ],
+            ]),
+            const_mask: Vec::new(),
             reg_count: 8, param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,
@@ -125,10 +138,11 @@ fn test_dispatch_no_match_returns_sentinel() {
                 OpCode::Dei(r(2), r(1)),
                 OpCode::Ret(r(2)),
             ],
-            constants: vec![
+            constants: raw_constants(vec![
                 Value::from_int(dispatch_key(99, 0)),
                 Value::from_int(dispatch_port_lookup()),
-            ],
+            ]),
+            const_mask: Vec::new(),
             reg_count: 4, param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,
@@ -151,10 +165,11 @@ fn test_pop_handler_clears_frame_and_cell() {
                 OpCode::Deo(r(2), r(3)),
                 OpCode::Ret(r(0)),
             ],
-            constants: vec![
+            constants: raw_constants(vec![
                 Value::UNIT,
                 Value::from_int(dispatch_port_pop()),
-            ],
+            ]),
+            const_mask: Vec::new(),
             reg_count: 4, param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,
@@ -201,12 +216,13 @@ fn test_nested_handlers_innermost_wins() {
                 OpCode::Dei(r(6), r(5)),
                 OpCode::Ret(r(6)),
             ],
-            constants: vec![
+            constants: raw_constants(vec![
                 Value::from_int(11),
                 Value::from_int(22),
                 Value::from_int(dispatch_key(3, 0)),
                 Value::from_int(dispatch_port_lookup()),
-            ],
+            ]),
+            const_mask: Vec::new(),
             reg_count: 16, param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,

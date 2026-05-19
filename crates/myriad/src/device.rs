@@ -1,15 +1,16 @@
-use super::{Value, BoxPool};
+use polka::Value;
+use crate::memory::Heap;
 
 pub trait Device {
     fn read(&mut self, port: u8) -> Result<Value, String>;
     fn write(&mut self, port: u8, val: Value) -> Result<(), String>;
-    // Default forwards to write(). Override when the device needs the box
-    // pool (e.g. to invoke a registered host fn whose signature takes it).
-    fn write_with_pool(
+    // Default forwards to write(). Override when the device needs heap access
+    // (e.g. to read a String handle's contents).
+    fn write_with_heap(
         &mut self,
         port: u8,
         val: Value,
-        _pool: &mut BoxPool,
+        _heap: &mut Heap,
     ) -> Result<(), String> {
         self.write(port, val)
     }

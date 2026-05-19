@@ -22,7 +22,8 @@ fn handler_frame_basic_structure() {
         cells_allocated: vec![(slot, generation)],
         body_frame_index: None,
         pending_return_arm_fn: None,
-        pending_return_arm_env: Value::NONE,
+        pending_return_arm_env: polka::HANDLE_NONE,
+        pending_return_arm_env_is_handle: false,
     };
 
     assert_eq!(frame.effect_id, 123);
@@ -44,7 +45,8 @@ fn handler_frame_push_succeeds() {
         cells_allocated: vec![(slot, generation)],
         body_frame_index: None,
         pending_return_arm_fn: None,
-        pending_return_arm_env: Value::NONE,
+        pending_return_arm_env: polka::HANDLE_NONE,
+        pending_return_arm_env_is_handle: false,
     });
 
     assert!(true, "push_handler succeeded without error");
@@ -64,7 +66,8 @@ fn handle_with_dispatch_table_handle_value() {
         cells_allocated: vec![(cont_slot, cont_gen)],
         body_frame_index: None,
         pending_return_arm_fn: None,
-        pending_return_arm_env: Value::NONE,
+        pending_return_arm_env: polka::HANDLE_NONE,
+        pending_return_arm_env_is_handle: false,
     };
 
     assert_eq!(frame.dispatch_table_slot, Some(table_slot));
@@ -85,7 +88,8 @@ fn handler_frame_with_pending_return_arm() {
         cells_allocated: vec![(cont_slot, cont_gen)],
         body_frame_index: Some(3),
         pending_return_arm_fn: Some(42),
-        pending_return_arm_env: Value::from_int(0),
+        pending_return_arm_env: 0,
+        pending_return_arm_env_is_handle: false,
     };
 
     assert_eq!(frame.body_frame_index, Some(3));
@@ -142,7 +146,8 @@ fn multiple_handler_frames_creation() {
             cells_allocated: vec![(i as u32 + 100, i as u32)],
             body_frame_index: None,
             pending_return_arm_fn: None,
-            pending_return_arm_env: Value::NONE,
+            pending_return_arm_env: polka::HANDLE_NONE,
+        pending_return_arm_env_is_handle: false,
         })
         .collect();
 
@@ -163,7 +168,8 @@ fn handler_with_invalid_generation_structure() {
         cells_allocated: vec![(100, 999)],
         body_frame_index: None,
         pending_return_arm_fn: None,
-        pending_return_arm_env: Value::NONE,
+        pending_return_arm_env: polka::HANDLE_NONE,
+        pending_return_arm_env_is_handle: false,
     };
 
     assert_eq!(frame.dispatch_table_gen, 999);
@@ -217,10 +223,9 @@ fn heap_st_modifies_cell() {
     let val1 = Value::from_int(42);
     let val2 = Value::from_int(100);
 
-    let old1 = vm.heap_st(slot, generation, 0, val1).expect("write 1");
-    let old2 = vm.heap_st(slot, generation, 1, val2).expect("write 2");
+    let old1 = vm.heap_st(slot, generation, 0, val1.raw(), false).expect("write 1");
+    let old2 = vm.heap_st(slot, generation, 1, val2.raw(), false).expect("write 2");
 
-    // heap_st returns the old value, which was NONE initially
-    assert_eq!(old1, Value::NONE);
-    assert_eq!(old2, Value::NONE);
+    assert_eq!(old1, (polka::HANDLE_NONE, false));
+    assert_eq!(old2, (polka::HANDLE_NONE, false));
 }
