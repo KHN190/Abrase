@@ -19,7 +19,7 @@ We also include Myriad as a safe sandbox environment, which can later compile to
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
-> Why design is hard? The simple answer is, you had too much freedom. Then when again design becomes easy? When you prisoned yourself with taste, and with freedom gone, you are left with only choices. ..By designing a programming language you become clearer with your taste, your limitations, and you find the same joy writing a very short poem.
+> ◇ Why design is hard? The simple answer is, you had too much freedom. ◇ Then when again design becomes easy? When you prisoned yourself with taste, and with freedom gone, you are left with only choices... ◇ By designing a programming language you become clearer with your taste, your limitations, and you find the same joy writing a very short poem.
 
 ## Language Overview
 
