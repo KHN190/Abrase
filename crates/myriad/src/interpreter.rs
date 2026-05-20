@@ -103,6 +103,7 @@ impl VirtualMachine {
         }
     }
 
+    #[inline(always)]
     fn exec(&mut self, module: &Module, bc: &BytecodeChunk, op: &OpCode) -> Result<(), String> {
         match op {
             OpCode::Add(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_add(y)),
