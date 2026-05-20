@@ -142,17 +142,6 @@ impl Chunk {
 pub struct Module {
     pub functions: Vec<Chunk>,
     pub entry: usize,
-    pub device_mask: [u8; 32],
-}
-
-impl Module {
-    pub fn require_device(&mut self, id: u8) {
-        self.device_mask[(id / 8) as usize] |= 1 << (id % 8);
-    }
-
-    pub fn requires_device(&self, id: u8) -> bool {
-        (self.device_mask[(id / 8) as usize] >> (id % 8)) & 1 == 1
-    }
 }
 
 #[inline(always)]

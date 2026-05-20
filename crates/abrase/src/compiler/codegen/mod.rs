@@ -153,7 +153,8 @@ impl Compiler {
                 }
             }
             ast::Stmt::Expr(expr) => {
-                self.emit_region_push()?;
+                let is_block = matches!(&expr.node, ast::Expr::Block(_));
+                if is_block { self.emit_region_push()?; }
                 let reg = self.compile_expr(expr)?;
                 let needs_drop = self.infer_expr_type(expr)
                     .as_ref()
@@ -162,7 +163,7 @@ impl Compiler {
                 if needs_drop {
                     self.emit(OpCode::Drop(reg));
                 }
-                self.emit_region_pop()?;
+                if is_block { self.emit_region_pop()?; }
                 Ok(())
             }
             ast::Stmt::Empty => Ok(()),

@@ -129,3 +129,32 @@ fn nested_loop_inner_break_with_outer_body_local_accepted() {
     "#;
     expect_typeck_ok(src);
 }
+
+#[test]
+fn return_from_loop_carrying_inner_heap_ref_rejected() {
+    let src = r#"
+        fn bad() -> &Array<Int> {
+            loop {
+                let xs = [1, 2, 3];
+                return &xs;
+            }
+        }
+        fn main() -> Int { 0 }
+    "#;
+    expect_escape_err(src);
+}
+
+#[test]
+fn throw_from_loop_carrying_inner_heap_ref_rejected() {
+    let src = r#"
+        fn bad() -> <exn<Int>> Int {
+            loop {
+                let xs = [1, 2, 3];
+                let r = &xs;
+                throw r
+            }
+        }
+        fn main() -> Int { 0 }
+    "#;
+    expect_escape_err(src);
+}

@@ -29,7 +29,7 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
             string_constants: Vec::new(),
         })
     }).collect();
-    let module = Module { functions: chunks, entry: n - 1, device_mask: [0; 32] };
+    let module = Module { functions: chunks, entry: n - 1 };
     VirtualMachine::new().run_module(&module)
 }
 
@@ -264,7 +264,6 @@ fn test_drop_reclaims_heap_via_rc_dec() {
             string_constants: Vec::new(),
         })],
         entry: 0,
-        device_mask: [0; 32],
     };
     let result = vm.run_module(&module);
     assert_eq!(result, Ok(Value::from_int(0)));
@@ -294,7 +293,6 @@ fn test_handle_after_free_is_rejected_via_generation() {
             string_constants: Vec::new(),
         })],
         entry: 0,
-        device_mask: [0; 32],
     };
     let result = vm.run_module(&module);
     assert_eq!(result, Ok(Value::from_int(0)));

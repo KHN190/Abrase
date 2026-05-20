@@ -168,9 +168,6 @@ impl VirtualMachine {
         total.saturating_sub(const_live)
     }
 
-    pub fn heap_total_live_count(&self) -> usize {
-        self.heap.live_count()
-    }
 
     pub fn heap_ref(&self) -> &Heap { &self.heap }
     pub fn heap_mut(&mut self) -> &mut Heap { &mut self.heap }

@@ -91,7 +91,13 @@ fn cmd_run(source: &str, debug: bool) -> ExitCode {
 
     Host::default().install_into(&mut vm);
     match vm.run_module(&module) {
-        Ok(v) => { print_result(&vm, v); ExitCode::SUCCESS }
+        Ok(v) => {
+            print_result(&vm, v);
+            if debug {
+                eprintln!("[heap] live_count after exit: {}", vm.heap_live_count());
+            }
+            ExitCode::SUCCESS
+        }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
     }
 }
