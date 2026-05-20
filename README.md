@@ -19,6 +19,23 @@ We also include Myriad as a safe sandbox environment, which can later compile to
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
+## Installation
+
+**CLI (compiler & tools):**
+```bash
+cargo install abrase-cli
+```
+
+**Libraries (in your Rust project):**
+```toml
+[dependencies]
+abrase = "0.1"
+polka = { version = "0.1", package = "polka-rs" }
+myriad = { version = "0.1", package = "myriad-rs" }
+```
+
+Download pre-compiled binaries from [GitHub Releases](https://github.com/KHN190/Abrase/releases).
+
 ## Language Overview
 
 ```rust
@@ -106,6 +123,4 @@ Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x f
 
 See [`Wiki / Bytecode Spec`](./wiki/appendix-bytecode-spec.md).
 
-> Why design is hard? The simple answer is, you had too much freedom. Then when again design becomes easy? That you prisoned yourself with taste, and with freedom gone, you are left with only choices. 
-
-> By designing a programming language you become clearer with your taste, your limitations, and you find the same joy writing a very short poem.
+Read about the blog [here](medium.com/p/05cb0e4df3e5).
