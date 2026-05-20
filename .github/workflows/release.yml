@@ -13,8 +13,39 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  sanity:
+    name: release sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: release smoke test
+        run: |
+          cargo build --release -p abrase-cli
+          for f in examples/*.abe; do
+            echo "→ $f"
+            ./target/release/abrase run "$f" > /dev/null || exit 1
+          done
+
+      # polka-rs has no external deps, so the full verify (compile after
+      # packaging) works without crates.io having anything yet.
+      - run: cargo publish -p polka-rs --dry-run --allow-dirty
+
+      # Downstream crates need polka-rs / myriad-rs in the registry to even
+      # resolve dependencies (path deps are stripped at publish time, and
+      # `--no-verify` only skips the post-package compile, not resolution).
+      - run: cargo publish -p myriad-rs  --dry-run --allow-dirty --no-verify
+        continue-on-error: true
+      - run: cargo publish -p abrase     --dry-run --allow-dirty --no-verify
+        continue-on-error: true
+      - run: cargo publish -p abrase-cli --dry-run --allow-dirty --no-verify
+        continue-on-error: true
+
   build:
     name: build (${{ matrix.target }})
+    needs: sanity
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
