@@ -134,6 +134,7 @@ impl Compiler {
 
         if installed_frame {
             self.emit_handle_pop()?;
+            self.emit(OpCode::Drop(return_arm_env_reg));
             return Ok(body_reg);
         }
 
@@ -141,7 +142,7 @@ impl Compiler {
             .ok_or_else(|| format!("internal: no env packed for return arm '{}'", ret_arm_name))?;
 
         let pos = self.code.len();
-        self.emit(OpCode::Copy(Register(0), env_reg));
+        self.emit(OpCode::Move(Register(0), env_reg));
         self.pending_arg_patches.push((pos, 0));
 
         let return_env_reg = self.alloc_register()?;
@@ -251,7 +252,7 @@ impl Compiler {
                 self.emit(OpCode::St(fn_id_reg, table_reg, off));
                 if let Some(env_reg) = current_envs.get(&arm_name).copied() {
                     let tmp = self.alloc_register()?;
-                    self.emit(OpCode::Copy(tmp, env_reg));
+                    self.emit(OpCode::Move(tmp, env_reg));
                     self.emit(OpCode::St(tmp, table_reg, off + 1));
                 }
             }
@@ -319,9 +320,6 @@ impl Compiler {
                         name, cap.name
                     ))?;
                 self.emit(OpCode::St(src, env_reg, offset));
-            }
-            if let Some(top) = self.block_locals_stack.last_mut() {
-                top.push(env_reg);
             }
             envs.insert(name.clone(), env_reg);
         }
