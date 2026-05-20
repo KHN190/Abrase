@@ -90,31 +90,33 @@ fn concat_native() -> NativeFn {
         let (a_slot, a_gen) = args[0].as_handle();
         let (b_slot, b_gen) = args[1].as_handle();
 
-        let a_bytes: Vec<u8> = {
+        // Clamp the user-stated length to the cell's actual payload capacity.
+        // Without this, a malicious St on slot 0 could drive copy_nonoverlapping
+        // past the cell buffer and into host memory.
+        let a_len = {
             let d = ctx.heap.cell_data(a_slot, a_gen)?;
-            let len = d[0] as usize;
-            let payload = &d[1..];
-            let ptr = payload.as_ptr() as *const u8;
-            unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+            (d[0] as usize).min(d.len().saturating_sub(1) * 8)
         };
-        let b_bytes: Vec<u8> = {
+        let b_len = {
             let d = ctx.heap.cell_data(b_slot, b_gen)?;
-            let len = d[0] as usize;
-            let payload = &d[1..];
-            let ptr = payload.as_ptr() as *const u8;
-            unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+            (d[0] as usize).min(d.len().saturating_sub(1) * 8)
         };
-
-        let total = a_bytes.len() + b_bytes.len();
+        let total = a_len + b_len;
         let size = 1 + (total + 7) / 8;
+
         let (slot, gen_) = ctx.heap.try_alloc(size)?;
+
+        // Source `Box<[u64]>` buffers stay put even if cells Vec reallocs,
+        // so these raw pointers remain valid until next free of a/b.
+        let a_src = ctx.heap.cell_data(a_slot, a_gen)?[1..].as_ptr() as *const u8;
+        let b_src = ctx.heap.cell_data(b_slot, b_gen)?[1..].as_ptr() as *const u8;
 
         let dst = ctx.heap.cell_data_mut(slot, gen_)?;
         dst[0] = total as u64;
-        let payload_ptr = dst[1..].as_mut_ptr() as *mut u8;
+        let dst_ptr = dst[1..].as_mut_ptr() as *mut u8;
         unsafe {
-            std::ptr::copy_nonoverlapping(a_bytes.as_ptr(), payload_ptr, a_bytes.len());
-            std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), payload_ptr.add(a_bytes.len()), b_bytes.len());
+            std::ptr::copy_nonoverlapping(a_src, dst_ptr, a_len);
+            std::ptr::copy_nonoverlapping(b_src, dst_ptr.add(a_len), b_len);
         }
 
         Ok(handle(Value::from_handle(slot, gen_)))
@@ -135,18 +137,35 @@ fn to_str_native() -> NativeFn {
 
 fn print_native() -> NativeFn {
     Rc::new(|ctx, args| {
-        let s = read_string(ctx.heap, args[0])
-            .ok_or_else(|| format!("print: arg0 not a String: {:?}", args[0]))?;
-        write_console(ctx.devices, s.as_bytes(), "print")?;
+        if args[0].is_handle_none() {
+            return Err(format!("print: arg0 not a String: {:?}", args[0]));
+        }
+        let (slot, gen_) = args[0].as_handle();
+        let bytes: Vec<u8> = {
+            let d = ctx.heap.cell_data(slot, gen_)?;
+            // Clamp stated length to actual cell payload capacity.
+            let len = (d[0] as usize).min(d.len().saturating_sub(1) * 8);
+            let ptr = d[1..].as_ptr() as *const u8;
+            unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+        };
+        write_console(ctx.devices, &bytes, "print")?;
         Ok(plain(Value::ZERO))
     })
 }
 
 fn println_native() -> NativeFn {
     Rc::new(|ctx, args| {
-        let s = read_string(ctx.heap, args[0])
-            .ok_or_else(|| format!("println: arg0 not a String: {:?}", args[0]))?;
-        write_console(ctx.devices, s.as_bytes(), "println")?;
+        if args[0].is_handle_none() {
+            return Err(format!("println: arg0 not a String: {:?}", args[0]));
+        }
+        let (slot, gen_) = args[0].as_handle();
+        let bytes: Vec<u8> = {
+            let d = ctx.heap.cell_data(slot, gen_)?;
+            let len = (d[0] as usize).min(d.len().saturating_sub(1) * 8);
+            let ptr = d[1..].as_ptr() as *const u8;
+            unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+        };
+        write_console(ctx.devices, &bytes, "println")?;
         write_console(ctx.devices, b"\n", "println")?;
         Ok(plain(Value::ZERO))
     })
@@ -155,10 +174,7 @@ fn println_native() -> NativeFn {
 fn write_console(devices: &mut DeviceTable, bytes: &[u8], op: &str) -> Result<(), String> {
     let dev = devices.get_mut(CONSOLE_ID)
         .ok_or_else(|| format!("{}: Console device 0x{:02x} not installed", op, CONSOLE_ID))?;
-    for &b in bytes {
-        dev.write(console::PORT_STDOUT, Value::from_int(b as i64))?;
-    }
-    Ok(())
+    dev.write_bytes(console::PORT_STDOUT, bytes)
 }
 
 fn now_native() -> NativeFn {

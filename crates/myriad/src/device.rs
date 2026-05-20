@@ -3,6 +3,16 @@ use polka::Value;
 pub trait Device {
     fn read(&mut self, port: u8) -> Result<Value, String>;
     fn write(&mut self, port: u8, val: Value) -> Result<(), String>;
+
+    // Bulk byte write — host-side optimization path for stream-oriented devices
+    // (console, file, network). Default forwards to per-byte `write`; override
+    // to issue a single syscall. Not exposed via DEI/DEO.
+    fn write_bytes(&mut self, port: u8, bytes: &[u8]) -> Result<(), String> {
+        for &b in bytes {
+            self.write(port, Value::from_int(b as i64))?;
+        }
+        Ok(())
+    }
 }
 
 pub struct DeviceTable {
