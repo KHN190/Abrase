@@ -178,20 +178,12 @@ impl VirtualMachine {
                 }
                 let raw = consts[idx];
                 let is_handle = mask_bit(mask, idx);
-                if is_handle && raw != HANDLE_NONE {
-                    let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
-                    let g = (raw & 0x00FF_FFFF) as u32;
-                    self.heap.rc_inc(s, g)?;
-                }
+                if is_handle { self.rc_inc_handle(raw)?; }
                 self.write(*reg, raw, is_handle)
             }
             OpCode::Copy(d, s) => {
                 let (v, is_handle) = self.read(*s)?;
-                if is_handle && v != HANDLE_NONE {
-                    let slot = ((v >> 24) & 0x00FF_FFFF) as u32;
-                    let gen_ = (v & 0x00FF_FFFF) as u32;
-                    self.heap.rc_inc(slot, gen_)?;
-                }
+                if is_handle { self.rc_inc_handle(v)?; }
                 self.write(*d, v, is_handle)
             }
             OpCode::Move(d, s) => {
@@ -202,22 +194,14 @@ impl VirtualMachine {
             OpCode::Ld(d, b, off) => {
                 let (slot, gen_) = self.read_handle(*b)?;
                 let (raw, is_handle) = self.heap.ld(slot, gen_, *off as usize)?;
-                if is_handle && raw != HANDLE_NONE {
-                    let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
-                    let g = (raw & 0x00FF_FFFF) as u32;
-                    self.heap.rc_inc(s, g)?;
-                }
+                if is_handle { self.rc_inc_handle(raw)?; }
                 self.write(*d, raw, is_handle)
             }
             OpCode::St(src, b, off) => {
                 let (slot, gen_) = self.read_handle(*b)?;
                 let (raw, is_handle) = self.take(*src)?;
                 let (old_raw, old_is_handle) = self.heap.st(slot, gen_, *off as usize, raw, is_handle)?;
-                if old_is_handle && old_raw != HANDLE_NONE {
-                    let s = ((old_raw >> 24) & 0x00FF_FFFF) as u32;
-                    let g = (old_raw & 0x00FF_FFFF) as u32;
-                    self.heap.rc_dec(s, g)?;
-                }
+                if old_is_handle { self.rc_dec_handle(old_raw)?; }
                 Ok(())
             }
             OpCode::LdIdx(d, b, i) => {
@@ -227,11 +211,7 @@ impl VirtualMachine {
                     return Err(format!("ldidx: negative index {}", off));
                 }
                 let (raw, is_handle) = self.heap.ld(slot, gen_, off as usize)?;
-                if is_handle && raw != HANDLE_NONE {
-                    let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
-                    let g = (raw & 0x00FF_FFFF) as u32;
-                    self.heap.rc_inc(s, g)?;
-                }
+                if is_handle { self.rc_inc_handle(raw)?; }
                 self.write(*d, raw, is_handle)
             }
             OpCode::StIdx(src, b, i) => {
@@ -242,20 +222,12 @@ impl VirtualMachine {
                 }
                 let (raw, is_handle) = self.take(*src)?;
                 let (old_raw, old_is_handle) = self.heap.st(slot, gen_, off as usize, raw, is_handle)?;
-                if old_is_handle && old_raw != HANDLE_NONE {
-                    let s = ((old_raw >> 24) & 0x00FF_FFFF) as u32;
-                    let g = (old_raw & 0x00FF_FFFF) as u32;
-                    self.heap.rc_dec(s, g)?;
-                }
+                if old_is_handle { self.rc_dec_handle(old_raw)?; }
                 Ok(())
             }
             OpCode::Ref(d, s) => {
                 let (v, is_handle) = self.read(*s)?;
-                if is_handle && v != HANDLE_NONE {
-                    let slot = ((v >> 24) & 0x00FF_FFFF) as u32;
-                    let gen_ = (v & 0x00FF_FFFF) as u32;
-                    self.heap.rc_inc(slot, gen_)?;
-                }
+                if is_handle { self.rc_inc_handle(v)?; }
                 let init_mask: u64 = if is_handle { 1 } else { 0 };
                 let (slot, generation) = self.checked_heap_alloc_with_mask(1, &[init_mask])?;
                 self.region_record_alloc(slot, generation);
@@ -282,11 +254,7 @@ impl VirtualMachine {
             OpCode::Drop(reg) => {
                 let abs = self.abs(*reg);
                 let (v, is_handle) = self.take_abs(abs);
-                if is_handle && v != HANDLE_NONE {
-                    let s = ((v >> 24) & 0x00FF_FFFF) as u32;
-                    let g = (v & 0x00FF_FFFF) as u32;
-                    self.heap.rc_dec(s, g)?;
-                }
+                if is_handle { self.rc_dec_handle(v)?; }
                 Ok(())
             }
 
@@ -295,8 +263,7 @@ impl VirtualMachine {
             OpCode::Handle(_dest, table_reg, effect_id) => {
                 let (table_raw, table_is_handle) = self.read_at(*table_reg);
                 let (table_slot, table_gen) = if table_is_handle && table_raw != HANDLE_NONE {
-                    let s = ((table_raw >> 24) & 0x00FF_FFFF) as u32;
-                    let g = (table_raw & 0x00FF_FFFF) as u32;
+                    let (s, g) = Self::decode_handle(table_raw);
                     (Some(s), g)
                 } else { (None, 0) };
                 self.handlers.push(super::HandlerFrame {
@@ -361,16 +328,11 @@ impl VirtualMachine {
                 exit_code: &mut self.exit_code,
             };
             let (result, result_is_handle) = func(&mut ctx, &buf[..param_count])?;
-            // Decrement rc of any handle args once the native fn consumed them.
             for i in 0..param_count {
                 let abs = new_base + i;
                 if self.reg_mask_bit(abs) {
                     let raw = self.read_abs_raw(abs);
-                    if raw != HANDLE_NONE {
-                        let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
-                        let g = (raw & 0x00FF_FFFF) as u32;
-                        self.heap.rc_dec(s, g)?;
-                    }
+                    self.rc_dec_handle(raw)?;
                     self.set_reg_mask_bit(abs, false);
                 }
                 self.write_abs_raw(abs, HANDLE_NONE);
@@ -502,11 +464,7 @@ impl VirtualMachine {
         }
         self.ensure_registers(needed);
 
-        if ra_env_is_handle && ra_env_raw != HANDLE_NONE {
-            let s = ((ra_env_raw >> 24) & 0x00FF_FFFF) as u32;
-            let g = (ra_env_raw & 0x00FF_FFFF) as u32;
-            self.heap.rc_inc(s, g)?;
-        }
+        if ra_env_is_handle { self.rc_inc_handle(ra_env_raw)?; }
         self.write_abs(new_base, ra_env_raw, ra_env_is_handle);
         self.write_abs(new_base + 1, 0, false);
         self.write_abs(new_base + 2, return_raw, return_is_handle);
@@ -520,139 +478,131 @@ impl VirtualMachine {
     fn do_dei(&mut self, d: Register, port_reg: Register) -> Result<(), String> {
         let port_val = self.read_i64(port_reg)?;
         let (device_id, port) = split_port(port_val)?;
-        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
-            let (raw, is_handle) = if let Some(frame) = self.handlers.last() {
-                self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::DISPATCH_FN_ID)?
-            } else {
-                (self.dispatch_last_result.take().unwrap_or(0xFFFF) as u64, false)
-            };
-            return self.write(d, raw, is_handle);
-        }
-        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_ENV {
-            let (raw, is_handle) = if let Some(frame) = self.handlers.last() {
-                self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::DISPATCH_ENV)?
-            } else {
-                self.dispatch_last_env.take().unwrap_or((HANDLE_NONE, false))
-            };
-            let (raw, is_handle) = if raw == HANDLE_NONE && !is_handle { (0u64, false) } else { (raw, is_handle) };
-            if is_handle && raw != HANDLE_NONE {
-                let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
-                let g = (raw & 0x00FF_FFFF) as u32;
-                self.heap.rc_inc(s, g)?;
+        match (device_id, port) {
+            (polka::DISPATCH_ID, polka::DISPATCH_PORT_LOOKUP) => {
+                let (raw, is_handle) = if let Some(frame) = self.handlers.last() {
+                    self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::DISPATCH_FN_ID)?
+                } else {
+                    (self.dispatch_last_result.take().unwrap_or(0xFFFF) as u64, false)
+                };
+                self.write(d, raw, is_handle)
             }
-            return self.write(d, raw, is_handle);
+            (polka::DISPATCH_ID, polka::DISPATCH_PORT_ENV) => {
+                let (raw, is_handle) = if let Some(frame) = self.handlers.last() {
+                    self.heap.ld(frame.cell_slot, frame.cell_gen, super::cont_slot::DISPATCH_ENV)?
+                } else {
+                    self.dispatch_last_env.take().unwrap_or((HANDLE_NONE, false))
+                };
+                let (raw, is_handle) = if raw == HANDLE_NONE && !is_handle { (0u64, false) } else { (raw, is_handle) };
+                if is_handle { self.rc_inc_handle(raw)?; }
+                self.write(d, raw, is_handle)
+            }
+            _ => {
+                let dev = self.devices.get_mut(device_id)
+                    .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
+                let v = dev.read(port)?;
+                self.write(d, v.raw(), false)
+            }
         }
-        let dev = self.devices.get_mut(device_id)
-            .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
-        let v = dev.read(port)?;
-        self.write(d, v.raw(), false)
     }
 
     fn do_deo(&mut self, module: &Module, src: Register, port_reg: Register) -> Result<(), String> {
         let (raw, is_handle) = self.read(src)?;
         let port_val = self.read_i64(port_reg)?;
         let (device_id, port) = split_port(port_val)?;
-        if device_id == 0x00 {
-            match port {
-                0x01 => {
-                    if !is_handle { self.exit_code = Some((raw as i64) & 0xFFFF_FFFF); }
-                    self.halted = true;
-                    return Ok(());
-                }
-                0x02 => {
-                    let msg = if is_handle && raw != HANDLE_NONE {
-                        let v = Value::from_raw(raw);
-                        crate::value::read_string(&self.heap, v).unwrap_or_else(|| format!("(handle {:?})", v))
-                    } else {
-                        format!("{}", raw as i64)
-                    };
-                    return Err(format!("panic: {}", msg));
-                }
-                _ => {}
+        match (device_id, port) {
+            (0x00, 0x01) => {
+                if !is_handle { self.exit_code = Some((raw as i64) & 0xFFFF_FFFF); }
+                self.halted = true;
+                Ok(())
             }
-        }
-        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_LOOKUP {
-            let key = decode_dispatch_key(raw)?;
-            let mut init_mask = vec![0u64; (super::cont_slot::SIZE + 63) / 64];
-            init_mask[0] = super::cont_slot::INIT_MASK_WORD0;
-            let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(super::cont_slot::SIZE, &init_mask)?;
-            self.region_record_alloc(cell_slot, cell_gen);
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_PC, (self.pc - 1) as u64, false)?;
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_BASE, self.base_reg as u64, false)?;
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_FUNC, self.current_func as u64, false)?;
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE, 1, false)?;
+            (0x00, 0x02) => {
+                let msg = if is_handle && raw != HANDLE_NONE {
+                    let v = Value::from_raw(raw);
+                    crate::value::read_string(&self.heap, v).unwrap_or_else(|| format!("(handle {:?})", v))
+                } else {
+                    format!("{}", raw as i64)
+                };
+                Err(format!("panic: {}", msg))
+            }
+            (polka::DISPATCH_ID, polka::DISPATCH_PORT_LOOKUP) => {
+                let key = decode_dispatch_key(raw)?;
+                let mut init_mask = vec![0u64; (super::cont_slot::SIZE + 63) / 64];
+                init_mask[0] = super::cont_slot::INIT_MASK_WORD0;
+                let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(super::cont_slot::SIZE, &init_mask)?;
+                self.region_record_alloc(cell_slot, cell_gen);
+                self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_PC, (self.pc - 1) as u64, false)?;
+                self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_BASE, self.base_reg as u64, false)?;
+                self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_FUNC, self.current_func as u64, false)?;
+                self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE, 1, false)?;
 
-            let reg_count = self.current_fn_reg_count(module);
-            let snapshot = self.snapshot_registers(self.base_reg, reg_count)?;
-            self.write_snapshot_into_cell(cell_slot, cell_gen, snapshot)?;
+                let reg_count = self.current_fn_reg_count(module);
+                let snapshot = self.snapshot_registers(self.base_reg, reg_count)?;
+                self.write_snapshot_into_cell(cell_slot, cell_gen, snapshot)?;
 
-            if let Some(handler_frame) = self.handlers.last_mut() {
-                handler_frame.cells_allocated.push((cell_slot, cell_gen));
-                handler_frame.cell_slot = cell_slot;
-                handler_frame.cell_gen = cell_gen;
-            }
-            let (fn_id, env) = self.resolve_dispatch(key);
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_FN_ID, fn_id as u64, false)?;
-            let (env_raw, env_is_handle) = env.unwrap_or((HANDLE_NONE, false));
-            if env_is_handle && env_raw != HANDLE_NONE {
-                let s = ((env_raw >> 24) & 0x00FF_FFFF) as u32;
-                let g = (env_raw & 0x00FF_FFFF) as u32;
-                self.heap.rc_inc(s, g)?;
-            }
-            self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
-            self.dispatch_last_result = Some(fn_id);
-            self.dispatch_last_env = env;
-            return Ok(());
-        }
-        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_POP_HANDLER {
-            let frame = self.handlers.pop()
-                .ok_or("dispatch.pop_handler: no active handler frame")?;
-            for (slot, generation) in frame.cells_allocated.iter() {
-                self.region_table.forget(*slot, *generation);
-                if self.heap.is_live(*slot, *generation) {
-                    self.heap.rc_dec(*slot, *generation)?;
+                if let Some(handler_frame) = self.handlers.last_mut() {
+                    handler_frame.cells_allocated.push((cell_slot, cell_gen));
+                    handler_frame.cell_slot = cell_slot;
+                    handler_frame.cell_gen = cell_gen;
                 }
+                let (fn_id, env) = self.resolve_dispatch(key);
+                self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_FN_ID, fn_id as u64, false)?;
+                let (env_raw, env_is_handle) = env.unwrap_or((HANDLE_NONE, false));
+                if env_is_handle { self.rc_inc_handle(env_raw)?; }
+                self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
+                self.dispatch_last_result = Some(fn_id);
+                self.dispatch_last_env = env;
+                Ok(())
             }
-            return Ok(());
-        }
-        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_RETURN_FN {
-            let fn_id = raw as i64;
-            let handler = self.handlers.last_mut()
-                .ok_or("dispatch.return_fn: no active handler frame")?;
-            handler.pending_return_arm_fn = Some(fn_id as usize);
-            return Ok(());
-        }
-        if device_id == polka::DISPATCH_ID && port == polka::DISPATCH_PORT_RETURN_ENV {
-            let handler = self.handlers.last_mut()
-                .ok_or("dispatch.return_env: no active handler frame")?;
-            handler.pending_return_arm_env = raw;
-            handler.pending_return_arm_env_is_handle = is_handle;
-            return Ok(());
-        }
-        if device_id == polka::REGION_ID {
-            return match port {
-                polka::REGION_PORT_PUSH => { self.region_push(); Ok(()) }
-                polka::REGION_PORT_POP  => self.region_pop(),
-                polka::REGION_PORT_FORGET => {
-                    if is_handle && raw != HANDLE_NONE {
-                        let slot = ((raw >> 24) & 0x00FF_FFFF) as u32;
-                        let gen_ = (raw & 0x00FF_FFFF) as u32;
-                        let mut visited: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
-                        self.deep_forget(slot, gen_, &mut visited)?;
+            (polka::DISPATCH_ID, polka::DISPATCH_PORT_POP_HANDLER) => {
+                let frame = self.handlers.pop()
+                    .ok_or("dispatch.pop_handler: no active handler frame")?;
+                for (slot, generation) in frame.cells_allocated.iter() {
+                    self.region_table.forget(*slot, *generation);
+                    if self.heap.is_live(*slot, *generation) {
+                        self.heap.rc_dec(*slot, *generation)?;
                     }
-                    Ok(())
                 }
-                _ => Err(format!("region: unknown port {:#x}", port)),
-            };
+                Ok(())
+            }
+            (polka::DISPATCH_ID, polka::DISPATCH_PORT_RETURN_FN) => {
+                let fn_id = raw as i64;
+                let handler = self.handlers.last_mut()
+                    .ok_or("dispatch.return_fn: no active handler frame")?;
+                handler.pending_return_arm_fn = Some(fn_id as usize);
+                Ok(())
+            }
+            (polka::DISPATCH_ID, polka::DISPATCH_PORT_RETURN_ENV) => {
+                let handler = self.handlers.last_mut()
+                    .ok_or("dispatch.return_env: no active handler frame")?;
+                handler.pending_return_arm_env = raw;
+                handler.pending_return_arm_env_is_handle = is_handle;
+                Ok(())
+            }
+            (polka::REGION_ID, polka::REGION_PORT_PUSH) => { self.region_push(); Ok(()) }
+            (polka::REGION_ID, polka::REGION_PORT_POP)  => self.region_pop(),
+            (polka::REGION_ID, polka::REGION_PORT_FORGET) => {
+                if is_handle && raw != HANDLE_NONE {
+                    let (slot, gen_) = Self::decode_handle(raw);
+                    let mut visited: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+                    self.deep_forget(slot, gen_, &mut visited)?;
+                }
+                Ok(())
+            }
+            (polka::REGION_ID, _) => Err(format!("region: unknown port {:#x}", port)),
+            (dev_id, _) if dev_id == crate::devices::HOSTFUNC_ID
+                && port == crate::devices::hostfunc::PORT_TRIGGER =>
+            {
+                let dev = self.devices.get_mut(device_id)
+                    .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
+                dev.write_with_heap(port, Value::from_raw(raw), &mut self.heap)
+            }
+            _ => {
+                let dev = self.devices.get_mut(device_id)
+                    .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
+                dev.write(port, Value::from_raw(raw))
+            }
         }
-        if device_id == crate::devices::HOSTFUNC_ID && port == crate::devices::hostfunc::PORT_TRIGGER {
-            let dev = self.devices.get_mut(device_id)
-                .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
-            return dev.write_with_heap(port, Value::from_raw(raw), &mut self.heap);
-        }
-        let dev = self.devices.get_mut(device_id)
-            .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
-        dev.write(port, Value::from_raw(raw))
     }
 
     pub(crate) fn deep_forget(
@@ -670,8 +620,7 @@ impl VirtualMachine {
         for off in 0..size {
             if let Ok((raw, is_handle)) = self.heap.ld(slot, generation, off) {
                 if is_handle && raw != HANDLE_NONE {
-                    let s = ((raw >> 24) & 0x00FF_FFFF) as u32;
-                    let g = (raw & 0x00FF_FFFF) as u32;
+                    let (s, g) = Self::decode_handle(raw);
                     self.deep_forget(s, g, visited)?;
                 }
             }
@@ -697,10 +646,9 @@ impl VirtualMachine {
             let snap = if !snap_is_handle || snap_raw == HANDLE_NONE {
                 crate::snapshot::SnapshotHandle::EMPTY
             } else {
-                let s = ((snap_raw >> 24) & 0x00FF_FFFF) as u32;
-                let g = (snap_raw & 0x00FF_FFFF) as u32;
+                let (slot, generation) = Self::decode_handle(snap_raw);
                 let count = data[super::cont_slot::REGS_COUNT] as usize;
-                crate::snapshot::SnapshotHandle { slot: s, generation: g, count }
+                crate::snapshot::SnapshotHandle { slot, generation, count }
             };
             (alive, saved_base, saved_func, snap)
         };
@@ -850,7 +798,7 @@ impl VirtualMachine {
         let v = self.read_abs_raw(abs);
         let h = self.reg_mask_bit(abs);
         self.write_abs_raw(abs, HANDLE_NONE);
-        self.set_reg_mask_bit(abs, false);
+        if h { self.set_reg_mask_bit(abs, false); }
         (v, h)
     }
 
@@ -909,9 +857,27 @@ impl VirtualMachine {
         if v == HANDLE_NONE {
             return Err(format!("expected handle, got None in r{}", r.0));
         }
-        let slot = ((v >> 24) & 0x00FF_FFFF) as u32;
-        let gen_ = (v & 0x00FF_FFFF) as u32;
-        Ok((slot, gen_))
+        Ok(Self::decode_handle(v))
+    }
+
+    #[inline(always)]
+    fn decode_handle(raw: u64) -> (u32, u32) {
+        (((raw >> 24) & 0x00FF_FFFF) as u32, (raw & 0x00FF_FFFF) as u32)
+    }
+
+    #[inline(always)]
+    fn rc_inc_handle(&mut self, raw: u64) -> Result<(), String> {
+        if raw == HANDLE_NONE { return Ok(()); }
+        let (s, g) = Self::decode_handle(raw);
+        self.heap.rc_inc(s, g)
+    }
+
+    #[inline(always)]
+    fn rc_dec_handle(&mut self, raw: u64) -> Result<(), String> {
+        if raw == HANDLE_NONE { return Ok(()); }
+        let (s, g) = Self::decode_handle(raw);
+        self.heap.rc_dec(s, g)?;
+        Ok(())
     }
 
     #[inline(always)]
