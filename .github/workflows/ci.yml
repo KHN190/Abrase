@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, pre-release]
+    branches: [master, dev]
   pull_request:
-    branches: [main, pre-release]
+    branches: [master, dev]
 
 env:
   CARGO_TERM_COLOR: always
@@ -32,6 +32,24 @@ jobs:
 
       - name: cargo test (workspace)
         run: cargo test --workspace --no-fail-fast
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: cargo llvm-cov (workspace)
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   release-build:
     name: release build (${{ matrix.os }})
