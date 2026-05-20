@@ -154,6 +154,11 @@ impl Heap {
         Ok(&self.cells[idx].as_ref().unwrap().data)
     }
 
+    pub fn cell_data_mut(&mut self, slot: u32, generation: u32) -> Result<&mut [u64], String> {
+        let idx = self.check(slot, generation, "cell_mut")?;
+        Ok(&mut self.cells[idx].as_mut().unwrap().data)
+    }
+
     pub fn cell_mask(&self, slot: u32, generation: u32) -> Result<&[u64], String> {
         let idx = self.check(slot, generation, "cell_mask")?;
         Ok(&self.cells[idx].as_ref().unwrap().mask)
