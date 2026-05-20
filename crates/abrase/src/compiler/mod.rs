@@ -79,7 +79,6 @@ pub struct Compiler {
     pub(super) builtin_types: HashMap<String, (Vec<TyType>, TyType)>,
     pub(super) fn_overloads: HashMap<String, Vec<usize>>,
     pub(super) fn_signatures: HashMap<usize, (Vec<TyType>, TyType)>,
-    pub(super) device_mask: [u8; 32],
     pub(super) current_span: ast::Span,
     pub(super) compiler_region_depth: usize,
     pub(super) fn_compiler_depth_baseline: usize,
@@ -138,7 +137,6 @@ impl Compiler {
             builtin_types: HashMap::new(),
             fn_overloads: HashMap::new(),
             fn_signatures: HashMap::new(),
-            device_mask: [0; 32],
             current_span: ast::Span::new(0, 0),
             compiler_region_depth: 0,
             fn_compiler_depth_baseline: 0,
@@ -304,7 +302,8 @@ impl Compiler {
         for decl in ast {
             match decl {
                 ast::Decl::Fn(fn_decl) => {
-                    if self.host_fns.contains_key(&fn_decl.name)
+                    if matches!(fn_decl.name.as_str(), "device_in" | "device_out")
+                        || self.host_fns.contains_key(&fn_decl.name)
                         || self.func_map.contains_key(&fn_decl.name)
                     {
                         self.errors.push(Error::new(
@@ -400,7 +399,6 @@ impl Compiler {
         Ok(Module {
             functions: self.functions.clone(),
             entry,
-            device_mask: self.device_mask,
         })
     }
 

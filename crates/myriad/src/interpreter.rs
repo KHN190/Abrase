@@ -14,7 +14,7 @@ pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
-        let module = Module { functions: vec![chunk.clone()], entry: 0, device_mask: [0; 32] };
+        let module = Module { functions: vec![chunk.clone()], entry: 0 };
         self.run_module(&module)
     }
 
@@ -29,7 +29,6 @@ impl VirtualMachine {
 
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
         validate_module_register_budget(module)?;
-        self.validate_module_devices(module)?;
         self.frames.clear();
         self.handlers.clear();
         self.region_table.clear();
@@ -590,13 +589,6 @@ impl VirtualMachine {
                 Ok(())
             }
             (polka::REGION_ID, _) => Err(format!("region: unknown port {:#x}", port)),
-            (dev_id, _) if dev_id == crate::devices::HOSTFUNC_ID
-                && port == crate::devices::hostfunc::PORT_TRIGGER =>
-            {
-                let dev = self.devices.get_mut(device_id)
-                    .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
-                dev.write_with_heap(port, Value::from_raw(raw), &mut self.heap)
-            }
             _ => {
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
@@ -989,17 +981,6 @@ impl VirtualMachine {
                 Chunk::Bytecode(_) => None,
             };
             self.resolved_natives.push(entry);
-        }
-        Ok(())
-    }
-
-    fn validate_module_devices(&self, module: &Module) -> Result<(), String> {
-        for id in 0u16..=255 {
-            let id = id as u8;
-            if id == polka::DISPATCH_ID { continue; }
-            if module.requires_device(id) && !self.devices.has(id) {
-                return Err(format!("module requires device {:#04x} but it is not installed", id));
-            }
         }
         Ok(())
     }
