@@ -1,7 +1,6 @@
 # Abrase
 
 [![CI](https://github.com/KHN190/Abrase/actions/workflows/ci.yml/badge.svg)](https://github.com/KHN190/Abrase/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/abrase-cli.svg?label=abrase)](https://crates.io/crates/abrase)
 [![crates.io](https://img.shields.io/crates/v/abrase-cli.svg?label=abrase-cli)](https://crates.io/crates/abrase-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -19,7 +18,22 @@ We also include Myriad as a safe sandbox environment, which can later compile to
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
-> ◇ Why design is hard? ◆ The simple answer is, you had too much freedom. ◇ Then when again design becomes easy? ◆ When you prisoned yourself with taste, and with freedom gone, you are left with only choices. ◇ By designing a programming language you become clearer with your taste, your limitations, and you find the same joy writing a very short poem.
+## Installation
+
+**CLI (compiler & tools):**
+```bash
+cargo install abrase-cli
+```
+
+**Libraries (in your Rust project):**
+```toml
+[dependencies]
+abrase = "0.1"
+polka = { version = "0.1", package = "polka-rs" }
+myriad = { version = "0.1", package = "myriad-rs" }
+```
+
+Download pre-compiled binaries from [GitHub Releases](https://github.com/KHN190/Abrase/releases).
 
 ## Language Overview
 
@@ -107,3 +121,5 @@ Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x f
 ```
 
 See [`Wiki / Bytecode Spec`](./wiki/appendix-bytecode-spec.md).
+
+Read about the blog [here](medium.com/p/05cb0e4df3e5).
