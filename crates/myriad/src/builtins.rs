@@ -81,15 +81,43 @@ fn handle(v: Value) -> (Value, bool) { (v, true) }
 
 fn concat_native() -> NativeFn {
     Rc::new(|ctx, args| {
-        let a = read_string(ctx.heap, args[0])
-            .ok_or_else(|| format!("__concat: arg0 not a String: {:?}", args[0]))?;
-        let b = read_string(ctx.heap, args[1])
-            .ok_or_else(|| format!("__concat: arg1 not a String: {:?}", args[1]))?;
-        let mut out = String::with_capacity(a.len() + b.len());
-        out.push_str(&a);
-        out.push_str(&b);
-        let v = alloc_string(ctx.heap, &out)?;
-        Ok(handle(v))
+        if args[0].is_handle_none() {
+            return Err(format!("__concat: arg0 not a String: {:?}", args[0]));
+        }
+        if args[1].is_handle_none() {
+            return Err(format!("__concat: arg1 not a String: {:?}", args[1]));
+        }
+        let (a_slot, a_gen) = args[0].as_handle();
+        let (b_slot, b_gen) = args[1].as_handle();
+
+        let a_bytes: Vec<u8> = {
+            let d = ctx.heap.cell_data(a_slot, a_gen)?;
+            let len = d[0] as usize;
+            let payload = &d[1..];
+            let ptr = payload.as_ptr() as *const u8;
+            unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+        };
+        let b_bytes: Vec<u8> = {
+            let d = ctx.heap.cell_data(b_slot, b_gen)?;
+            let len = d[0] as usize;
+            let payload = &d[1..];
+            let ptr = payload.as_ptr() as *const u8;
+            unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+        };
+
+        let total = a_bytes.len() + b_bytes.len();
+        let size = 1 + (total + 7) / 8;
+        let (slot, gen_) = ctx.heap.try_alloc(size)?;
+
+        let dst = ctx.heap.cell_data_mut(slot, gen_)?;
+        dst[0] = total as u64;
+        let payload_ptr = dst[1..].as_mut_ptr() as *mut u8;
+        unsafe {
+            std::ptr::copy_nonoverlapping(a_bytes.as_ptr(), payload_ptr, a_bytes.len());
+            std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), payload_ptr.add(a_bytes.len()), b_bytes.len());
+        }
+
+        Ok(handle(Value::from_handle(slot, gen_)))
     })
 }
 
@@ -302,10 +330,12 @@ fn char_to_s_native() -> NativeFn {
 
 fn string_to_s_native() -> NativeFn {
     Rc::new(|ctx, args| {
-        let s = read_string(ctx.heap, args[0])
-            .ok_or_else(|| format!("__string_to_s: arg0 not String: {:?}", args[0]))?;
-        let v = alloc_string(ctx.heap, &s)?;
-        Ok(handle(v))
+        if args[0].is_handle_none() {
+            return Err(format!("__string_to_s: arg0 not String: {:?}", args[0]));
+        }
+        let (slot, gen_) = args[0].as_handle();
+        ctx.heap.rc_inc(slot, gen_)?;
+        Ok(handle(args[0]))
     })
 }
 
