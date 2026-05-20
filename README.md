@@ -1,6 +1,7 @@
 # Abrase
 
 [![CI](https://github.com/KHN190/Abrase/actions/workflows/ci.yml/badge.svg)](https://github.com/KHN190/Abrase/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/KHN190/Abrase/branch/dev/graph/badge.svg)](https://codecov.io/gh/KHN190/Abrase)
 [![crates.io](https://img.shields.io/crates/v/abrase-cli.svg?label=abrase-cli)](https://crates.io/crates/abrase-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
