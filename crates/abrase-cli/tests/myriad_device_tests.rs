@@ -4,7 +4,7 @@ use myriad::devices::{BufferConsole, Console, SystemDevice, CONSOLE_ID, SYSTEM_I
 
 fn r(n: u8) -> Register { Register(n) }
 
-fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize, mask: [u8; 32]) -> Module {
+fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize) -> Module {
     let raw: Vec<u64> = constants.iter().map(|v| v.raw()).collect();
     Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
@@ -14,14 +14,7 @@ fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize, mask:
             string_constants: Vec::new(),
         })],
         entry: 0,
-        device_mask: mask,
     }
-}
-
-fn mask_with(ids: &[u8]) -> [u8; 32] {
-    let mut m = [0u8; 32];
-    for id in ids { m[(*id / 8) as usize] |= 1 << (*id % 8); }
-    m
 }
 
 #[test]
@@ -42,7 +35,6 @@ fn console_write_byte_to_stdout() {
         ],
         vec![Value::from_int(b'A' as i64), Value::from_int(0x1001), Value::from_int(0)],
         3,
-        mask_with(&[CONSOLE_ID]),
     );
     vm.run_module(&module).unwrap();
     assert_eq!(&*out_handle.borrow(), b"A");
@@ -66,7 +58,6 @@ fn console_write_byte_to_stderr() {
         ],
         vec![Value::from_int(b'E' as i64), Value::from_int(0x1002), Value::from_int(0)],
         3,
-        mask_with(&[CONSOLE_ID]),
     );
     vm.run_module(&module).unwrap();
     assert_eq!(&*err_handle.borrow(), b"E");
@@ -86,7 +77,6 @@ fn console_stdin_read_returns_minus_one_on_empty() {
         ],
         vec![Value::from_int(0x1000)],
         2,
-        mask_with(&[CONSOLE_ID]),
     );
     assert_eq!(vm.run_module(&module).unwrap(), Value::from_int(-1));
 }
@@ -104,7 +94,6 @@ fn system_halt_returns_exit_code() {
         ],
         vec![Value::from_int(7), Value::from_int(0x0001)],
         2,
-        mask_with(&[SYSTEM_ID]),
     );
     assert_eq!(vm.run_module(&module).unwrap(), Value::from_int(7));
 }
@@ -122,7 +111,6 @@ fn system_panic_traps() {
         ],
         vec![Value::from_int(0), Value::from_int(0x0002)],
         2,
-        mask_with(&[SYSTEM_ID]),
     );
     let result = vm.run_module(&module);
     assert!(result.is_err());
@@ -141,24 +129,9 @@ fn system_version_read() {
         ],
         vec![Value::from_int(0x0000)],
         2,
-        mask_with(&[SYSTEM_ID]),
     );
     let v = vm.run_module(&module).unwrap();
     assert!(v.as_int() >= (1i64 << 32), "version must be at least major=1");
-}
-
-#[test]
-fn missing_device_load_rejected() {
-    let mut vm = VirtualMachine::new();
-    let module = module_with(
-        vec![OpCode::PushConst(r(0), 0), OpCode::Ret(r(0))],
-        vec![Value::from_int(0)],
-        1,
-        mask_with(&[CONSOLE_ID]),
-    );
-    let result = vm.run_module(&module);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("0x10"));
 }
 
 #[test]
@@ -172,7 +145,6 @@ fn dei_on_uninstalled_device_traps() {
         ],
         vec![Value::from_int(0x9000)],
         2,
-        [0; 32],
     );
     let result = vm.run_module(&module);
     assert!(result.is_err());

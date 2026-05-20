@@ -266,27 +266,7 @@ impl Compiler {
     }
 
     fn emit_host_fn_call(&mut self, fn_id: u16, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
-        let arg_port = self.alloc_register()?;
-        let arg_port_idx = self.add_constant(Value::from_int(0xF018))?;
-        self.emit(OpCode::PushConst(arg_port, arg_port_idx));
-        for a in args {
-            let v = self.compile_expr(a)?;
-            self.emit(OpCode::Deo(v, arg_port));
-        }
-        let trigger_reg = self.alloc_register()?;
-        let trigger_val_idx = self.add_constant(Value::from_int(fn_id as i64))?;
-        self.emit(OpCode::PushConst(trigger_reg, trigger_val_idx));
-        let trigger_port = self.alloc_register()?;
-        let trigger_port_idx = self.add_constant(Value::from_int(0xF01F))?;
-        self.emit(OpCode::PushConst(trigger_port, trigger_port_idx));
-        self.emit(OpCode::Deo(trigger_reg, trigger_port));
-        let result_port = self.alloc_register()?;
-        let result_port_idx = self.add_constant(Value::from_int(0xF01E))?;
-        self.emit(OpCode::PushConst(result_port, result_port_idx));
-        let result = self.alloc_register()?;
-        self.emit(OpCode::Dei(result, result_port));
-        self.device_mask[0xF0 / 8] |= 1 << (0xF0 % 8);
-        Ok(result)
+        self.emit_func_call(fn_id, CallEnv::None, args)
     }
 
     // device_in(port, data) → Deo(data, port). Returns Unit register.

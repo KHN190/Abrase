@@ -98,6 +98,19 @@ impl Compiler {
     }
 
     pub(super) fn register_builtins_to_checker(&self, checker: &mut crate::typeck::Checker) {
+        let device_in_ty = TyType::Function {
+            params: vec![TyType::Int, TyType::Int],
+            effects: vec![],
+            ret: Box::new(TyType::Unit),
+        };
+        checker.insert_var("device_in".into(), device_in_ty, false, ast::Span { line: 0, col: 0 });
+        let device_out_ty = TyType::Function {
+            params: vec![TyType::Int],
+            effects: vec![],
+            ret: Box::new(TyType::Int),
+        };
+        checker.insert_var("device_out".into(), device_out_ty, false, ast::Span { line: 0, col: 0 });
+
         for decl in self.host_fns.values() {
             let fn_ty = TyType::Function {
                 params: decl.params.clone(),
