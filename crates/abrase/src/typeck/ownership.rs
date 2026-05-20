@@ -23,13 +23,14 @@ impl Checker {
                     return Err(format!("Cannot immutably borrow '{}': mutable borrow already active", var_name));
                 }
                 meta.immut_borrow_count += 1;
-                self.borrow_stack.push((var_name.to_string(), false));
+                let depth = self.scopes.len();
+                self.borrow_stack.push((var_name.to_string(), false, depth));
                 return Ok(());
             }
         }
         Err(format!("Variable '{}' not found", var_name))
     }
-    
+
     pub fn try_mut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(var_name) {
@@ -46,20 +47,21 @@ impl Checker {
                     return Err(format!("Cannot mutably borrow immutable variable '{}'", var_name));
                 }
                 meta.mut_borrow_active = true;
-                self.borrow_stack.push((var_name.to_string(), true));
+                let depth = self.scopes.len();
+                self.borrow_stack.push((var_name.to_string(), true, depth));
                 return Ok(());
             }
         }
         Err(format!("Variable '{}' not found", var_name))
     }
-    
+
     pub fn release_borrow(&mut self, var_name: &str) {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(var_name) {
                 if meta.immut_borrow_count > 0 {
                     meta.immut_borrow_count = meta.immut_borrow_count.saturating_sub(1);
                 }
-                if meta.mut_borrow_active && self.borrow_stack.last().map_or(false, |(name, _)| name == var_name) {
+                if meta.mut_borrow_active && self.borrow_stack.last().map_or(false, |(name, _, _)| name == var_name) {
                     meta.mut_borrow_active = false;
                 }
                 return;

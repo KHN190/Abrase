@@ -320,6 +320,9 @@ impl Compiler {
                     ))?;
                 self.emit(OpCode::St(src, env_reg, offset));
             }
+            if let Some(top) = self.block_locals_stack.last_mut() {
+                top.push(env_reg);
+            }
             envs.insert(name.clone(), env_reg);
         }
         Ok(envs)

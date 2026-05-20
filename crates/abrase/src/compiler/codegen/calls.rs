@@ -348,6 +348,9 @@ impl Compiler {
         self.emit(OpCode::PushConst(env_port_reg, env_port_idx));
         let env_reg = self.alloc_register()?;
         self.emit(OpCode::Dei(env_reg, env_port_reg));
+        if let Some(top) = self.block_locals_stack.last_mut() {
+            top.push(env_reg);
+        }
 
         let return_env_reg = self.alloc_register()?;
         let zero_idx = self.add_constant(Value::from_int(0))?;

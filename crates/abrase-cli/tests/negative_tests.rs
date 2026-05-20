@@ -346,3 +346,14 @@ fn range_non_int_end_rejected() {
     assert!(err.contains("Range end must be Int") || err.contains("range") || err.contains("Int"),
             "expected range end type error, got: {}", err);
 }
+
+#[test]
+fn main_with_declared_effect_rejected() {
+    let src = r#"
+        effect e { op f() -> Int }
+        fn main() -> <e> Int { e.f() }
+    "#;
+    let err = must_reject(src);
+    assert!(err.contains("pure") || err.contains("must be pure"),
+        "expected `main` must-be-pure rejection, got: {}", err);
+}
