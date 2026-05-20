@@ -14,6 +14,15 @@ pub trait Console {
     fn write_stdout(&mut self, byte: u8) -> Result<(), String>;
     fn write_stderr(&mut self, byte: u8) -> Result<(), String>;
     fn flush(&mut self) -> Result<(), String>;
+
+    fn write_stdout_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
+        for &b in bytes { self.write_stdout(b)?; }
+        Ok(())
+    }
+    fn write_stderr_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
+        for &b in bytes { self.write_stderr(b)?; }
+        Ok(())
+    }
 }
 
 impl Device for Box<dyn Console> {
@@ -34,6 +43,17 @@ impl Device for Box<dyn Console> {
             PORT_STDERR => self.write_stderr((n & 0xFF) as u8),
             PORT_FLUSH => self.flush(),
             _ => Ok(()),
+        }
+    }
+
+    fn write_bytes(&mut self, port: u8, bytes: &[u8]) -> Result<(), String> {
+        match port {
+            PORT_STDOUT => self.write_stdout_bulk(bytes),
+            PORT_STDERR => self.write_stderr_bulk(bytes),
+            _ => {
+                for &b in bytes { self.write(port, Value::from_int(b as i64))?; }
+                Ok(())
+            }
         }
     }
 }
@@ -74,6 +94,13 @@ impl Console for BufferConsole {
         self.err_buf.borrow_mut().push(byte); Ok(())
     }
     fn flush(&mut self) -> Result<(), String> { Ok(()) }
+
+    fn write_stdout_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.out_buf.borrow_mut().extend_from_slice(bytes); Ok(())
+    }
+    fn write_stderr_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.err_buf.borrow_mut().extend_from_slice(bytes); Ok(())
+    }
 }
 
 pub struct StdoutConsole;
@@ -98,5 +125,14 @@ impl Console for StdoutConsole {
     fn flush(&mut self) -> Result<(), String> {
         std::io::stdout().flush().map_err(|e| format!("flush: {}", e))?;
         std::io::stderr().flush().map_err(|e| format!("flush: {}", e))
+    }
+
+    fn write_stdout_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
+        std::io::stdout().write_all(bytes)
+            .map_err(|e| format!("console.stdout: {}", e))
+    }
+    fn write_stderr_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
+        std::io::stderr().write_all(bytes)
+            .map_err(|e| format!("console.stderr: {}", e))
     }
 }
