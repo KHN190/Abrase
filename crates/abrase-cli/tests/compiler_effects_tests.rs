@@ -241,15 +241,15 @@ fn handler_pop_frees_cont_cell_after_resume() {
 }
 
 #[test]
-#[ignore = "arm-break terminator not yet implemented (wiki 05 line 96 aspirational); test pending impl"]
-fn handler_pop_frees_cont_cell_when_arm_breaks() {
+#[ignore = "arm body that throws needs exn handler arm; pending proper throw-arm wiring"]
+fn handler_pop_frees_cont_cell_when_arm_throws() {
     let src = r#"
         effect e { op ask() -> Int }
         fn produce() -> <e> Int { e.ask() + 1 }
         fn main() -> Int {
             handle produce() {
                 return v => v,
-                e.ask => break 42
+                e.ask => throw 42
             }
         }
     "#;
@@ -257,7 +257,7 @@ fn handler_pop_frees_cont_cell_when_arm_breaks() {
     let (v, live) = compile_module_and_run_with_heap(&ast).expect("run ok");
     assert_eq!(v, Value::from_int(42));
     assert_eq!(live, 0,
-        "arm-break path must still free cont cell + snapshot at handler pop; got live={}",
+        "arm-throw path must still free cont cell + snapshot at handler pop; got live={}",
         live);
 }
 
