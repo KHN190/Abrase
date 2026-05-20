@@ -362,3 +362,27 @@ fn nested_regions_get_distinct_labels() {
     let _ = vm.run_module(&module);
     let _ = Type::Int; // import sanity
 }
+
+#[test]
+fn primitive_bit_copies_out_of_region() {
+    use myriad::VirtualMachine;
+    let src = r#"
+        fn main() -> Int {
+            let n = region { 1 + 2 };
+            n
+        }
+    "#;
+    let mut parser = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = parser.parse_program();
+    assert!(parser.errors.is_empty(), "parse errors: {}", parser.pretty_print_errors());
+    let mut compiler = Compiler::new().with_source(src.into());
+    let module = compiler.compile_module(&ast).unwrap_or_else(|_| {
+        panic!("compile failed: {}", compiler.pretty_print_errors())
+    });
+    let mut vm = VirtualMachine::new();
+    let v = vm.run_module(&module).expect("runtime");
+    assert_eq!(v.as_int(), 3, "primitive Int should bit-copy out of region");
+    assert_eq!(vm.heap_live_count(), 0,
+        "region inner allocs (none for pure arith) must not leak; got live={}",
+        vm.heap_live_count());
+}

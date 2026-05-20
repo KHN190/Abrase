@@ -609,6 +609,9 @@ impl VirtualMachine {
                 .ok_or("dispatch.pop_handler: no active handler frame")?;
             for (slot, generation) in frame.cells_allocated.iter() {
                 self.region_table.forget(*slot, *generation);
+                if self.heap.is_live(*slot, *generation) {
+                    self.heap.rc_dec(*slot, *generation)?;
+                }
             }
             return Ok(());
         }

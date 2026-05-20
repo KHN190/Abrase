@@ -448,12 +448,8 @@ impl Compiler {
                         Ok(reg) => {
                             self.var_to_reg.insert(name.clone(), reg);
                             self.var_types.insert(name.clone(), ty.clone());
-                            let is_handler_arm = fn_decl.name.starts_with("__handle_");
-                            let skip_drop = is_handler_arm && (name == "__env" || name == "__return_env");
-                            if !skip_drop {
-                                if let Some(top) = self.block_locals_stack.last_mut() {
-                                    top.push(reg);
-                                }
+                            if let Some(top) = self.block_locals_stack.last_mut() {
+                                top.push(reg);
                             }
                         }
                         Err(_) => {

@@ -4,6 +4,13 @@ mod compiler_codegen_common;
 use compiler_codegen_common::*;
 use myriad::Value;
 
+fn expect_int_clean(src: &str, expected: i64) {
+    let ast = parse_source(src);
+    let (v, live) = compile_module_and_run_with_heap(&ast).expect("run ok");
+    assert_eq!(v, Value::from_int(expected));
+    assert_eq!(live, 0, "heap leak: live={}", live);
+}
+
 #[test]
 fn handle_with_only_return_arm_passes_body_through() {
     let src = r#"
@@ -14,7 +21,7 @@ fn handle_with_only_return_arm_passes_body_through() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(42)));
+    expect_int_clean(src, 42);
 }
 
 #[test]
@@ -27,7 +34,7 @@ fn return_arm_transforms_body_value() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(42)));
+    expect_int_clean(src, 42);
 }
 
 #[test]
@@ -42,7 +49,7 @@ fn effect_op_call_reroutes_to_arm() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(8)));
+    expect_int_clean(src, 8);
 }
 
 #[test]
@@ -59,7 +66,7 @@ fn arm_body_resumes_with_constant() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(50)));
+    expect_int_clean(src, 50);
 }
 
 #[test]
@@ -74,7 +81,7 @@ fn effect_op_with_param_is_visible_to_arm() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(106)));
+    expect_int_clean(src, 106);
 }
 
 #[test]
@@ -89,7 +96,7 @@ fn multiple_op_calls_each_dispatch_to_arm() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(5)));
+    expect_int_clean(src, 5);
 }
 
 #[test]
@@ -105,7 +112,7 @@ fn arm_can_call_top_level_function() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(14)));
+    expect_int_clean(src, 14);
 }
 
 #[test]
@@ -127,7 +134,7 @@ fn two_handlers_for_different_effects_in_one_module() {
             x + y
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(42)));
+    expect_int_clean(src, 42);
 }
 
 #[test]
@@ -143,7 +150,7 @@ fn return_arm_body_captures_outer_let_binding() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(105)));
+    expect_int_clean(src, 105);
 }
 
 #[test]
@@ -158,7 +165,7 @@ fn op_arm_body_captures_outer_let_binding() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(70)));
+    expect_int_clean(src, 70);
 }
 
 #[test]
@@ -176,7 +183,7 @@ fn nested_handlers_same_effect_use_inner_arm() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(110)));
+    expect_int_clean(src, 110);
 }
 
 #[test]
@@ -188,7 +195,7 @@ fn handle_compiles_when_body_is_pure() {
             }
         }
     "#;
-    assert_eq!(run_source(src), Ok(Value::from_int(14)));
+    expect_int_clean(src, 14);
 }
 
 #[test]
@@ -211,4 +218,70 @@ fn lifted_arms_appear_in_function_table() {
         "expected ≥4 fns after lifting arms; got {}",
         module.functions.len()
     );
+}
+
+#[test]
+fn handler_pop_frees_cont_cell_after_resume() {
+    let src = r#"
+        effect e { op ask() -> Int }
+        fn produce() -> <e> Int { e.ask() + 1 }
+        fn main() -> Int {
+            handle produce() {
+                return v => v,
+                e.ask => resume(7)
+            }
+        }
+    "#;
+    let ast = parse_source(src);
+    let (v, live) = compile_module_and_run_with_heap(&ast).expect("run ok");
+    assert_eq!(v, Value::from_int(8));
+    assert_eq!(live, 0,
+        "handler pop must rc_dec each cont cell and cascade-free its snapshot/env; got live={}",
+        live);
+}
+
+#[test]
+#[ignore = "arm-break terminator not yet implemented (wiki 05 line 96 aspirational); test pending impl"]
+fn handler_pop_frees_cont_cell_when_arm_breaks() {
+    let src = r#"
+        effect e { op ask() -> Int }
+        fn produce() -> <e> Int { e.ask() + 1 }
+        fn main() -> Int {
+            handle produce() {
+                return v => v,
+                e.ask => break 42
+            }
+        }
+    "#;
+    let ast = parse_source(src);
+    let (v, live) = compile_module_and_run_with_heap(&ast).expect("run ok");
+    assert_eq!(v, Value::from_int(42));
+    assert_eq!(live, 0,
+        "arm-break path must still free cont cell + snapshot at handler pop; got live={}",
+        live);
+}
+
+#[test]
+#[ignore = "multi-suspension cont cell cleanup pending (WIP)"]
+fn handler_pop_frees_cont_cells_across_multiple_suspensions() {
+    let src = r#"
+        effect scale { op apply(x: Int) -> Int }
+        fn transform(a: Int, b: Int) -> <scale> Int {
+            let x = scale.apply(a);
+            let y = scale.apply(b);
+            x + y
+        }
+        fn main() -> Int {
+            handle transform(3, 7) {
+                scale.apply x => resume(x * 2),
+                return v      => v
+            }
+        }
+    "#;
+    let ast = parse_source(src);
+    let (v, live) = compile_module_and_run_with_heap(&ast).expect("run ok");
+    assert_eq!(v, Value::from_int(20));
+    assert_eq!(live, 0,
+        "two cont cells allocated across two suspensions must both be freed; got live={}",
+        live);
 }

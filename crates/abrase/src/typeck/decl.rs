@@ -307,7 +307,7 @@ impl Checker {
             }
         }
 
-        self.scopes.pop();
+        self.exit_scope();
         self.fn_declared_effects = saved_declared;
         self.fn_required_effects = saved_required;
         self.handled_effects = saved_handled;

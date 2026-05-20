@@ -92,7 +92,7 @@ pub struct Checker {
     module_registry: HashMap<String, HashMap<String, Type>>,
 
     // Ownership & Borrowing
-    borrow_stack: Vec<(String, bool)>,
+    borrow_stack: Vec<(String, bool, usize)>,
 
     // Effects System
     effect_registry: HashMap<String, Vec<String>>,
@@ -242,6 +242,21 @@ impl Checker {
         self.scopes.push(Scope { vars: HashMap::new() });
     }
     pub fn exit_scope(&mut self) {
+        let target_depth = self.scopes.len().saturating_sub(1);
+        while let Some((_, _, depth)) = self.borrow_stack.last() {
+            if *depth <= target_depth { break; }
+            let (name, is_mut, _) = self.borrow_stack.pop().unwrap();
+            for scope in self.scopes.iter_mut().rev() {
+                if let Some(meta) = scope.vars.get_mut(&name) {
+                    if is_mut {
+                        meta.mut_borrow_active = false;
+                    } else {
+                        meta.immut_borrow_count = meta.immut_borrow_count.saturating_sub(1);
+                    }
+                    break;
+                }
+            }
+        }
         self.scopes.pop();
     }
     pub fn display_errors(&self) -> String {
