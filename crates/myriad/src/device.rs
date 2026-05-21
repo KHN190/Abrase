@@ -30,10 +30,6 @@ impl DeviceTable {
         self.slots[id as usize] = Some(dev);
     }
 
-    pub fn has(&self, id: u8) -> bool {
-        self.slots[id as usize].is_some()
-    }
-
     pub fn get_mut(&mut self, id: u8) -> Option<&mut Box<dyn Device>> {
         self.slots[id as usize].as_mut()
     }
