@@ -103,7 +103,7 @@ impl<'a> Parser<'a> {
             Token::For => { let r = self.parse_for_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::While => { let r = self.parse_while_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Loop => { let r = self.parse_loop_expr(); return self.prefix_to_expr_or_err(r, span); }
-            Token::Pipe | Token::Move => { let r = self.parse_closure_expr(); return self.prefix_to_expr_or_err(r, span); }
+            Token::Pipe | Token::Or | Token::Move => { let r = self.parse_closure_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Region => { let r = self.parse_region_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Handle => { let r = self.parse_handle_expr(); return self.prefix_to_expr_or_err(r, span); }
             Token::Resume => { let r = self.parse_resume_expr(); return self.prefix_to_expr_or_err(r, span); }
@@ -334,33 +334,38 @@ impl<'a> Parser<'a> {
     fn parse_closure_expr(&mut self) -> Result<Expr, String> {
         let is_move = if self.current_token == Token::Move {
             self.next_token();
-            if self.current_token != Token::Pipe {
-                return Err("Expected '|' after 'move' in closure".into());
+            if self.current_token != Token::Pipe && self.current_token != Token::Or {
+                return Err("Expected '|' or '||' after 'move' in closure".into());
             }
             true
         } else {
             false
         };
-        self.next_token();
-        let mut params = Vec::new();
-        while self.current_token != Token::Pipe {
-            let pat_span = self.current_span;
-            let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected param name".into()); };
-            let mut ty = None;
-            if self.peek_token == Token::Colon {
-                self.next_token();
-                self.next_token();
-                ty = Some(self.parse_type()?);
+        let params: Vec<ClosureParam> = if self.current_token == Token::Or {
+            Vec::new()
+        } else {
+            self.next_token();
+            let mut params = Vec::new();
+            while self.current_token != Token::Pipe {
+                let pat_span = self.current_span;
+                let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected param name".into()); };
+                let mut ty = None;
+                if self.peek_token == Token::Colon {
+                    self.next_token();
+                    self.next_token();
+                    ty = Some(self.parse_type()?);
+                }
+                params.push(ClosureParam { pattern: Spanned { node: Pattern::Bind(name), span: pat_span }, ty });
+                if self.peek_token == Token::Comma {
+                    self.next_token();
+                    self.next_token();
+                } else { break; }
             }
-            params.push(ClosureParam { pattern: Spanned { node: Pattern::Bind(name), span: pat_span }, ty });
-            if self.peek_token == Token::Comma {
-                self.next_token();
-                self.next_token();
-            } else { break; }
-        }
-        if !self.expect_peek(Token::Pipe) {
-            return Err("Expected '|' after closure params".into());
-        }
+            if !self.expect_peek(Token::Pipe) {
+                return Err("Expected '|' after closure params".into());
+            }
+            params
+        };
         let return_type = if self.peek_token == Token::Arrow {
             self.next_token();
             let (_, ret) = self.parse_fn_type_tail()?;

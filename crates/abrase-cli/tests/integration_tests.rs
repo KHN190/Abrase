@@ -99,6 +99,13 @@ fn closures_no_single_and_multi_capture() {
 }
 
 #[test]
+fn closures_complex_bodies() {
+    let v = run_file("tests/scripts/closures_complex.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(110));
+}
+
+#[test]
 fn effect_dispatch_runs() {
     let v = run_file("tests/scripts/effect_dispatch.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
@@ -110,6 +117,13 @@ fn multiple_suspension_points() {
     let v = run_file("tests/scripts/multi_effect.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(20));
+}
+
+#[test]
+fn effect_resume_paths_nested_handlers_and_return_arm() {
+    let v = run_file("tests/scripts/effect_resume_paths.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(2050));
 }
 
 #[test]

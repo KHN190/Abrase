@@ -18,12 +18,25 @@ impl Compiler {
         self.emit(OpCode::Alloc(env_reg, alloc_size));
         for (i, cap) in info.captures.iter().enumerate() {
             let offset = super::scaffold::to_u16(i, "Closure env offset")?;
-            let src = *self.var_to_reg.get(&cap.name)
-                .ok_or_else(|| format!(
-                    "internal: closure capture '{}' not in scope at closure site",
-                    cap.name
-                ))?;
-            // `move |...|` takes src; default is Copy-then-St so the outer binding survives.
+            let src = match self.var_to_reg.get(&cap.name).copied() {
+                Some(r) => r,
+                None => {
+                    let outer_env_reg = self.var_to_reg.get("__env").copied()
+                        .ok_or_else(|| format!(
+                            "internal: closure capture '{}' not in scope at closure site",
+                            cap.name
+                        ))?;
+                    let outer_offset = self.current_closure_layout.get(&cap.name).copied()
+                        .ok_or_else(|| format!(
+                            "internal: closure capture '{}' not in scope at closure site",
+                            cap.name
+                        ))?;
+                    let tmp = self.alloc_register()?;
+                    let off16 = super::scaffold::to_u16(outer_offset, "Outer env offset")?;
+                    self.emit(OpCode::Ld(tmp, outer_env_reg, off16));
+                    tmp
+                }
+            };
             if info.is_move {
                 self.emit(OpCode::St(src, env_reg, offset));
                 self.var_to_reg.remove(&cap.name);

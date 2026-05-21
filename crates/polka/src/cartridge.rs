@@ -8,11 +8,8 @@ const KIND_NATIVE: u8 = 1;
 
 #[derive(Debug)]
 pub enum EncodeError {
-    /// An `ld`/`st` offset operand exceeds the 255-byte wire-format limit.
     OffsetTooLarge { value: u16, op: &'static str },
-    /// A count or index value is larger than its wire-format field can hold.
     CountOverflow { value: usize, what: &'static str },
-    /// An import name is longer than the cart's `name_len` field (u16) allows.
     NameTooLong { length: usize },
 }
 
@@ -33,24 +30,16 @@ impl std::error::Error for EncodeError {}
 
 #[derive(Debug)]
 pub enum LoadError {
-    /// The file doesn't start with the Polka magic — almost certainly not a cart.
     NotACartridge,
-    /// Magic matched, but the version field is one this runtime can't load.
     UnsupportedVersion(u16),
-    /// The cart parsed past the header but is structurally malformed.
-    /// `offset` is the byte position in the input where parsing failed.
     Corrupt { offset: usize, kind: Corruption },
 }
 
 #[derive(Debug)]
 pub enum Corruption {
-    /// Hit end-of-input while a wire-format field still needed bytes.
     Truncated,
-    /// A function-table entry has an unrecognized kind byte.
     UnknownKind(u8),
-    /// An instruction byte does not match any defined opcode.
     UnknownOpcode(u8),
-    /// A string-pool entry or import name is not valid UTF-8.
     InvalidUtf8,
 }
 
@@ -116,7 +105,7 @@ pub fn read_pk(data: &[u8]) -> Result<Module, LoadError> {
     let entry = r.read_u32()? as usize;
 
     let fn_count = r.read_u32()? as usize;
-    let mut headers: Vec<FnHeader> = Vec::new(); // fn_count is attacker-controlled; avoid with_capacity
+    let mut headers: Vec<FnHeader> = Vec::new();
     for _ in 0..fn_count {
         headers.push(read_fn_header(&mut r)?);
     }
@@ -142,7 +131,7 @@ fn write_bc_header(out: &mut Vec<u8>, bc: &BytecodeChunk) -> Result<(), EncodeEr
     out.push(KIND_BYTECODE);
     out.push(param_count);
     out.push(reg_count);
-    out.push(0); // pad
+    out.push(0);
     out.extend_from_slice(&const_count.to_le_bytes());
     out.extend_from_slice(&string_count.to_le_bytes());
     out.extend_from_slice(&code_count.to_le_bytes());
@@ -277,10 +266,6 @@ fn read_fn_payload(r: &mut Reader, header: FnHeader) -> Result<Chunk, LoadError>
         }
     }
 }
-//
-// Each instruction is 4 bytes: opcode byte + 3 operand bytes. Layout per
-// opcode follows §3 of the spec; see Appendix-Wire-Format.md for the full
-// per-opcode byte table.
 
 fn r(reg: Register) -> u8 { reg.0 }
 

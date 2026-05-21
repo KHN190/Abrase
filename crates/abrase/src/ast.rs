@@ -100,6 +100,8 @@ pub enum Pattern {
     Record { ty: Vec<String>, fields: Vec<FieldPattern>, rest: bool },
     Variant { ty: Vec<String>, args: Vec<Spanned<Pattern>> },
 
+    Rest,
+
     Ref(Box<Spanned<Pattern>>),
     Or(Vec<Spanned<Pattern>>),
 }

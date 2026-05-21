@@ -5,7 +5,8 @@ use crate::bytecode::Value;
 
 pub(in crate::compiler) enum CallEnv {
     None,
-    Reg(Register)
+    Reg(Register),
+    EnvLoadOffset(usize),
 }
 
 pub(in crate::compiler) enum CallTarget<'a> {
@@ -77,6 +78,7 @@ impl Compiler {
         if let Some(t) = self.resolve_primitive(callee, args)? { return Ok(t); }
         if let Some(t) = self.resolve_env_load(callee, args)? { return Ok(t); }
         if let Some(t) = self.resolve_closure_call(callee)? { return Ok(t); }
+        if let Some(t) = self.resolve_env_load_closure_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_effect_op_call(callee, call_span)? { return Ok(t); }
         if let Some(t) = self.resolve_method_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_host_or_ctor(callee, args)? { return Ok(t); }
@@ -92,50 +94,10 @@ impl Compiler {
         let ast::Expr::Identifier(name) = &callee.node else {
             return Err("Call target must be a function identifier".to_string());
         };
-        let func_id = if self.fn_overloads.contains_key(name) {
-            self.resolve_overload_fn_id(name, args)?
-        } else {
-            self.func_map.get(name).copied()
-                .ok_or_else(|| format!("Undefined function: {}", name))?
-        };
+        let func_id = self.func_map.get(name).copied()
+            .ok_or_else(|| format!("Undefined function: {}", name))?;
         let fid = super::scaffold::to_u16(func_id, &format!("Function id for '{}'", name))?;
         Ok(CallTarget::Function { func_id: fid, env: CallEnv::None })
-    }
-
-    fn resolve_overload_fn_id(
-        &self,
-        name: &str,
-        args: &[ast::Spanned<ast::Expr>],
-    ) -> Result<usize, String> {
-        let arg_tys: Vec<Option<ast::Type>> =
-            args.iter().map(|a| self.infer_expr_type(a)).collect();
-        let mut candidates: Vec<usize> = Vec::new();
-        if let Some(&primary) = self.func_map.get(name) { candidates.push(primary); }
-        if let Some(extras) = self.fn_overloads.get(name) { candidates.extend(extras); }
-        for fid in &candidates {
-            let Some((params, _)) = self.fn_signatures.get(fid) else { continue };
-            if params.len() != arg_tys.len() { continue; }
-            let ok = params.iter().zip(&arg_tys).all(|(p, a)| match a {
-                Some(t) => Self::ty_matches_ast_type(p, t),
-                None => false,
-            });
-            if ok { return Ok(*fid); }
-        }
-        candidates.first().copied()
-            .ok_or_else(|| format!("Undefined function: {}", name))
-    }
-
-    fn ty_matches_ast_type(ty: &crate::ty::Type, ast_ty: &ast::Type) -> bool {
-        use crate::ty::Type as T;
-        match (ty, ast_ty) {
-            (T::Int,    ast::Type::Named(n)) if n == "Int"    => true,
-            (T::Float,  ast::Type::Named(n)) if n == "Float"  => true,
-            (T::Bool,   ast::Type::Named(n)) if n == "Bool"   => true,
-            (T::Char,   ast::Type::Named(n)) if n == "Char"   => true,
-            (T::String, ast::Type::Named(n)) if n == "String" => true,
-            (T::Unit,   ast::Type::Tuple(v)) if v.is_empty()  => true,
-            _ => false,
-        }
     }
 
     fn resolve_env_load<'a>(
@@ -168,6 +130,26 @@ impl Compiler {
             .ok_or_else(|| format!("internal: closure binding '{}' has no register", name))?;
         let fid = super::scaffold::to_u16(func_id, &format!("Closure fn_id for '{}'", name))?;
         Ok(Some(CallTarget::Function { func_id: fid, env: CallEnv::Reg(env_reg) }))
+    }
+
+    fn resolve_env_load_closure_call<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
+    ) -> Result<Option<CallTarget<'a>>, String> {
+        let ast::Expr::Call { callee: inner_callee, args: inner_args } = &callee.node else { return Ok(None) };
+        let ast::Expr::Identifier(inner_name) = &inner_callee.node else { return Ok(None) };
+        if inner_name != "__env_load" { return Ok(None); }
+        if inner_args.len() != 2 { return Ok(None); }
+        let ast::Expr::Literal(ast::Literal::Int(off)) = &inner_args[1].node else { return Ok(None) };
+        let offset = *off as usize;
+        let captured_name = self.current_closure_layout.iter()
+            .find_map(|(n, &i)| if i == offset { Some(n.clone()) } else { None });
+        let Some(captured_name) = captured_name else { return Ok(None); };
+        let Some(info) = self.closure_by_var.get(&captured_name) else { return Ok(None) };
+        let func_id = *self.func_map.get(&info.lifted_fn)
+            .ok_or_else(|| format!("internal: lifted closure fn '{}' not in fn table", info.lifted_fn))?;
+        let fid = super::scaffold::to_u16(func_id, &format!("Closure fn_id for '{}'", captured_name))?;
+        Ok(Some(CallTarget::Function { func_id: fid, env: CallEnv::EnvLoadOffset(offset) }))
     }
 
     fn resolve_effect_op_call<'a>(
@@ -369,7 +351,15 @@ impl Compiler {
     ) -> Result<Register, String> {
         let env_to_pass = match env {
             CallEnv::None => None,
-            CallEnv::Reg(r) => Some(r)
+            CallEnv::Reg(r) => Some(r),
+            CallEnv::EnvLoadOffset(off) => {
+                let outer_env = *self.var_to_reg.get("__env")
+                    .ok_or_else(|| "internal: env-load call site outside closure body".to_string())?;
+                let tmp = self.alloc_register()?;
+                let off16 = super::scaffold::to_u16(off, "outer env offset")?;
+                self.emit(OpCode::Ld(tmp, outer_env, off16));
+                Some(tmp)
+            }
         };
         let mut staged: Vec<(Register, bool)> = env_to_pass.into_iter().map(|r| (r, true)).collect();
         for arg in args {

@@ -67,11 +67,7 @@ impl Compiler {
         param_count: usize,
     ) -> usize {
         let id = self.functions.len();
-        if self.func_map.contains_key(user_name) {
-            self.fn_overloads.entry(user_name.into()).or_default().push(id);
-        } else {
-            self.func_map.insert(user_name.into(), id);
-        }
+        self.func_map.insert(user_name.into(), id);
         self.functions.push(Chunk::Native(NativeChunk {
             name: chunk_name.into(),
             param_count,
@@ -123,25 +119,6 @@ impl Compiler {
         }
         self.register_builtin_traits(checker);
         self.register_builtin_effects(checker);
-    }
-
-    pub(super) fn register_builtin_overloads_to_checker(&self, checker: &mut crate::typeck::Checker) {
-        for (name, fn_ids) in &self.fn_overloads {
-            let mut sigs: Vec<(Vec<TyType>, TyType)> = Vec::new();
-            if let Some(primary) = self.func_map.get(name) {
-                if let Some(sig) = self.fn_signatures.get(primary) {
-                    sigs.push(sig.clone());
-                }
-            }
-            for id in fn_ids {
-                if let Some(sig) = self.fn_signatures.get(id) {
-                    sigs.push(sig.clone());
-                }
-            }
-            if !sigs.is_empty() {
-                checker.fn_overloads.insert(name.clone(), sigs);
-            }
-        }
     }
 
     fn register_builtin_traits(&self, checker: &mut crate::typeck::Checker) {
