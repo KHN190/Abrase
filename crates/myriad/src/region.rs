@@ -43,12 +43,11 @@ impl RegionTable {
     }
 
     pub fn forget(&mut self, slot: u32, generation: u32) -> bool {
-        let mut removed = false;
-        for region in &mut self.stack {
-            let before = region.len();
-            region.retain(|(s, g)| !(*s == slot && *g == generation));
-            if region.len() < before { removed = true; }
-        }
-        removed
+        // record_alloc only ever pushes to the top region, so a live cell can
+        // appear in at most that one. Scan top only.
+        let Some(top) = self.stack.last_mut() else { return false; };
+        let before = top.len();
+        top.retain(|(s, g)| !(*s == slot && *g == generation));
+        top.len() < before
     }
 }

@@ -258,8 +258,7 @@ impl Compiler {
             }
         }
         let eid_u16 = effect_id;
-        let dest_reg = self.alloc_register()?;
-        self.emit(OpCode::Handle(dest_reg, table_reg, eid_u16));
+        self.emit(OpCode::Handle(table_reg, eid_u16));
         self.handler_table_stack.push(table_reg);
         Ok(true)
     }

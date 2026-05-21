@@ -1,15 +1,6 @@
 fn main() -> Int {
   println("hello, myriad");
 
-  let t0 = now();
-  sleep_ms(5);
-  let dt = now() - t0;
-  println("slept ~{dt} ms");
-
-  srand(0.42);
-  let r = rand();
-  println("rand = {r}");
-
   let lo = 7.min(3);
   let hi = 7.max(3);
   let a = (0 - 9).abs();

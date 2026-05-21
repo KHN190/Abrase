@@ -9,13 +9,15 @@ use abrase::typeck::Checker;
 use myriad::{Host, Value, VirtualMachine, read_string};
 
 const USAGE: &str = "\
-Abrase compiler & Myriad VM
+Abrase compiler & Myriad Runtime
 
 usage:
     abrase run    [--debug] <file.abe>    parse, compile, execute main()
     abrase check  <file.abe>               parse and type-check; no execution
     abrase parse  <file.abe>               dump AST and parser errors
     abrase disasm <file.abe>               parse, compile, dump bytecode
+    abrase export <file.abe> <out.pk>      compile and write a .pk cartridge
+    abrase load   <file.pk>                load a .pk cartridge and execute
 
 flags:
     --debug    dump compile-time lowering/codegen prints and runtime
@@ -35,6 +37,17 @@ fn main() -> ExitCode {
     }
     let cmd = args[1].as_str();
     let path = &args[2];
+
+    if cmd == "load" {
+        return cmd_load(path, debug);
+    }
+    if cmd == "export" {
+        if args.len() < 4 {
+            eprint!("{}", USAGE);
+            return ExitCode::from(64);
+        }
+        return cmd_export(path, &args[3]);
+    }
 
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
@@ -165,4 +178,50 @@ fn cmd_disasm(source: &str) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+fn cmd_export(src_path: &str, out_path: &str) -> ExitCode {
+    let source = match fs::read_to_string(src_path) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("ect: cannot read {}: {}", src_path, e); return ExitCode::from(66); }
+    };
+    let ast = match parse(&source) { Ok(a) => a, Err(c) => return c };
+    let mut compiler = Compiler::new().with_source(source.clone());
+    let module = match compiler.compile_module(&ast) {
+        Ok(m) => m,
+        Err(_) => { eprint!("{}", compiler.pretty_print_errors()); return ExitCode::from(1); }
+    };
+    let bytes = match polka::cartridge::write_pk(&module) {
+        Ok(b) => b,
+        Err(e) => { eprintln!("export: {}", e); return ExitCode::from(2); }
+    };
+    if let Err(e) = fs::write(out_path, &bytes) {
+        eprintln!("export: cannot write {}: {}", out_path, e);
+        return ExitCode::from(74);
+    }
+    eprintln!("wrote {} bytes to {}", bytes.len(), out_path);
+    ExitCode::SUCCESS
+}
+
+fn cmd_load(pk_path: &str, debug: bool) -> ExitCode {
+    let bytes = match fs::read(pk_path) {
+        Ok(b) => b,
+        Err(e) => { eprintln!("ect: cannot read {}: {}", pk_path, e); return ExitCode::from(66); }
+    };
+    let module = match polka::cartridge::read_pk(&bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("load {}: {}", pk_path, e);
+            if matches!(e, polka::cartridge::LoadError::NotACartridge) && pk_path.ends_with(".abe") {
+                eprintln!("hint: `{}` looks like Abrase source; try `abrase run {}` instead", pk_path, pk_path);
+            }
+            return ExitCode::from(65);
+        }
+    };
+    let mut vm = VirtualMachine::new().with_debug(debug);
+    Host::default().install_into(&mut vm);
+    match vm.run_module(&module) {
+        Ok(v) => { print_result(&vm, v); ExitCode::SUCCESS }
+        Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
+    }
 }

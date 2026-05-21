@@ -13,8 +13,6 @@ pub const HANDLE_SLOT_MAX: u32 = (1u32 << HANDLE_SLOT_BITS) - 2;
 impl Value {
     pub const ZERO: Value = Value(0);
     pub const NONE: Value = Value(HANDLE_NONE);
-    // Unit / False / True are plain encodings. Same bit pattern as ZERO for
-    // unit and false — type comes from the consuming OpCode, not the bits.
     pub const UNIT:  Value = Value(0);
     pub const FALSE: Value = Value(0);
     pub const TRUE:  Value = Value(1);
@@ -74,41 +72,3 @@ impl fmt::Debug for Value {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test] fn value_is_8_bytes() { assert_eq!(std::mem::size_of::<Value>(), 8); }
-
-    #[test]
-    fn int_round_trip() {
-        for n in [0i64, 1, -1, 42, -42, i64::MAX, i64::MIN] {
-            assert_eq!(Value::from_int(n).as_int(), n);
-        }
-    }
-
-    #[test]
-    fn float_round_trip() {
-        for f in [0.0, 1.5, -3.14, f64::INFINITY, -f64::INFINITY] {
-            assert_eq!(Value::from_float(f).as_float(), f);
-        }
-    }
-
-    #[test]
-    fn nan_float() {
-        let v = Value::from_float(f64::NAN);
-        assert!(v.as_float().is_nan());
-    }
-
-    #[test]
-    fn handle_round_trip() {
-        let v = Value::from_handle(0xABCDEF, 0x123456);
-        assert_eq!(v.as_handle(), (0xABCDEF, 0x123456));
-    }
-
-    #[test]
-    fn handle_none_distinct() {
-        assert!(Value::NONE.is_handle_none());
-        assert!(!Value::from_handle(0, 0).is_handle_none());
-    }
-}

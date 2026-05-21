@@ -119,7 +119,7 @@ fn test_handle_allocates_cell_and_resume_frees_it() {
     let chunk = Chunk::Bytecode(BytecodeChunk {
         code: vec![
             OpCode::PushConst(r(0), 0),
-            OpCode::Handle(r(3), r(1), 0),
+            OpCode::Handle(r(1), 0),
             OpCode::Resume(r(3), r(0)),
             OpCode::Ret(r(3)),
         ],
@@ -139,7 +139,7 @@ fn test_handle_without_dispatch_allocates_no_cell() {
     let mut vm = VirtualMachine::new();
     let install = Chunk::Bytecode(BytecodeChunk {
         code: vec![
-            OpCode::Handle(r(7), r(1), 0),
+            OpCode::Handle(r(1), 0),
             OpCode::Ret(r(0)),
         ],
         constants: raw_constants(vec![Value::from_int(0)]),
@@ -163,7 +163,7 @@ fn test_dispatch_lookup_allocates_cont_and_snapshot() {
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::PushConst(r(2), 1),
-            OpCode::Handle(r(3), r(1), 0),
+            OpCode::Handle(r(1), 0),
             OpCode::Deo(r(0), r(2)),
             OpCode::Ret(r(0)),
         ],
@@ -183,7 +183,7 @@ fn test_resume_on_uninitialized_handler_traps() {
     let result = run(
         vec![
             OpCode::PushConst(r(0), 0),
-            OpCode::Handle(r(3), r(1), 0),
+            OpCode::Handle(r(1), 0),
             OpCode::Resume(r(3), r(0)),
             OpCode::Ret(r(3)),
         ],

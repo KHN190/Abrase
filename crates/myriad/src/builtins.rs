@@ -1,6 +1,6 @@
 use crate::{Heap, Value};
 use crate::device::DeviceTable;
-use crate::devices::{clock, console, random, CLOCK_ID, CONSOLE_ID, RANDOM_ID};
+use crate::devices::{console, CONSOLE_ID};
 use crate::value::{alloc_string, read_string};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -54,12 +54,6 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
 
     reg.register("print",       print_native());
     reg.register("println",     println_native());
-
-    reg.register("now",         now_native());
-    reg.register("sleep_ms",    sleep_ms_native());
-
-    reg.register("rand",        rand_native());
-    reg.register("srand",       srand_native());
 
     reg.register("abs",         abs_native());
     reg.register("ceil",        ceil_native());
@@ -175,53 +169,6 @@ fn write_console(devices: &mut DeviceTable, bytes: &[u8], op: &str) -> Result<()
     let dev = devices.get_mut(CONSOLE_ID)
         .ok_or_else(|| format!("{}: Console device 0x{:02x} not installed", op, CONSOLE_ID))?;
     dev.write_bytes(console::PORT_STDOUT, bytes)
-}
-
-fn now_native() -> NativeFn {
-    Rc::new(|ctx, _args| {
-        let dev = ctx.devices.get_mut(CLOCK_ID)
-            .ok_or_else(|| format!("now: Clock device 0x{:02x} not installed", CLOCK_ID))?;
-        let v = dev.read(clock::PORT_MONO_NS)?;
-        Ok(plain(Value::from_int(v.as_int() / 1_000_000)))
-    })
-}
-
-fn sleep_ms_native() -> NativeFn {
-    Rc::new(|ctx, args| {
-        let ms = args[0].as_int();
-        let dev = ctx.devices.get_mut(CLOCK_ID)
-            .ok_or_else(|| format!("sleep_ms: Clock device 0x{:02x} not installed", CLOCK_ID))?;
-        dev.write(clock::PORT_SLEEP_MS, Value::from_int(ms))?;
-        Ok(plain(Value::ZERO))
-    })
-}
-
-fn rand_native() -> NativeFn {
-    Rc::new(|ctx, _args| {
-        let n = read_random_u64(ctx.devices)?;
-        let m = n & ((1u64 << 53) - 1);
-        let f = (m as f64) / ((1u64 << 53) as f64);
-        Ok(plain(Value::from_float(f)))
-    })
-}
-
-fn srand_native() -> NativeFn {
-    Rc::new(|ctx, args| {
-        let f = args[0].as_float();
-        let bits = f.to_bits();
-        let folded = bits ^ (bits >> 32);
-        let dev = ctx.devices.get_mut(RANDOM_ID)
-            .ok_or_else(|| format!("srand: Random device 0x{:02x} not installed", RANDOM_ID))?;
-        dev.write(random::PORT_SEED, Value::from_raw(folded))?;
-        Ok(plain(Value::ZERO))
-    })
-}
-
-fn read_random_u64(devices: &mut DeviceTable) -> Result<u64, String> {
-    let dev = devices.get_mut(RANDOM_ID)
-        .ok_or_else(|| format!("rand: Random device 0x{:02x} not installed", RANDOM_ID))?;
-    let v = dev.read(random::PORT_U64)?;
-    Ok(v.raw())
 }
 
 fn halt_native() -> NativeFn {

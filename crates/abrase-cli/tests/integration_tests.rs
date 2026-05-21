@@ -209,9 +209,7 @@ fn string_interp_with_records_recursion_and_closures() {
 
 #[test]
 fn built_ins() {
-    // The bare `run_file` helper uses a no-device VirtualMachine; native fns
-    // like print / now / rand need Console + Clock + Random installed, so we
-    // go through real VirtualMachine.
+    // print / math / type conversions — all core natives, no clock/random.
     let src = fs::read_to_string("tests/scripts/built_ins.abe")
         .expect("built_ins.abe missing");
     let (mut rt, console) = abrase_cli::host::Runtime::new_for_tests();
@@ -220,8 +218,6 @@ fn built_ins() {
     let (out_handle, _) = console.handles();
     let out = String::from_utf8(out_handle.borrow().clone()).expect("stdout utf-8");
     assert!(out.contains("hello, myriad"),    "missing greeting in: {:?}", out);
-    assert!(out.contains("slept ~"),          "missing sleep line in: {:?}", out);
-    assert!(out.contains("rand = "),          "missing rand line in: {:?}", out);
     assert!(out.contains("7.min(3)=3"),       "Int .min() broken in: {:?}", out);
     assert!(out.contains("7.max(3)=7"),       "Int .max() broken in: {:?}", out);
     assert!(out.contains("(-9).abs()=9"),     "Int .abs() broken in: {:?}", out);
