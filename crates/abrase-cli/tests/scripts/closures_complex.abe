@@ -34,5 +34,15 @@ fn main() -> Int {
   };
   let r5 = region_cap;
 
-  r1 + r2 + r3 + r4 + r5
+  let adder = |y| y + base;
+  let use_adder = |z| adder(z) + 1;
+  let r6 = use_adder(6);
+
+  let nested = |w| {
+    let inner = |x| x + base;
+    inner(w)
+  };
+  let r7 = nested(8);
+
+  r1 + r2 + r3 + r4 + r5 + r6 + r7
 }
