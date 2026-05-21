@@ -29,7 +29,7 @@ fn verify_compile_undefined_variable_errors() {
 }
 
 #[test]
-fn verify_compile_non_bind_pattern_errors() {
+fn verify_compile_tuple_destructure_compiles() {
     let mut compiler = Compiler::new();
     let ast = vec![Decl::Fn(FnDecl {
         attrs: vec![],
@@ -75,7 +75,7 @@ fn verify_compile_non_bind_pattern_errors() {
     })];
 
     let result = compiler.compile(&ast);
-    assert!(result.is_err(), "Expected error for non-bind pattern");
+    assert!(result.is_ok(), "Expected tuple destructure to compile, got: {:?}", result.err());
 }
 
 #[test]

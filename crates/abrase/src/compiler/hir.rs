@@ -11,14 +11,6 @@ impl RecordLayout {
     pub fn offset_of(&self, field: &str) -> Option<u16> {
         self.fields.iter().position(|f| f == field).map(|i| i as u16)
     }
-
-    pub fn size(&self) -> u32 {
-        self.fields.len() as u32
-    }
-
-    pub fn type_of(&self, field: &str) -> Option<&ast::Type> {
-        self.fields.iter().position(|f| f == field).and_then(|i| self.field_types.get(i))
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -33,20 +25,6 @@ pub struct VariantLayout {
     pub type_name: String,
     pub tag: u32,
     pub shape: VariantShape,
-}
-
-impl VariantLayout {
-    pub fn payload_size(&self) -> u32 {
-        match &self.shape {
-            VariantShape::Unit => 0,
-            VariantShape::Tuple(n) => *n as u32,
-            VariantShape::Record(fs) => fs.len() as u32,
-        }
-    }
-
-    pub fn alloc_size(&self) -> u32 {
-        1 + self.payload_size()
-    }
 }
 
 #[derive(Default)]

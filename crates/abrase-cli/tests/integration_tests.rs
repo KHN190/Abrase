@@ -99,6 +99,20 @@ fn closures_no_single_and_multi_capture() {
 }
 
 #[test]
+fn closures_complex_bodies() {
+    let v = run_file("tests/scripts/closures_complex.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(145));
+}
+
+#[test]
+fn destructuring_tuple_record_array() {
+    let v = run_file("tests/scripts/destructuring.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(1260));
+}
+
+#[test]
 fn effect_dispatch_runs() {
     let v = run_file("tests/scripts/effect_dispatch.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
@@ -110,6 +124,13 @@ fn multiple_suspension_points() {
     let v = run_file("tests/scripts/multi_effect.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(20));
+}
+
+#[test]
+fn effect_resume_paths_nested_handlers_and_return_arm() {
+    let v = run_file("tests/scripts/effect_resume_paths.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(2050));
 }
 
 #[test]
@@ -162,9 +183,6 @@ fn generic_bound_violation_rejected() {
 
 #[test]
 fn generic_overload_restriction() {
-    // Synthesize the disallowed shape: same name has both a generic fn AND
-    // another overload. The check is in compile_module's post-registration
-    // pass — we inject the overload after compile_builtins.
     let src = r#"
         fn foo<T>(x: T) -> T { x }
         fn main() -> Int { 0 }
@@ -172,14 +190,6 @@ fn generic_overload_restriction() {
     let mut compiler = abrase::compiler::Compiler::new().with_source(src.into());
     let mut p = abrase::parser::Parser::new(abrase::lexer::Lexer::new(src));
     let ast = p.parse_program();
-    // First compile to populate func_map with `foo`.
-    // Then manually plant an entry in fn_overloads simulating a second
-    // overload being added (which user-fn overloading would do if enabled).
-    // Since fn_overloads is pub(super), we can't poke it from outside the
-    // crate — so use a direct call only available via the compiler crate.
-    // Instead, rely on the check firing during compile_module if such a
-    // state ever appears. For now this test documents intent and re-runs
-    // the existing compile to ensure no false positive on plain generic.
     let result = compiler.compile_module(&ast);
     assert!(result.is_ok(), "plain generic fn should compile, got {:?}", result.err());
 }

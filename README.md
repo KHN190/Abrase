@@ -15,8 +15,6 @@ It features:
 * Effect system
 * Simplified lifecycle management
 
-Myriad is a wasm-style language runtime: pure computation plus conventional I/O. Anything beyond — clock, random, graphics, audio, filesystem, network — is layered in by **extensions** (host integrations that register imports / exports). This repo holds Myriad core only; extension specs and implementations live elsewhere.
-
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
 ## Installation

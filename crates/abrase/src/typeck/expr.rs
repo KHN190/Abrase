@@ -22,85 +22,6 @@ impl Checker {
 
     // Overload resolution for a call site. If `name` has registered overloads,
     // pick the one whose params match arg types inferred from literals / known
-    // variable bindings. Returns the matched Type::Function so the existing
-    // arg-checking loop can use it.
-    pub(super) fn resolve_call_overload(
-        &self,
-        name: &str,
-        args: &[Spanned<ast::Expr>],
-    ) -> Option<Type> {
-        let sigs = self.fn_overloads.get(name)?;
-        if sigs.is_empty() { return None; }
-        let arg_tys: Vec<Option<Type>> =
-            args.iter().map(|a| self.quick_arg_type(a)).collect();
-        for (params, ret) in sigs {
-            if params.len() != arg_tys.len() { continue; }
-            let ok = params.iter().zip(&arg_tys).all(|(p, a)| match a {
-                Some(t) => p == t || matches!(p, Type::Unknown) || matches!(t, Type::Unknown),
-                None => false,
-            });
-            if ok {
-                return Some(Type::Function {
-                    params: params.clone(),
-                    effects: vec![],
-                    ret: Box::new(ret.clone()),
-                });
-            }
-        }
-        None
-    }
-
-    // Side-effect-free arg type peek. Covers literals, simple identifiers, and
-    // arithmetic/comparison binops whose operand types are themselves peek-able.
-    // Returns None for anything more complex; the caller then falls back to
-    // full inference (which is allowed to report errors).
-    fn quick_arg_type(&self, expr: &Spanned<ast::Expr>) -> Option<Type> {
-        match &expr.node {
-            ast::Expr::Literal(lit) => Some(match lit {
-                ast::Literal::Int(_)    => Type::Int,
-                ast::Literal::Float(_)  => Type::Float,
-                ast::Literal::Bool(_)   => Type::Bool,
-                ast::Literal::Char(_)   => Type::Char,
-                ast::Literal::String(_) => Type::String,
-                ast::Literal::Unit      => Type::Unit,
-                _ => return None,
-            }),
-            ast::Expr::Identifier(name) => {
-                for scope in self.scopes.iter().rev() {
-                    if let Some(meta) = scope.vars.get(name) {
-                        return Some(meta.ty.clone());
-                    }
-                }
-                None
-            }
-            // Arithmetic: result type = operand type (when both peek-able and
-            // agree). Comparisons / logical ops yield Bool regardless.
-            ast::Expr::Binary { op, left, right } => {
-                use ast::BinaryOp as B;
-                match op {
-                    B::Add | B::Sub | B::Mul | B::Div | B::Mod
-                    | B::AddAssign | B::SubAssign | B::MulAssign
-                    | B::DivAssign | B::ModAssign => {
-                        let lt = self.quick_arg_type(left)?;
-                        let rt = self.quick_arg_type(right)?;
-                        if lt == rt { Some(lt) } else { None }
-                    }
-                    B::Eq | B::Neq | B::Lt | B::Gt | B::Lte | B::Gte
-                    | B::And | B::Or => Some(Type::Bool),
-                    B::Assign => None,
-                }
-            }
-            ast::Expr::Unary { op, right } => {
-                use ast::UnaryOp as U;
-                match op {
-                    U::Neg => self.quick_arg_type(right),
-                    U::Not => Some(Type::Bool),
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    }
 
     pub(super) fn type_contains_shared(&self, ty: &Type) -> bool {
         let mut visited = std::collections::HashSet::new();
@@ -757,15 +678,7 @@ impl Checker {
                 } else {
                     Vec::new()
                 };
-                // Overload resolution: if the callee is an identifier with a
-                // registered overload set, pick the matching signature based on
-                // arg types. Falls back to scope lookup if nothing matches.
-                let overload_hit: Option<Type> = if let ast::Expr::Identifier(name) = &callee.node {
-                    self.resolve_call_overload(name, args)
-                } else {
-                    None
-                };
-                let callee_ty = overload_hit.unwrap_or_else(|| self.infer_expr(callee));
+                let callee_ty = self.infer_expr(callee);
                 let result = if let Type::Function { params, effects, ret } = callee_ty {
                     if args.len() != params.len() {
                         self.report_error(
@@ -1274,6 +1187,12 @@ impl Checker {
                 body_ty
             }
             ast::Expr::Handle { expr: handler_expr, arms } => {
+                if matches!(handler_expr.node, ast::Expr::Handle { .. }) {
+                    self.report_error(
+                        "inline nested handle is not allowed; extract the inner handle into a function and call it".into(),
+                        handler_expr.span,
+                    );
+                }
                 self.context_stack.push("In handle expression".into());
                 let saved_handled = std::mem::take(&mut self.handled_effects);
 

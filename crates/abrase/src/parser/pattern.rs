@@ -23,8 +23,7 @@ impl<'a> Parser<'a> {
         let span = self.current_span;
         let node = match &self.current_token {
             Token::Underscore => Pattern::Wildcard,
-            // `..` rest marker inside array / tuple patterns.
-            Token::Range => Pattern::Wildcard,
+            Token::Range => Pattern::Rest,
             Token::Ampersand => {
                 self.next_token();
                 let pat = self.parse_pattern_primary()?;
