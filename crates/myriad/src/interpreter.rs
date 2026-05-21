@@ -260,7 +260,7 @@ impl VirtualMachine {
 
             OpCode::Dei(d, port_reg) => self.do_dei(*d, *port_reg),
             OpCode::Deo(src, port_reg) => self.do_deo(module, *src, *port_reg),
-            OpCode::Handle(_dest, table_reg, effect_id) => {
+            OpCode::Handle(table_reg, effect_id) => {
                 let (table_raw, table_is_handle) = self.read_at(*table_reg);
                 let (table_slot, table_gen) = if table_is_handle && table_raw != HANDLE_NONE {
                     let (s, g) = Self::decode_handle(table_raw);

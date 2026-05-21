@@ -105,6 +105,12 @@ impl Compiler {
                 protect = protect.max(reg.0 as u16 + 1);
             }
         }
+        let high = self.snapshot_register_high_water();
+        for r in protect..high {
+            if self.reg_holds_handle.get(r as usize).copied().unwrap_or(false) {
+                self.emit(OpCode::Drop(Register(r as u8)));
+            }
+        }
         self.restore_register_high_water(protect);
     }
 

@@ -3099,6 +3099,7 @@ fn verify_move_closure_is_valid() {
 #[test]
 fn closure_cannot_capture_mutable_binding() {
     // { let mut x = 0; |y: Int| y + x }  must reject capture of mut x
+    // by a non-move closure (would alias outer mutation).
     let mut checker = Checker::new();
     let let_stmt = sp(ast::Stmt::Let {
         pattern: sp(Pattern::Bind("x".into())),
@@ -3127,9 +3128,47 @@ fn closure_cannot_capture_mutable_binding() {
     let _ = checker.infer_expr(&sp(ast::Expr::Block(block)));
     assert!(
         checker.errors.iter().any(|e|
-            e.message.contains("mutable binding 'x' cannot be captured by a closure")
+            e.message.contains("mutable binding 'x' cannot be captured by a non-move closure")
         ),
         "expected mut-capture error; got {:?}", checker.errors
+    );
+}
+
+#[test]
+fn move_closure_can_capture_mutable_binding() {
+    let mut checker = Checker::new();
+    let let_stmt = sp(ast::Stmt::Let {
+        pattern: sp(Pattern::Bind("x".into())),
+        is_mut: true,
+        ty: Some(ast::Type::Named("Int".into())),
+        value: sp(ast::Expr::Literal(ast::Literal::Int(0))),
+    });
+    let closure = sp(ast::Expr::Closure {
+        is_move: true,
+        params: vec![ast::ClosureParam {
+            pattern: sp(ast::Pattern::Bind("y".into())),
+            ty: Some(ast::Type::Named("Int".into())),
+        }],
+        effects: vec![],
+        return_type: Some(ast::Type::Named("Int".into())),
+        body: Box::new(sp(ast::Expr::Binary {
+            op: ast::BinaryOp::Add,
+            left: Box::new(sp(ast::Expr::Identifier("y".into()))),
+            right: Box::new(sp(ast::Expr::Identifier("x".into()))),
+        })),
+    });
+    let block = ast::Block {
+        stmts: vec![let_stmt],
+        ret: Some(Box::new(closure)),
+    };
+    let _ = checker.infer_expr(&sp(ast::Expr::Block(block)));
+    let mut_capture_err = checker.errors.iter().any(|e|
+        e.message.contains("mutable binding")
+            && e.message.contains("cannot be captured")
+    );
+    assert!(
+        !mut_capture_err,
+        "move closure must accept mut capture; got errors {:?}", checker.errors
     );
 }
 

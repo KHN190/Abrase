@@ -47,6 +47,10 @@ pub struct Compiler {
     pub(super) code: Vec<OpCode>,
     pub(super) next_reg: u16,
     pub(super) max_reg: u16,
+    // Compile-time tracking: which regs may currently hold a heap handle.
+    // Updated by `emit()` based on opcode kind. Used by reclaim to skip
+    // Drop emission for regs that provably do not hold a handle.
+    pub(super) reg_holds_handle: Vec<bool>,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
     pub(super) var_bound_at_region: HashMap<String, usize>,
@@ -101,6 +105,7 @@ impl Compiler {
             code: Vec::new(),
             next_reg: 0,
             max_reg: 0,
+            reg_holds_handle: Vec::new(),
             var_to_reg: HashMap::new(),
             var_types: HashMap::new(),
             var_bound_at_region: HashMap::new(),
@@ -409,6 +414,7 @@ impl Compiler {
         let saved_string_constants = std::mem::take(&mut self.string_constants);
         let saved_next_reg = self.next_reg;
         let saved_max_reg = self.max_reg;
+        let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
         let saved_var_bound_at_region = std::mem::take(&mut self.var_bound_at_region);
@@ -526,6 +532,7 @@ impl Compiler {
         self.string_constants = saved_string_constants;
         self.next_reg = saved_next_reg;
         self.max_reg = saved_max_reg;
+        self.reg_holds_handle = saved_reg_holds_handle;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
         self.var_bound_at_region = saved_var_bound_at_region;

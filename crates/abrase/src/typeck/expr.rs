@@ -1009,7 +1009,7 @@ impl Checker {
                 self.context_stack.pop();
                 field_type
             }
-            ast::Expr::Closure { is_move: _, params, effects, return_type, body } => {
+            ast::Expr::Closure { is_move, params, effects, return_type, body } => {
                 self.context_stack.push("In closure expression".into());
 
                 // closure captures must be Move/Copy.
@@ -1043,15 +1043,18 @@ impl Checker {
                                     body.span,
                                 );
                             }
-                            if let Some(true) = self.peek_var_is_mut(name) {
-                                self.report_error(
-                                    format!(
-                                        "mutable binding '{}' cannot be captured by a closure; \
-                                         rebind as immutable, or model mutation through the `state` effect",
-                                        name
-                                    ),
-                                    body.span,
-                                );
+                            if !*is_move {
+                                if let Some(true) = self.peek_var_is_mut(name) {
+                                    self.report_error(
+                                        format!(
+                                            "mutable binding '{}' cannot be captured by a non-move closure; \
+                                             use `move |...|` to transfer ownership, or model mutation \
+                                             through the `state` effect",
+                                            name
+                                        ),
+                                        body.span,
+                                    );
+                                }
                             }
                         }
                     }
@@ -1082,7 +1085,6 @@ impl Checker {
                 }
 
                 // Validate closure effect declarations
-                // If effects are declared, check that inferred effects match declaration
                 if !declared_effects.is_empty() {
                     let inferred = self.fn_required_effects.clone();
                     let exceeds = self.inferred_effects_exceed_declared(&declared_effects, &inferred);
