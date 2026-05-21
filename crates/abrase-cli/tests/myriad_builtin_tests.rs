@@ -1,9 +1,5 @@
 use abrase::bytecode::{BytecodeChunk, Chunk, Module, OpCode, Register};
 use myriad::{Value, VirtualMachine};
-use myriad::devices::{
-    Clock, Random, SeededRandom, SystemClock,
-    CLOCK_ID, RANDOM_ID,
-};
 
 fn r(n: u8) -> Register { Register(n) }
 
@@ -18,46 +14,6 @@ fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize) -> Mo
         })],
         entry: 0,
     }
-}
-
-#[test]
-fn clock_returns_monotonic_progress() {
-    let mut vm = VirtualMachine::new();
-    let clock: Box<dyn Clock> = Box::new(SystemClock::new());
-    vm.install_device(CLOCK_ID, Box::new(clock));
-    let module = module_with(
-        vec![
-            OpCode::PushConst(r(0), 0),
-            OpCode::Dei(r(1), r(0)),
-            OpCode::Ret(r(1)),
-        ],
-        vec![Value::from_int(0x6001)],
-        2,
-    );
-    let v = vm.run_module(&module).unwrap();
-    assert!(v.as_int() >= 0);
-}
-
-#[test]
-fn random_seeded_is_deterministic() {
-    let mut vm = VirtualMachine::new();
-    let rng: Box<dyn Random> = Box::new(SeededRandom::new(12345));
-    vm.install_device(RANDOM_ID, Box::new(rng));
-    let module = module_with(
-        vec![
-            OpCode::PushConst(r(0), 0),
-            OpCode::Dei(r(1), r(0)),
-            OpCode::Ret(r(1)),
-        ],
-        vec![Value::from_int(0x7001)],
-        2,
-    );
-    let v1 = vm.run_module(&module).unwrap();
-    let mut vm2 = VirtualMachine::new();
-    let rng2: Box<dyn Random> = Box::new(SeededRandom::new(12345));
-    vm2.install_device(RANDOM_ID, Box::new(rng2));
-    let v2 = vm2.run_module(&module).unwrap();
-    assert_eq!(v1, v2);
 }
 
 #[test]

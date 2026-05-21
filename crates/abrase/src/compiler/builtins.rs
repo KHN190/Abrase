@@ -19,12 +19,6 @@ impl Compiler {
         // Console
         self.register_typed_native("print",    vec![s.clone()],            u.clone(), 1);
         self.register_typed_native("println",  vec![s.clone()],            u.clone(), 1);
-        // Clock
-        self.register_typed_native("now",      vec![],                     i.clone(), 0);
-        self.register_typed_native("sleep_ms", vec![i.clone()],            u.clone(), 1);
-        // Random
-        self.register_typed_native("rand",     vec![],                     f.clone(), 0);
-        self.register_typed_native("srand",    vec![f.clone()],            u.clone(), 1);
         // Float-only math
         self.register_typed_native("ceil",     vec![f.clone()],            i.clone(), 1);
         self.register_typed_native("flr",      vec![f.clone()],            i.clone(), 1);
