@@ -147,7 +147,7 @@ fn write_native_header(out: &mut Vec<u8>, n: &NativeChunk) -> Result<(), EncodeE
     out.push(param_count);
     out.extend_from_slice(&0u16.to_le_bytes());
     out.extend_from_slice(&name_len.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&[0u8; 6]);
     Ok(())
 }
 
@@ -201,7 +201,7 @@ fn read_fn_header(r: &mut Reader) -> Result<FnHeader, LoadError> {
             let param_count = r.read_u8()?;
             let _pad = r.read_u16()?;
             let name_len = r.read_u16()?;
-            let _pad = r.read_u32()?;
+            let _pad = r.take(6)?;
             Ok(FnHeader::Native { param_count, name_len })
         }
         k => Err(LoadError::Corrupt {
