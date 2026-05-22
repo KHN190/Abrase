@@ -296,7 +296,6 @@ fn all_opcodes() -> Vec<OpCode> {
         St   (r(13), r(14), 0),
         LdIdx(r(15), r(16), r(17)),
         StIdx(r(18), r(19), r(20)),
-        Ref  (r(21), r(22)),
 
         Alloc(r(23), 0xFFFF),
         Drop(r(24)),
@@ -323,7 +322,7 @@ fn all_opcodes() -> Vec<OpCode> {
 #[test]
 fn all_46_opcodes_roundtrip() {
     let code = all_opcodes();
-    assert_eq!(code.len(), 46, "opcode set drifted from spec");
+    assert_eq!(code.len(), 45, "opcode set drifted from spec");
 
     // 1024 reg_count is bigger than needed but exercises u16 reg_count when serialized.
     let bc = BytecodeChunk {

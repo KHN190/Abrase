@@ -14,13 +14,15 @@ fn worker() -> <Counter, Log> Int {
   a + Counter.bump(2)
 }
 
+fn with_log() -> <Counter> Int {
+  handle worker() {
+    return v       => v,
+    Log.note _     => resume(())
+  }
+}
+
 fn main() -> Int {
-  handle
-    handle worker() {
-      return v       => v,
-      Log.note _     => resume(())
-    }
-  {
+  handle with_log() {
     return v         => v,
     Counter.bump by  => resume(by + 100)
   }

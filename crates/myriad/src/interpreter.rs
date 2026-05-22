@@ -225,17 +225,6 @@ impl VirtualMachine {
                 if old_is_handle { self.rc_dec_handle(old_raw)?; }
                 Ok(())
             }
-            OpCode::Ref(d, s) => {
-                let (v, is_handle) = self.read(*s)?;
-                if is_handle { self.rc_inc_handle(v)?; }
-                let init_mask: u64 = if is_handle { 1 } else { 0 };
-                let (slot, generation) = self.checked_heap_alloc_with_mask(1, &[init_mask])?;
-                self.region_record_alloc(slot, generation);
-                self.heap.st(slot, generation, 0, v, is_handle)?;
-                let handle = Value::from_handle(slot, generation).raw();
-                self.write(*d, handle, true)
-            }
-
             OpCode::AddImm(d, s, imm) => {
                 let x = self.read_i64(*s)?;
                 self.write(*d, x.wrapping_add(*imm as i64) as u64, false)

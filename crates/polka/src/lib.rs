@@ -76,7 +76,6 @@ pub enum OpCode {
     St(Register, Register, u16),
     LdIdx(Register, Register, Register),
     StIdx(Register, Register, Register),
-    Ref(Register, Register),
 
     AddImm(Register, Register, i8),
     SubImm(Register, Register, i8),

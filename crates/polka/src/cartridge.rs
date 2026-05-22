@@ -317,27 +317,26 @@ fn encode_op(op: &OpCode) -> Result<[u8; 4], EncodeError> {
         }
         LdIdx(a,b,c) => [0x1c, r(*a), r(*b), r(*c)],
         StIdx(a,b,c) => [0x1d, r(*a), r(*b), r(*c)],
-        Ref(a,b)     => [0x1e, r(*a), r(*b), 0],
 
-        Alloc(a, sz) => { let o = sz.to_le_bytes(); [0x1f, r(*a), o[0], o[1]] }
-        Drop(a)      => [0x20, r(*a), 0, 0],
+        Alloc(a, sz) => { let o = sz.to_le_bytes(); [0x1e, r(*a), o[0], o[1]] }
+        Drop(a)      => [0x1f, r(*a), 0, 0],
 
-        Dei(a,b) => [0x21, r(*a), r(*b), 0],
-        Deo(a,b) => [0x22, r(*a), r(*b), 0],
+        Dei(a,b) => [0x20, r(*a), r(*b), 0],
+        Deo(a,b) => [0x21, r(*a), r(*b), 0],
 
-        Handle(a, eid) => { let o = eid.to_le_bytes(); [0x23, r(*a), o[0], o[1]] }
-        Resume(a,b)    => [0x24, r(*a), r(*b), 0],
+        Handle(a, eid) => { let o = eid.to_le_bytes(); [0x22, r(*a), o[0], o[1]] }
+        Resume(a,b)    => [0x23, r(*a), r(*b), 0],
 
-        AddImm(a,b,imm) => [0x25, r(*a), r(*b), *imm as u8],
-        SubImm(a,b,imm) => [0x26, r(*a), r(*b), *imm as u8],
+        AddImm(a,b,imm) => [0x24, r(*a), r(*b), *imm as u8],
+        SubImm(a,b,imm) => [0x25, r(*a), r(*b), *imm as u8],
 
-        FAdd(a,b,c) => [0x27, r(*a), r(*b), r(*c)],
-        FSub(a,b,c) => [0x28, r(*a), r(*b), r(*c)],
-        FMul(a,b,c) => [0x29, r(*a), r(*b), r(*c)],
-        FDiv(a,b,c) => [0x2a, r(*a), r(*b), r(*c)],
-        FNeg(a,b)   => [0x2b, r(*a), r(*b), 0],
-        FLt (a,b,c) => [0x2c, r(*a), r(*b), r(*c)],
-        FEq (a,b,c) => [0x2d, r(*a), r(*b), r(*c)],
+        FAdd(a,b,c) => [0x26, r(*a), r(*b), r(*c)],
+        FSub(a,b,c) => [0x27, r(*a), r(*b), r(*c)],
+        FMul(a,b,c) => [0x28, r(*a), r(*b), r(*c)],
+        FDiv(a,b,c) => [0x29, r(*a), r(*b), r(*c)],
+        FNeg(a,b)   => [0x2a, r(*a), r(*b), 0],
+        FLt (a,b,c) => [0x2b, r(*a), r(*b), r(*c)],
+        FEq (a,b,c) => [0x2c, r(*a), r(*b), r(*c)],
     })
 }
 
@@ -377,22 +376,21 @@ fn decode_op(b: [u8; 4], offset: usize) -> Result<OpCode, LoadError> {
         0x1b => St (reg(b[1]), reg(b[2]), b[3] as u16),
         0x1c => LdIdx(reg(b[1]), reg(b[2]), reg(b[3])),
         0x1d => StIdx(reg(b[1]), reg(b[2]), reg(b[3])),
-        0x1e => Ref(reg(b[1]), reg(b[2])),
-        0x1f => Alloc(reg(b[1]), u16le(b)),
-        0x20 => Drop(reg(b[1])),
-        0x21 => Dei(reg(b[1]), reg(b[2])),
-        0x22 => Deo(reg(b[1]), reg(b[2])),
-        0x23 => Handle(reg(b[1]), u16le(b)),
-        0x24 => Resume(reg(b[1]), reg(b[2])),
-        0x25 => AddImm(reg(b[1]), reg(b[2]), b[3] as i8),
-        0x26 => SubImm(reg(b[1]), reg(b[2]), b[3] as i8),
-        0x27 => FAdd(reg(b[1]), reg(b[2]), reg(b[3])),
-        0x28 => FSub(reg(b[1]), reg(b[2]), reg(b[3])),
-        0x29 => FMul(reg(b[1]), reg(b[2]), reg(b[3])),
-        0x2a => FDiv(reg(b[1]), reg(b[2]), reg(b[3])),
-        0x2b => FNeg(reg(b[1]), reg(b[2])),
-        0x2c => FLt (reg(b[1]), reg(b[2]), reg(b[3])),
-        0x2d => FEq (reg(b[1]), reg(b[2]), reg(b[3])),
+        0x1e => Alloc(reg(b[1]), u16le(b)),
+        0x1f => Drop(reg(b[1])),
+        0x20 => Dei(reg(b[1]), reg(b[2])),
+        0x21 => Deo(reg(b[1]), reg(b[2])),
+        0x22 => Handle(reg(b[1]), u16le(b)),
+        0x23 => Resume(reg(b[1]), reg(b[2])),
+        0x24 => AddImm(reg(b[1]), reg(b[2]), b[3] as i8),
+        0x25 => SubImm(reg(b[1]), reg(b[2]), b[3] as i8),
+        0x26 => FAdd(reg(b[1]), reg(b[2]), reg(b[3])),
+        0x27 => FSub(reg(b[1]), reg(b[2]), reg(b[3])),
+        0x28 => FMul(reg(b[1]), reg(b[2]), reg(b[3])),
+        0x29 => FDiv(reg(b[1]), reg(b[2]), reg(b[3])),
+        0x2a => FNeg(reg(b[1]), reg(b[2])),
+        0x2b => FLt (reg(b[1]), reg(b[2]), reg(b[3])),
+        0x2c => FEq (reg(b[1]), reg(b[2]), reg(b[3])),
         other => return Err(LoadError::Corrupt {
             offset,
             kind: Corruption::UnknownOpcode(other),

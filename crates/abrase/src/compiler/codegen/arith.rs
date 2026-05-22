@@ -16,7 +16,10 @@ impl Compiler {
             ast::UnaryOp::Ref | ast::UnaryOp::RefMut => {
                 let src = self.compile_expr(right)?;
                 let dest = self.alloc_register()?;
-                self.emit(OpCode::Ref(dest, src));
+                let tmp = self.alloc_register()?;
+                self.emit(OpCode::Copy(tmp, src));
+                self.emit(OpCode::Alloc(dest, 1));
+                self.emit(OpCode::St(tmp, dest, 0));
                 Ok(dest)
             }
             ast::UnaryOp::Deref => {
