@@ -88,6 +88,8 @@ pub enum OpCode {
 
     Handle(Register, u16),
     Resume(Register, Register),
+
+    Raise(Register, Register, Register),
 }
 
 #[derive(Clone, Default, Debug)]

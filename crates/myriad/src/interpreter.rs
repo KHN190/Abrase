@@ -270,6 +270,7 @@ impl VirtualMachine {
                 Ok(())
             }
             OpCode::Resume(dest_reg, val_reg) => self.do_resume(module, *dest_reg, *val_reg),
+            OpCode::Raise(dest, key_reg, args_base) => self.do_raise(module, bc, *dest, *key_reg, *args_base),
         }
     }
 
@@ -345,6 +346,125 @@ impl VirtualMachine {
         self.current_func = fn_id;
         self.pc = 0;
         Ok(())
+    }
+
+    fn do_raise(
+        &mut self,
+        module: &Module,
+        caller_bc: &BytecodeChunk,
+        dest: Register,
+        key_reg: Register,
+        args_base: Register,
+    ) -> Result<(), String> {
+        let key_raw = self.read_i64(key_reg)?;
+        if !(0..=0xFFFF).contains(&key_raw) {
+            return Err(format!("raise: bad key {}", key_raw));
+        }
+        let key = key_raw as u16;
+        let effect_id = (key >> 8) as u16;
+        let op_id = (key & 0xFF) as usize;
+
+        let (arm_fn_id, env) = self.resolve_dispatch_for(effect_id, op_id);
+        if arm_fn_id == polka::DISPATCH_NO_MATCH {
+            return Err(format!("raise: unhandled effect {:#04x} op {}", effect_id, op_id));
+        }
+        let arm_fn_id = arm_fn_id as usize;
+
+        let caller_reg_count = caller_bc.reg_count;
+        if dest.to_usize() >= caller_reg_count {
+            return Err(format!(
+                "raise: dest r{} out of caller window (reg_count {})",
+                dest.0, caller_reg_count
+            ));
+        }
+        let dest_abs = self.base_reg + dest.to_usize();
+
+        let arm_chunk = module.functions.get(arm_fn_id)
+            .ok_or_else(|| format!("raise: bad arm fn_id {}", arm_fn_id))?;
+        let (arm_reg_count, arm_param_count) = match arm_chunk {
+            Chunk::Bytecode(b) => (b.reg_count, b.param_count),
+            Chunk::Native(_) => return Err(format!("raise: arm fn_id {} is native", arm_fn_id)),
+        };
+        if arm_param_count < 2 {
+            return Err(format!("raise: arm fn_id {} param_count {} < 2", arm_fn_id, arm_param_count));
+        }
+        let nargs = arm_param_count - 2;
+
+        let mut init_mask = vec![0u64; (super::cont_slot::SIZE + 63) / 64];
+        init_mask[0] = super::cont_slot::INIT_MASK_WORD0;
+        let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(super::cont_slot::SIZE, &init_mask)?;
+        self.region_record_alloc(cell_slot, cell_gen);
+        self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_PC, (self.pc - 1) as u64, false)?;
+        self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_BASE, self.base_reg as u64, false)?;
+        self.heap.st(cell_slot, cell_gen, super::cont_slot::SUSPEND_FUNC, self.current_func as u64, false)?;
+        self.heap.st(cell_slot, cell_gen, super::cont_slot::ALIVE, 1, false)?;
+
+        let snapshot = self.snapshot_registers(self.base_reg, caller_reg_count)?;
+        self.write_snapshot_into_cell(cell_slot, cell_gen, snapshot)?;
+
+        if let Some(handler_frame) = self.handlers.last_mut() {
+            handler_frame.cells_allocated.push((cell_slot, cell_gen));
+            handler_frame.cell_slot = cell_slot;
+            handler_frame.cell_gen = cell_gen;
+        }
+        self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_FN_ID, arm_fn_id as u64, false)?;
+        let (env_raw, env_is_handle) = env.unwrap_or((HANDLE_NONE, false));
+        if env_is_handle { self.rc_inc_handle(env_raw)?; }
+        self.heap.st(cell_slot, cell_gen, super::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
+
+        let new_base = self.base_reg + caller_reg_count;
+        let window = arm_reg_count.max(polka::FRAME_REGS);
+        let needed = new_base + window + STAGE_SLACK;
+        if needed > MAX_REGISTERS {
+            return Err(format!(
+                "Stack overflow: register window {} exceeds limit {}",
+                needed, MAX_REGISTERS
+            ));
+        }
+        self.ensure_registers(needed);
+
+        if env_is_handle { self.rc_inc_handle(env_raw)?; }
+        self.write_abs(new_base, env_raw, env_is_handle);
+        self.write_abs(new_base + 1, 0, false);
+
+        let args_base_abs = self.base_reg + args_base.to_usize();
+        for i in 0..nargs {
+            let src_abs = args_base_abs + i;
+            let raw = self.read_abs_raw(src_abs);
+            let is_handle = self.reg_mask_bit(src_abs);
+            if is_handle { self.rc_inc_handle(raw)?; }
+            self.write_abs(new_base + 2 + i, raw, is_handle);
+        }
+
+        if self.frames.len() >= MAX_RECURSION_DEPTH {
+            return Err(format!(
+                "Stack overflow: recursion depth {} exceeds limit {}",
+                self.frames.len(),
+                MAX_RECURSION_DEPTH
+            ));
+        }
+        self.frames.push(Frame::normal(self.current_func, self.pc, self.base_reg, dest_abs));
+        self.maybe_mark_body_frame();
+        self.base_reg = new_base;
+        self.current_func = arm_fn_id;
+        self.pc = 0;
+        Ok(())
+    }
+
+    fn resolve_dispatch_for(&self, effect_id: u16, op_id: usize) -> (u16, Option<(u64, bool)>) {
+        for h in self.handlers.iter().rev() {
+            if h.effect_id != effect_id { continue; }
+            if let Some(slot) = h.dispatch_table_slot {
+                if let Ok((raw, _)) = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2) {
+                    let n = raw as i64;
+                    if (0..=0xFFFF).contains(&n) && (n as u16) != polka::DISPATCH_NO_MATCH {
+                        let env = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2 + 1).ok();
+                        return (n as u16, env);
+                    }
+                }
+            }
+        }
+        (polka::DISPATCH_NO_MATCH, None)
     }
 
     #[cold]

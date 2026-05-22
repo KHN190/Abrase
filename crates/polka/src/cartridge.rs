@@ -337,6 +337,8 @@ fn encode_op(op: &OpCode) -> Result<[u8; 4], EncodeError> {
         FNeg(a,b)   => [0x2a, r(*a), r(*b), 0],
         FLt (a,b,c) => [0x2b, r(*a), r(*b), r(*c)],
         FEq (a,b,c) => [0x2c, r(*a), r(*b), r(*c)],
+
+        Raise(a,b,c) => [0x2d, r(*a), r(*b), r(*c)],
     })
 }
 
@@ -391,6 +393,7 @@ fn decode_op(b: [u8; 4], offset: usize) -> Result<OpCode, LoadError> {
         0x2a => FNeg(reg(b[1]), reg(b[2])),
         0x2b => FLt (reg(b[1]), reg(b[2]), reg(b[3])),
         0x2c => FEq (reg(b[1]), reg(b[2]), reg(b[3])),
+        0x2d => Raise(reg(b[1]), reg(b[2]), reg(b[3])),
         other => return Err(LoadError::Corrupt {
             offset,
             kind: Corruption::UnknownOpcode(other),
