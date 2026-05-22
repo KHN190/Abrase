@@ -276,53 +276,34 @@ impl Compiler {
         op_id: u8,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
-
-        //   PushConst(key_reg, key_idx)
-        //   PushConst(lookup_port_reg, lookup_port_idx)
-        //   Deo(key_reg, lookup_port_reg)      # Request handler fn_id
-        //   Dei(fn_id_reg, lookup_port_reg)    # Receive fn_id
-        //   PushConst(env_port_reg, env_port_idx)
-        //   Dei(env_reg, env_port_reg)         # Receive arm env
-        //   PushConst(return_env_reg, 0)       # Dummy return_env
-        //   <stage args with env, return_env, user_args>
-        //   CallReg(dest, fn_id_reg)           # Call dispatched handler
-
         let key = ((effect_id as i64) << 8) | (op_id as i64);
-        let lookup_port = ((crate::bytecode::DISPATCH_ID as i64) << 8)
-            | (crate::bytecode::DISPATCH_PORT_LOOKUP as i64);
-        let env_port = ((crate::bytecode::DISPATCH_ID as i64) << 8)
-            | (crate::bytecode::DISPATCH_PORT_ENV as i64);
 
         let key_reg = self.alloc_register()?;
         let key_idx = self.add_constant(Value::from_int(key))?;
         self.emit(OpCode::PushConst(key_reg, key_idx));
 
-        let lookup_port_reg = self.alloc_register()?;
-        let lookup_port_idx = self.add_constant(Value::from_int(lookup_port))?;
-        self.emit(OpCode::PushConst(lookup_port_reg, lookup_port_idx));
-        self.emit(OpCode::Deo(key_reg, lookup_port_reg));
-
-        let fn_id_reg = self.alloc_register()?;
-        self.emit(OpCode::Dei(fn_id_reg, lookup_port_reg));
-
-        let env_port_reg = self.alloc_register()?;
-        let env_port_idx = self.add_constant(Value::from_int(env_port))?;
-        self.emit(OpCode::PushConst(env_port_reg, env_port_idx));
-        let env_reg = self.alloc_register()?;
-        self.emit(OpCode::Dei(env_reg, env_port_reg));
-
-        let return_env_reg = self.alloc_register()?;
-        let zero_idx = self.add_constant(Value::from_int(0))?;
-        self.emit(OpCode::PushConst(return_env_reg, zero_idx));
-
-        let mut staged: Vec<(Register, bool)> = vec![(env_reg, true), (return_env_reg, false)];
-        for arg in args {
+        let nargs = args.len();
+        let args_base = if nargs == 0 {
+            self.alloc_register()?
+        } else {
+            let first = self.alloc_register()?;
+            for _ in 1..nargs {
+                let _ = self.alloc_register()?;
+            }
+            first
+        };
+        for (i, arg) in args.iter().enumerate() {
             let r = self.compile_expr(arg)?;
-            staged.push((r, self.arg_should_move(arg)));
+            let slot = Register((args_base.0 as usize + i) as u8);
+            if self.arg_should_move(arg) {
+                self.emit(OpCode::Move(slot, r));
+            } else {
+                self.emit(OpCode::Copy(slot, r));
+            }
         }
-        self.stage_call_args(&staged)?;
+
         let dest = self.alloc_register()?;
-        self.emit(OpCode::CallReg(dest, fn_id_reg));
+        self.emit(OpCode::Raise(dest, key_reg, args_base));
         Ok(dest)
     }
 

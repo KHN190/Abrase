@@ -23,11 +23,6 @@ For the CLI, install [`abrase-cli`](https://crates.io/crates/abrase-cli)
 instead. See the [main repo](https://github.com/KHN190/Abrase) for language
 docs and examples.
 
-## Status
-
-Experimental. Schema stable for 0.1.x; some edge cases (multi-shot resume,
-trait coherence, supertraits) are documented in `backlog.md`.
-
 ## License
 
 MIT

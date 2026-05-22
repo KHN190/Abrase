@@ -4,14 +4,14 @@ version = 4
 
 [[package]]
 name = "abrase"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "polka-rs",
 ]
 
 [[package]]
 name = "abrase-cli"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "abrase",
  "myriad-rs",
@@ -20,11 +20,11 @@ dependencies = [
 
 [[package]]
 name = "myriad-rs"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "polka-rs",
 ]
 
 [[package]]
 name = "polka-rs"
-version = "0.1.0-alpha.1"
+version = "0.1.0"

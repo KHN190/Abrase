@@ -131,7 +131,7 @@ fn system_version_read() {
         2,
     );
     let v = vm.run_module(&module).unwrap();
-    assert!(v.as_int() >= (1i64 << 32), "version must be at least major=1");
+    assert!(v.as_int() >= (2i64 << 48), "version must be at least major=2");
 }
 
 #[test]

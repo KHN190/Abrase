@@ -47,7 +47,7 @@ impl Compiler {
     fn track_dest_handle_bit(&mut self, op: &OpCode) {
         use OpCode::*;
         let (dest, holds): (Register, bool) = match op {
-            Alloc(d, _) | Ref(d, _) => (*d, true),
+            Alloc(d, _) => (*d, true),
             Drop(d) => (*d, false),
             Add(d,_,_) | Sub(d,_,_) | Mul(d,_,_) | Div(d,_,_) | Mod(d,_,_) | Neg(d,_) |
             Eq(d,_,_) | Neq(d,_,_) |
@@ -89,7 +89,6 @@ impl Compiler {
             OpCode::PushConst(d, _) |
             OpCode::Copy(d, _) | OpCode::Move(d, _) |
             OpCode::Ld(d, _, _) | OpCode::LdIdx(d, _, _) |
-            OpCode::Ref(d, _) |
             OpCode::AddImm(d, _, _) | OpCode::SubImm(d, _, _) |
             OpCode::Alloc(d, _) |
             OpCode::Call(d, _) | OpCode::CallReg(d, _) => d,

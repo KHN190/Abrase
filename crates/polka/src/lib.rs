@@ -76,7 +76,6 @@ pub enum OpCode {
     St(Register, Register, u16),
     LdIdx(Register, Register, Register),
     StIdx(Register, Register, Register),
-    Ref(Register, Register),
 
     AddImm(Register, Register, i8),
     SubImm(Register, Register, i8),
@@ -89,6 +88,8 @@ pub enum OpCode {
 
     Handle(Register, u16),
     Resume(Register, Register),
+
+    Raise(Register, Register, Register),
 }
 
 #[derive(Clone, Default, Debug)]

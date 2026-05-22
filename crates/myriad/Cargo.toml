@@ -20,4 +20,4 @@ name = "myriad"
 doctest = false
 
 [dependencies]
-polka = { package = "polka-rs", path = "../polka", version = "=0.1.0-alpha.1" }
+polka = { package = "polka-rs", path = "../polka", version = "=0.1.0" }
