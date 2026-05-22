@@ -7,13 +7,14 @@
 
 <img src="./abrase.png" alt="Abrase" width="100" align="right">
 
-Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language designed for code review, not just human authorship. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
+Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language made and designed for large language models. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
 
 It features:
 
 * Static type check
 * Effect system
 * Simplified lifecycle management
+* Performative & Leak free
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
