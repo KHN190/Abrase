@@ -357,12 +357,11 @@ impl VirtualMachine {
         args_base: Register,
     ) -> Result<(), String> {
         let key_raw = self.read_i64(key_reg)?;
-        if !(0..=0xFFFF).contains(&key_raw) {
+        if !(0..=0xFFFFFF).contains(&key_raw) {
             return Err(format!("raise: bad key {}", key_raw));
         }
-        let key = key_raw as u16;
-        let effect_id = (key >> 8) as u16;
-        let op_id = (key & 0xFF) as usize;
+        let effect_id = ((key_raw >> 8) & 0xFFFF) as u16;
+        let op_id = (key_raw & 0xFF) as usize;
 
         let (arm_fn_id, env) = self.resolve_dispatch_for(effect_id, op_id);
         if arm_fn_id == polka::DISPATCH_NO_MATCH {
