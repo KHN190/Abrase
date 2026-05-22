@@ -6,7 +6,7 @@ pub const PORT_HALT: u8 = 0x01;
 pub const PORT_PANIC: u8 = 0x02;
 pub const PORT_FLAGS: u8 = 0x03;
 
-pub const SPEC_VERSION: i64 = 1i64 << 32;
+pub const SPEC_VERSION: i64 = 2i64 << 48;
 
 pub struct SystemDevice {
     pub flags: i64,

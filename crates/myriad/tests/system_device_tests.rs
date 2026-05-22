@@ -8,7 +8,7 @@ fn r(n: u8) -> Register { Register(n) }
 fn version_port_returns_spec_version() {
     let mut dev = SystemDevice::new();
     let v = dev.read(0x00).unwrap();
-    assert_eq!(v.as_int(), 1i64 << 32);
+    assert_eq!(v.as_int(), 2i64 << 48);
 }
 
 #[test]

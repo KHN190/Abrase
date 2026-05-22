@@ -7,7 +7,7 @@
 
 <img src="./abrase.png" alt="Abrase" width="100" align="right">
 
-Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language made and designed for large language models. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
+Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language made for LLM & efficiency. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
 
 It features:
 
