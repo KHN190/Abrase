@@ -1195,3 +1195,100 @@ fn t3_mut_borrow_does_not_consume_move_type() {
     );
     let _ = Ownership::Move;
 }
+
+#[test]
+fn mut_borrow_released_when_subregion_pops_allowing_sequential_subregion() {
+    let mut checker = Checker::new();
+    checker.enter_scope();
+    checker.insert_var("v".into(), Type::Named("String".into()), true, d_span());
+
+    checker.enter_scope();
+    assert!(checker.try_mut_borrow("v", d_span()).is_ok(),
+        "first &mut v in sibling sub-scope must succeed");
+    checker.exit_scope();
+
+    checker.enter_scope();
+    let result = checker.try_mut_borrow("v", d_span());
+    assert!(result.is_ok(),
+        "second &mut v in sibling sub-scope must succeed after the first popped; got {:?}",
+        result);
+    checker.exit_scope();
+
+    checker.exit_scope();
+}
+
+#[test]
+fn mut_borrow_rejected_when_taken_in_nested_subregions_simultaneously() {
+    let mut checker = Checker::new();
+    checker.enter_scope();
+    checker.insert_var("v".into(), Type::Named("String".into()), true, d_span());
+
+    checker.enter_scope();
+    assert!(checker.try_mut_borrow("v", d_span()).is_ok());
+
+    checker.enter_scope();
+    let result = checker.try_mut_borrow("v", d_span());
+    assert!(result.is_err(),
+        "nested &mut v while outer borrow still active must be rejected");
+    assert!(result.unwrap_err().contains("mutable borrow already active"));
+    checker.exit_scope();
+    checker.exit_scope();
+    checker.exit_scope();
+}
+
+#[test]
+fn mut_borrow_from_outer_blocks_inner_subregion() {
+    let mut checker = Checker::new();
+    checker.enter_scope();
+    checker.insert_var("v".into(), Type::Named("String".into()), true, d_span());
+
+    assert!(checker.try_mut_borrow("v", d_span()).is_ok(),
+        "outer-scope mut borrow must succeed");
+
+    checker.enter_scope();
+    let result = checker.try_mut_borrow("v", d_span());
+    assert!(result.is_err(),
+        "&mut v in sub-scope while outer borrow alive must be rejected");
+    checker.exit_scope();
+
+    checker.exit_scope();
+}
+
+#[test]
+fn immut_borrow_released_when_subregion_pops() {
+    let mut checker = Checker::new();
+    checker.enter_scope();
+    checker.insert_var("v".into(), Type::Named("String".into()), true, d_span());
+
+    checker.enter_scope();
+    assert!(checker.try_immut_borrow("v", d_span()).is_ok());
+    checker.exit_scope();
+
+    let result = checker.try_mut_borrow("v", d_span());
+    assert!(result.is_ok(),
+        "outer &mut v must succeed after sub-scope with &v popped; got {:?}", result);
+
+    checker.exit_scope();
+}
+
+#[test]
+fn shadowing_inner_var_release_does_not_clear_outer_borrow() {
+    let mut checker = Checker::new();
+    checker.enter_scope();
+    checker.insert_var("v".into(), Type::Named("String".into()), true, d_span());
+
+    assert!(checker.try_mut_borrow("v", d_span()).is_ok(),
+        "outer borrow must succeed");
+
+    checker.enter_scope();
+    checker.insert_var("v".into(), Type::Named("String".into()), true, d_span());
+    assert!(checker.try_mut_borrow("v", d_span()).is_ok(),
+        "shadowing borrow on inner v must succeed");
+    checker.exit_scope();
+
+    let result = checker.try_mut_borrow("v", d_span());
+    assert!(result.is_err(),
+        "outer v's borrow must still be active after inner shadowing scope exits; got {:?}", result);
+
+    checker.exit_scope();
+}

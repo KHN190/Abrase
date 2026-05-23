@@ -59,7 +59,7 @@ fn test_call_reg_dispatches_to_bytecode() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(callee), Chunk::Bytecode(caller)],
-        entry: 1, device_mask: [0; 32],
+        entry: 1,
     };
     assert_eq!(VirtualMachine::new().run_module(&module), Ok(Value::from_int(42)));
 }
@@ -85,7 +85,7 @@ fn test_call_reg_dispatches_to_native() {
     };
     let module = Module {
         functions: vec![Chunk::Native(native), Chunk::Bytecode(caller)],
-        entry: 1, device_mask: [0; 32],
+        entry: 1,
     };
     let mut vm = VirtualMachine::new();
     vm.register_native("test_double", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, args: &[Value]| {
@@ -104,7 +104,7 @@ fn test_handle_records_dispatch_table() {
                 OpCode::Alloc(r(0), 1),
                 OpCode::PushConst(r(1), 0),
                 OpCode::St(r(1), r(0), 0),
-                OpCode::Handle(r(5), r(0), 7),
+                OpCode::Handle(r(0), 7),
                 OpCode::PushConst(r(2), 1),
                 OpCode::PushConst(r(3), 2),
                 OpCode::Deo(r(2), r(3)),
@@ -120,7 +120,6 @@ fn test_handle_records_dispatch_table() {
             reg_count: 8, param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,
-        device_mask: [0; 32],
     };
     let v = vm.run_module(&module).expect("dispatch must succeed");
     assert_eq!(v, Value::from_int(99));
@@ -146,7 +145,6 @@ fn test_dispatch_no_match_returns_sentinel() {
             reg_count: 4, param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,
-        device_mask: [0; 32],
     };
     let v = vm.run_module(&module).expect("must run");
     assert_eq!(v, Value::from_int(polka::DISPATCH_NO_MATCH as i64));
@@ -159,7 +157,7 @@ fn test_pop_handler_clears_frame_and_cell() {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
             code: vec![
                 OpCode::Alloc(r(0), 1),
-                OpCode::Handle(r(1), r(0), 5),
+                OpCode::Handle(r(0), 5),
                 OpCode::PushConst(r(2), 0),
                 OpCode::PushConst(r(3), 1),
                 OpCode::Deo(r(2), r(3)),
@@ -173,7 +171,6 @@ fn test_pop_handler_clears_frame_and_cell() {
             reg_count: 4, param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,
-        device_mask: [0; 32],
     };
     let _ = vm.run_module(&module).expect("must run");
     assert_eq!(vm.heap_live_count(), 1);
@@ -205,11 +202,11 @@ fn test_nested_handlers_innermost_wins() {
                 OpCode::Alloc(r(0), 1),
                 OpCode::PushConst(r(1), 0),
                 OpCode::St(r(1), r(0), 0),
-                OpCode::Handle(r(7), r(0), 3),
+                OpCode::Handle(r(0), 3),
                 OpCode::Alloc(r(2), 1),
                 OpCode::PushConst(r(3), 1),
                 OpCode::St(r(3), r(2), 0),
-                OpCode::Handle(r(8), r(2), 3),
+                OpCode::Handle(r(2), 3),
                 OpCode::PushConst(r(4), 2),
                 OpCode::PushConst(r(5), 3),
                 OpCode::Deo(r(4), r(5)),
@@ -226,7 +223,6 @@ fn test_nested_handlers_innermost_wins() {
             reg_count: 16, param_count: 0, string_constants: Vec::new(),
         })],
         entry: 0,
-        device_mask: [0; 32],
     };
     let v = vm.run_module(&module).expect("must run");
     assert_eq!(v, Value::from_int(22));

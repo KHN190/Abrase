@@ -120,10 +120,9 @@ fn test_let_nested_tuple_pattern() {
 }
 
 #[test]
-fn test_tuple_let_pattern_rejected_at_parser() {
+fn test_tuple_let_pattern_parses() {
     let errs = parse_errs("fn f() -> Int { let (a, b) = (1, 2); 0 }");
-    assert!(errs.iter().any(|e| e.contains("destructuring let not yet supported")),
-            "expected destructuring-let parser error, got: {:?}", errs);
+    assert!(errs.is_empty(), "tuple destructuring let must parse cleanly, got: {:?}", errs);
 }
 
 #[test]

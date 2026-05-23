@@ -321,17 +321,39 @@ impl Checker {
                 }
             }
             ast::Pattern::Tuple(pats) => {
-                // Tuple pattern: recursively check nested patterns
                 if let Type::Tuple(elem_types) = value_ty {
-                    if pats.len() != elem_types.len() {
-                        self.report_error(
-                            format!("Tuple pattern length mismatch: expected {}, got {}",
-                                elem_types.len(), pats.len()),
-                            pattern.span
-                        );
-                    }
-                    for (pat, elem_ty) in pats.iter().zip(elem_types.iter()) {
-                        self.check_pattern(pat, elem_ty, pat.span);
+                    let rest_at = pats.iter().position(|p| matches!(p.node, ast::Pattern::Rest));
+                    match rest_at {
+                        None => {
+                            if pats.len() != elem_types.len() {
+                                self.report_error(
+                                    format!("Tuple pattern length mismatch: expected {}, got {}",
+                                        elem_types.len(), pats.len()),
+                                    pattern.span
+                                );
+                            }
+                            for (pat, elem_ty) in pats.iter().zip(elem_types.iter()) {
+                                self.check_pattern(pat, elem_ty, pat.span);
+                            }
+                        }
+                        Some(i) => {
+                            let head = &pats[..i];
+                            let tail = &pats[i+1..];
+                            if head.len() + tail.len() > elem_types.len() {
+                                self.report_error(
+                                    format!("Tuple pattern too long: {} fixed elements + .. cannot fit in {}-tuple",
+                                        head.len() + tail.len(), elem_types.len()),
+                                    pattern.span,
+                                );
+                            }
+                            for (pat, ty) in head.iter().zip(elem_types.iter()) {
+                                self.check_pattern(pat, ty, pat.span);
+                            }
+                            let tail_start = elem_types.len().saturating_sub(tail.len());
+                            for (pat, ty) in tail.iter().zip(elem_types[tail_start..].iter()) {
+                                self.check_pattern(pat, ty, pat.span);
+                            }
+                        }
                     }
                 } else {
                     self.report_error(
@@ -372,11 +394,44 @@ impl Checker {
                     }
                 }
             }
-            ast::Pattern::Record { ty: _, fields, rest: _ } => {
-                // Record pattern: verify fields exist (without type registry, skip validation)
+            ast::Pattern::Record { ty, fields, rest } => {
+                let type_name = match (ty.last(), value_ty) {
+                    (Some(n), _) => Some(n.clone()),
+                    (None, Type::Named(n)) => Some(n.clone()),
+                    _ => None,
+                };
+                let expected_fields: Vec<(String, Type)> = type_name.as_ref()
+                    .and_then(|n| self.type_registry.get(n))
+                    .and_then(|body| match body {
+                        ast::TypeBody::Record(fs) => Some(
+                            fs.iter().map(|f| (f.name.clone(), self.convert_type(&f.ty))).collect()
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                if !expected_fields.is_empty() && !*rest {
+                    let listed: std::collections::HashSet<&str> =
+                        fields.iter().map(|f| f.name.as_str()).collect();
+                    let missing: Vec<&str> = expected_fields.iter()
+                        .filter(|(n, _)| !listed.contains(n.as_str()))
+                        .map(|(n, _)| n.as_str())
+                        .collect();
+                    if !missing.is_empty() {
+                        self.report_error(
+                            format!("Record pattern missing fields: {} (use `..` to ignore)", missing.join(", ")),
+                            pattern.span,
+                        );
+                    }
+                }
                 for field in fields {
+                    let field_ty = expected_fields.iter()
+                        .find(|(n, _)| n == &field.name)
+                        .map(|(_, t)| t.clone())
+                        .unwrap_or(Type::Unknown);
                     if let Some(pat) = &field.pattern {
-                        self.check_pattern(pat, &Type::Unknown, pat.span);
+                        self.check_pattern(pat, &field_ty, pat.span);
+                    } else {
+                        self.insert_var(field.name.clone(), field_ty, false, pattern.span);
                     }
                 }
             }
@@ -442,6 +497,7 @@ impl Checker {
                     );
                 }
             }
+            ast::Pattern::Rest => {}
         }
     }
 

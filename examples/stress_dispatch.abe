@@ -1,0 +1,16 @@
+fn loops(n: Int) -> Int {
+  let mut a = 0;
+  let mut b = 1;
+  let mut i = 0;
+  while i < n {
+    let c = a + b;
+    a = b;
+    b = c;
+    i = i + 1
+  };
+  a
+}
+
+fn main() -> Int {
+  loops(2000000)
+}

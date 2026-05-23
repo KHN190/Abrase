@@ -1,10 +1,23 @@
 [package]
-name = "myriad"
-version = "0.1.0"
-edition = "2024"
+name = "myriad-rs"
+description = "VM runtime for Polka bytecode, computation core."
+keywords = ["vm", "interpreter", "runtime", "bytecode", "abrase"]
+categories = ["compilers", "emulators", "embedded"]
+readme = "README.md"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
 
+# Registry name is `myriad-rs` (the bare `myriad` was taken). Rust import
+# path stays `myriad` so downstream `use myriad::*` and intra-workspace path
+# deps don't change.
 [lib]
+name = "myriad"
 doctest = false
 
 [dependencies]
-polka = { path = "../polka" }
+polka = { package = "polka-rs", path = "../polka", version = "=0.1.0" }

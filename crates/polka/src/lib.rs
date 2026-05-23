@@ -1,6 +1,4 @@
-// Rule 1: OpCode design is frozen, do not add new.
-// Rule 2: Bytecode is type agnostic. No complex data structure.
-//   Type comes from OpCode itself + compiler-provided const_mask / frame mask.
+// OpCode design frozen; type-agnostic bytecode, type from OpCode + masks.
 
 pub mod value;
 pub mod cartridge;
@@ -33,7 +31,7 @@ impl Register {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpCode {
     Add(Register, Register, Register),
     Sub(Register, Register, Register),
@@ -78,7 +76,6 @@ pub enum OpCode {
     St(Register, Register, u16),
     LdIdx(Register, Register, Register),
     StIdx(Register, Register, Register),
-    Ref(Register, Register),
 
     AddImm(Register, Register, i8),
     SubImm(Register, Register, i8),
@@ -89,11 +86,13 @@ pub enum OpCode {
     Dei(Register, Register),
     Deo(Register, Register),
 
-    Handle(Register, Register, u16),
+    Handle(Register, u16),
     Resume(Register, Register),
+
+    Raise(Register, Register, Register),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct BytecodeChunk {
     pub code: Vec<OpCode>,
     pub constants: Vec<u64>,
@@ -120,7 +119,7 @@ pub struct NativeChunk {
     pub param_count: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Chunk {
     Bytecode(BytecodeChunk),
     Native(NativeChunk),
@@ -139,20 +138,10 @@ impl Chunk {
     }
 }
 
+#[derive(Debug)]
 pub struct Module {
     pub functions: Vec<Chunk>,
     pub entry: usize,
-    pub device_mask: [u8; 32],
-}
-
-impl Module {
-    pub fn require_device(&mut self, id: u8) {
-        self.device_mask[(id / 8) as usize] |= 1 << (id % 8);
-    }
-
-    pub fn requires_device(&self, id: u8) -> bool {
-        (self.device_mask[(id / 8) as usize] >> (id % 8)) & 1 == 1
-    }
 }
 
 #[inline(always)]

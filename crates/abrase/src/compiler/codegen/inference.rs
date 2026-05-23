@@ -82,6 +82,12 @@ impl Compiler {
                     B::Assign => None,
                 }
             }
+            ast::Expr::Tuple(items) => {
+                let tys: Option<Vec<ast::Type>> = items.iter()
+                    .map(|e| self.infer_expr_type(e))
+                    .collect();
+                tys.map(ast::Type::Tuple)
+            }
             _ => None,
         }
     }

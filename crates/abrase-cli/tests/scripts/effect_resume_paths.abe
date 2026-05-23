@@ -1,0 +1,23 @@
+effect Counter { op bump(by: Int) -> Int }
+effect Log     { op note(n: Int) -> Unit }
+
+fn work() -> <Counter, Log> Int {
+  let a = Counter.bump(3);
+  Log.note(a);
+  let b = Counter.bump(2);
+  a + b
+}
+
+fn workx10() -> <Counter> Int {
+  handle work() {
+    return v       => v * 10,
+    Log.note _     => resume(())
+  }
+}
+
+fn main() -> Int {
+  handle workx10() {
+    return v         => v,
+    Counter.bump by  => resume(by + 100)
+  }
+}

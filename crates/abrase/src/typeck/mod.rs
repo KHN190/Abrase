@@ -92,7 +92,7 @@ pub struct Checker {
     module_registry: HashMap<String, HashMap<String, Type>>,
 
     // Ownership & Borrowing
-    borrow_stack: Vec<(String, bool)>,
+    borrow_stack: Vec<(String, bool, usize)>,
 
     // Effects System
     effect_registry: HashMap<String, Vec<String>>,
@@ -155,10 +155,6 @@ pub struct Checker {
 
     // Type Aliases
     type_alias_registry: HashMap<String, Type>,
-
-    // Function Overloads — name -> list of (params, ret). Populated by Compiler
-    // before check_program. Call resolution dispatches on arg types when present.
-    pub(crate) fn_overloads: HashMap<String, Vec<(Vec<Type>, Type)>>,
 }
 
 
@@ -232,7 +228,6 @@ impl Checker {
             op_effects: HashMap::new(),
             effect_ops_registry: HashMap::new(),
             type_alias_registry: HashMap::new(),
-            fn_overloads: HashMap::new(),
             imported_names: HashMap::new(),
             import_collisions: std::collections::HashSet::new(),
             module_registry: HashMap::new(),
@@ -242,6 +237,21 @@ impl Checker {
         self.scopes.push(Scope { vars: HashMap::new() });
     }
     pub fn exit_scope(&mut self) {
+        let target_depth = self.scopes.len().saturating_sub(1);
+        while let Some((_, _, depth)) = self.borrow_stack.last() {
+            if *depth <= target_depth { break; }
+            let (name, is_mut, _) = self.borrow_stack.pop().unwrap();
+            for scope in self.scopes.iter_mut().rev() {
+                if let Some(meta) = scope.vars.get_mut(&name) {
+                    if is_mut {
+                        meta.mut_borrow_active = false;
+                    } else {
+                        meta.immut_borrow_count = meta.immut_borrow_count.saturating_sub(1);
+                    }
+                    break;
+                }
+            }
+        }
         self.scopes.pop();
     }
     pub fn display_errors(&self) -> String {

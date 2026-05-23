@@ -19,12 +19,6 @@ impl Compiler {
         // Console
         self.register_typed_native("print",    vec![s.clone()],            u.clone(), 1);
         self.register_typed_native("println",  vec![s.clone()],            u.clone(), 1);
-        // Clock
-        self.register_typed_native("now",      vec![],                     i.clone(), 0);
-        self.register_typed_native("sleep_ms", vec![i.clone()],            u.clone(), 1);
-        // Random
-        self.register_typed_native("rand",     vec![],                     f.clone(), 0);
-        self.register_typed_native("srand",    vec![f.clone()],            u.clone(), 1);
         // Float-only math
         self.register_typed_native("ceil",     vec![f.clone()],            i.clone(), 1);
         self.register_typed_native("flr",      vec![f.clone()],            i.clone(), 1);
@@ -73,11 +67,7 @@ impl Compiler {
         param_count: usize,
     ) -> usize {
         let id = self.functions.len();
-        if self.func_map.contains_key(user_name) {
-            self.fn_overloads.entry(user_name.into()).or_default().push(id);
-        } else {
-            self.func_map.insert(user_name.into(), id);
-        }
+        self.func_map.insert(user_name.into(), id);
         self.functions.push(Chunk::Native(NativeChunk {
             name: chunk_name.into(),
             param_count,
@@ -98,6 +88,19 @@ impl Compiler {
     }
 
     pub(super) fn register_builtins_to_checker(&self, checker: &mut crate::typeck::Checker) {
+        let device_in_ty = TyType::Function {
+            params: vec![TyType::Int, TyType::Int],
+            effects: vec![],
+            ret: Box::new(TyType::Unit),
+        };
+        checker.insert_var("device_in".into(), device_in_ty, false, ast::Span { line: 0, col: 0 });
+        let device_out_ty = TyType::Function {
+            params: vec![TyType::Int],
+            effects: vec![],
+            ret: Box::new(TyType::Int),
+        };
+        checker.insert_var("device_out".into(), device_out_ty, false, ast::Span { line: 0, col: 0 });
+
         for decl in self.host_fns.values() {
             let fn_ty = TyType::Function {
                 params: decl.params.clone(),
@@ -116,25 +119,6 @@ impl Compiler {
         }
         self.register_builtin_traits(checker);
         self.register_builtin_effects(checker);
-    }
-
-    pub(super) fn register_builtin_overloads_to_checker(&self, checker: &mut crate::typeck::Checker) {
-        for (name, fn_ids) in &self.fn_overloads {
-            let mut sigs: Vec<(Vec<TyType>, TyType)> = Vec::new();
-            if let Some(primary) = self.func_map.get(name) {
-                if let Some(sig) = self.fn_signatures.get(primary) {
-                    sigs.push(sig.clone());
-                }
-            }
-            for id in fn_ids {
-                if let Some(sig) = self.fn_signatures.get(id) {
-                    sigs.push(sig.clone());
-                }
-            }
-            if !sigs.is_empty() {
-                checker.fn_overloads.insert(name.clone(), sigs);
-            }
-        }
     }
 
     fn register_builtin_traits(&self, checker: &mut crate::typeck::Checker) {

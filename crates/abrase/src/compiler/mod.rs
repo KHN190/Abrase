@@ -47,6 +47,10 @@ pub struct Compiler {
     pub(super) code: Vec<OpCode>,
     pub(super) next_reg: u16,
     pub(super) max_reg: u16,
+    // Compile-time tracking: which regs may currently hold a heap handle.
+    // Updated by `emit()` based on opcode kind. Used by reclaim to skip
+    // Drop emission for regs that provably do not hold a handle.
+    pub(super) reg_holds_handle: Vec<bool>,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
     pub(super) var_bound_at_region: HashMap<String, usize>,
@@ -77,9 +81,8 @@ pub struct Compiler {
     pub(super) to_str_fn_id: Option<usize>,
     pub(super) host_fns: HashMap<String, HostFnDecl>,
     pub(super) builtin_types: HashMap<String, (Vec<TyType>, TyType)>,
-    pub(super) fn_overloads: HashMap<String, Vec<usize>>,
     pub(super) fn_signatures: HashMap<usize, (Vec<TyType>, TyType)>,
-    pub(super) device_mask: [u8; 32],
+    pub(super) current_closure_layout: HashMap<String, usize>,
     pub(super) current_span: ast::Span,
     pub(super) compiler_region_depth: usize,
     pub(super) fn_compiler_depth_baseline: usize,
@@ -102,6 +105,7 @@ impl Compiler {
             code: Vec::new(),
             next_reg: 0,
             max_reg: 0,
+            reg_holds_handle: Vec::new(),
             var_to_reg: HashMap::new(),
             var_types: HashMap::new(),
             var_bound_at_region: HashMap::new(),
@@ -136,9 +140,8 @@ impl Compiler {
             to_str_fn_id: None,
             host_fns: HashMap::new(),
             builtin_types: HashMap::new(),
-            fn_overloads: HashMap::new(),
             fn_signatures: HashMap::new(),
-            device_mask: [0; 32],
+            current_closure_layout: HashMap::new(),
             current_span: ast::Span::new(0, 0),
             compiler_region_depth: 0,
             fn_compiler_depth_baseline: 0,
@@ -235,7 +238,6 @@ impl Compiler {
         self.register_builtins();
         let mut checker = crate::typeck::Checker::new();
         self.register_builtins_to_checker(&mut checker);
-        self.register_builtin_overloads_to_checker(&mut checker);
 
         checker.check_program(ast);
         if !checker.errors.is_empty() {
@@ -304,7 +306,8 @@ impl Compiler {
         for decl in ast {
             match decl {
                 ast::Decl::Fn(fn_decl) => {
-                    if self.host_fns.contains_key(&fn_decl.name)
+                    if matches!(fn_decl.name.as_str(), "device_in" | "device_out")
+                        || self.host_fns.contains_key(&fn_decl.name)
                         || self.func_map.contains_key(&fn_decl.name)
                     {
                         self.errors.push(Error::new(
@@ -335,25 +338,6 @@ impl Compiler {
             self.func_map.insert(arm_fn.name.clone(), idx);
             self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
             fn_decls.push((idx, arm_fn));
-        }
-
-        for (name, extras) in &self.fn_overloads {
-            let mut all_ids = vec![*self.func_map.get(name).unwrap_or(&usize::MAX)];
-            all_ids.extend(extras.iter().copied());
-            let any_generic = all_ids.iter().any(|fid| {
-                fn_decls.iter().any(|(i, fd)| i == fid && !fd.generics.is_empty())
-            });
-            if any_generic && all_ids.len() > 1 {
-                self.errors.push(Error::new(
-                    ErrorCode::TypeError,
-                    ast::Span::new(0, 0),
-                    format!(
-                        "fn `{}` cannot have a generic overload alongside other overloads — \
-                         generic + overload mangling is not supported",
-                        name
-                    ),
-                ));
-            }
         }
 
         let entry = match self.func_map.get("main").copied() {
@@ -400,7 +384,6 @@ impl Compiler {
         Ok(Module {
             functions: self.functions.clone(),
             entry,
-            device_mask: self.device_mask,
         })
     }
 
@@ -411,6 +394,7 @@ impl Compiler {
         let saved_string_constants = std::mem::take(&mut self.string_constants);
         let saved_next_reg = self.next_reg;
         let saved_max_reg = self.max_reg;
+        let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
         let saved_var_bound_at_region = std::mem::take(&mut self.var_bound_at_region);
@@ -425,6 +409,12 @@ impl Compiler {
         let saved_handler_table_stack = std::mem::take(&mut self.handler_table_stack);
         let saved_fn_handler_baseline = self.fn_handler_baseline;
         let saved_remaining_uses = std::mem::take(&mut self.remaining_uses);
+        let saved_closure_layout = std::mem::take(&mut self.current_closure_layout);
+        if let Some(info) = self.closure_by_span.values().find(|i| i.lifted_fn == fn_decl.name).cloned() {
+            self.current_closure_layout = info.captures.iter().enumerate()
+                .map(|(i, c)| (c.name.clone(), i))
+                .collect();
+        }
 
         self.remaining_uses = liveness::count_uses(&fn_decl.body);
         self.current_fn_fallible = effects::fn_is_fallible(fn_decl);
@@ -448,12 +438,8 @@ impl Compiler {
                         Ok(reg) => {
                             self.var_to_reg.insert(name.clone(), reg);
                             self.var_types.insert(name.clone(), ty.clone());
-                            let is_handler_arm = fn_decl.name.starts_with("__handle_");
-                            let skip_drop = is_handler_arm && (name == "__env" || name == "__return_env");
-                            if !skip_drop {
-                                if let Some(top) = self.block_locals_stack.last_mut() {
-                                    top.push(reg);
-                                }
+                            if let Some(top) = self.block_locals_stack.last_mut() {
+                                top.push(reg);
                             }
                         }
                         Err(_) => {
@@ -532,6 +518,7 @@ impl Compiler {
         self.string_constants = saved_string_constants;
         self.next_reg = saved_next_reg;
         self.max_reg = saved_max_reg;
+        self.reg_holds_handle = saved_reg_holds_handle;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
         self.var_bound_at_region = saved_var_bound_at_region;
@@ -546,6 +533,7 @@ impl Compiler {
         self.handler_table_stack = saved_handler_table_stack;
         self.fn_handler_baseline = saved_fn_handler_baseline;
         self.remaining_uses = saved_remaining_uses;
+        self.current_closure_layout = saved_closure_layout;
 
         Ok(chunk)
     }

@@ -63,6 +63,6 @@ fn count_queens(n: Int) -> Int {
   }
 }
 
-fn main() -> Int {
-  count_queens(6)
+fn main() -> Unit {
+  print(count_queens(6).to_s())
 }

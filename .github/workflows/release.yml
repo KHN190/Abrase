@@ -1,0 +1,160 @@
+name: Release
+
+# Fires on git tags shaped vX.Y.Z[-pre]. Builds release binaries for linux
+# + macos, attaches them to the GitHub Release, and (gated on a secret)
+# publishes the workspace to crates.io.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sanity:
+    name: release sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: release smoke test
+        run: |
+          cargo build --release -p abrase-cli
+          for f in examples/*.abe; do
+            echo "→ $f"
+            ./target/release/abrase run "$f" > /dev/null || exit 1
+          done
+
+      # polka-rs has no external deps, so the full verify (compile after
+      # packaging) works without crates.io having anything yet.
+      - run: cargo publish -p polka-rs --dry-run --allow-dirty
+
+      # Downstream crates need polka-rs / myriad-rs in the registry to even
+      # resolve dependencies (path deps are stripped at publish time, and
+      # `--no-verify` only skips the post-package compile, not resolution).
+      - run: cargo publish -p myriad-rs  --dry-run --allow-dirty --no-verify
+        continue-on-error: true
+      - run: cargo publish -p abrase     --dry-run --allow-dirty --no-verify
+        continue-on-error: true
+      - run: cargo publish -p abrase-cli --dry-run --allow-dirty --no-verify
+        continue-on-error: true
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: sanity
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: abrase-x86_64-linux
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: abrase-aarch64-darwin
+          # Cross-compile to Intel from the Apple-Silicon runner. macos-13
+          # (native Intel) runner pool is tiny and queues 20+ min; the
+          # macos-latest runner ships an Xcode SDK that targets both arches,
+          # so we just install the rust target and `cargo build --target`.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: abrase-x86_64-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --target ${{ matrix.target }} -p abrase-cli
+
+      - name: stage tarball
+        run: |
+          mkdir -p dist/${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/abrase dist/${{ matrix.artifact }}/
+          cp README.md LICENSE dist/${{ matrix.artifact }}/
+          cd dist && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.tar.gz
+          retention-days: 7
+
+  release:
+    name: github release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: list assets
+        run: ls -lR dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  publish-crates:
+    name: cargo publish
+    needs: build
+    runs-on: ubuntu-latest
+    # Skip unless the CRATES_IO_TOKEN secret is set. Toggle by adding /
+    # removing the secret in repo settings; no workflow edit needed.
+    if: ${{ github.repository == 'KHN190/Abrase' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: login
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "CRATES_IO_TOKEN not set; skipping publish."
+            exit 0
+          fi
+
+      - name: publish polka-rs
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p polka-rs
+      - name: settle index
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        run: sleep 30
+
+      - name: publish myriad-rs
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p myriad-rs
+
+      - name: publish abrase
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p abrase
+      - name: settle index
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        run: sleep 30
+
+      - name: publish abrase-cli
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p abrase-cli

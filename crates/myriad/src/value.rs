@@ -15,12 +15,11 @@ pub fn alloc_string(heap: &mut Heap, s: &str) -> Result<Value, String> {
     let bytes = s.as_bytes();
     let size = string_word_count(bytes.len());
     let (slot, gen_) = heap.try_alloc(size)?;
-    heap.st(slot, gen_, 0, bytes.len() as u64, false)?;
-    for (i, chunk) in bytes.chunks(8).enumerate() {
-        let mut buf = [0u8; 8];
-        buf[..chunk.len()].copy_from_slice(chunk);
-        let w = u64::from_le_bytes(buf);
-        heap.st(slot, gen_, 1 + i, w, false)?;
+    let dst = heap.cell_data_mut(slot, gen_)?;
+    dst[0] = bytes.len() as u64;
+    if !bytes.is_empty() {
+        let dst_ptr = dst[1..].as_mut_ptr() as *mut u8;
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst_ptr, bytes.len()); }
     }
     Ok(Value::from_handle(slot, gen_))
 }

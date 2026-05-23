@@ -88,6 +88,117 @@ impl Compiler {
         r
     }
 
+    fn split_rest<'p>(&self, pats: &'p [ast::Spanned<ast::Pattern>])
+        -> (&'p [ast::Spanned<ast::Pattern>], Option<usize>, &'p [ast::Spanned<ast::Pattern>])
+    {
+        for (i, p) in pats.iter().enumerate() {
+            if matches!(p.node, ast::Pattern::Rest) {
+                return (&pats[..i], Some(i), &pats[i+1..]);
+            }
+        }
+        (pats, None, &[])
+    }
+
+    pub(in crate::compiler) fn compile_destructure(
+        &mut self,
+        pattern: &ast::Spanned<ast::Pattern>,
+        src_reg: Register,
+        value_ty: Option<&ast::Type>,
+    ) -> Result<(), String> {
+        match &pattern.node {
+            ast::Pattern::Wildcard => Ok(()),
+            ast::Pattern::Bind(name) => {
+                self.var_to_reg.insert(name.clone(), src_reg);
+                self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
+                if let Some(t) = value_ty {
+                    self.var_types.insert(name.clone(), t.clone());
+                }
+                Ok(())
+            }
+            ast::Pattern::Tuple(sub_pats) => {
+                let elem_tys: Vec<Option<ast::Type>> = match value_ty {
+                    Some(ast::Type::Tuple(ts)) => ts.iter().cloned().map(Some).collect(),
+                    _ => (0..sub_pats.len()).map(|_| None).collect(),
+                };
+                let (head, rest_idx, tail) = self.split_rest(sub_pats);
+                let total = sub_pats.len();
+                let (head_end, tail_start) = if rest_idx.is_some() {
+                    let head_n = head.len();
+                    let tail_n = tail.len();
+                    let actual = elem_tys.len();
+                    (head_n, actual.saturating_sub(tail_n))
+                } else {
+                    (head.len(), head.len())
+                };
+                for (i, sub) in head.iter().enumerate() {
+                    let dest = self.alloc_register()?;
+                    let off = crate::compiler::codegen::scaffold::to_u16(i, "destructure offset")?;
+                    self.emit(OpCode::Ld(dest, src_reg, off));
+                    let sub_ty = elem_tys.get(i).and_then(|t| t.as_ref());
+                    self.compile_destructure(sub, dest, sub_ty)?;
+                }
+                if rest_idx.is_some() {
+                    for (j, sub) in tail.iter().enumerate() {
+                        let actual_idx = tail_start + j;
+                        let dest = self.alloc_register()?;
+                        let off = crate::compiler::codegen::scaffold::to_u16(actual_idx, "destructure offset")?;
+                        self.emit(OpCode::Ld(dest, src_reg, off));
+                        let sub_ty = elem_tys.get(actual_idx).and_then(|t| t.as_ref());
+                        self.compile_destructure(sub, dest, sub_ty)?;
+                    }
+                } else if total != elem_tys.len() && value_ty.is_some() {
+                    return Err(format!(
+                        "tuple pattern has {} elements, type has {}",
+                        total, elem_tys.len()
+                    ));
+                }
+                let _ = head_end;
+                Ok(())
+            }
+            ast::Pattern::Array(sub_pats) => {
+                let (head, rest_idx, tail) = self.split_rest(sub_pats);
+                for (i, sub) in head.iter().enumerate() {
+                    let dest = self.alloc_register()?;
+                    let off = crate::compiler::codegen::scaffold::to_u16(i, "destructure offset")?;
+                    self.emit(OpCode::Ld(dest, src_reg, off));
+                    self.compile_destructure(sub, dest, None)?;
+                }
+                if rest_idx.is_some() && !tail.is_empty() {
+                    return Err("array destructure with trailing pattern after `..` requires runtime length; not yet supported".into());
+                }
+                Ok(())
+            }
+            ast::Pattern::Record { ty: _, fields, rest: _ } => {
+                let ty_name = match value_ty {
+                    Some(ast::Type::Named(n)) => Some(n.clone()),
+                    _ => None,
+                };
+                let layout = ty_name.as_ref()
+                    .and_then(|n| self.layouts.records.get(n).cloned());
+                if !fields.is_empty() && layout.is_none() {
+                    return Err("record destructure requires a known record type".into());
+                }
+                for fp in fields {
+                    let off = match &layout {
+                        Some(l) => l.offset_of(&fp.name)
+                            .ok_or_else(|| format!("unknown field '{}'", fp.name))?,
+                        None => continue,
+                    };
+                    let dest = self.alloc_register()?;
+                    self.emit(OpCode::Ld(dest, src_reg, off));
+                    if let Some(sub) = &fp.pattern {
+                        self.compile_destructure(sub, dest, None)?;
+                    } else {
+                        self.var_to_reg.insert(fp.name.clone(), dest);
+                        self.var_bound_at_region.insert(fp.name.clone(), self.compiler_region_depth);
+                    }
+                }
+                Ok(())
+            }
+            other => Err(format!("destructure for pattern {:?} not supported", other)),
+        }
+    }
+
     // Rewind next_reg but keep regs in long-lived structures.
     pub(in crate::compiler) fn reclaim_temp_regs_above(&mut self, mark: u16) {
         let mut protect = mark;
@@ -105,6 +216,12 @@ impl Compiler {
                 protect = protect.max(reg.0 as u16 + 1);
             }
         }
+        let high = self.snapshot_register_high_water();
+        for r in protect..high {
+            if self.reg_holds_handle.get(r as usize).copied().unwrap_or(false) {
+                self.emit(OpCode::Drop(Register(r as u8)));
+            }
+        }
         self.restore_register_high_water(protect);
     }
 
@@ -115,8 +232,8 @@ impl Compiler {
         self.current_span = stmt.span;
         match &stmt.node {
             ast::Stmt::Let { pattern, value, ty, .. } => {
+                let inferred_ty = ty.clone().or_else(|| self.infer_expr_type(value));
                 if let ast::Pattern::Bind(name) = &pattern.node {
-                    let inferred_ty = ty.clone().or_else(|| self.infer_expr_type(value));
                     let src_reg = self.compile_expr(value)?;
                     let bound_reg = if let ast::Expr::Identifier(src_name) = &value.node {
                         let dest = self.alloc_register()?;
@@ -149,11 +266,17 @@ impl Compiler {
                     }
                     Ok(())
                 } else {
-                    Err("Only simple bindings supported".to_string())
+                    let src_reg = self.compile_expr(value)?;
+                    self.compile_destructure(pattern, src_reg, inferred_ty.as_ref())?;
+                    if let Some(top) = self.block_locals_stack.last_mut() {
+                        top.push(src_reg);
+                    }
+                    Ok(())
                 }
             }
             ast::Stmt::Expr(expr) => {
-                self.emit_region_push()?;
+                let is_block = matches!(&expr.node, ast::Expr::Block(_));
+                if is_block { self.emit_region_push()?; }
                 let reg = self.compile_expr(expr)?;
                 let needs_drop = self.infer_expr_type(expr)
                     .as_ref()
@@ -162,7 +285,7 @@ impl Compiler {
                 if needs_drop {
                     self.emit(OpCode::Drop(reg));
                 }
-                self.emit_region_pop()?;
+                if is_block { self.emit_region_pop()?; }
                 Ok(())
             }
             ast::Stmt::Empty => Ok(()),

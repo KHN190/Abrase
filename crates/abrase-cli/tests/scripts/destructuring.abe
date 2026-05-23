@@ -1,0 +1,34 @@
+type Pt = { x: Int, y: Int, z: Int }
+
+fn main() -> Int {
+  let t = (1, 2, 3, 4);
+  let (a, _, _, d) = t;
+  let r1 = a + d;
+
+  let (e, ..) = t;
+  let (.., f) = t;
+  let (g, .., h) = t;
+  let r2 = e + f + g + h;
+
+  let p = Pt { x: 10, y: 20, z: 30 };
+  let Pt { x, y, z } = p;
+  let r3 = x + y + z;
+
+  let q = Pt { x: 100, y: 200, z: 300 };
+  let Pt { x: qx, .. } = q;
+  let r4 = qx;
+
+  let arr = [7, 8, 9];
+  let [aa, bb, cc] = arr;
+  let r5 = aa + bb + cc;
+
+  let arr2 = [11, 12, 13];
+  let [head, ..] = arr2;
+  let r6 = head;
+
+  let pt2 = Pt { x: 1000, y: 0, z: 0 };
+  let (Pt { x: nested_x, .. }, tag) = (pt2, 50);
+  let r7 = nested_x + tag;
+
+  r1 + r2 + r3 + r4 + r5 + r6 + r7
+}

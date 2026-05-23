@@ -1,0 +1,48 @@
+fn main() -> Int {
+  let base = 10;
+
+  let if_cap = |n| if n > 0 { n + base } else { base };
+  let r1 = if_cap(5);
+
+  let block_cap = |n| {
+    let mid = base + n;
+    let result = mid * 2;
+    result
+  };
+  let r2 = block_cap(3);
+
+  let loop_cap = |n| {
+    let mut i = 0;
+    let mut s = 0;
+    while i < n {
+      s = s + base;
+      i = i + 1;
+    };
+    s
+  };
+  let r3 = loop_cap(3);
+
+  let array_cap = |i| {
+    let arr = [base, base + 1, base + 2];
+    arr[0] + arr[i]
+  };
+  let r4 = array_cap(2);
+
+  let region_cap = region {
+    let cap = |x| x + base;
+    cap(7)
+  };
+  let r5 = region_cap;
+
+  let adder = |y| y + base;
+  let use_adder = |z| adder(z) + 1;
+  let r6 = use_adder(6);
+
+  let nested = |w| {
+    let inner = |x| x + base;
+    inner(w)
+  };
+  let r7 = nested(8);
+
+  r1 + r2 + r3 + r4 + r5 + r6 + r7
+}

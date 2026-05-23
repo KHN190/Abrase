@@ -40,7 +40,40 @@ impl Compiler {
     }
 
     pub(in crate::compiler) fn emit(&mut self, op: OpCode) {
+        self.track_dest_handle_bit(&op);
         self.code.push(op);
+    }
+
+    fn track_dest_handle_bit(&mut self, op: &OpCode) {
+        use OpCode::*;
+        let (dest, holds): (Register, bool) = match op {
+            Alloc(d, _) => (*d, true),
+            Drop(d) => (*d, false),
+            Add(d,_,_) | Sub(d,_,_) | Mul(d,_,_) | Div(d,_,_) | Mod(d,_,_) | Neg(d,_) |
+            Eq(d,_,_) | Neq(d,_,_) |
+            Lt(d,_,_) | Gt(d,_,_) | Lte(d,_,_) | Gte(d,_,_) |
+            And(d,_,_) | Or(d,_,_) | Xor(d,_,_) | Shl(d,_,_) | Shr(d,_,_) |
+            AddImm(d,_,_) | SubImm(d,_,_) |
+            FAdd(d,_,_) | FSub(d,_,_) | FMul(d,_,_) | FDiv(d,_,_) | FNeg(d,_) |
+            FLt(d,_,_) | FEq(d,_,_) => (*d, false),
+            PushConst(d, idx) => {
+                let h = self.const_mask_bits.get(*idx as usize).copied().unwrap_or(false);
+                (*d, h)
+            }
+            Copy(d, s) | Move(d, s) => {
+                let h = self.reg_holds_handle.get(s.0 as usize).copied().unwrap_or(false);
+                (*d, h)
+            }
+            // Pessimistic: result might be a handle.
+            Ld(d, _, _) | LdIdx(d, _, _) | Dei(d, _) |
+            Call(d, _) | CallReg(d, _) | Resume(d, _) => (*d, true),
+            _ => return,
+        };
+        let i = dest.0 as usize;
+        if i >= self.reg_holds_handle.len() {
+            self.reg_holds_handle.resize(i + 1, false);
+        }
+        self.reg_holds_handle[i] = holds;
     }
 
     pub(in crate::compiler) fn try_redirect_last_dest(&mut self, old: Register, new: Register) -> bool {
@@ -56,7 +89,6 @@ impl Compiler {
             OpCode::PushConst(d, _) |
             OpCode::Copy(d, _) | OpCode::Move(d, _) |
             OpCode::Ld(d, _, _) | OpCode::LdIdx(d, _, _) |
-            OpCode::Ref(d, _) |
             OpCode::AddImm(d, _, _) | OpCode::SubImm(d, _, _) |
             OpCode::Alloc(d, _) |
             OpCode::Call(d, _) | OpCode::CallReg(d, _) => d,
