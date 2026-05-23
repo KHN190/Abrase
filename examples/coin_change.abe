@@ -56,7 +56,7 @@ fn coin_change(amount: Int, coins: &List) -> Int {
   if result >= inf() { 0 - 1 } else { result }
 }
 
-fn main() -> Int {
+fn main() -> Unit {
   let coins = Cons(1, Cons(3, Cons(4, Nil)));
-  coin_change(6, &coins)
+  println(coin_change(6, &coins).to_s())
 }

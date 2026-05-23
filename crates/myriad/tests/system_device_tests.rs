@@ -5,10 +5,21 @@ use polka::{BytecodeChunk, Chunk, Module, OpCode, Register};
 fn r(n: u8) -> Register { Register(n) }
 
 #[test]
-fn version_port_returns_spec_version() {
+fn version_major_port_returns_2() {
     let mut dev = SystemDevice::new();
-    let v = dev.read(0x00).unwrap();
-    assert_eq!(v.as_int(), 2i64 << 48);
+    assert_eq!(dev.read(0x00).unwrap().as_int(), 2);
+}
+
+#[test]
+fn version_minor_port_returns_0() {
+    let mut dev = SystemDevice::new();
+    assert_eq!(dev.read(0x04).unwrap().as_int(), 0);
+}
+
+#[test]
+fn version_patch_port_returns_1() {
+    let mut dev = SystemDevice::new();
+    assert_eq!(dev.read(0x05).unwrap().as_int(), 1);
 }
 
 #[test]
@@ -22,7 +33,7 @@ fn flags_port_reflects_field() {
 #[test]
 fn unknown_read_port_returns_zero() {
     let mut dev = SystemDevice::new();
-    for port in [0x05, 0x7F, 0xFF] {
+    for port in [0x06, 0x7F, 0xFF] {
         assert_eq!(dev.read(port).unwrap().as_int(), 0, "port {:#x}", port);
     }
 }

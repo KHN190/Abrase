@@ -93,6 +93,19 @@ impl Compiler {
                     .collect();
                 tys.map(ast::Type::Tuple)
             }
+            ast::Expr::Handle { arms, .. } => {
+                let return_arm = arms.iter()
+                    .find(|a| matches!(a.kind, ast::HandleArmKind::Return));
+                let arm = return_arm.or_else(|| arms.first())?;
+                self.infer_expr_type(&arm.body)
+            }
+            ast::Expr::If { consequence, alternative, .. } => {
+                self.infer_expr_type(consequence)
+                    .or_else(|| alternative.as_deref().and_then(|a| self.infer_expr_type(a)))
+            }
+            ast::Expr::Block(b) => {
+                b.ret.as_deref().and_then(|r| self.infer_expr_type(r))
+            }
             _ => None,
         }
     }

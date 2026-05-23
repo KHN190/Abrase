@@ -30,6 +30,9 @@ impl Value {
     pub fn from_float(f: f64) -> Value { Value(f.to_bits()) }
 
     #[inline(always)]
+    pub fn from_float_f32(f: f64) -> Value { Value((f as f32).to_bits() as u64) }
+
+    #[inline(always)]
     pub fn from_bool(b: bool) -> Value { Value(if b { 1 } else { 0 }) }
 
     #[inline(always)]

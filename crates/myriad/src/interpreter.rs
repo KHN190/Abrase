@@ -29,6 +29,7 @@ impl VirtualMachine {
 
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
         validate_module_register_budget(module)?;
+        self.int32_safe = (module.flags & polka::CART_FLAG_INT32_SAFE) != 0;
         self.frames.clear();
         self.handlers.clear();
         self.region_table.clear();
@@ -54,9 +55,11 @@ impl VirtualMachine {
         'outer: loop {
             if self.halted {
                 if let Some(code) = self.exit_code {
+                    self.last_result_is_handle = false;
                     return Ok(Value::from_int(code));
                 }
                 let v = self.read_abs_raw(self.base_reg);
+                self.last_result_is_handle = self.reg_mask_bit(self.base_reg);
                 return Ok(Value::from_raw(v));
             }
             debug_assert!(self.current_func < module.functions.len());
@@ -80,6 +83,7 @@ impl VirtualMachine {
                         continue 'outer;
                     } else {
                         let v = self.read_abs_raw(self.base_reg);
+                        self.last_result_is_handle = self.reg_mask_bit(self.base_reg);
                         return Ok(Value::from_raw(v));
                     }
                 }
@@ -122,7 +126,8 @@ impl VirtualMachine {
             OpCode::FDiv(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x / y),
             OpCode::FNeg(d, a)    => {
                 let x = self.read_f64(*a)?;
-                self.write(*d, f64::to_bits(-x), false)
+                let bits = self.narrow_float_bits(-x);
+                self.write(*d, bits, false)
             }
             OpCode::FLt(d, a, b)  => {
                 let x = self.read_f64(*a)?;
@@ -945,7 +950,21 @@ impl VirtualMachine {
 
     #[inline(always)]
     fn read_f64(&self, r: Register) -> Result<f64, String> {
-        Ok(f64::from_bits(self.read_raw(r)?))
+        let raw = self.read_raw(r)?;
+        if self.int32_safe {
+            Ok(f32::from_bits(raw as u32) as f64)
+        } else {
+            Ok(f64::from_bits(raw))
+        }
+    }
+
+    #[inline(always)]
+    fn narrow_float_bits(&self, v: f64) -> u64 {
+        if self.int32_safe {
+            (v as f32).to_bits() as u64
+        } else {
+            v.to_bits()
+        }
     }
 
     #[inline(always)]
@@ -1018,7 +1037,8 @@ impl VirtualMachine {
     fn bin_f64<F: Fn(f64, f64) -> f64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
         let x = self.read_f64(a)?;
         let y = self.read_f64(b)?;
-        self.write(d, f64::to_bits(f(x, y)), false)
+        let bits = self.narrow_float_bits(f(x, y));
+        self.write(d, bits, false)
     }
 
     #[inline(always)]

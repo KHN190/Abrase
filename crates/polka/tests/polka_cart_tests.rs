@@ -227,9 +227,9 @@ fn magic_is_little_endian_ecff00ec() {
 }
 
 #[test]
-fn version_is_0x0200() {
+fn version_is_0x0201() {
     let bytes = write_pk(&good_minimal_module()).unwrap();
-    assert_eq!(&bytes[4..6], &[0x00, 0x02]);
+    assert_eq!(&bytes[4..6], &[0x01, 0x02]);
 }
 
 #[test]

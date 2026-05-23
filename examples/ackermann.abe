@@ -15,6 +15,6 @@ fn ack(m: Int, n: Int) -> Int {
   }
 }
 
-fn main() -> Int {
-  ack(3, 3)
+fn main() -> Unit {
+  println(ack(3, 3).to_s())
 }

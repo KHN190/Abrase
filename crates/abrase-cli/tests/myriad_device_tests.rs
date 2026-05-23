@@ -118,8 +118,7 @@ fn system_panic_traps() {
     assert!(result.unwrap_err().contains("panic"));
 }
 
-#[test]
-fn system_version_read() {
+fn read_system_port(port_be_int: i64) -> i64 {
     let mut vm = VirtualMachine::new();
     vm.install_device(SYSTEM_ID, Box::new(SystemDevice::new()));
     let module = module_with(
@@ -128,11 +127,25 @@ fn system_version_read() {
             OpCode::Dei(r(1), r(0)),
             OpCode::Ret(r(1)),
         ],
-        vec![Value::from_int(0x0000)],
+        vec![Value::from_int(port_be_int)],
         2,
     );
-    let v = vm.run_module(&module).unwrap();
-    assert!(v.as_int() >= (2i64 << 48), "version must be at least major=2");
+    vm.run_module(&module).unwrap().as_int()
+}
+
+#[test]
+fn system_version_major_port_returns_2() {
+    assert_eq!(read_system_port(0x0000), 2, "major should be 2");
+}
+
+#[test]
+fn system_version_minor_port_returns_0() {
+    assert_eq!(read_system_port(0x0004), 0, "minor should be 0");
+}
+
+#[test]
+fn system_version_patch_port_returns_1() {
+    assert_eq!(read_system_port(0x0005), 1, "patch should be 1");
 }
 
 #[test]

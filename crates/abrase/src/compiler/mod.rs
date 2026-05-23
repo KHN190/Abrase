@@ -97,6 +97,7 @@ pub struct Compiler {
     pub(super) debug_sink: Option<debug::CompileDebugSink>,
     pub(super) remaining_uses: HashMap<String, usize>,
     pub(super) int32_mode: bool,
+    pub(super) no_built_in: bool,
 }
 
 impl Compiler {
@@ -159,6 +160,7 @@ impl Compiler {
             debug_sink: None,
             remaining_uses: HashMap::new(),
             int32_mode: false,
+            no_built_in: false,
         }
     }
 
@@ -189,6 +191,11 @@ impl Compiler {
 
     pub fn with_int32_mode(mut self, on: bool) -> Self {
         self.int32_mode = on;
+        self
+    }
+
+    pub fn with_no_built_in(mut self, on: bool) -> Self {
+        self.no_built_in = on;
         self
     }
 
@@ -246,9 +253,13 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
-        self.register_builtins();
+        if !self.no_built_in {
+            self.register_builtins();
+        }
         let mut checker = crate::typeck::Checker::new();
-        self.register_builtins_to_checker(&mut checker);
+        if !self.no_built_in {
+            self.register_builtins_to_checker(&mut checker);
+        }
 
         checker.check_program(ast);
         if !checker.errors.is_empty() {

@@ -87,7 +87,8 @@ impl Compiler {
             }
             ast::Literal::Float(f)  => {
                 self.check_float32_literal(*f)?;
-                self.add_constant(Value::from_float(*f))?
+                let v = if self.int32_mode { Value::from_float_f32(*f) } else { Value::from_float(*f) };
+                self.add_constant(v)?
             }
             ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
             ast::Literal::String(s) => self.add_string_constant(s)?,

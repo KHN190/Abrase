@@ -29,6 +29,6 @@ fn sum_primes(limit: Int) -> Int {
   }
 }
 
-fn main() -> Int {
-  sum_primes(20)
+fn main() -> Unit {
+  println(sum_primes(20).to_s())
 }

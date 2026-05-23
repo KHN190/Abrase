@@ -1,7 +1,7 @@
 use crate::{BytecodeChunk, Chunk, Module, NativeChunk, OpCode, Register};
 
 pub const MAGIC: u32 = 0xECFF_00EC;
-pub const VERSION: u16 = 0x0200;
+pub const VERSION: u16 = 0x0201;
 
 const KIND_BYTECODE: u8 = 0;
 const KIND_NATIVE: u8 = 1;

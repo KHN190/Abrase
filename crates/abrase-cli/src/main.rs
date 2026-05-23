@@ -26,17 +26,25 @@ flags:
                and Float literals not representable as f32; sets cart header
                INT32_SAFE flag bit so 32-bit runtimes can opt into narrow
                storage. Bytecode encoding itself is unchanged.
+    --no-built-in
+               skip registering mandatory native imports (print, math,
+               conversions, string ops, halt/abort). Any reference to them
+               in source becomes an undefined-function error. Produces carts
+               whose function table contains only user bytecode chunks, so a
+               minimal runtime needs zero native implementations.
 ";
 
 fn main() -> ExitCode {
     let raw: Vec<String> = env::args().collect();
     let mut debug = false;
     let mut int32 = false;
+    let mut no_built_in = false;
     let mut args: Vec<String> = Vec::with_capacity(raw.len());
     for a in raw {
         match a.as_str() {
             "--debug" => debug = true,
             "--int32" => int32 = true,
+            "--no-built-in" => no_built_in = true,
             _ => args.push(a),
         }
     }
@@ -55,7 +63,7 @@ fn main() -> ExitCode {
             eprint!("{}", USAGE);
             return ExitCode::from(64);
         }
-        return cmd_export(path, &args[3], int32);
+        return cmd_export(path, &args[3], int32, no_built_in);
     }
 
     let source = match fs::read_to_string(path) {
@@ -67,10 +75,10 @@ fn main() -> ExitCode {
     };
 
     match cmd {
-        "run" => cmd_run(&source, debug, int32),
-        "check" => cmd_check(&source, int32),
+        "run" => cmd_run(&source, debug, int32, no_built_in),
+        "check" => cmd_check(&source, int32, no_built_in),
         "parse" => cmd_parse(&source),
-        "disasm" => cmd_disasm(&source, int32),
+        "disasm" => cmd_disasm(&source, int32, no_built_in),
         _ => {
             eprint!("{}", USAGE);
             ExitCode::from(64)
@@ -88,7 +96,7 @@ fn parse(source: &str) -> Result<Vec<abrase::ast::Decl>, ExitCode> {
     Ok(ast)
 }
 
-fn cmd_run(source: &str, debug: bool, int32: bool) -> ExitCode {
+fn cmd_run(source: &str, debug: bool, int32: bool, no_built_in: bool) -> ExitCode {
     if debug {
         eprintln!("# debug fmt:");
         eprintln!("#   compile-time: [lower] [COMPILE] [CALL] [emit_handle_install] [FUNC_MAP] [BYTECODE]");
@@ -100,7 +108,8 @@ fn cmd_run(source: &str, debug: bool, int32: bool) -> ExitCode {
     let mut compiler = Compiler::new()
         .with_source(source.to_string())
         .with_debug(debug)
-        .with_int32_mode(int32);
+        .with_int32_mode(int32)
+        .with_no_built_in(no_built_in);
     let module = match compiler.compile_module(&ast) {
         Ok(m) => m,
         Err(_) => {
@@ -115,9 +124,10 @@ fn cmd_run(source: &str, debug: bool, int32: bool) -> ExitCode {
         .with_fn_names(fn_names);
 
     Host::default().install_into(&mut vm);
+    let main_returns_unit = main_returns_unit(&ast);
     match vm.run_module(&module) {
         Ok(v) => {
-            print_result(&vm, v);
+            if !main_returns_unit { print_result(&vm, v); }
             if debug {
                 eprintln!("[heap] live_count after exit: {}", vm.heap_live_count());
             }
@@ -127,8 +137,25 @@ fn cmd_run(source: &str, debug: bool, int32: bool) -> ExitCode {
     }
 }
 
+fn main_returns_unit(ast: &[abrase::ast::Decl]) -> bool {
+    use abrase::ast::{Decl, Type};
+    for d in ast {
+        if let Decl::Fn(fd) = d {
+            if fd.name == "main" {
+                return match &fd.return_type {
+                    None => true,
+                    Some(Type::Named(n)) if n == "Unit" => true,
+                    Some(Type::Tuple(t)) if t.is_empty() => true,
+                    _ => false,
+                };
+            }
+        }
+    }
+    false
+}
+
 fn print_result(vm: &VirtualMachine, v: Value) {
-    if !v.is_handle_none() {
+    if vm.last_result_is_handle() && !v.is_handle_none() {
         if let Some(s) = read_string(vm.heap_ref(), v) {
             println!("{}", s);
             return;
@@ -137,7 +164,7 @@ fn print_result(vm: &VirtualMachine, v: Value) {
     println!("{}", v.as_int());
 }
 
-fn cmd_check(source: &str, int32: bool) -> ExitCode {
+fn cmd_check(source: &str, int32: bool, no_built_in: bool) -> ExitCode {
     let ast = match parse(source) { Ok(a) => a, Err(c) => return c };
     let mut checker = Checker::new();
     checker.check_program(&ast);
@@ -145,10 +172,11 @@ fn cmd_check(source: &str, int32: bool) -> ExitCode {
         eprint!("{}", checker.pretty_print_errors(source));
         return ExitCode::from(1);
     }
-    if int32 {
+    if int32 || no_built_in {
         let mut compiler = Compiler::new()
             .with_source(source.to_string())
-            .with_int32_mode(true);
+            .with_int32_mode(int32)
+            .with_no_built_in(no_built_in);
         if compiler.compile_module(&ast).is_err() {
             eprint!("{}", compiler.pretty_print_errors());
             return ExitCode::from(1);
@@ -171,11 +199,12 @@ fn cmd_parse(source: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_disasm(source: &str, int32: bool) -> ExitCode {
+fn cmd_disasm(source: &str, int32: bool, no_built_in: bool) -> ExitCode {
     let ast = match parse(source) { Ok(a) => a, Err(c) => return c };
     let mut compiler = Compiler::new()
         .with_source(source.to_string())
-        .with_int32_mode(int32);
+        .with_int32_mode(int32)
+        .with_no_built_in(no_built_in);
     let module = match compiler.compile_module(&ast) {
         Ok(m) => m,
         Err(_) => {
@@ -203,7 +232,7 @@ fn cmd_disasm(source: &str, int32: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_export(src_path: &str, out_path: &str, int32: bool) -> ExitCode {
+fn cmd_export(src_path: &str, out_path: &str, int32: bool, no_built_in: bool) -> ExitCode {
     let source = match fs::read_to_string(src_path) {
         Ok(s) => s,
         Err(e) => { eprintln!("ect: cannot read {}: {}", src_path, e); return ExitCode::from(66); }
@@ -211,7 +240,8 @@ fn cmd_export(src_path: &str, out_path: &str, int32: bool) -> ExitCode {
     let ast = match parse(&source) { Ok(a) => a, Err(c) => return c };
     let mut compiler = Compiler::new()
         .with_source(source.clone())
-        .with_int32_mode(int32);
+        .with_int32_mode(int32)
+        .with_no_built_in(no_built_in);
     let module = match compiler.compile_module(&ast) {
         Ok(m) => m,
         Err(_) => { eprint!("{}", compiler.pretty_print_errors()); return ExitCode::from(1); }

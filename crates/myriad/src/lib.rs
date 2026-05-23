@@ -56,6 +56,8 @@ pub struct VirtualMachine {
     pub(crate) debug_sink: Option<DebugSink>,
     pub(crate) fn_names: Vec<String>,
     pub(crate) failing_pc: usize,
+    pub(crate) last_result_is_handle: bool,
+    pub(crate) int32_safe: bool,
 }
 
 pub struct HandlerFrame {
@@ -115,6 +117,8 @@ impl VirtualMachine {
             debug_sink: None,
             fn_names: Vec::new(),
             failing_pc: 0,
+            last_result_is_handle: false,
+            int32_safe: false,
         }
     }
 
@@ -171,6 +175,8 @@ impl VirtualMachine {
 
     pub fn heap_ref(&self) -> &Heap { &self.heap }
     pub fn heap_mut(&mut self) -> &mut Heap { &mut self.heap }
+
+    pub fn last_result_is_handle(&self) -> bool { self.last_result_is_handle }
 
     pub fn install_device(&mut self, id: u8, dev: Box<dyn Device>) {
         self.devices.install(id, dev);
