@@ -359,6 +359,8 @@ mod snapshot_tests {
             })],
             entry: 0,
             flags: 0,
+
+            exports: vec![],
         };
         assert_eq!(v.current_fn_reg_count(&module), 42);
     }
@@ -371,6 +373,8 @@ mod snapshot_tests {
             functions: Vec::new(),
             entry: 0,
             flags: 0,
+
+            exports: vec![],
         };
         assert_eq!(v.current_fn_reg_count(&module), 0);
     }

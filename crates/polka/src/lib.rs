@@ -143,6 +143,13 @@ pub struct Module {
     pub functions: Vec<Chunk>,
     pub entry: usize,
     pub flags: u16,
+    pub exports: Vec<Export>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Export {
+    pub name: String,
+    pub fn_id: u16,
 }
 
 pub const CART_FLAG_INT32_SAFE: u16 = 0x0001;

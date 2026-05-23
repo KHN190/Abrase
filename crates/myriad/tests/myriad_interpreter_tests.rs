@@ -1,7 +1,7 @@
 // OpCode instruction basics
 // Other tests should be pushed to region / memory
 
-use polka::{BytecodeChunk, Chunk, NativeChunk, OpCode, Register, Module};
+use polka::{BytecodeChunk, Chunk, Export, NativeChunk, OpCode, Register, Module};
 use myriad::{Value, VirtualMachine};
 use std::rc::Rc;
 
@@ -36,7 +36,7 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
             })
         })
         .collect();
-    let module = Module { functions: chunks, entry: num_functions - 1, flags: 0 };
+    let module = Module { functions: chunks, entry: num_functions - 1, flags: 0, exports: vec![] };
     VirtualMachine::new().run_module(&module)
 }
 
@@ -853,6 +853,8 @@ fn test_call_dispatches_to_native_chunk() {
         functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let mut vm = VirtualMachine::new();
     vm.register_native("test_add", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, args: &[Value]| {
@@ -886,6 +888,8 @@ fn test_native_chunk_propagates_error() {
         functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let mut vm = VirtualMachine::new();
     vm.register_native("test_boom", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, _args: &[Value]| Err("boom".to_string())));
@@ -964,6 +968,8 @@ fn test_module_load_rejects_oversize_reg_count() {
         functions: vec![Chunk::Bytecode(bad)],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err(), "oversize reg_count must be rejected");
@@ -985,6 +991,8 @@ fn test_module_load_rejects_param_count_exceeds_reg_count() {
         functions: vec![Chunk::Bytecode(bad)],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err(), "param_count > reg_count must be rejected");
@@ -1006,6 +1014,8 @@ fn test_module_load_accepts_exact_frame_budget() {
         functions: vec![Chunk::Bytecode(chunk)],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let result = VirtualMachine::new().run_module(&module);
     assert_eq!(result, Ok(Value::from_int(7)));
@@ -1041,6 +1051,8 @@ fn test_call_reg_out_of_range_fn_id_traps() {
         functions: vec![Chunk::Bytecode(caller)],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err());
@@ -1064,6 +1076,8 @@ fn test_call_reg_unknown_fn_id_traps() {
         functions: vec![Chunk::Bytecode(caller)],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err());
@@ -1246,4 +1260,72 @@ fn test_stidx_negative_index_traps() {
     );
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("stidx: negative index"));
+}
+
+#[test]
+fn call_export_sum_two_ints() {
+    let sum = BytecodeChunk {
+        code: vec![
+            OpCode::Add(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        constants: Vec::new(),
+        const_mask: Vec::new(),
+        reg_count: 3,
+        param_count: 2,
+        string_constants: Vec::new(),
+    };
+    let dummy = BytecodeChunk {
+        code: vec![OpCode::Ret(r(0))],
+        constants: Vec::new(),
+        const_mask: Vec::new(),
+        reg_count: 1,
+        param_count: 0,
+        string_constants: Vec::new(),
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(dummy), Chunk::Bytecode(sum)],
+        entry: 0,
+        flags: 0,
+        exports: vec![Export { name: "sum".into(), fn_id: 1 }],
+    };
+    let r = VirtualMachine::new().call_export(&module, "sum", &[Value::from_int(40), Value::from_int(2)]);
+    assert_eq!(r.unwrap().as_int(), 42);
+}
+
+#[test]
+fn call_export_unknown_name() {
+    let bc = BytecodeChunk {
+        code: vec![OpCode::Ret(r(0))],
+        reg_count: 1,
+        ..BytecodeChunk::default()
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(bc)],
+        entry: 0,
+        flags: 0,
+        exports: vec![],
+    };
+    let r = VirtualMachine::new().call_export(&module, "nope", &[]);
+    assert!(r.is_err());
+    assert!(r.unwrap_err().contains("no export"));
+}
+
+#[test]
+fn call_export_arity_mismatch() {
+    let bc = BytecodeChunk {
+        code: vec![OpCode::Ret(r(0))],
+        reg_count: 2,
+        param_count: 1,
+        ..BytecodeChunk::default()
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(bc)],
+        entry: 0,
+        flags: 0,
+        exports: vec![Export { name: "f".into(), fn_id: 0 }],
+    };
+    let r = VirtualMachine::new().call_export(&module, "f", &[]);
+    assert!(r.is_err());
+    assert!(r.unwrap_err().contains("expects 1"));
 }

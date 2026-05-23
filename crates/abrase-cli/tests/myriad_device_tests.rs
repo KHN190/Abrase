@@ -15,6 +15,8 @@ fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize) -> Mo
         })],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     }
 }
 
