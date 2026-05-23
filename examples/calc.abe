@@ -13,7 +13,7 @@ fn eval(e: &Expr) -> Int {
   }
 }
 
-fn main() -> Int {
+fn main() -> Unit {
   let e = Add(Num(2), Add(Mul(Num(3), Num(4)), Neg(Num(5))));
-  eval(&e)
+  println(eval(&e).to_s())
 }

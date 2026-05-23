@@ -11,6 +11,6 @@ fn loops(n: Int) -> Int {
   a
 }
 
-fn main() -> Int {
-  loops(2000000)
+fn main() -> Unit {
+  println(loops(2000000).to_s())
 }

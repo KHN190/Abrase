@@ -60,8 +60,8 @@ fn last_of(lst: List, acc: Int) -> Int {
   }
 }
 
-fn main() -> Int {
+fn main() -> Unit {
   let lst = Cons(5, Cons(2, Cons(8, Cons(1, Cons(9, Cons(3, Cons(7, Cons(4, Nil))))))));
   let sorted = sort(lst);
-  last_of(sorted, 0)
+  println(last_of(sorted, 0).to_s())
 }

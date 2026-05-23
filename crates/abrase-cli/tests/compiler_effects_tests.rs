@@ -285,3 +285,54 @@ fn handler_pop_frees_cont_cells_across_multiple_suspensions() {
         "two cont cells allocated across two suspensions must both be freed; got live={}",
         live);
 }
+
+#[test]
+fn handler_arm_mut_capture_counts_effects() {
+    let src = r#"
+        effect E { op tick() -> Unit }
+        fn body() -> <E> Unit { E.tick(); E.tick(); E.tick() }
+        fn main() -> Int {
+            let mut total = 0;
+            handle body() {
+                return _ => total,
+                E.tick   => { total = total + 1; resume(()) }
+            }
+        }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_int(3)));
+}
+
+#[test]
+fn handler_arm_mut_capture_accumulates_payload() {
+    let src = r#"
+        effect E { op emit(n: Int) -> Unit }
+        fn body() -> <E> Unit { E.emit(10); E.emit(20); E.emit(30) }
+        fn main() -> Int {
+            let mut sum = 0;
+            handle body() {
+                return _   => sum,
+                E.emit v   => { sum = sum + v; resume(()) }
+            }
+        }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_int(60)));
+}
+
+#[test]
+fn handler_arm_mut_capture_shared_with_return_arm() {
+    // total is mutated by op arm; return arm reads its final value.
+    // Both arms must see the same cell.
+    let src = r#"
+        effect E { op bump() -> Unit }
+        fn body() -> <E> Unit { E.bump(); E.bump() }
+        fn main() -> Int {
+            let mut total = 100;
+            handle body() {
+                return _ => total + 1,
+                E.bump   => { total = total + 10; resume(()) }
+            }
+        }
+    "#;
+    // 100 + 10 + 10 = 120, +1 = 121
+    assert_eq!(run_source(src), Ok(Value::from_int(121)));
+}

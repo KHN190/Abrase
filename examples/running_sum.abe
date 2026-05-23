@@ -9,9 +9,10 @@ fn compute() -> <Acc> Unit {
   Acc.add(10); Acc.add(5); Acc.add(3)
 }
 
-fn main() -> Int {
-  handle compute() {
+fn main() -> Unit {
+  let s = handle compute() {
     return _   => 0,
     Acc.add n  => n + resume(())
-  }
+  };
+  println(s.to_s())
 }

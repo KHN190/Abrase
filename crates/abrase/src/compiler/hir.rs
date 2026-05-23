@@ -25,6 +25,7 @@ pub struct VariantLayout {
     pub type_name: String,
     pub tag: u32,
     pub shape: VariantShape,
+    pub field_types: Vec<ast::Type>,
 }
 
 #[derive(Default)]

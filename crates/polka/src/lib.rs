@@ -138,11 +138,14 @@ impl Chunk {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Module {
     pub functions: Vec<Chunk>,
     pub entry: usize,
+    pub flags: u16,
 }
+
+pub const CART_FLAG_INT32_SAFE: u16 = 0x0001;
 
 #[inline(always)]
 pub fn mask_bit_set(mask: &[u64], idx: usize) -> bool {

@@ -2,7 +2,7 @@ use crate::{Heap, Value};
 use crate::device::DeviceTable;
 use crate::devices::{console, CONSOLE_ID};
 use crate::value::{alloc_string, read_string};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 pub struct NativeCtx<'a> {
@@ -17,11 +17,11 @@ pub type NativeFn = Rc<dyn for<'a> Fn(&mut NativeCtx<'a>, &[Value]) -> Result<(V
 
 #[derive(Default, Clone)]
 pub struct NativeRegistry {
-    fns: HashMap<String, NativeFn>,
+    fns: BTreeMap<String, NativeFn>,
 }
 
 impl NativeRegistry {
-    pub fn new() -> Self { Self { fns: HashMap::new() } }
+    pub fn new() -> Self { Self { fns: BTreeMap::new() } }
 
     pub fn register<S: Into<String>>(&mut self, name: S, func: NativeFn) {
         self.fns.insert(name.into(), func);

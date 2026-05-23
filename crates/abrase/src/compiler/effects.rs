@@ -10,11 +10,13 @@ pub fn install_result_variant(ctx: &mut LayoutCtx) {
         type_name: RESULT_TYPE.to_string(),
         tag: OK_TAG,
         shape: VariantShape::Tuple(1),
+        field_types: vec![ast::Type::Named("T".into())],
     });
     ctx.register_variant("Err".to_string(), VariantLayout {
         type_name: RESULT_TYPE.to_string(),
         tag: ERR_TAG,
         shape: VariantShape::Tuple(1),
+        field_types: vec![ast::Type::Named("E".into())],
     });
 }
 

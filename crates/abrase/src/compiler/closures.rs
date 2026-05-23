@@ -381,6 +381,82 @@ pub fn collect_free_vars(
     }
 }
 
+pub fn collect_assigned_idents(
+    expr: &Spanned<Expr>,
+    candidates: &HashSet<String>,
+    out: &mut HashSet<String>,
+) {
+    match &expr.node {
+        Expr::Binary { op, left, right } => {
+            if matches!(op, BinaryOp::Assign | BinaryOp::AddAssign | BinaryOp::SubAssign
+                | BinaryOp::MulAssign | BinaryOp::DivAssign | BinaryOp::ModAssign) {
+                if let Expr::Identifier(n) = &left.node {
+                    if candidates.contains(n) { out.insert(n.clone()); }
+                }
+            }
+            collect_assigned_idents(left, candidates, out);
+            collect_assigned_idents(right, candidates, out);
+        }
+        Expr::Unary { right, .. } => collect_assigned_idents(right, candidates, out),
+        Expr::Call { callee, args } => {
+            collect_assigned_idents(callee, candidates, out);
+            for a in args { collect_assigned_idents(a, candidates, out); }
+        }
+        Expr::If { condition, consequence, alternative } => {
+            collect_assigned_idents(condition, candidates, out);
+            collect_assigned_idents(consequence, candidates, out);
+            if let Some(a) = alternative { collect_assigned_idents(a, candidates, out); }
+        }
+        Expr::Match { scrutinee, arms } => {
+            collect_assigned_idents(scrutinee, candidates, out);
+            for arm in arms { collect_assigned_idents(&arm.body, candidates, out); }
+        }
+        Expr::Block(b) => {
+            for stmt in &b.stmts {
+                match &stmt.node {
+                    Stmt::Let { value, .. } => collect_assigned_idents(value, candidates, out),
+                    Stmt::Expr(e) => collect_assigned_idents(e, candidates, out),
+                    Stmt::Empty => {}
+                }
+            }
+            if let Some(r) = &b.ret { collect_assigned_idents(r, candidates, out); }
+        }
+        Expr::While { condition, body } => {
+            collect_assigned_idents(condition, candidates, out);
+            collect_assigned_idents(&Spanned { node: Expr::Block(body.clone()), span: expr.span }, candidates, out);
+        }
+        Expr::For { iter, body, .. } => {
+            collect_assigned_idents(iter, candidates, out);
+            collect_assigned_idents(&Spanned { node: Expr::Block(body.clone()), span: expr.span }, candidates, out);
+        }
+        Expr::Loop { body } | Expr::Region { body, .. } => {
+            collect_assigned_idents(&Spanned { node: Expr::Block(body.clone()), span: expr.span }, candidates, out);
+        }
+        Expr::Handle { expr: e, arms } => {
+            collect_assigned_idents(e, candidates, out);
+            for arm in arms { collect_assigned_idents(&arm.body, candidates, out); }
+        }
+        Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) => {
+            collect_assigned_idents(e, candidates, out);
+        }
+        Expr::Resume(Some(e)) => collect_assigned_idents(e, candidates, out),
+        Expr::Index { base, index } => {
+            collect_assigned_idents(base, candidates, out);
+            collect_assigned_idents(index, candidates, out);
+        }
+        Expr::FieldAccess { base, .. } => collect_assigned_idents(base, candidates, out),
+        Expr::Tuple(elems) | Expr::Array(elems) => {
+            for e in elems { collect_assigned_idents(e, candidates, out); }
+        }
+        Expr::ArrayRepeat { elem, count } => {
+            collect_assigned_idents(elem, candidates, out);
+            collect_assigned_idents(count, candidates, out);
+        }
+        Expr::Closure { body, .. } => collect_assigned_idents(body, candidates, out),
+        _ => {}
+    }
+}
+
 pub(in crate::compiler) fn rewrite_captures(
     expr: &Spanned<Expr>,
     layout: &HashMap<String, usize>,
@@ -388,10 +464,32 @@ pub(in crate::compiler) fn rewrite_captures(
     self_name: Option<&str>,
     lifted_fn_name: &str,
 ) -> Spanned<Expr> {
+    rewrite_captures_with_cells(expr, layout, params, self_name, lifted_fn_name, &HashSet::new())
+}
+
+pub(in crate::compiler) fn rewrite_captures_with_cells(
+    expr: &Spanned<Expr>,
+    layout: &HashMap<String, usize>,
+    params: &HashSet<String>,
+    self_name: Option<&str>,
+    lifted_fn_name: &str,
+    cells: &HashSet<String>,
+) -> Spanned<Expr> {
     Spanned {
-        node: rewrite_node(&expr.node, layout, params, expr.span, self_name, lifted_fn_name),
+        node: rewrite_node(&expr.node, layout, params, expr.span, self_name, lifted_fn_name, cells),
         span: expr.span,
     }
+}
+
+fn rw(
+    e: &Spanned<Expr>,
+    layout: &HashMap<String, usize>,
+    params: &HashSet<String>,
+    self_name: Option<&str>,
+    lifted_fn_name: &str,
+    cells: &HashSet<String>,
+) -> Spanned<Expr> {
+    rewrite_captures_with_cells(e, layout, params, self_name, lifted_fn_name, cells)
 }
 
 fn rewrite_node(
@@ -401,19 +499,20 @@ fn rewrite_node(
     span: Span,
     self_name: Option<&str>,
     lifted_fn_name: &str,
+    cells: &HashSet<String>,
 ) -> Expr {
     match node {
         Expr::Identifier(name) => {
             if params.contains(name) {
                 return Expr::Identifier(name.clone());
             }
-            // Captured idx (or pass through if not captured).
             let Some(&idx) = layout.get(name) else {
                 return Expr::Identifier(name.clone());
             };
+            let builtin = if cells.contains(name) { "__cell_load" } else { "__env_load" };
             Expr::Call {
                 callee: Box::new(Spanned {
-                    node: Expr::Identifier("__env_load".into()),
+                    node: Expr::Identifier(builtin.into()),
                     span,
                 }),
                 args: vec![
@@ -422,17 +521,37 @@ fn rewrite_node(
                 ],
             }
         }
-        Expr::Binary { op, left, right } => Expr::Binary {
-            op: op.clone(),
-            left: Box::new(rewrite_captures(left, layout, params, self_name, lifted_fn_name)),
-            right: Box::new(rewrite_captures(right, layout, params, self_name, lifted_fn_name)),
-        },
+        Expr::Binary { op, left, right } => {
+            if matches!(op, BinaryOp::Assign) {
+                if let Expr::Identifier(name) = &left.node {
+                    if cells.contains(name) && !params.contains(name) {
+                        if let Some(&idx) = layout.get(name) {
+                            return Expr::Call {
+                                callee: Box::new(Spanned {
+                                    node: Expr::Identifier("__cell_store".into()),
+                                    span,
+                                }),
+                                args: vec![
+                                    Spanned { node: Expr::Identifier("__env".into()), span },
+                                    Spanned { node: Expr::Literal(Literal::Int(idx as i64)), span },
+                                    rw(right, layout, params, self_name, lifted_fn_name, cells),
+                                ],
+                            };
+                        }
+                    }
+                }
+            }
+            Expr::Binary {
+                op: op.clone(),
+                left: Box::new(rw(left, layout, params, self_name, lifted_fn_name, cells)),
+                right: Box::new(rw(right, layout, params, self_name, lifted_fn_name, cells)),
+            }
+        }
         Expr::Unary { op, right } => Expr::Unary {
             op: op.clone(),
-            right: Box::new(rewrite_captures(right, layout, params, self_name, lifted_fn_name)),
+            right: Box::new(rw(right, layout, params, self_name, lifted_fn_name, cells)),
         },
         Expr::Call { callee, args } => {
-            // Self-recursion: rewrite to lifted fn call with current env to avoid rc cycle.
             if let (Some(sn), Expr::Identifier(name)) = (self_name, &callee.node) {
                 if name == sn && !params.contains(name) && !layout.contains_key(name) {
                     let mut new_args = vec![Spanned {
@@ -440,7 +559,7 @@ fn rewrite_node(
                         span: callee.span,
                     }];
                     for a in args {
-                        new_args.push(rewrite_captures(a, layout, params, self_name, lifted_fn_name));
+                        new_args.push(rw(a, layout, params, self_name, lifted_fn_name, cells));
                     }
                     return Expr::Call {
                         callee: Box::new(Spanned {
@@ -452,70 +571,70 @@ fn rewrite_node(
                 }
             }
             Expr::Call {
-                callee: Box::new(rewrite_captures(callee, layout, params, self_name, lifted_fn_name)),
-                args: args.iter().map(|a| rewrite_captures(a, layout, params, self_name, lifted_fn_name)).collect(),
+                callee: Box::new(rw(callee, layout, params, self_name, lifted_fn_name, cells)),
+                args: args.iter().map(|a| rw(a, layout, params, self_name, lifted_fn_name, cells)).collect(),
             }
         }
         Expr::If { condition, consequence, alternative } => Expr::If {
-            condition: Box::new(rewrite_captures(condition, layout, params, self_name, lifted_fn_name)),
-            consequence: Box::new(rewrite_captures(consequence, layout, params, self_name, lifted_fn_name)),
-            alternative: alternative.as_ref().map(|a| Box::new(rewrite_captures(a, layout, params, self_name, lifted_fn_name))),
+            condition: Box::new(rw(condition, layout, params, self_name, lifted_fn_name, cells)),
+            consequence: Box::new(rw(consequence, layout, params, self_name, lifted_fn_name, cells)),
+            alternative: alternative.as_ref().map(|a| Box::new(rw(a, layout, params, self_name, lifted_fn_name, cells))),
         },
-        Expr::Block(b) => Expr::Block(rewrite_block(b, layout, params, self_name, lifted_fn_name)),
-        Expr::Return(opt) => Expr::Return(opt.as_ref().map(|e| Box::new(rewrite_captures(e, layout, params, self_name, lifted_fn_name)))),
-        Expr::Throw(e) => Expr::Throw(Box::new(rewrite_captures(e, layout, params, self_name, lifted_fn_name))),
-        Expr::Question(e) => Expr::Question(Box::new(rewrite_captures(e, layout, params, self_name, lifted_fn_name))),
+        Expr::Block(b) => Expr::Block(rewrite_block(b, layout, params, self_name, lifted_fn_name, cells)),
+        Expr::Return(opt) => Expr::Return(opt.as_ref().map(|e| Box::new(rw(e, layout, params, self_name, lifted_fn_name, cells)))),
+        Expr::Throw(e) => Expr::Throw(Box::new(rw(e, layout, params, self_name, lifted_fn_name, cells))),
+        Expr::Question(e) => Expr::Question(Box::new(rw(e, layout, params, self_name, lifted_fn_name, cells))),
         Expr::Index { base, index } => Expr::Index {
-            base: Box::new(rewrite_captures(base, layout, params, self_name, lifted_fn_name)),
-            index: Box::new(rewrite_captures(index, layout, params, self_name, lifted_fn_name)),
+            base: Box::new(rw(base, layout, params, self_name, lifted_fn_name, cells)),
+            index: Box::new(rw(index, layout, params, self_name, lifted_fn_name, cells)),
         },
         Expr::FieldAccess { base, field } => Expr::FieldAccess {
-            base: Box::new(rewrite_captures(base, layout, params, self_name, lifted_fn_name)),
+            base: Box::new(rw(base, layout, params, self_name, lifted_fn_name, cells)),
             field: field.clone(),
         },
-        Expr::Tuple(elems) => Expr::Tuple(elems.iter().map(|e| rewrite_captures(e, layout, params, self_name, lifted_fn_name)).collect()),
-        Expr::Array(elems) => Expr::Array(elems.iter().map(|e| rewrite_captures(e, layout, params, self_name, lifted_fn_name)).collect()),
+        Expr::Tuple(elems) => Expr::Tuple(elems.iter().map(|e| rw(e, layout, params, self_name, lifted_fn_name, cells)).collect()),
+        Expr::Array(elems) => Expr::Array(elems.iter().map(|e| rw(e, layout, params, self_name, lifted_fn_name, cells)).collect()),
         Expr::ArrayRepeat { elem, count } => Expr::ArrayRepeat {
-            elem: Box::new(rewrite_captures(elem, layout, params, self_name, lifted_fn_name)),
-            count: Box::new(rewrite_captures(count, layout, params, self_name, lifted_fn_name)),
+            elem: Box::new(rw(elem, layout, params, self_name, lifted_fn_name, cells)),
+            count: Box::new(rw(count, layout, params, self_name, lifted_fn_name, cells)),
         },
         Expr::Match { scrutinee, arms } => Expr::Match {
-            scrutinee: Box::new(rewrite_captures(scrutinee, layout, params, self_name, lifted_fn_name)),
+            scrutinee: Box::new(rw(scrutinee, layout, params, self_name, lifted_fn_name, cells)),
             arms: arms.iter().map(|a| MatchArm {
                 pattern: a.pattern.clone(),
-                guard: a.guard.as_ref().map(|g| rewrite_captures(g, layout, params, self_name, lifted_fn_name)),
-                body: rewrite_captures(&a.body, layout, params, self_name, lifted_fn_name),
+                guard: a.guard.as_ref().map(|g| rw(g, layout, params, self_name, lifted_fn_name, cells)),
+                body: rw(&a.body, layout, params, self_name, lifted_fn_name, cells),
             }).collect(),
         },
         Expr::While { condition, body } => Expr::While {
-            condition: Box::new(rewrite_captures(condition, layout, params, self_name, lifted_fn_name)),
-            body: rewrite_block(body, layout, params, self_name, lifted_fn_name),
+            condition: Box::new(rw(condition, layout, params, self_name, lifted_fn_name, cells)),
+            body: rewrite_block(body, layout, params, self_name, lifted_fn_name, cells),
         },
         Expr::For { pattern, iter, body } => Expr::For {
             pattern: pattern.clone(),
-            iter: Box::new(rewrite_captures(iter, layout, params, self_name, lifted_fn_name)),
-            body: rewrite_block(body, layout, params, self_name, lifted_fn_name),
+            iter: Box::new(rw(iter, layout, params, self_name, lifted_fn_name, cells)),
+            body: rewrite_block(body, layout, params, self_name, lifted_fn_name, cells),
         },
         Expr::Loop { body } => Expr::Loop {
-            body: rewrite_block(body, layout, params, self_name, lifted_fn_name),
+            body: rewrite_block(body, layout, params, self_name, lifted_fn_name, cells),
         },
         Expr::Region { label, body } => Expr::Region {
             label: label.clone(),
-            body: rewrite_block(body, layout, params, self_name, lifted_fn_name),
+            body: rewrite_block(body, layout, params, self_name, lifted_fn_name, cells),
         },
         Expr::Handle { expr, arms } => Expr::Handle {
-            expr: Box::new(rewrite_captures(expr, layout, params, self_name, lifted_fn_name)),
+            expr: Box::new(rw(expr, layout, params, self_name, lifted_fn_name, cells)),
             arms: arms.iter().map(|a| HandleArm {
                 kind: a.kind.clone(),
                 pattern: a.pattern.clone(),
-                body: rewrite_captures(&a.body, layout, params, self_name, lifted_fn_name),
+                body: rw(&a.body, layout, params, self_name, lifted_fn_name, cells),
             }).collect(),
         },
         Expr::Resume(opt) => Expr::Resume(
-            opt.as_ref().map(|e| Box::new(rewrite_captures(e, layout, params, self_name, lifted_fn_name)))
+            opt.as_ref().map(|e| Box::new(rw(e, layout, params, self_name, lifted_fn_name, cells)))
         ),
         Expr::Break(opt) => Expr::Break(
-            opt.as_ref().map(|e| Box::new(rewrite_captures(e, layout, params, self_name, lifted_fn_name)))
+            opt.as_ref().map(|e| Box::new(rw(e, layout, params, self_name, lifted_fn_name, cells)))
         ),
         _ => node.clone(),
     }
@@ -527,6 +646,7 @@ fn rewrite_block(
     params: &HashSet<String>,
     self_name: Option<&str>,
     lifted_fn_name: &str,
+    cells: &HashSet<String>,
 ) -> Block {
     let stmts = block.stmts.iter().map(|s| {
         let node = match &s.node {
@@ -534,14 +654,14 @@ fn rewrite_block(
                 pattern: pattern.clone(),
                 is_mut: *is_mut,
                 ty: ty.clone(),
-                value: rewrite_captures(value, layout, params, self_name, lifted_fn_name),
+                value: rw(value, layout, params, self_name, lifted_fn_name, cells),
             },
-            Stmt::Expr(e) => Stmt::Expr(rewrite_captures(e, layout, params, self_name, lifted_fn_name)),
+            Stmt::Expr(e) => Stmt::Expr(rw(e, layout, params, self_name, lifted_fn_name, cells)),
             Stmt::Empty => Stmt::Empty,
         };
         Spanned { node, span: s.span }
     }).collect();
-    let ret = block.ret.as_ref().map(|r| Box::new(rewrite_captures(r, layout, params, self_name, lifted_fn_name)));
+    let ret = block.ret.as_ref().map(|r| Box::new(rw(r, layout, params, self_name, lifted_fn_name, cells)));
     Block { stmts, ret }
 }
 

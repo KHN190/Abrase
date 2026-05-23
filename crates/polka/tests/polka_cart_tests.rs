@@ -3,7 +3,7 @@ use polka::cartridge::{read_pk, write_pk, Corruption, EncodeError, LoadError};
 
 #[test]
 fn empty_module_roundtrip() {
-    let m = Module { functions: vec![], entry: 0 };
+    let m = Module { functions: vec![], entry: 0, flags: 0 };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     assert_eq!(back.entry, 0);
@@ -23,7 +23,7 @@ fn single_bytecode_fn_roundtrip() {
         reg_count: 1,
         param_count: 0,
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     assert_eq!(back.functions.len(), 1);
@@ -49,6 +49,7 @@ fn native_then_bytecode_roundtrip() {
     let m = Module {
         functions: vec![Chunk::Native(n), Chunk::Bytecode(bc)],
         entry: 1,
+        flags: 0,
     };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
@@ -72,7 +73,7 @@ fn const_mask_roundtrip() {
         reg_count: 1,
         param_count: 0,
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     if let Chunk::Bytecode(b2) = &back.functions[0] {
@@ -100,6 +101,7 @@ fn good_minimal_module() -> Module {
             param_count: 0,
         })],
         entry: 0,
+        flags: 0,
     }
 }
 
@@ -197,7 +199,7 @@ fn ld_offset_over_255_rejected() {
         reg_count: 2,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
     assert!(matches!(
         write_pk(&m),
         Err(EncodeError::OffsetTooLarge { value: 256, op: "ld" })
@@ -211,7 +213,7 @@ fn st_offset_over_255_rejected() {
         reg_count: 2,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
     assert!(matches!(
         write_pk(&m),
         Err(EncodeError::OffsetTooLarge { value: 1000, op: "st" })
@@ -225,9 +227,9 @@ fn magic_is_little_endian_ecff00ec() {
 }
 
 #[test]
-fn version_is_0x0200() {
+fn version_is_0x0201() {
     let bytes = write_pk(&good_minimal_module()).unwrap();
-    assert_eq!(&bytes[4..6], &[0x00, 0x02]);
+    assert_eq!(&bytes[4..6], &[0x01, 0x02]);
 }
 
 #[test]
@@ -251,6 +253,7 @@ fn entry_fn_id_nonzero_roundtrip() {
     let m = Module {
         functions: vec![Chunk::Native(n), Chunk::Bytecode(bc)],
         entry: 1,
+        flags: 0,
     };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
@@ -333,7 +336,7 @@ fn all_46_opcodes_roundtrip() {
         reg_count: 64,
         param_count: 0,
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     let bc2 = back.functions[0].as_bytecode().unwrap();
@@ -350,7 +353,7 @@ fn negative_jump_immediate_signed() {
         reg_count: 1,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     let bc2 = back.functions[0].as_bytecode().unwrap();
@@ -370,7 +373,7 @@ fn addimm_signed_imm8() {
         reg_count: 2,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     let bc2 = back.functions[0].as_bytecode().unwrap();
@@ -387,7 +390,7 @@ fn empty_string_in_pool() {
         reg_count: 1,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     let bc2 = back.functions[0].as_bytecode().unwrap();
@@ -410,7 +413,7 @@ fn many_functions() {
             ..BytecodeChunk::default()
         }));
     }
-    let m = Module { functions: fns, entry: 31 };
+    let m = Module { functions: fns, entry: 31, flags: 0 };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     assert_eq!(back.functions.len(), 32);

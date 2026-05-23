@@ -72,6 +72,8 @@ pub struct Compiler {
     pub(super) op_call_to_arm: HashMap<ast::Span, String>,
     pub(super) return_arm_by_handle: HashMap<ast::Span, String>,
     pub(super) arm_captures: HashMap<String, Vec<closures::CaptureInfo>>,
+    pub(super) cell_vars: std::collections::HashSet<String>,
+    pub(super) cell_bindings: std::collections::HashSet<String>,
     pub(super) arm_env_stack: Vec<HashMap<String, Register>>,
     pub method_dispatch: HashMap<(String, String), String>,
     pub(super) closure_by_span: HashMap<ast::Span, closures::ClosureInfo>,
@@ -94,6 +96,8 @@ pub struct Compiler {
     pub source: String,
     pub(super) debug_sink: Option<debug::CompileDebugSink>,
     pub(super) remaining_uses: HashMap<String, usize>,
+    pub(super) int32_mode: bool,
+    pub(super) no_built_in: bool,
 }
 
 impl Compiler {
@@ -131,6 +135,8 @@ impl Compiler {
             op_call_to_arm: HashMap::new(),
             return_arm_by_handle: HashMap::new(),
             arm_captures: HashMap::new(),
+            cell_vars: std::collections::HashSet::new(),
+            cell_bindings: std::collections::HashSet::new(),
             arm_env_stack: Vec::new(),
             method_dispatch: HashMap::new(),
             closure_by_span: HashMap::new(),
@@ -153,6 +159,8 @@ impl Compiler {
             source: String::new(),
             debug_sink: None,
             remaining_uses: HashMap::new(),
+            int32_mode: false,
+            no_built_in: false,
         }
     }
 
@@ -178,6 +186,16 @@ impl Compiler {
 
     pub fn with_debug_sink(mut self, sink: debug::CompileDebugSink) -> Self {
         self.debug_sink = Some(sink);
+        self
+    }
+
+    pub fn with_int32_mode(mut self, on: bool) -> Self {
+        self.int32_mode = on;
+        self
+    }
+
+    pub fn with_no_built_in(mut self, on: bool) -> Self {
+        self.no_built_in = on;
         self
     }
 
@@ -235,9 +253,13 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
-        self.register_builtins();
+        if !self.no_built_in {
+            self.register_builtins();
+        }
         let mut checker = crate::typeck::Checker::new();
-        self.register_builtins_to_checker(&mut checker);
+        if !self.no_built_in {
+            self.register_builtins_to_checker(&mut checker);
+        }
 
         checker.check_program(ast);
         if !checker.errors.is_empty() {
@@ -295,6 +317,7 @@ impl Compiler {
         self.return_arm_by_handle = handler_lowering.return_arm_by_handle;
         self.effect_arms_by_handle = handler_lowering.effect_arms_by_handle;
         self.arm_captures = handler_lowering.arm_captures;
+        self.cell_vars = handler_lowering.cell_vars;
         self.arm_resume_counts = handler_lowering.arm_resume_counts;
         self.arm_resume_in_tail = handler_lowering.arm_resume_in_tail;
         self.effect_ids = handler_lowering.effect_ids;
@@ -381,9 +404,12 @@ impl Compiler {
             }
         }
 
+        let mut flags = 0u16;
+        if self.int32_mode { flags |= crate::bytecode::CART_FLAG_INT32_SAFE; }
         Ok(Module {
             functions: self.functions.clone(),
             entry,
+            flags,
         })
     }
 
@@ -410,6 +436,7 @@ impl Compiler {
         let saved_fn_handler_baseline = self.fn_handler_baseline;
         let saved_remaining_uses = std::mem::take(&mut self.remaining_uses);
         let saved_closure_layout = std::mem::take(&mut self.current_closure_layout);
+        let saved_cell_bindings = std::mem::take(&mut self.cell_bindings);
         if let Some(info) = self.closure_by_span.values().find(|i| i.lifted_fn == fn_decl.name).cloned() {
             self.current_closure_layout = info.captures.iter().enumerate()
                 .map(|(i, c)| (c.name.clone(), i))
@@ -534,6 +561,7 @@ impl Compiler {
         self.fn_handler_baseline = saved_fn_handler_baseline;
         self.remaining_uses = saved_remaining_uses;
         self.current_closure_layout = saved_closure_layout;
+        self.cell_bindings = saved_cell_bindings;
 
         Ok(chunk)
     }

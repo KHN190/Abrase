@@ -140,3 +140,59 @@ fn verify_compile_record_with_multiple_fields() {
     let result = compile_module_and_run(&ast);
     assert_eq!(result, Ok(Value::from_int(777)));
 }
+
+#[test]
+fn record_field_assign_writes_field() {
+    let src = r#"
+        type Point = { x: Int, y: Int }
+        fn main() -> Int {
+            let mut p = Point { x: 1, y: 2 };
+            p.x = 100;
+            p.y = 200;
+            p.x + p.y
+        }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_int(300)));
+}
+
+#[test]
+fn record_field_assign_rejects_immutable_binding() {
+    let src = r#"
+        type Point = { x: Int, y: Int }
+        fn main() -> Int {
+            let p = Point { x: 1, y: 2 };
+            p.x = 99;
+            p.x
+        }
+    "#;
+    let err = run_source(src).unwrap_err();
+    assert!(err.contains("immutable") || err.contains("mut"),
+        "expected immutable-binding error, got: {}", err);
+}
+
+#[test]
+fn record_field_assign_visible_in_subsequent_reads() {
+    let src = r#"
+        type Inner = { v: Int }
+        type Outer = { inner: Inner, n: Int }
+        fn main() -> Int {
+            let mut o = Outer { inner: Inner { v: 5 }, n: 10 };
+            o.n = 99;
+            o.n + o.inner.v
+        }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_int(104)));
+}
+
+#[test]
+fn record_field_assign_replaces_handle_typed_field() {
+    let src = r#"
+        type Box = { tag: Int, msg: String }
+        fn main() -> String {
+            let mut b = Box { tag: 1, msg: "old" };
+            b.msg = "new";
+            b.msg
+        }
+    "#;
+    assert_eq!(run_source_string(src).as_deref(), Ok("new"));
+}

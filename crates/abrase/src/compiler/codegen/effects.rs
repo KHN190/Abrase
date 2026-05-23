@@ -318,7 +318,9 @@ impl Compiler {
                         "internal: handler arm '{}' captures '{}', not in scope at handle site",
                         name, cap.name
                     ))?;
-                self.emit(OpCode::St(src, env_reg, offset));
+                let tmp = self.alloc_register()?;
+                self.emit(OpCode::Copy(tmp, src));
+                self.emit(OpCode::St(tmp, env_reg, offset));
             }
             envs.insert(name.clone(), env_reg);
         }

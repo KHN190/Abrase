@@ -40,8 +40,8 @@ fn unwrap(v: Value) -> Int {
   }
 }
 
-fn main() -> Int {
+fn main() -> Unit {
   let prog = App(App(Lam(Lam(Var(1))), Lit(7)), Lit(99));
   let env0 = ENil;
-  unwrap(eval(&prog, &env0))
+  println(unwrap(eval(&prog, &env0)).to_s())
 }
