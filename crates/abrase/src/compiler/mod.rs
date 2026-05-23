@@ -37,7 +37,6 @@ pub struct HostFnDecl {
     pub name: String,
     pub params: Vec<TyType>,
     pub ret: TyType,
-    pub fn_id: u16,
 }
 
 pub struct Compiler {
@@ -218,8 +217,29 @@ impl Compiler {
         }
     }
 
-    pub fn register_host_fn(&mut self, decl: HostFnDecl) {
-        self.host_fns.insert(decl.name.clone(), decl);
+    pub fn register_host_fn(
+        &mut self,
+        name: &str,
+        params: Vec<TyType>,
+        ret: TyType,
+    ) -> Result<u16, String> {
+        if self.host_fns.contains_key(name) || self.func_map.contains_key(name) {
+            return Err(format!("name '{}' already registered", name));
+        }
+        let param_count = params.len();
+        let id = self.functions.len();
+        let fn_id = u16::try_from(id)
+            .map_err(|_| format!("function table overflow registering '{}'", name))?;
+        self.func_map.insert(name.into(), id);
+        self.functions.push(Chunk::Native(crate::bytecode::NativeChunk {
+            name: name.into(),
+            param_count,
+        }));
+        self.fn_signatures.insert(id, (params.clone(), ret.clone()));
+        self.host_fns.insert(name.into(), HostFnDecl {
+            name: name.into(), params, ret, fn_id,
+        });
+        Ok(fn_id)
     }
 
     pub fn lookup_fn_id(&self, name: &str) -> Option<u16> {
