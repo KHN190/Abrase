@@ -138,3 +138,69 @@ fn reassign_in_while_loop_builds_string() {
     "#;
     assert_eq!(run_str(src), Ok("xyyy".to_string()));
 }
+
+#[test]
+fn ref_to_variant_deref_sums_through_borrow() {
+    let src = r#"
+        type L = Nil | Cons(Int, L)
+        fn sum(xs: &L) -> Int {
+            match *xs {
+                Nil => 0
+                Cons(h, t) => h + sum(&t)
+                _ => 0
+            }
+        }
+        fn main() -> Int {
+            let lst = Cons(10, Cons(20, Cons(30, Nil)));
+            sum(&lst)
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(60)));
+}
+
+#[test]
+fn ref_to_record_deref_reads_fields() {
+    let src = r#"
+        type Pt = { x: Int, y: Int }
+        fn sum(p: &Pt) -> Int { (*p).x + (*p).y }
+        fn main() -> Int {
+            let p = Pt { x: 10, y: 32 };
+            sum(&p)
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(42)));
+}
+
+#[test]
+fn ref_to_variant_passes_through_nested_call() {
+    // Stress-test ref/deref consistency: &L flows through two fn boundaries.
+    let src = r#"
+        type L = Nil | Cons(Int, L)
+        fn head(xs: &L) -> Int {
+            match *xs {
+                Nil => -1
+                Cons(h, _) => h
+                _ => -1
+            }
+        }
+        fn forward(xs: &L) -> Int { head(xs) }
+        fn main() -> Int {
+            let lst = Cons(99, Nil);
+            forward(&lst)
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(99)));
+}
+
+#[test]
+fn ref_to_int_deref_returns_primitive() {
+    // Primitive `&Int` must still wrap (not raw alias), since Int has no handle.
+    let src = r#"
+        fn deref_int(p: &Int) -> Int { *p }
+        fn main() -> Int {
+            let n = 42;
+            deref_int(&n)
+        }
+    "#;
+    assert_eq!(run(src), Ok(Value::from_int(42)));
+}

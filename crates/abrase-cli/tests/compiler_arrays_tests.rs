@@ -62,3 +62,44 @@ fn verify_codegen_array_repeat_element_value() {
     let src = "fn main() -> Int { let a = [7; 4]; a[0] + a[3] }";
     assert_eq!(run_source(src), Ok(Value::from_int(14)));
 }
+
+#[test]
+fn array_indexed_assign_writes_slot() {
+    let src = "fn main() -> Int { let mut a = [0; 4]; a[2] = 42; a[2] }";
+    assert_eq!(run_source(src), Ok(Value::from_int(42)));
+}
+
+#[test]
+fn array_indexed_assign_independent_slots() {
+    let src = "fn main() -> Int { let mut a = [0; 4]; a[0] = 10; a[1] = 20; a[2] = 30; a[3] = 40; a[0] + a[1] + a[2] + a[3] }";
+    assert_eq!(run_source(src), Ok(Value::from_int(100)));
+}
+
+#[test]
+fn array_indexed_assign_overwrites_initial_value() {
+    let src = "fn main() -> Int { let mut a = [1, 2, 3]; a[1] = 99; a[0] + a[1] + a[2] }";
+    assert_eq!(run_source(src), Ok(Value::from_int(103)));
+}
+
+#[test]
+fn array_indexed_assign_rejects_immutable_binding() {
+    let src = "fn main() -> Int { let a = [0; 3]; a[0] = 1; a[0] }";
+    let err = run_source(src).unwrap_err();
+    assert!(err.contains("immutable") || err.contains("mut"),
+        "expected immutable-binding error, got: {}", err);
+}
+
+#[test]
+fn array_indexed_assign_in_place_through_mut_borrow() {
+    let src = r#"
+        fn fill(xs: &mut Array<Int>, i: Int, n: Int) -> Int {
+            if i >= n { 0 } else { (*xs)[i] = i * i; fill(xs, i + 1, n) }
+        }
+        fn main() -> Int {
+            let mut a = [0; 5];
+            fill(&mut a, 0, 5);
+            a[0] + a[1] + a[2] + a[3] + a[4]
+        }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_int(0 + 1 + 4 + 9 + 16)));
+}
