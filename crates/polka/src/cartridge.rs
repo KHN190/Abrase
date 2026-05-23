@@ -1,7 +1,7 @@
 use crate::{BytecodeChunk, Chunk, Module, NativeChunk, OpCode, Register};
 
 pub const MAGIC: u32 = 0xECFF_00EC;
-pub const VERSION: u16 = 0x0200;
+pub const VERSION: u16 = 0x0201;
 
 const KIND_BYTECODE: u8 = 0;
 const KIND_NATIVE: u8 = 1;
@@ -70,7 +70,7 @@ pub fn write_pk(module: &Module) -> Result<Vec<u8>, EncodeError> {
     let mut out = Vec::new();
     out.extend_from_slice(&MAGIC.to_le_bytes());
     out.extend_from_slice(&VERSION.to_le_bytes());
-    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&module.flags.to_le_bytes());
     let entry = u32::try_from(module.entry)
         .map_err(|_| EncodeError::CountOverflow { value: module.entry, what: "entry fn_id" })?;
     out.extend_from_slice(&entry.to_le_bytes());
@@ -101,7 +101,7 @@ pub fn read_pk(data: &[u8]) -> Result<Module, LoadError> {
 
     let version = r.read_u16()?;
     if version != VERSION { return Err(LoadError::UnsupportedVersion(version)); }
-    let _flags = r.read_u16()?;
+    let flags = r.read_u16()?;
     let entry = r.read_u32()? as usize;
 
     let fn_count = r.read_u32()? as usize;
@@ -113,7 +113,7 @@ pub fn read_pk(data: &[u8]) -> Result<Module, LoadError> {
     for h in headers {
         functions.push(read_fn_payload(&mut r, h)?);
     }
-    Ok(Module { functions, entry })
+    Ok(Module { functions, entry, flags })
 }
 
 fn write_bc_header(out: &mut Vec<u8>, bc: &BytecodeChunk) -> Result<(), EncodeError> {

@@ -99,6 +99,18 @@ impl Checker {
                     break;
                 }
             }
+        } else if matches!(&left.node, ast::Expr::Index { .. } | ast::Expr::FieldAccess { .. }) {
+            if let Some(root) = Self::root_ident(left) {
+                let is_mut = self.scopes.iter().rev()
+                    .find_map(|s| s.vars.get(&root).map(|m| m.is_mut));
+                if let Some(false) = is_mut {
+                    self.report_error(
+                        format!("Cannot mutate through immutable binding '{}'; \
+                                 use `let mut {}` to allow mutation", root, root),
+                        left.span,
+                    );
+                }
+            }
         }
         Type::Unit
     }

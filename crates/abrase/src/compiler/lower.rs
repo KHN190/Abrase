@@ -20,18 +20,20 @@ pub fn register_type_decl(ctx: &mut LayoutCtx, name: &str, body: &ast::TypeBody)
         }
         ast::TypeBody::Variant(cases) => {
             for (tag, case) in cases.iter().enumerate() {
-                let (ctor, shape) = match case {
-                    ast::VariantCase::Unit(n) => (n.clone(), VariantShape::Unit),
-                    ast::VariantCase::Tuple(n, tys) => (n.clone(), VariantShape::Tuple(tys.len())),
+                let (ctor, shape, field_types) = match case {
+                    ast::VariantCase::Unit(n) => (n.clone(), VariantShape::Unit, vec![]),
+                    ast::VariantCase::Tuple(n, tys) => (n.clone(), VariantShape::Tuple(tys.len()), tys.clone()),
                     ast::VariantCase::Record(n, fs) => (
                         n.clone(),
                         VariantShape::Record(fs.iter().map(|f| f.name.clone()).collect()),
+                        fs.iter().map(|f| f.ty.clone()).collect(),
                     ),
                 };
                 ctx.register_variant(ctor, VariantLayout {
                     type_name: name.to_string(),
                     tag: tag as u32,
                     shape,
+                    field_types,
                 });
             }
         }

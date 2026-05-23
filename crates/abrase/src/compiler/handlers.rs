@@ -1,6 +1,6 @@
 // Effect-handler lowering.
 use crate::ast::*;
-use crate::compiler::closures::{collect_free_vars, rewrite_captures, CaptureInfo};
+use crate::compiler::closures::{collect_assigned_idents, collect_free_vars, rewrite_captures_with_cells, CaptureInfo};
 use std::collections::{HashMap, HashSet};
 
 pub struct HandleLowering {
@@ -10,6 +10,7 @@ pub struct HandleLowering {
     pub effect_arms_by_handle: HashMap<Span, HashMap<(String, String), String>>,
     pub synthetic_fns: Vec<FnDecl>,
     pub arm_captures: HashMap<String, Vec<CaptureInfo>>,
+    pub cell_vars: HashSet<String>,
     pub effect_ids: HashMap<String, u16>,
     pub op_ids: HashMap<(String, String), u8>,
     pub effect_op_counts: HashMap<String, u8>,
@@ -31,6 +32,7 @@ impl HandleLowering {
             effect_arms_by_handle: HashMap::new(),
             synthetic_fns: Vec::new(),
             arm_captures: HashMap::new(),
+            cell_vars: HashSet::new(),
             effect_ids: HashMap::new(),
             op_ids: HashMap::new(),
             effect_op_counts: HashMap::new(),
@@ -202,6 +204,23 @@ impl HandleLowering {
         scope: &ScopeStack,
     ) -> HashMap<(String, String), String> {
         let mut local_dispatch: HashMap<(String, String), String> = HashMap::new();
+        let outer_names: HashSet<String> = scope.all_names();
+        for arm in arms {
+            let mut params: HashSet<String> = HashSet::new();
+            params.insert("__env".into());
+            if let Some(p) = &arm.pattern {
+                if let Pattern::Bind(n) = &p.node { params.insert(n.clone()); }
+            }
+            let mut frees: Vec<String> = Vec::new();
+            let mut seen: HashSet<String> = HashSet::new();
+            collect_free_vars(&arm.body, &params, &mut seen, &mut frees);
+            let caps: HashSet<String> = frees.into_iter()
+                .filter(|n| outer_names.contains(n))
+                .collect();
+            let mut assigned: HashSet<String> = HashSet::new();
+            collect_assigned_idents(&arm.body, &caps, &mut assigned);
+            for n in assigned { self.cell_vars.insert(n); }
+        }
         for arm in arms {
             match &arm.kind {
                 HandleArmKind::Return => {
@@ -322,12 +341,18 @@ impl HandleLowering {
             })
             .collect();
 
-        // Rewrite captured-name references in the body to env loads.
         let layout: HashMap<String, usize> = captures.iter()
             .enumerate()
             .map(|(i, c)| (c.name.clone(), i))
             .collect();
-        let rewritten_body = rewrite_captures(body, &layout, &param_names, None, "");
+        let capture_set: HashSet<String> = captures.iter().map(|c| c.name.clone()).collect();
+        let mut cells: HashSet<String> = HashSet::new();
+        collect_assigned_idents(body, &capture_set, &mut cells);
+        for n in &cells { self.cell_vars.insert(n.clone()); }
+        for n in &capture_set {
+            if self.cell_vars.contains(n) { cells.insert(n.clone()); }
+        }
+        let rewritten_body = rewrite_captures_with_cells(body, &layout, &param_names, None, "", &cells);
 
         // Build the param list: __env, __return_env, then the arm pattern (if any).
         let mut params: Vec<Param> = Vec::new();
@@ -493,6 +518,9 @@ impl ScopeStack {
             if let Some(t) = scope.get(name) { return Some(t.clone()); }
         }
         None
+    }
+    fn all_names(&self) -> HashSet<String> {
+        self.scopes.iter().flat_map(|s| s.keys().cloned()).collect()
     }
 }
 

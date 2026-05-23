@@ -14,30 +14,50 @@ impl Compiler {
     ) -> Result<Register, String> {
         match op {
             ast::UnaryOp::Ref | ast::UnaryOp::RefMut => {
+                let inner_ty = self.infer_expr_type(right);
+                let cell_typed = inner_ty.as_ref().map(is_move_type).unwrap_or(false);
                 let src = self.compile_expr(right)?;
                 let dest = self.alloc_register()?;
-                let tmp = self.alloc_register()?;
-                self.emit(OpCode::Copy(tmp, src));
-                self.emit(OpCode::Alloc(dest, 1));
-                self.emit(OpCode::St(tmp, dest, 0));
+                if cell_typed {
+                    self.emit(OpCode::Copy(dest, src));
+                } else {
+                    let tmp = self.alloc_register()?;
+                    self.emit(OpCode::Copy(tmp, src));
+                    self.emit(OpCode::Alloc(dest, 1));
+                    self.emit(OpCode::St(tmp, dest, 0));
+                }
                 Ok(dest)
             }
             ast::UnaryOp::Deref => {
+                let inner_ty = self.infer_expr_type(right);
+                let inner_is_cell = matches!(
+                    inner_ty.as_ref(),
+                    Some(ast::Type::Reference { inner, .. }) if is_move_type(inner)
+                );
                 let src = self.compile_expr(right)?;
                 let dest = self.alloc_register()?;
-                self.emit(OpCode::Ld(dest, src, 0));
+                if inner_is_cell {
+                    self.emit(OpCode::Copy(dest, src));
+                } else {
+                    self.emit(OpCode::Ld(dest, src, 0));
+                }
                 Ok(dest)
             }
             ast::UnaryOp::Neg => {
                 if let ast::Expr::Literal(ast::Literal::Int(n)) = &right.node {
+                    let v = -n;
+                    self.check_int32_literal(v)?;
                     let reg = self.alloc_register()?;
-                    let idx = self.add_constant(Value::from_int(-n))?;
+                    let idx = self.add_constant(Value::from_int(v))?;
                     self.emit(OpCode::PushConst(reg, idx));
                     return Ok(reg);
                 }
                 if let ast::Expr::Literal(ast::Literal::Float(f)) = &right.node {
+                    let v = -f;
+                    self.check_float32_literal(v)?;
+                    let encoded = if self.int32_mode { Value::from_float_f32(v) } else { Value::from_float(v) };
                     let reg = self.alloc_register()?;
-                    let idx = self.add_constant(Value::from_float(-f))?;
+                    let idx = self.add_constant(encoded)?;
                     self.emit(OpCode::PushConst(reg, idx));
                     return Ok(reg);
                 }
@@ -72,35 +92,93 @@ impl Compiler {
     ) -> Result<Register, String> {
         match op {
             ast::BinaryOp::Assign => {
-                if let ast::Expr::Identifier(name) = &left.node {
-                    let rr = self.compile_expr(right)?;
-                    let ty = self.var_types.get(name).cloned();
-                    let is_heap = ty.as_ref().map(is_move_type).unwrap_or(false);
-                    // Crossing into an outer region. Forget the cell so region.pop
-                    // doesn't force-free what the binding still references.
-                    let bound_depth = self.var_bound_at_region.get(name).copied().unwrap_or(0);
-                    if is_heap && bound_depth < self.compiler_region_depth {
-                        if let Some(t) = ty.as_ref() {
-                            self.emit_region_forget_typed(rr, t)?;
+                match &left.node {
+                    ast::Expr::Identifier(name) => {
+                        let rr = self.compile_expr(right)?;
+                        let ty = self.var_types.get(name).cloned();
+                        let is_heap = ty.as_ref().map(is_move_type).unwrap_or(false);
+                        if self.cell_bindings.contains(name) {
+                            let cell = *self.var_to_reg.get(name)
+                                .ok_or_else(|| format!("cell binding '{}' missing register", name))?;
+                            if is_heap {
+                                let old = self.alloc_register()?;
+                                self.emit(OpCode::Ld(old, cell, 0));
+                                self.emit(OpCode::Drop(old));
+                            }
+                            self.emit(OpCode::St(rr, cell, 0));
+                            return Ok(rr);
                         }
+                        let bound_depth = self.var_bound_at_region.get(name).copied().unwrap_or(0);
+                        if is_heap && bound_depth < self.compiler_region_depth {
+                            if let Some(t) = ty.as_ref() {
+                                self.emit_region_forget_typed(rr, t)?;
+                            }
+                        }
+                        let dest_reg = match self.var_to_reg.get(name).copied() {
+                            Some(r) => {
+                                if is_heap { self.emit(OpCode::Drop(r)); }
+                                self.emit(OpCode::Copy(r, rr));
+                                r
+                            }
+                            None => {
+                                let r = self.alloc_register()?;
+                                self.emit(OpCode::Copy(r, rr));
+                                self.var_to_reg.insert(name.clone(), r);
+                                self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
+                                r
+                            }
+                        };
+                        Ok(dest_reg)
                     }
-                    let dest_reg = match self.var_to_reg.get(name).copied() {
-                        Some(r) => {
-                            if is_heap { self.emit(OpCode::Drop(r)); }
-                            self.emit(OpCode::Copy(r, rr));
-                            r
+                    ast::Expr::Index { base, index } => {
+                        let arr_reg = self.compile_expr(base)?;
+                        let idx_reg = self.compile_expr(index)?;
+                        let val_reg = self.compile_expr(right)?;
+                        let tmp = self.alloc_register()?;
+                        self.emit(OpCode::Copy(tmp, val_reg));
+                        self.emit(OpCode::StIdx(tmp, arr_reg, idx_reg));
+                        Ok(val_reg)
+                    }
+                    ast::Expr::Unary { op: ast::UnaryOp::Deref, right: target } => {
+                        let cell_reg = self.compile_expr(target)?;
+                        let val_reg = self.compile_expr(right)?;
+                        let tmp = self.alloc_register()?;
+                        self.emit(OpCode::Copy(tmp, val_reg));
+                        self.emit(OpCode::St(tmp, cell_reg, 0));
+                        Ok(val_reg)
+                    }
+                    ast::Expr::FieldAccess { base, field } => {
+                        let type_name = self.infer_expr_type(base).and_then(|t| match t {
+                            ast::Type::Named(n) => Some(n),
+                            ast::Type::Reference { inner, .. } => match *inner {
+                                ast::Type::Named(n) => Some(n),
+                                _ => None,
+                            },
+                            _ => None,
+                        }).ok_or_else(|| format!("Cannot determine record type for field assignment '.{}'", field))?;
+                        let (offset, field_ty) = {
+                            let layout = self.layouts.records.get(&type_name)
+                                .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
+                            let idx = layout.offset_of(field)
+                                .ok_or_else(|| format!("No field '{}' in {}", field, type_name))?;
+                            let pos = layout.fields.iter().position(|n| n == field)
+                                .ok_or_else(|| format!("No field '{}' in {}", field, type_name))?;
+                            let fty = layout.field_types.get(pos).cloned();
+                            (idx, fty)
+                        };
+                        let val_reg = self.compile_expr(right)?;
+                        let base_reg = self.compile_expr(base)?;
+                        let field_is_heap = field_ty.as_ref().map(is_move_type).unwrap_or(false);
+                        if field_is_heap {
+                            let old = self.alloc_register()?;
+                            self.emit(OpCode::Ld(old, base_reg, offset));
+                            self.emit(OpCode::Drop(old));
                         }
-                        None => {
-                            let r = self.alloc_register()?;
-                            self.emit(OpCode::Copy(r, rr));
-                            self.var_to_reg.insert(name.clone(), r);
-                            self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
-                            r
-                        }
-                    };
-                    Ok(dest_reg)
-                } else {
-                    Err("Assignment target must be a variable".to_string())
+                        let want_move = self.arg_should_move(right);
+                        self.emit_store_field(val_reg, want_move, base_reg, offset)?;
+                        Ok(val_reg)
+                    }
+                    _ => Err("Assignment target must be a variable".to_string())
                 }
             }
             _ => {

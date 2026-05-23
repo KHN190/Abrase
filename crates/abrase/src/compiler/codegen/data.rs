@@ -31,8 +31,15 @@ impl Compiler {
     ) -> Result<Register, String> {
         let reg = self.alloc_register()?;
         let idx = match lit {
-            ast::Literal::Int(n)    => self.add_constant(Value::from_int(*n))?,
-            ast::Literal::Float(f)  => self.add_constant(Value::from_float(*f))?,
+            ast::Literal::Int(n)    => {
+                self.check_int32_literal(*n)?;
+                self.add_constant(Value::from_int(*n))?
+            }
+            ast::Literal::Float(f)  => {
+                self.check_float32_literal(*f)?;
+                let v = if self.int32_mode { Value::from_float_f32(*f) } else { Value::from_float(*f) };
+                self.add_constant(v)?
+            }
             ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
             ast::Literal::Char(c)   => self.add_constant(Value::from_char(*c))?,
             ast::Literal::String(s) => self.add_string_constant(s)?,
@@ -129,6 +136,11 @@ impl Compiler {
         name: &str,
     ) -> Result<Register, String> {
         if let Some(reg) = self.var_to_reg.get(name).copied() {
+            if self.cell_bindings.contains(name) {
+                let dest = self.alloc_register()?;
+                self.emit(OpCode::Ld(dest, reg, 0));
+                return Ok(dest);
+            }
             return Ok(reg);
         }
         if let Some(info) = self.layouts.variants.get(name).cloned() {

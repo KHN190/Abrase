@@ -40,6 +40,6 @@ fn count_inside(grid: Int, max: Int) -> Int {
   total
 }
 
-fn main() -> Int {
-  count_inside(8, 15)
+fn main() -> Unit {
+  println(count_inside(8, 15).to_s())
 }

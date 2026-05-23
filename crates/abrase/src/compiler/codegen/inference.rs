@@ -42,6 +42,11 @@ impl Compiler {
                 _ => self.infer_expr_type(right),
             },
             ast::Expr::Call { callee, args: _ } => {
+                if let ast::Expr::Identifier(name) = &callee.node {
+                    if let Some(info) = self.layouts.variants.get(name) {
+                        return Some(ast::Type::Named(info.type_name.clone()));
+                    }
+                }
                 let fid = match &callee.node {
                     ast::Expr::Identifier(name) => {
                         if let Some(info) = self.closure_by_var.get(name) {
@@ -87,6 +92,30 @@ impl Compiler {
                     .map(|e| self.infer_expr_type(e))
                     .collect();
                 tys.map(ast::Type::Tuple)
+            }
+            ast::Expr::Handle { expr, arms, .. } => {
+                let body_ty = self.infer_expr_type(expr);
+                let return_arm = arms.iter()
+                    .find(|a| matches!(a.kind, ast::HandleArmKind::Return));
+                if let Some(arm) = return_arm {
+                    if let (Some(pat), ast::Expr::Identifier(arm_body_name)) = (&arm.pattern, &arm.body.node) {
+                        if let ast::Pattern::Bind(pat_name) = &pat.node {
+                            if pat_name == arm_body_name {
+                                return body_ty;
+                            }
+                        }
+                    }
+                    self.infer_expr_type(&arm.body).or(body_ty)
+                } else {
+                    body_ty
+                }
+            }
+            ast::Expr::If { consequence, alternative, .. } => {
+                self.infer_expr_type(consequence)
+                    .or_else(|| alternative.as_deref().and_then(|a| self.infer_expr_type(a)))
+            }
+            ast::Expr::Block(b) => {
+                b.ret.as_deref().and_then(|r| self.infer_expr_type(r))
             }
             _ => None,
         }
@@ -169,6 +198,19 @@ fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
         T::Char   => ast::Type::Named("Char".into()),
         T::String => ast::Type::Named("String".into()),
         T::Unit   => ast::Type::Tuple(vec![]),
+        T::Named(n) => ast::Type::Named(n.clone()),
+        T::Reference { inner, is_mut } => ast::Type::Reference {
+            is_mut: *is_mut,
+            inner: Box::new(ty_to_ast(inner)?),
+            region: None,
+        },
+        T::Tuple(elems) => ast::Type::Tuple(
+            elems.iter().map(ty_to_ast).collect::<Option<Vec<_>>>()?
+        ),
+        T::Generic { name, args } => ast::Type::Generic {
+            name: name.clone(),
+            args: args.iter().map(ty_to_ast).collect::<Option<Vec<_>>>()?,
+        },
         _ => return None,
     })
 }
