@@ -143,6 +143,9 @@ impl Compiler {
             }
             return Ok(reg);
         }
+        if let Some(lit) = self.const_values.get(name).cloned() {
+            return self.compile_literal(&lit);
+        }
         if let Some(info) = self.layouts.variants.get(name).cloned() {
             let dest = self.alloc_register()?;
             self.emit(OpCode::Alloc(dest, 1));

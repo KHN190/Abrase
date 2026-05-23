@@ -1,0 +1,17 @@
+const N: Int = 2 + 3 * 5
+const NEG: Int = -7
+const FLAG: Bool = true && !(false || false)
+const PI: Float = 3.0 + 0.14
+const DERIVED: Int = N + NEG
+
+fn main() -> Int {
+    let local_override = {
+        let N = 100;
+        N
+    };
+    if FLAG {
+        DERIVED + local_override
+    } else {
+        -1
+    }
+}

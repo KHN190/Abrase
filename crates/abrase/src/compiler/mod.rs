@@ -98,6 +98,7 @@ pub struct Compiler {
     pub(super) remaining_uses: HashMap<String, usize>,
     pub(super) int32_mode: bool,
     pub(super) no_built_in: bool,
+    pub(super) const_values: HashMap<String, ast::Literal>,
 }
 
 impl Compiler {
@@ -161,6 +162,7 @@ impl Compiler {
             remaining_uses: HashMap::new(),
             int32_mode: false,
             no_built_in: false,
+            const_values: HashMap::new(),
         }
     }
 
@@ -351,6 +353,16 @@ impl Compiler {
                 }
                 ast::Decl::Type { name, body, .. } => {
                     lower::register_type_decl(&mut self.layouts, name, body);
+                }
+                ast::Decl::Const { name, value, is_fn, .. } if !*is_fn => {
+                    match self.try_const_fold(value) {
+                        Some(lit) => { self.const_values.insert(name.clone(), lit); }
+                        None => self.errors.push(Error::new(
+                            ErrorCode::CodegenError,
+                            value.span,
+                            format!("const `{}` value is not a compile-time constant", name),
+                        )),
+                    }
                 }
                 _ => {}
             }

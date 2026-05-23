@@ -130,6 +130,9 @@ impl Compiler {
     pub(in crate::compiler) fn try_const_fold(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Literal> {
         match &expr.node {
             ast::Expr::Literal(lit) => Some(lit.clone()),
+            ast::Expr::Identifier(name) if !self.var_to_reg.contains_key(name) => {
+                self.const_values.get(name).cloned()
+            }
             ast::Expr::Unary { op: ast::UnaryOp::Neg, right } => {
                 match self.try_const_fold(right)? {
                     ast::Literal::Int(n) => Some(ast::Literal::Int(n.wrapping_neg())),
