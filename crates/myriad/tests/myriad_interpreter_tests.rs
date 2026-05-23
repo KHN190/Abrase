@@ -1329,3 +1329,81 @@ fn call_export_arity_mismatch() {
     assert!(r.is_err());
     assert!(r.unwrap_err().contains("expects 1"));
 }
+
+fn ident_module() -> Module {
+    let bc = BytecodeChunk {
+        code: vec![OpCode::Ret(r(0))],
+        constants: Vec::new(),
+        const_mask: Vec::new(),
+        reg_count: 1,
+        param_count: 1,
+        string_constants: Vec::new(),
+    };
+    Module {
+        functions: vec![Chunk::Bytecode(bc)],
+        entry: 0,
+        flags: 0,
+        exports: vec![Export { name: "id".into(), fn_id: 0 }],
+    }
+}
+
+#[test]
+fn call_export_persists_heap_across_calls() {
+    let module = ident_module();
+    let mut vm = VirtualMachine::new();
+    vm.call_export(&module, "id", &[Value::from_int(1)]).unwrap();
+    let (slot, gen_) = vm.heap_alloc(4);
+    let live_before = vm.heap_live_count();
+    vm.call_export(&module, "id", &[Value::from_int(2)]).unwrap();
+    assert_eq!(vm.heap_live_count(), live_before, "heap reset between calls");
+    assert!(vm.heap_ref().is_live(slot, gen_), "host-allocated cell freed by call_export");
+}
+
+#[test]
+fn call_export_cold_auto_inits() {
+    let module = ident_module();
+    let mut vm = VirtualMachine::new();
+    let v = vm.call_export(&module, "id", &[Value::from_int(42)]).unwrap();
+    assert_eq!(v.as_int(), 42);
+}
+
+#[test]
+fn reset_wipes_state() {
+    let module = ident_module();
+    let mut vm = VirtualMachine::new();
+    vm.call_export(&module, "id", &[Value::from_int(1)]).unwrap();
+    let (slot, gen_) = vm.heap_alloc(4);
+    assert!(vm.heap_ref().is_live(slot, gen_));
+    vm.reset();
+    assert!(!vm.heap_ref().is_live(slot, gen_));
+    let v = vm.call_export(&module, "id", &[Value::from_int(7)]).unwrap();
+    assert_eq!(v.as_int(), 7);
+}
+
+#[test]
+fn run_module_then_call_export_preserves_module_state() {
+    let bc = BytecodeChunk {
+        code: vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::Ret(r(0)),
+        ],
+        constants: vec![99u64],
+        const_mask: Vec::new(),
+        reg_count: 1,
+        param_count: 0,
+        string_constants: Vec::new(),
+    };
+    let module = Module {
+        functions: vec![Chunk::Bytecode(bc)],
+        entry: 0,
+        flags: 0,
+        exports: vec![Export { name: "main".into(), fn_id: 0 }],
+    };
+    let mut vm = VirtualMachine::new();
+    let r1 = vm.run_module(&module).unwrap();
+    assert_eq!(r1.as_int(), 99);
+    let (slot, gen_) = vm.heap_alloc(2);
+    let r2 = vm.call_export(&module, "main", &[]).unwrap();
+    assert_eq!(r2.as_int(), 99);
+    assert!(vm.heap_ref().is_live(slot, gen_), "call_export wiped heap after run_module");
+}
