@@ -93,11 +93,22 @@ impl Compiler {
                     .collect();
                 tys.map(ast::Type::Tuple)
             }
-            ast::Expr::Handle { arms, .. } => {
+            ast::Expr::Handle { expr, arms, .. } => {
+                let body_ty = self.infer_expr_type(expr);
                 let return_arm = arms.iter()
                     .find(|a| matches!(a.kind, ast::HandleArmKind::Return));
-                let arm = return_arm.or_else(|| arms.first())?;
-                self.infer_expr_type(&arm.body)
+                if let Some(arm) = return_arm {
+                    if let (Some(pat), ast::Expr::Identifier(arm_body_name)) = (&arm.pattern, &arm.body.node) {
+                        if let ast::Pattern::Bind(pat_name) = &pat.node {
+                            if pat_name == arm_body_name {
+                                return body_ty;
+                            }
+                        }
+                    }
+                    self.infer_expr_type(&arm.body).or(body_ty)
+                } else {
+                    body_ty
+                }
             }
             ast::Expr::If { consequence, alternative, .. } => {
                 self.infer_expr_type(consequence)
