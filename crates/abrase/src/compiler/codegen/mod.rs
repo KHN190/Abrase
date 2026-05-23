@@ -22,8 +22,10 @@ impl Compiler {
     ) -> Result<Register, String> {
         self.current_span = expr.span;
         if matches!(expr.node, ast::Expr::Unary { .. } | ast::Expr::Binary { .. }) {
-            if let Some(lit) = self.try_const_fold(expr) {
-                return self.compile_literal(&lit);
+            if let Some(cv) = self.try_const_fold(expr) {
+                if let Some(lit) = cv.as_lit() {
+                    return self.compile_literal(lit);
+                }
             }
         }
         match &expr.node {

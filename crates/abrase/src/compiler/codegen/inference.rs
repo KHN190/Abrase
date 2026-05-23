@@ -127,31 +127,37 @@ impl Compiler {
         receiver_name_of(&ty)
     }
 
-    pub(in crate::compiler) fn try_const_fold(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Literal> {
+    pub(in crate::compiler) fn try_const_fold(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ConstValue> {
         match &expr.node {
-            ast::Expr::Literal(lit) => Some(lit.clone()),
+            ast::Expr::Literal(lit) => Some(ConstValue::Lit(lit.clone())),
             ast::Expr::Identifier(name) if !self.var_to_reg.contains_key(name) => {
                 self.const_values.get(name).cloned()
             }
+            ast::Expr::Array(items) => {
+                let elems: Option<Vec<ConstValue>> = items.iter()
+                    .map(|e| self.try_const_fold(e))
+                    .collect();
+                elems.map(ConstValue::Array)
+            }
             ast::Expr::Unary { op: ast::UnaryOp::Neg, right } => {
-                match self.try_const_fold(right)? {
-                    ast::Literal::Int(n) => Some(ast::Literal::Int(n.wrapping_neg())),
-                    ast::Literal::Float(f) => Some(ast::Literal::Float(-f)),
+                match self.try_const_fold(right)?.into_lit()? {
+                    ast::Literal::Int(n) => Some(ConstValue::Lit(ast::Literal::Int(n.wrapping_neg()))),
+                    ast::Literal::Float(f) => Some(ConstValue::Lit(ast::Literal::Float(-f))),
                     _ => None,
                 }
             }
             ast::Expr::Unary { op: ast::UnaryOp::Not, right } => {
-                match self.try_const_fold(right)? {
-                    ast::Literal::Bool(b) => Some(ast::Literal::Bool(!b)),
+                match self.try_const_fold(right)?.into_lit()? {
+                    ast::Literal::Bool(b) => Some(ConstValue::Lit(ast::Literal::Bool(!b))),
                     _ => None,
                 }
             }
             ast::Expr::Binary { op, left, right } => {
-                let l = self.try_const_fold(left)?;
-                let r = self.try_const_fold(right)?;
+                let l = self.try_const_fold(left)?.into_lit()?;
+                let r = self.try_const_fold(right)?.into_lit()?;
                 use ast::BinaryOp as B;
                 use ast::Literal as L;
-                match (l, r) {
+                let out = match (l, r) {
                     (L::Int(a), L::Int(b)) => match op {
                         B::Add => Some(L::Int(a.wrapping_add(b))),
                         B::Sub => Some(L::Int(a.wrapping_sub(b))),
@@ -183,8 +189,30 @@ impl Compiler {
                         _ => None,
                     },
                     _ => None,
-                }
+                };
+                out.map(ConstValue::Lit)
             }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ConstValue {
+    Lit(ast::Literal),
+    Array(Vec<ConstValue>),
+}
+
+impl ConstValue {
+    pub fn into_lit(self) -> Option<ast::Literal> {
+        match self {
+            ConstValue::Lit(l) => Some(l),
+            _ => None,
+        }
+    }
+    pub fn as_lit(&self) -> Option<&ast::Literal> {
+        match self {
+            ConstValue::Lit(l) => Some(l),
             _ => None,
         }
     }
