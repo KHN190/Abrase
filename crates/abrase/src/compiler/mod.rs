@@ -96,6 +96,7 @@ pub struct Compiler {
     pub source: String,
     pub(super) debug_sink: Option<debug::CompileDebugSink>,
     pub(super) remaining_uses: HashMap<String, usize>,
+    pub(super) int32_mode: bool,
 }
 
 impl Compiler {
@@ -157,6 +158,7 @@ impl Compiler {
             source: String::new(),
             debug_sink: None,
             remaining_uses: HashMap::new(),
+            int32_mode: false,
         }
     }
 
@@ -182,6 +184,11 @@ impl Compiler {
 
     pub fn with_debug_sink(mut self, sink: debug::CompileDebugSink) -> Self {
         self.debug_sink = Some(sink);
+        self
+    }
+
+    pub fn with_int32_mode(mut self, on: bool) -> Self {
+        self.int32_mode = on;
         self
     }
 
@@ -386,9 +393,12 @@ impl Compiler {
             }
         }
 
+        let mut flags = 0u16;
+        if self.int32_mode { flags |= crate::bytecode::CART_FLAG_INT32_SAFE; }
         Ok(Module {
             functions: self.functions.clone(),
             entry,
+            flags,
         })
     }
 

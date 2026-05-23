@@ -81,8 +81,14 @@ impl Compiler {
         exit_jumps: &mut Vec<usize>,
     ) -> Result<(), String> {
         let pat_idx = match lit {
-            ast::Literal::Int(n)    => self.add_constant(Value::from_int(*n))?,
-            ast::Literal::Float(f)  => self.add_constant(Value::from_float(*f))?,
+            ast::Literal::Int(n)    => {
+                self.check_int32_literal(*n)?;
+                self.add_constant(Value::from_int(*n))?
+            }
+            ast::Literal::Float(f)  => {
+                self.check_float32_literal(*f)?;
+                self.add_constant(Value::from_float(*f))?
+            }
             ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
             ast::Literal::String(s) => self.add_string_constant(s)?,
             ast::Literal::Unit      => self.add_constant(Value::UNIT)?,

@@ -45,14 +45,18 @@ impl Compiler {
             }
             ast::UnaryOp::Neg => {
                 if let ast::Expr::Literal(ast::Literal::Int(n)) = &right.node {
+                    let v = -n;
+                    self.check_int32_literal(v)?;
                     let reg = self.alloc_register()?;
-                    let idx = self.add_constant(Value::from_int(-n))?;
+                    let idx = self.add_constant(Value::from_int(v))?;
                     self.emit(OpCode::PushConst(reg, idx));
                     return Ok(reg);
                 }
                 if let ast::Expr::Literal(ast::Literal::Float(f)) = &right.node {
+                    let v = -f;
+                    self.check_float32_literal(v)?;
                     let reg = self.alloc_register()?;
-                    let idx = self.add_constant(Value::from_float(-f))?;
+                    let idx = self.add_constant(Value::from_float(v))?;
                     self.emit(OpCode::PushConst(reg, idx));
                     return Ok(reg);
                 }

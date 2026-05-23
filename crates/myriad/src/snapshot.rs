@@ -358,6 +358,7 @@ mod snapshot_tests {
                 string_constants: Vec::new(),
             })],
             entry: 0,
+            flags: 0,
         };
         assert_eq!(v.current_fn_reg_count(&module), 42);
     }
@@ -369,6 +370,7 @@ mod snapshot_tests {
         let module = Module {
             functions: Vec::new(),
             entry: 0,
+            flags: 0,
         };
         assert_eq!(v.current_fn_reg_count(&module), 0);
     }

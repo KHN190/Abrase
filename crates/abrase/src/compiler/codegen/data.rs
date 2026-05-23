@@ -31,8 +31,14 @@ impl Compiler {
     ) -> Result<Register, String> {
         let reg = self.alloc_register()?;
         let idx = match lit {
-            ast::Literal::Int(n)    => self.add_constant(Value::from_int(*n))?,
-            ast::Literal::Float(f)  => self.add_constant(Value::from_float(*f))?,
+            ast::Literal::Int(n)    => {
+                self.check_int32_literal(*n)?;
+                self.add_constant(Value::from_int(*n))?
+            }
+            ast::Literal::Float(f)  => {
+                self.check_float32_literal(*f)?;
+                self.add_constant(Value::from_float(*f))?
+            }
             ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
             ast::Literal::Char(c)   => self.add_constant(Value::from_char(*c))?,
             ast::Literal::String(s) => self.add_string_constant(s)?,

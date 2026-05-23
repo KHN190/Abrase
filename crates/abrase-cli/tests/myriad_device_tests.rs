@@ -14,6 +14,7 @@ fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize) -> Mo
             string_constants: Vec::new(),
         })],
         entry: 0,
+        flags: 0,
     }
 }
 

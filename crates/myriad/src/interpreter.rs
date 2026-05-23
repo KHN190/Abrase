@@ -14,7 +14,7 @@ pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
-        let module = Module { functions: vec![chunk.clone()], entry: 0 };
+        let module = Module { functions: vec![chunk.clone()], entry: 0, flags: 0 };
         self.run_module(&module)
     }
 

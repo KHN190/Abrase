@@ -36,7 +36,7 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
             })
         })
         .collect();
-    let module = Module { functions: chunks, entry: num_functions - 1 };
+    let module = Module { functions: chunks, entry: num_functions - 1, flags: 0 };
     VirtualMachine::new().run_module(&module)
 }
 
@@ -851,7 +851,8 @@ fn test_call_dispatches_to_native_chunk() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
-        entry: 0
+        entry: 0,
+        flags: 0,
     };
     let mut vm = VirtualMachine::new();
     vm.register_native("test_add", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, args: &[Value]| {
@@ -883,7 +884,8 @@ fn test_native_chunk_propagates_error() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller), Chunk::Native(native)],
-        entry: 0
+        entry: 0,
+        flags: 0,
     };
     let mut vm = VirtualMachine::new();
     vm.register_native("test_boom", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, _args: &[Value]| Err("boom".to_string())));
@@ -960,7 +962,8 @@ fn test_module_load_rejects_oversize_reg_count() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(bad)],
-        entry: 0
+        entry: 0,
+        flags: 0,
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err(), "oversize reg_count must be rejected");
@@ -980,7 +983,8 @@ fn test_module_load_rejects_param_count_exceeds_reg_count() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(bad)],
-        entry: 0
+        entry: 0,
+        flags: 0,
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err(), "param_count > reg_count must be rejected");
@@ -1000,7 +1004,8 @@ fn test_module_load_accepts_exact_frame_budget() {
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(chunk)],
-        entry: 0
+        entry: 0,
+        flags: 0,
     };
     let result = VirtualMachine::new().run_module(&module);
     assert_eq!(result, Ok(Value::from_int(7)));
@@ -1035,6 +1040,7 @@ fn test_call_reg_out_of_range_fn_id_traps() {
     let module = Module {
         functions: vec![Chunk::Bytecode(caller)],
         entry: 0,
+        flags: 0,
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err());
@@ -1057,6 +1063,7 @@ fn test_call_reg_unknown_fn_id_traps() {
     let module = Module {
         functions: vec![Chunk::Bytecode(caller)],
         entry: 0,
+        flags: 0,
     };
     let result = VirtualMachine::new().run_module(&module);
     assert!(result.is_err());
