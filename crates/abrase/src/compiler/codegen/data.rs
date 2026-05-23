@@ -25,6 +25,26 @@ impl Compiler {
 }
 
 impl Compiler {
+    pub(in crate::compiler) fn compile_const_value(
+        &mut self,
+        cv: &super::inference::ConstValue,
+    ) -> Result<Register, String> {
+        match cv {
+            super::inference::ConstValue::Lit(lit) => self.compile_literal(lit),
+            super::inference::ConstValue::Array(elems) => {
+                let dest = self.alloc_register()?;
+                let count = super::scaffold::to_u16(elems.len(), "Array const length")?;
+                self.emit(OpCode::Alloc(dest, count));
+                for (i, e) in elems.iter().enumerate() {
+                    let off = super::scaffold::to_u16(i, "Array const offset")?;
+                    let v = self.compile_const_value(e)?;
+                    self.emit(OpCode::St(v, dest, off));
+                }
+                Ok(dest)
+            }
+        }
+    }
+
     pub(in crate::compiler) fn compile_literal(
         &mut self,
         lit: &ast::Literal,
@@ -143,8 +163,8 @@ impl Compiler {
             }
             return Ok(reg);
         }
-        if let Some(lit) = self.const_values.get(name).cloned() {
-            return self.compile_literal(&lit);
+        if let Some(cv) = self.const_values.get(name).cloned() {
+            return self.compile_const_value(&cv);
         }
         if let Some(info) = self.layouts.variants.get(name).cloned() {
             let dest = self.alloc_register()?;

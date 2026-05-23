@@ -67,6 +67,27 @@ fn test_const_decl() {
 }
 
 #[test]
+fn test_field_assign() {
+    let v = run_file("tests/scripts/field_assign.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(220));
+}
+
+#[test]
+fn test_shared_deref_write() {
+    let v = run_file("tests/scripts/shared_deref_write.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(42));
+}
+
+#[test]
+fn test_handler_let_mut_cell() {
+    let v = run_file("tests/scripts/handler_let_mut_cell.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(3));
+}
+
+#[test]
 fn test_bst() {
     let v = run_file("tests/scripts/bst.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
