@@ -37,8 +37,10 @@ impl Compiler {
                 self.emit(OpCode::Alloc(dest, count));
                 for (i, e) in elems.iter().enumerate() {
                     let off = super::scaffold::to_u16(i, "Array const offset")?;
+                    let mark = self.snapshot_register_high_water();
                     let v = self.compile_const_value(e)?;
                     self.emit(OpCode::St(v, dest, off));
+                    self.restore_register_high_water(mark);
                 }
                 Ok(dest)
             }
@@ -276,8 +278,10 @@ impl Compiler {
         self.emit(OpCode::Alloc(dest, count));
         for (i, item) in items.iter().enumerate() {
             let offset = to_u16(i, "Array element offset")?;
+            let mark = self.snapshot_register_high_water();
             let v = self.compile_expr(item)?;
             self.emit(OpCode::St(v, dest, offset));
+            self.restore_register_high_water(mark);
         }
         Ok(dest)
     }
@@ -303,8 +307,10 @@ impl Compiler {
         self.emit(OpCode::Alloc(dest, count));
         for (i, item) in items.iter().enumerate() {
             let offset = to_u16(i, "Tuple element offset")?;
+            let mark = self.snapshot_register_high_water();
             let v = self.compile_expr(item)?;
             self.emit(OpCode::St(v, dest, offset));
+            self.restore_register_high_water(mark);
         }
         Ok(dest)
     }
@@ -322,11 +328,13 @@ impl Compiler {
         let n_u16 = to_u16(n, "Array-repeat length")?;
         self.emit(OpCode::Alloc(dest, n_u16));
         let src = self.compile_expr(elem)?;
+        let mark = self.snapshot_register_high_water();
         for i in 0..n {
             let offset = to_u16(i, "Array-repeat offset")?;
             let copy = self.alloc_register()?;
             self.emit(OpCode::Copy(copy, src));
             self.emit(OpCode::St(copy, dest, offset));
+            self.restore_register_high_water(mark);
         }
         Ok(dest)
     }
