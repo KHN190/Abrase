@@ -13,6 +13,8 @@ pub(in crate::compiler) enum CallTarget<'a> {
     Function { func_id: u16, env: CallEnv },
     Method   { func_id: u16, receiver: &'a ast::Spanned<ast::Expr> },
     EnvLoad  { env_reg: Register, idx: u16 },
+    CellLoad { env_reg: Register, idx: u16 },
+    CellStore { env_reg: Register, idx: u16, value: &'a ast::Spanned<ast::Expr> },
     SharedCtor,
     HostFn { fn_id: u16 },
     VariantCtor { tag: u32 },
@@ -44,6 +46,8 @@ impl Compiler {
         }
         match target {
             CallTarget::EnvLoad { env_reg, idx } => self.emit_env_load(env_reg, idx),
+            CallTarget::CellLoad { env_reg, idx } => self.emit_cell_load(env_reg, idx),
+            CallTarget::CellStore { env_reg, idx, value } => self.emit_cell_store(env_reg, idx, value),
             CallTarget::SharedCtor => self.emit_shared_ctor(args),
             CallTarget::HostFn { fn_id } => self.emit_host_fn_call(fn_id, args),
             CallTarget::VariantCtor { tag } => self.emit_variant_ctor(tag, args),
@@ -77,6 +81,7 @@ impl Compiler {
         // these names, but we double-gate here so the intrinsic always fires.
         if let Some(t) = self.resolve_primitive(callee, args)? { return Ok(t); }
         if let Some(t) = self.resolve_env_load(callee, args)? { return Ok(t); }
+        if let Some(t) = self.resolve_cell_builtin(callee, args)? { return Ok(t); }
         if let Some(t) = self.resolve_closure_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_env_load_closure_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_effect_op_call(callee, call_span)? { return Ok(t); }
@@ -237,6 +242,54 @@ impl Compiler {
         let dest = self.alloc_register()?;
         self.emit(OpCode::Ld(dest, env_reg, idx));
         Ok(dest)
+    }
+
+    fn resolve_cell_builtin<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
+        args: &'a [ast::Spanned<ast::Expr>],
+    ) -> Result<Option<CallTarget<'a>>, String> {
+        let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
+        let is_load = name == "__cell_load" && args.len() == 2;
+        let is_store = name == "__cell_store" && args.len() == 3;
+        if !is_load && !is_store { return Ok(None); }
+        let (env_name, idx) = match (&args[0].node, &args[1].node) {
+            (ast::Expr::Identifier(en), ast::Expr::Literal(ast::Literal::Int(i))) => (en, *i),
+            _ => return Ok(None),
+        };
+        let env_reg = *self.var_to_reg.get(env_name)
+            .ok_or_else(|| format!("internal: env binding '{}' not in scope", env_name))?;
+        if idx < 0 { return Err(format!("cell-builtin index must be non-negative, got {}", idx)); }
+        let env_idx = super::scaffold::to_u16(idx as usize, "cell-builtin index")?;
+        if is_load {
+            Ok(Some(CallTarget::CellLoad { env_reg, idx: env_idx }))
+        } else {
+            Ok(Some(CallTarget::CellStore { env_reg, idx: env_idx, value: &args[2] }))
+        }
+    }
+
+    fn emit_cell_load(&mut self, env_reg: Register, idx: u16) -> Result<Register, String> {
+        let cell = self.alloc_register()?;
+        self.emit(OpCode::Ld(cell, env_reg, idx));
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Ld(dest, cell, 0));
+        Ok(dest)
+    }
+
+    fn emit_cell_store(
+        &mut self,
+        env_reg: Register,
+        idx: u16,
+        value: &ast::Spanned<ast::Expr>,
+    ) -> Result<Register, String> {
+        let v = self.compile_expr(value)?;
+        let cell = self.alloc_register()?;
+        self.emit(OpCode::Ld(cell, env_reg, idx));
+        self.emit(OpCode::St(v, cell, 0));
+        let unit = self.alloc_register()?;
+        let i = self.add_constant(Value::UNIT)?;
+        self.emit(OpCode::PushConst(unit, i));
+        Ok(unit)
     }
 
     fn emit_shared_ctor(&mut self, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {

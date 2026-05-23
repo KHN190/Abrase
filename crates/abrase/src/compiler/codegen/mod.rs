@@ -231,7 +231,7 @@ impl Compiler {
     ) -> Result<(), String> {
         self.current_span = stmt.span;
         match &stmt.node {
-            ast::Stmt::Let { pattern, value, ty, .. } => {
+            ast::Stmt::Let { pattern, value, ty, is_mut, .. } => {
                 let inferred_ty = ty.clone().or_else(|| self.infer_expr_type(value));
                 if let ast::Pattern::Bind(name) = &pattern.node {
                     let src_reg = self.compile_expr(value)?;
@@ -251,7 +251,16 @@ impl Compiler {
                     } else {
                         src_reg
                     };
-                    self.var_to_reg.insert(name.clone(), bound_reg);
+                    let final_reg = if *is_mut && self.cell_vars.contains(name) {
+                        let cell = self.alloc_register()?;
+                        self.emit(OpCode::Alloc(cell, 1));
+                        self.emit(OpCode::St(bound_reg, cell, 0));
+                        self.cell_bindings.insert(name.clone());
+                        cell
+                    } else {
+                        bound_reg
+                    };
+                    self.var_to_reg.insert(name.clone(), final_reg);
                     self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
                     if let Some(t) = inferred_ty {
                         self.var_types.insert(name.clone(), t);
@@ -262,7 +271,7 @@ impl Compiler {
                         }
                     }
                     if let Some(top) = self.block_locals_stack.last_mut() {
-                        top.push(bound_reg);
+                        top.push(final_reg);
                     }
                     Ok(())
                 } else {

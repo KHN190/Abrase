@@ -129,6 +129,11 @@ impl Compiler {
         name: &str,
     ) -> Result<Register, String> {
         if let Some(reg) = self.var_to_reg.get(name).copied() {
+            if self.cell_bindings.contains(name) {
+                let dest = self.alloc_register()?;
+                self.emit(OpCode::Ld(dest, reg, 0));
+                return Ok(dest);
+            }
             return Ok(reg);
         }
         if let Some(info) = self.layouts.variants.get(name).cloned() {

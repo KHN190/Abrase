@@ -163,6 +163,9 @@ impl Compiler {
                 let offset = super::scaffold::to_u16(i + 1, "Variant pattern arg offset")?;
                 self.emit(OpCode::Ld(r, scrutinee_reg, offset));
                 self.var_to_reg.insert(n.clone(), r);
+                if let Some(ft) = info.field_types.get(i) {
+                    self.var_types.insert(n.clone(), ft.clone());
+                }
             }
         }
 

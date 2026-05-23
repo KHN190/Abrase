@@ -42,6 +42,11 @@ impl Compiler {
                 _ => self.infer_expr_type(right),
             },
             ast::Expr::Call { callee, args: _ } => {
+                if let ast::Expr::Identifier(name) = &callee.node {
+                    if let Some(info) = self.layouts.variants.get(name) {
+                        return Some(ast::Type::Named(info.type_name.clone()));
+                    }
+                }
                 let fid = match &callee.node {
                     ast::Expr::Identifier(name) => {
                         if let Some(info) = self.closure_by_var.get(name) {
@@ -169,6 +174,19 @@ fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
         T::Char   => ast::Type::Named("Char".into()),
         T::String => ast::Type::Named("String".into()),
         T::Unit   => ast::Type::Tuple(vec![]),
+        T::Named(n) => ast::Type::Named(n.clone()),
+        T::Reference { inner, is_mut } => ast::Type::Reference {
+            is_mut: *is_mut,
+            inner: Box::new(ty_to_ast(inner)?),
+            region: None,
+        },
+        T::Tuple(elems) => ast::Type::Tuple(
+            elems.iter().map(ty_to_ast).collect::<Option<Vec<_>>>()?
+        ),
+        T::Generic { name, args } => ast::Type::Generic {
+            name: name.clone(),
+            args: args.iter().map(ty_to_ast).collect::<Option<Vec<_>>>()?,
+        },
         _ => return None,
     })
 }
