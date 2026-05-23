@@ -538,6 +538,9 @@ impl Checker {
         if let Some(ty) = self.lookup_variant_constructor(name) {
             return ty;
         }
+        if let Some(ty) = self.get_const(name) {
+            return ty;
+        }
         self.report_error(format!("Undefined variable: {}", name), usage_span)
     }
 

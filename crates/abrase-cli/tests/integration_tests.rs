@@ -60,6 +60,13 @@ fn arithmetic_recursion_and_loop() {
 }
 
 #[test]
+fn test_const_decl() {
+    let v = run_file("tests/scripts/const_decl.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(110));
+}
+
+#[test]
 fn test_bst() {
     let v = run_file("tests/scripts/bst.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));

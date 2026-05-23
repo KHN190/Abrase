@@ -62,12 +62,17 @@ impl VirtualMachine {
     ) -> Result<Value, String> {
         validate_module_register_budget(module)?;
         self.int32_safe = (module.flags & polka::CART_FLAG_INT32_SAFE) != 0;
-        self.frames.clear();
-        self.handlers.clear();
-        self.region_table.clear();
-        self.heap.clear();
-        self.string_const_handles.clear();
-        self.resolve_constants(module)?;
+        if self.resolved_constants.is_empty() {
+            self.frames.clear();
+            self.handlers.clear();
+            self.region_table.clear();
+            self.heap.clear();
+            self.string_const_handles.clear();
+            self.resolve_constants(module)?;
+        } else {
+            self.frames.clear();
+            self.handlers.clear();
+        }
         self.pc = 0;
         self.base_reg = 0;
         self.current_func = fn_id;
@@ -84,6 +89,21 @@ impl VirtualMachine {
         } else {
             self.run_loop::<false>(module)
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.frames.clear();
+        self.handlers.clear();
+        self.region_table.clear();
+        self.heap.clear();
+        self.string_const_handles.clear();
+        self.resolved_constants.clear();
+        self.resolved_const_mask.clear();
+        self.resolved_natives.clear();
+        self.halted = false;
+        self.exit_code = None;
+        self.pc = 0;
+        self.base_reg = 0;
     }
 
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
