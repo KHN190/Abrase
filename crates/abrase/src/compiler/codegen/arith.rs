@@ -72,35 +72,43 @@ impl Compiler {
     ) -> Result<Register, String> {
         match op {
             ast::BinaryOp::Assign => {
-                if let ast::Expr::Identifier(name) = &left.node {
-                    let rr = self.compile_expr(right)?;
-                    let ty = self.var_types.get(name).cloned();
-                    let is_heap = ty.as_ref().map(is_move_type).unwrap_or(false);
-                    // Crossing into an outer region. Forget the cell so region.pop
-                    // doesn't force-free what the binding still references.
-                    let bound_depth = self.var_bound_at_region.get(name).copied().unwrap_or(0);
-                    if is_heap && bound_depth < self.compiler_region_depth {
-                        if let Some(t) = ty.as_ref() {
-                            self.emit_region_forget_typed(rr, t)?;
+                match &left.node {
+                    ast::Expr::Identifier(name) => {
+                        let rr = self.compile_expr(right)?;
+                        let ty = self.var_types.get(name).cloned();
+                        let is_heap = ty.as_ref().map(is_move_type).unwrap_or(false);
+                        let bound_depth = self.var_bound_at_region.get(name).copied().unwrap_or(0);
+                        if is_heap && bound_depth < self.compiler_region_depth {
+                            if let Some(t) = ty.as_ref() {
+                                self.emit_region_forget_typed(rr, t)?;
+                            }
                         }
+                        let dest_reg = match self.var_to_reg.get(name).copied() {
+                            Some(r) => {
+                                if is_heap { self.emit(OpCode::Drop(r)); }
+                                self.emit(OpCode::Copy(r, rr));
+                                r
+                            }
+                            None => {
+                                let r = self.alloc_register()?;
+                                self.emit(OpCode::Copy(r, rr));
+                                self.var_to_reg.insert(name.clone(), r);
+                                self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
+                                r
+                            }
+                        };
+                        Ok(dest_reg)
                     }
-                    let dest_reg = match self.var_to_reg.get(name).copied() {
-                        Some(r) => {
-                            if is_heap { self.emit(OpCode::Drop(r)); }
-                            self.emit(OpCode::Copy(r, rr));
-                            r
-                        }
-                        None => {
-                            let r = self.alloc_register()?;
-                            self.emit(OpCode::Copy(r, rr));
-                            self.var_to_reg.insert(name.clone(), r);
-                            self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
-                            r
-                        }
-                    };
-                    Ok(dest_reg)
-                } else {
-                    Err("Assignment target must be a variable".to_string())
+                    ast::Expr::Index { base, index } => {
+                        let arr_reg = self.compile_expr(base)?;
+                        let idx_reg = self.compile_expr(index)?;
+                        let val_reg = self.compile_expr(right)?;
+                        let tmp = self.alloc_register()?;
+                        self.emit(OpCode::Copy(tmp, val_reg));
+                        self.emit(OpCode::StIdx(tmp, arr_reg, idx_reg));
+                        Ok(val_reg)
+                    }
+                    _ => Err("Assignment target must be a variable".to_string())
                 }
             }
             _ => {
