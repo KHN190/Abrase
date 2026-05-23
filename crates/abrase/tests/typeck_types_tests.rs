@@ -339,7 +339,7 @@ fn verify_nested_array_types_equivalent() {
 }
 
 #[test]
-fn verify_nested_array_different_sizes_not_equivalent() {
+fn verify_array_sizes_collapse_to_same_generic() {
     let mut checker = Checker::new();
 
     let fields1 = vec![
@@ -366,7 +366,8 @@ fn verify_nested_array_different_sizes_not_equivalent() {
     checker.register_type("Array1".into(), TypeBody::Record(fields1));
     checker.register_type("Array2".into(), TypeBody::Record(fields2));
 
-    assert!(!checker.are_types_equivalent("Array1", "Array2"));
+    assert!(checker.are_types_equivalent("Array1", "Array2"),
+        "[Int; N] is lowered to Generic{{Array, [Int]}}; size is erased so two arrays of Int are equivalent regardless of declared size");
 }
 
 #[test]
@@ -451,14 +452,30 @@ fn verify_convert_generic_types() {
 }
 
 #[test]
-fn verify_convert_array_with_size() {
+fn verify_convert_array_lowers_to_generic_array() {
     let checker = Checker::new();
     let array = ast::Type::Array {
         elem: Box::new(ast::Type::Named("Int".into())),
         size: 16,
     };
     let converted = checker.convert_type(&array);
-    assert!(format!("{:?}", converted).contains("16"));
+    assert_eq!(
+        converted,
+        Type::Generic { name: "Array".into(), args: vec![Type::Int] },
+        "`[Int; N]` must lower to the same Generic{{Array, [Int]}} as array literals so the two unify"
+    );
+}
+
+#[test]
+fn verify_sized_array_unifies_with_array_literal_type() {
+    let checker = Checker::new();
+    let sized = checker.convert_type(&ast::Type::Array {
+        elem: Box::new(ast::Type::Named("Int".into())),
+        size: 4,
+    });
+    let from_literal = Type::Generic { name: "Array".into(), args: vec![Type::Int] };
+    assert_eq!(sized, from_literal,
+        "sized array annotation must equal the type produced by array literal inference");
 }
 
 #[test]

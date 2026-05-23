@@ -615,9 +615,11 @@ impl Checker {
                     args: args.iter().map(|arg| self.convert_type(arg)).collect(),
                 }
             },
-            ast::Type::Array { elem, size } => {
-                // Track array sizes
-                Type::Named(format!("[{}; {}]", elem_name(elem), size))
+            ast::Type::Array { elem, .. } => {
+                Type::Generic {
+                    name: "Array".into(),
+                    args: vec![self.convert_type(elem)],
+                }
             },
             ast::Type::Tuple(tys) => {
                 Type::Tuple(tys.iter().map(|t| self.convert_type(t)).collect())

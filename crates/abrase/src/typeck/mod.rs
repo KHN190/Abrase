@@ -4,13 +4,6 @@ use std::collections::HashMap;
 use crate::ast::{self, Span};
 use crate::ty::{Ownership, Type};
 
-fn elem_name(ty: &ast::Type) -> String {
-    match ty {
-        ast::Type::Named(n) => n.clone(),
-        _ => "?".into(),
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct TypeError {
     pub message: String,
