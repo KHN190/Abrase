@@ -230,7 +230,10 @@ impl Compiler {
                     name, host.params.len(), args.len()
                 ));
             }
-            return Ok(Some(CallTarget::HostFn { fn_id: host.fn_id }));
+            let id = *self.func_map.get(name)
+                .ok_or_else(|| format!("internal: host fn '{}' missing from fn table", name))?;
+            let fn_id = super::scaffold::to_u16(id, &format!("host fn id for '{}'", name))?;
+            return Ok(Some(CallTarget::HostFn { fn_id }));
         }
         if let Some(info) = self.layouts.variants.get(name) {
             return Ok(Some(CallTarget::VariantCtor { tag: info.tag }));

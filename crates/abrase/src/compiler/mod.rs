@@ -237,7 +237,7 @@ impl Compiler {
         }));
         self.fn_signatures.insert(id, (params.clone(), ret.clone()));
         self.host_fns.insert(name.into(), HostFnDecl {
-            name: name.into(), params, ret, fn_id,
+            name: name.into(), params, ret,
         });
         Ok(fn_id)
     }
