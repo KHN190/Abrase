@@ -14,7 +14,7 @@ pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
-        let module = Module { functions: vec![chunk.clone()], entry: 0, flags: 0 };
+        let module = Module { functions: vec![chunk.clone()], entry: 0, flags: 0, exports: vec![] };
         self.run_module(&module)
     }
 
@@ -25,6 +25,65 @@ impl VirtualMachine {
             super::debug::render_fn_label(self.current_func, &self.fn_names),
             self.failing_pc, e,
         ))
+    }
+
+    pub fn call_export(
+        &mut self,
+        module: &Module,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, String> {
+        let export = module.exports.iter().find(|e| e.name == name)
+            .ok_or_else(|| format!("no export named '{}'", name))?;
+        let fn_id = export.fn_id as usize;
+        if fn_id >= module.functions.len() {
+            return Err(format!("export '{}' fn_id {} out of range", name, fn_id));
+        }
+        let param_count = module.functions[fn_id].param_count();
+        if args.len() != param_count {
+            return Err(format!(
+                "export '{}' expects {} arg(s), got {}",
+                name, param_count, args.len()
+            ));
+        }
+        let r = self.run_export_inner(module, fn_id, args);
+        r.map_err(|e| format!(
+            "[{}:{}] {}",
+            super::debug::render_fn_label(self.current_func, &self.fn_names),
+            self.failing_pc, e,
+        ))
+    }
+
+    fn run_export_inner(
+        &mut self,
+        module: &Module,
+        fn_id: usize,
+        args: &[Value],
+    ) -> Result<Value, String> {
+        validate_module_register_budget(module)?;
+        self.int32_safe = (module.flags & polka::CART_FLAG_INT32_SAFE) != 0;
+        self.frames.clear();
+        self.handlers.clear();
+        self.region_table.clear();
+        self.heap.clear();
+        self.string_const_handles.clear();
+        self.resolve_constants(module)?;
+        self.pc = 0;
+        self.base_reg = 0;
+        self.current_func = fn_id;
+        self.halted = false;
+        self.exit_code = None;
+        let needed = FRAME_REGS + STAGE_SLACK;
+        self.ensure_registers(needed);
+        for (i, v) in args.iter().enumerate() {
+            self.write_abs_raw(i, v.raw());
+            self.set_reg_mask_bit(i, false);
+        }
+        if self.debug_sink.is_some() {
+            self.run_loop::<true>(module)
+        } else {
+            self.run_loop::<false>(module)
+        }
     }
 
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {

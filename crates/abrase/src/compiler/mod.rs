@@ -406,10 +406,28 @@ impl Compiler {
 
         let mut flags = 0u16;
         if self.int32_mode { flags |= crate::bytecode::CART_FLAG_INT32_SAFE; }
+        let mut exports: Vec<crate::bytecode::Export> = Vec::new();
+        for decl in ast {
+            if let ast::Decl::Fn(fn_decl) = decl {
+                if fn_decl.is_pub {
+                    if let Some(&idx) = self.func_map.get(&fn_decl.name) {
+                        if let Ok(id) = u16::try_from(idx) {
+                            exports.push(crate::bytecode::Export { name: fn_decl.name.clone(), fn_id: id });
+                        }
+                    }
+                }
+            }
+        }
+        if let Ok(id) = u16::try_from(entry) {
+            if !exports.iter().any(|e| e.name == "main") {
+                exports.push(crate::bytecode::Export { name: "main".into(), fn_id: id });
+            }
+        }
         Ok(Module {
             functions: self.functions.clone(),
             entry,
             flags,
+            exports,
         })
     }
 

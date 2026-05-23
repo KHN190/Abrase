@@ -1,7 +1,7 @@
-use crate::{BytecodeChunk, Chunk, Module, NativeChunk, OpCode, Register};
+use crate::{BytecodeChunk, Chunk, Export, Module, NativeChunk, OpCode, Register};
 
 pub const MAGIC: u32 = 0xECFF_00EC;
-pub const VERSION: u16 = 0x0201;
+pub const VERSION: u16 = 0x0202;
 
 const KIND_BYTECODE: u8 = 0;
 const KIND_NATIVE: u8 = 1;
@@ -90,6 +90,38 @@ pub fn write_pk(module: &Module) -> Result<Vec<u8>, EncodeError> {
             Chunk::Native(n) => write_native_payload(&mut out, n),
         }
     }
+    write_exports(&mut out, &module.exports)?;
+    Ok(out)
+}
+
+fn write_exports(out: &mut Vec<u8>, exports: &[Export]) -> Result<(), EncodeError> {
+    let count = u32::try_from(exports.len())
+        .map_err(|_| EncodeError::CountOverflow { value: exports.len(), what: "export" })?;
+    out.extend_from_slice(&count.to_le_bytes());
+    for e in exports {
+        let name_len = u16::try_from(e.name.len())
+            .map_err(|_| EncodeError::NameTooLong { length: e.name.len() })?;
+        out.extend_from_slice(&name_len.to_le_bytes());
+        out.extend_from_slice(&e.fn_id.to_le_bytes());
+        out.extend_from_slice(e.name.as_bytes());
+    }
+    Ok(())
+}
+
+fn read_exports(r: &mut Reader) -> Result<Vec<Export>, LoadError> {
+    let count = r.read_u32()? as usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let name_len = r.read_u16()? as usize;
+        let fn_id = r.read_u16()?;
+        let utf8_offset = r.pos;
+        let bytes = r.take(name_len)?.to_vec();
+        let name = String::from_utf8(bytes).map_err(|_| LoadError::Corrupt {
+            offset: utf8_offset,
+            kind: Corruption::InvalidUtf8,
+        })?;
+        out.push(Export { name, fn_id });
+    }
     Ok(out)
 }
 
@@ -113,7 +145,8 @@ pub fn read_pk(data: &[u8]) -> Result<Module, LoadError> {
     for h in headers {
         functions.push(read_fn_payload(&mut r, h)?);
     }
-    Ok(Module { functions, entry, flags })
+    let exports = read_exports(&mut r)?;
+    Ok(Module { functions, entry, flags, exports })
 }
 
 fn write_bc_header(out: &mut Vec<u8>, bc: &BytecodeChunk) -> Result<(), EncodeError> {

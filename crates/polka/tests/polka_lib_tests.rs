@@ -133,7 +133,7 @@ fn chunk_as_bytecode_none_for_native() {
 
 #[test]
 fn module_construct() {
-    let m = Module { functions: vec![], entry: 0, flags: 0 };
+    let m = Module { functions: vec![], entry: 0, flags: 0, exports: vec![] };
     assert_eq!(m.entry, 0);
     assert!(m.functions.is_empty());
 }

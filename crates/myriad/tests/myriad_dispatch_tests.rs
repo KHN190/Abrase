@@ -61,6 +61,8 @@ fn test_call_reg_dispatches_to_bytecode() {
         functions: vec![Chunk::Bytecode(callee), Chunk::Bytecode(caller)],
         entry: 1,
         flags: 0,
+
+        exports: vec![],
     };
     assert_eq!(VirtualMachine::new().run_module(&module), Ok(Value::from_int(42)));
 }
@@ -88,6 +90,8 @@ fn test_call_reg_dispatches_to_native() {
         functions: vec![Chunk::Native(native), Chunk::Bytecode(caller)],
         entry: 1,
         flags: 0,
+
+        exports: vec![],
     };
     let mut vm = VirtualMachine::new();
     vm.register_native("test_double", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, args: &[Value]| {
@@ -123,6 +127,8 @@ fn test_handle_records_dispatch_table() {
         })],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let v = vm.run_module(&module).expect("dispatch must succeed");
     assert_eq!(v, Value::from_int(99));
@@ -149,6 +155,8 @@ fn test_dispatch_no_match_returns_sentinel() {
         })],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let v = vm.run_module(&module).expect("must run");
     assert_eq!(v, Value::from_int(polka::DISPATCH_NO_MATCH as i64));
@@ -176,6 +184,8 @@ fn test_pop_handler_clears_frame_and_cell() {
         })],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let _ = vm.run_module(&module).expect("must run");
     assert_eq!(vm.heap_live_count(), 1);
@@ -229,6 +239,8 @@ fn test_nested_handlers_innermost_wins() {
         })],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     let v = vm.run_module(&module).expect("must run");
     assert_eq!(v, Value::from_int(22));

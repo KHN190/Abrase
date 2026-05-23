@@ -59,6 +59,8 @@ fn run_bytecode(code: Vec<OpCode>, constants: Vec<u64>, reg_count: usize) -> Res
         })],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     };
     vm.run_module(&module)
 }

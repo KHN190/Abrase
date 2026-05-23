@@ -1,9 +1,9 @@
-use polka::{BytecodeChunk, Chunk, Module, NativeChunk, OpCode, Register};
+use polka::{BytecodeChunk, Chunk, Export, Module, NativeChunk, OpCode, Register};
 use polka::cartridge::{read_pk, write_pk, Corruption, EncodeError, LoadError};
 
 #[test]
 fn empty_module_roundtrip() {
-    let m = Module { functions: vec![], entry: 0, flags: 0 };
+    let m = Module { functions: vec![], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     assert_eq!(back.entry, 0);
@@ -23,7 +23,7 @@ fn single_bytecode_fn_roundtrip() {
         reg_count: 1,
         param_count: 0,
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     assert_eq!(back.functions.len(), 1);
@@ -50,6 +50,8 @@ fn native_then_bytecode_roundtrip() {
         functions: vec![Chunk::Native(n), Chunk::Bytecode(bc)],
         entry: 1,
         flags: 0,
+
+        exports: vec![],
     };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
@@ -73,7 +75,7 @@ fn const_mask_roundtrip() {
         reg_count: 1,
         param_count: 0,
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     if let Chunk::Bytecode(b2) = &back.functions[0] {
@@ -102,6 +104,8 @@ fn good_minimal_module() -> Module {
         })],
         entry: 0,
         flags: 0,
+
+        exports: vec![],
     }
 }
 
@@ -181,8 +185,8 @@ fn truncated_payload() {
 fn bad_opcode_in_code() {
     let m = good_minimal_module();
     let mut bytes = write_pk(&m).unwrap();
-    let code_start = bytes.len() - 4;
-    bytes[code_start] = 0x7E; // beyond 0x2d
+    let code_start = bytes.len() - 4 - 4;
+    bytes[code_start] = 0x7E;
     let err = read_pk(&bytes).unwrap_err();
     match err {
         LoadError::Corrupt { offset, kind: Corruption::UnknownOpcode(0x7E) } => {
@@ -199,7 +203,7 @@ fn ld_offset_over_255_rejected() {
         reg_count: 2,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     assert!(matches!(
         write_pk(&m),
         Err(EncodeError::OffsetTooLarge { value: 256, op: "ld" })
@@ -213,7 +217,7 @@ fn st_offset_over_255_rejected() {
         reg_count: 2,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     assert!(matches!(
         write_pk(&m),
         Err(EncodeError::OffsetTooLarge { value: 1000, op: "st" })
@@ -227,9 +231,10 @@ fn magic_is_little_endian_ecff00ec() {
 }
 
 #[test]
-fn version_is_0x0201() {
+fn version_is_current() {
     let bytes = write_pk(&good_minimal_module()).unwrap();
-    assert_eq!(&bytes[4..6], &[0x01, 0x02]);
+    let v = u16::from_le_bytes([bytes[4], bytes[5]]);
+    assert_eq!(v, polka::cartridge::VERSION);
 }
 
 #[test]
@@ -254,6 +259,8 @@ fn entry_fn_id_nonzero_roundtrip() {
         functions: vec![Chunk::Native(n), Chunk::Bytecode(bc)],
         entry: 1,
         flags: 0,
+
+        exports: vec![],
     };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
@@ -336,7 +343,7 @@ fn all_46_opcodes_roundtrip() {
         reg_count: 64,
         param_count: 0,
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     let bc2 = back.functions[0].as_bytecode().unwrap();
@@ -353,7 +360,7 @@ fn negative_jump_immediate_signed() {
         reg_count: 1,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     let bc2 = back.functions[0].as_bytecode().unwrap();
@@ -373,7 +380,7 @@ fn addimm_signed_imm8() {
         reg_count: 2,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     let bc2 = back.functions[0].as_bytecode().unwrap();
@@ -390,7 +397,7 @@ fn empty_string_in_pool() {
         reg_count: 1,
         ..BytecodeChunk::default()
     };
-    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0 };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     let bc2 = back.functions[0].as_bytecode().unwrap();
@@ -413,7 +420,7 @@ fn many_functions() {
             ..BytecodeChunk::default()
         }));
     }
-    let m = Module { functions: fns, entry: 31, flags: 0 };
+    let m = Module { functions: fns, entry: 31, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     assert_eq!(back.functions.len(), 32);
@@ -446,4 +453,37 @@ fn encode_error_display_names_the_culprit() {
 
     let s = format!("{}", EncodeError::CountOverflow { value: 70000, what: "constant" });
     assert!(s.contains("constant"), "display should name the count kind: {}", s);
+}
+
+#[test]
+fn exports_roundtrip() {
+    let bc = BytecodeChunk {
+        code: vec![OpCode::Ret(Register(0))],
+        reg_count: 1,
+        ..BytecodeChunk::default()
+    };
+    let m = Module {
+        functions: vec![Chunk::Bytecode(bc.clone()), Chunk::Bytecode(bc)],
+        entry: 0,
+        flags: 0,
+        exports: vec![
+            Export { name: "main".into(), fn_id: 0 },
+            Export { name: "helper".into(), fn_id: 1 },
+        ],
+    };
+    let bytes = write_pk(&m).unwrap();
+    let back = read_pk(&bytes).unwrap();
+    assert_eq!(back.exports.len(), 2);
+    assert_eq!(back.exports[0].name, "main");
+    assert_eq!(back.exports[0].fn_id, 0);
+    assert_eq!(back.exports[1].name, "helper");
+    assert_eq!(back.exports[1].fn_id, 1);
+}
+
+#[test]
+fn empty_exports_roundtrip() {
+    let m = good_minimal_module();
+    let bytes = write_pk(&m).unwrap();
+    let back = read_pk(&bytes).unwrap();
+    assert!(back.exports.is_empty());
 }
