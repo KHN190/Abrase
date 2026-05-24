@@ -5,9 +5,8 @@ pub mod cartridge;
 
 pub use value::{Value, HANDLE_NONE, HANDLE_SLOT_MAX};
 
-// 64 fits frame handle-mask in one u64.
-pub const FRAME_REGS: usize = 64;
-pub const FRAME_MASK_WORDS: usize = FRAME_REGS / 64;
+pub const FRAME_REGS: usize = 128;
+pub const FRAME_MASK_WORDS: usize = (FRAME_REGS + 63) / 64;
 
 pub const DISPATCH_ID: u8 = 0xE0;
 pub const DISPATCH_PORT_LOOKUP: u8 = 0x00;

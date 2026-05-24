@@ -11,8 +11,8 @@ use polka::{
 
 #[test]
 fn frame_constants() {
-    assert_eq!(FRAME_REGS, 64);
-    assert_eq!(FRAME_MASK_WORDS, 1);
+    assert_eq!(FRAME_REGS, 128);
+    assert_eq!(FRAME_MASK_WORDS, 2);
 }
 
 #[test]

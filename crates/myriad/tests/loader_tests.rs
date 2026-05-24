@@ -22,14 +22,15 @@ fn load_accepts_well_formed_module() {
 
 #[test]
 fn load_rejects_reg_count_over_frame_budget() {
+    let over = polka::FRAME_REGS + 1;
     let m = Module {
-        functions: vec![bc(128, 0)],
+        functions: vec![bc(over, 0)],
         entry: 0,
         flags: 0,
         exports: vec![],
     };
     let err = match load(m) { Ok(_) => panic!("expected error"), Err(e) => e };
-    assert!(err.contains("reg_count 128"), "got: {}", err);
+    assert!(err.contains(&format!("reg_count {}", over)), "got: {}", err);
     assert!(err.contains("frame budget"));
 }
 
