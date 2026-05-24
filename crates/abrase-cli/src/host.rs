@@ -42,7 +42,7 @@ impl Runtime {
         }
         let mut compiler = Compiler::new().with_source(source.into());
         let module = compiler.compile_module(&ast).map_err(|errs| {
-            errs.iter().map(|e| format!("{:?}", e)).collect::<Vec<_>>().join("\n")
+            errs.iter().map(|e| e.pretty_print(source)).collect::<Vec<_>>().join("\n")
         })?;
         self.vm.run_module(&module)
     }

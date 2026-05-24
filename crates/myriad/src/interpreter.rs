@@ -692,8 +692,9 @@ impl VirtualMachine {
             _ => {
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
-                let v = dev.read(port)?;
-                self.write(d, v.raw(), false)
+                let (v, is_handle) = dev.read(port)?;
+                if is_handle { self.rc_inc_handle(v.raw())?; }
+                self.write(d, v.raw(), is_handle)
             }
         }
     }
@@ -783,9 +784,10 @@ impl VirtualMachine {
             }
             (polka::REGION_ID, _) => Err(format!("region: unknown port {:#x}", port)),
             _ => {
+                if is_handle { self.rc_inc_handle(raw)?; }
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("deo: device {:#04x} not installed", device_id))?;
-                dev.write(port, Value::from_raw(raw))
+                dev.write(port, Value::from_raw(raw), is_handle, &mut self.heap)
             }
         }
     }

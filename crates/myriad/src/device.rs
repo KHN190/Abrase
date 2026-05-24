@@ -1,15 +1,28 @@
 use polka::Value;
+use crate::memory::Heap;
 
 pub trait Device {
-    fn read(&mut self, port: u8) -> Result<Value, String>;
-    fn write(&mut self, port: u8, val: Value) -> Result<(), String>;
+    /// Read a port. Returns (value, is_handle). For non-handle ports the tag
+    /// is `false`. For state-style ports that store cell handles, the device
+    /// returns the stored handle bits with `is_handle = true`; the runtime
+    /// gives the cart a fresh observer (rc_inc) on return.
+    fn read(&mut self, port: u8) -> Result<(Value, bool), String>;
+
+    /// Write a port. `is_handle` reflects the source register's tag. For
+    /// handle writes the runtime has already rc_inc'd the value, so the
+    /// device receives a fresh observer to either store (consuming the rc)
+    /// or discard (releasing rc via `heap.rc_dec`). State devices that
+    /// overwrite a previously-stored handle must rc_dec the old one through
+    /// `heap`.
+    fn write(&mut self, port: u8, val: Value, is_handle: bool, heap: &mut Heap)
+        -> Result<(), String>;
 
     // Bulk byte write — host-side optimization path for stream-oriented devices
     // (console, file, network). Default forwards to per-byte `write`; override
     // to issue a single syscall. Not exposed via DEI/DEO.
-    fn write_bytes(&mut self, port: u8, bytes: &[u8]) -> Result<(), String> {
+    fn write_bytes(&mut self, port: u8, bytes: &[u8], heap: &mut Heap) -> Result<(), String> {
         for &b in bytes {
-            self.write(port, Value::from_int(b as i64))?;
+            self.write(port, Value::from_int(b as i64), false, heap)?;
         }
         Ok(())
     }

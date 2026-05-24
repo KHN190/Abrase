@@ -1,4 +1,5 @@
 use crate::{Device, Value};
+use crate::memory::Heap;
 
 pub const SYSTEM_ID: u8 = 0x00;
 pub const PORT_VERSION_MAJOR: u8 = 0x00;
@@ -23,17 +24,21 @@ impl SystemDevice {
 }
 
 impl Device for SystemDevice {
-    fn read(&mut self, port: u8) -> Result<Value, String> {
-        match port {
-            PORT_VERSION_MAJOR => Ok(Value::from_int(SPEC_MAJOR)),
-            PORT_VERSION_MINOR => Ok(Value::from_int(SPEC_MINOR)),
-            PORT_VERSION_PATCH => Ok(Value::from_int(SPEC_PATCH)),
-            PORT_FLAGS => Ok(Value::from_int(self.flags)),
-            _ => Ok(Value::from_int(0)),
-        }
+    fn read(&mut self, port: u8) -> Result<(Value, bool), String> {
+        let v = match port {
+            PORT_VERSION_MAJOR => Value::from_int(SPEC_MAJOR),
+            PORT_VERSION_MINOR => Value::from_int(SPEC_MINOR),
+            PORT_VERSION_PATCH => Value::from_int(SPEC_PATCH),
+            PORT_FLAGS => Value::from_int(self.flags),
+            _ => Value::from_int(0),
+        };
+        Ok((v, false))
     }
 
-    fn write(&mut self, _port: u8, _val: Value) -> Result<(), String> {
+    fn write(&mut self, _port: u8, val: Value, is_handle: bool, heap: &mut Heap)
+        -> Result<(), String>
+    {
+        if is_handle { heap.rc_dec_handle(val.raw())?; }
         Ok(())
     }
 }

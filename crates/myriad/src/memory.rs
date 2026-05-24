@@ -1,5 +1,15 @@
 use polka::{HANDLE_NONE, HANDLE_SLOT_MAX};
 
+#[inline(always)]
+pub fn handle_parts(raw: u64) -> (u32, u32) {
+    (((raw >> 24) & 0x00FF_FFFF) as u32, (raw & 0x00FF_FFFF) as u32)
+}
+
+#[inline(always)]
+pub fn make_handle(slot: u32, generation: u32) -> u64 {
+    ((slot as u64) << 24) | (generation as u64 & 0x00FF_FFFF)
+}
+
 pub const HEAP_BYTES_PER_SLOT: usize = 8 + 1; // data u64 + amortized mask bit
 
 pub struct Cell {
@@ -175,6 +185,19 @@ impl Heap {
         idx < self.cells.len()
             && self.cells[idx].is_some()
             && self.generation[idx] == generation
+    }
+
+    pub fn rc_inc_handle(&mut self, raw: u64) -> Result<(), String> {
+        if raw == HANDLE_NONE { return Ok(()); }
+        let (s, g) = handle_parts(raw);
+        self.rc_inc(s, g)
+    }
+
+    pub fn rc_dec_handle(&mut self, raw: u64) -> Result<(), String> {
+        if raw == HANDLE_NONE { return Ok(()); }
+        let (s, g) = handle_parts(raw);
+        self.rc_dec(s, g)?;
+        Ok(())
     }
 
     pub fn rc_inc(&mut self, slot: u32, generation: u32) -> Result<(), String> {
