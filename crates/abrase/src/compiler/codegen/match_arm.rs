@@ -21,18 +21,22 @@ impl Compiler {
 
         let scrutinee_reg = self.compile_expr(scrutinee)?;
         let result_reg = self.alloc_register()?;
+        let arm_mark = self.snapshot_register_high_water();
         let mut exit_jumps = Vec::new();
 
         for arm in arms {
-            match &arm.pattern.node {
+            let pre_vars: std::collections::HashSet<String> =
+                self.var_to_reg.keys().cloned().collect();
+            let terminal = match &arm.pattern.node {
                 ast::Pattern::Wildcard => {
                     let body_reg = self.compile_expr(&arm.body)?;
                     self.emit(OpCode::Copy(result_reg, body_reg));
-                    break;
+                    true
                 }
                 ast::Pattern::Literal(lit) => {
                     self.compile_literal_arm(
                         lit, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps)?;
+                    false
                 }
                 ast::Pattern::Bind(name) => {
                     if self.layouts.variants.contains_key(name) {
@@ -43,25 +47,36 @@ impl Compiler {
                             ))?;
                         self.compile_variant_tag_arm(
                             info.tag, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps)?;
+                        false
                     } else {
-                        // Plain bind: catch-all. Subsequent arms unreachable.
                         self.var_to_reg.insert(name.clone(), scrutinee_reg);
                         let body_reg = self.compile_expr(&arm.body)?;
                         self.emit(OpCode::Copy(result_reg, body_reg));
-                        break;
+                        true
                     }
                 }
                 ast::Pattern::Variant { ty: vty, args } => {
                     self.compile_variant_pattern_arm(
                         vty, args, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps)?;
+                    false
                 }
                 ast::Pattern::Record { ty: rty, fields, .. } => {
                     self.compile_record_pattern_arm(
                         rty, fields, &arm.body, scrutinee_reg, result_reg)?;
-                    break;
+                    true
                 }
                 _ => return Err("Unsupported pattern in match".to_string()),
+            };
+            let new_vars: Vec<String> = self.var_to_reg.keys()
+                .filter(|k| !pre_vars.contains(*k))
+                .cloned()
+                .collect();
+            for n in new_vars {
+                self.var_to_reg.remove(&n);
+                self.var_types.remove(&n);
             }
+            self.reclaim_temp_regs_above(arm_mark);
+            if terminal { break; }
         }
 
         let end_addr = self.code.len();

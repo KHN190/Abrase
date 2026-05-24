@@ -85,11 +85,15 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{:?} at line {}, col {}: {}",
-            self.code, self.span.line, self.span.col, self.message
-        )?;
+        if self.span.line > 0 {
+            write!(
+                f,
+                "{} at line {}, col {}: {}",
+                self.code, self.span.line, self.span.col, self.message
+            )?;
+        } else {
+            write!(f, "{}: {}", self.code, self.message)?;
+        }
         if !self.context.is_empty() {
             write!(f, "\n  Context:")?;
             for ctx in &self.context {

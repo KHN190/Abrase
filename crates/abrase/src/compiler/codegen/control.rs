@@ -17,6 +17,7 @@ impl Compiler {
         self.emit(OpCode::Jz(cond_reg, 0));
 
         let result_reg = self.alloc_register()?;
+        let arm_mark = self.snapshot_register_high_water();
 
         let cons_reg = self.compile_expr(consequence)?;
         if !is_leaf_for_peephole(&consequence.node)
@@ -24,6 +25,7 @@ impl Compiler {
         {
             self.emit(OpCode::Copy(result_reg, cons_reg));
         }
+        self.reclaim_temp_regs_above(arm_mark);
 
         let jmp_idx = self.code.len();
         self.emit(OpCode::Jmp(0));
@@ -42,6 +44,7 @@ impl Compiler {
         if !alt_leaf || !self.try_redirect_last_dest(alt_reg, result_reg) {
             self.emit(OpCode::Copy(result_reg, alt_reg));
         }
+        self.reclaim_temp_regs_above(arm_mark);
 
         let end_addr = self.code.len();
         self.patch_jmp_at(jmp_idx, end_addr)?;

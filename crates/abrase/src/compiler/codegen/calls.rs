@@ -386,6 +386,7 @@ impl Compiler {
         env: CallEnv,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
+        let mark = self.snapshot_register_high_water();
         let env_to_pass = match env {
             CallEnv::None => None,
             CallEnv::Reg(r) => Some(r),
@@ -404,6 +405,7 @@ impl Compiler {
             staged.push((r, self.arg_should_move(arg)));
         }
         self.stage_call_args(&staged)?;
+        self.reclaim_temp_regs_above(mark);
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id));
         Ok(dest)
@@ -449,6 +451,7 @@ impl Compiler {
         receiver: &ast::Spanned<ast::Expr>,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
+        let mark = self.snapshot_register_high_water();
         let r = self.compile_expr(receiver)?;
         let mut staged = vec![(r, self.arg_should_move(receiver))];
         for arg in args {
@@ -456,6 +459,7 @@ impl Compiler {
             staged.push((r, self.arg_should_move(arg)));
         }
         self.stage_call_args(&staged)?;
+        self.reclaim_temp_regs_above(mark);
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id));
         Ok(dest)
