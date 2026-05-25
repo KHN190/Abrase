@@ -4,7 +4,7 @@ pub use crate::ast::StringPart;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     // Keywords
-    Fn, Let, Const, If, Else, Match, For, While, Loop, Break, Continue,
+    Fn, Let, Const, Static, If, Else, Match, For, While, Loop, Break, Continue,
     Return, Type, Trait, Impl, Import, Mod, Pub, Region, Handle, Resume,
     Throw, True, False, Where, In, As, SelfKW, SelfUpper, Mut, Move, Thread,
     Effect, Underscore,
@@ -39,6 +39,7 @@ impl Token {
             Token::Fn => "fn".into(),
             Token::Let => "let".into(),
             Token::Const => "const".into(),
+            Token::Static => "static".into(),
             Token::If => "if".into(),
             Token::Else => "else".into(),
             Token::Match => "match".into(),
@@ -185,6 +186,7 @@ impl<'a> Lexer<'a> {
             "fn" => Token::Fn,
             "let" => Token::Let,
             "const" => Token::Const,
+            "static" => Token::Static,
             "if" => Token::If,
             "else" => Token::Else,
             "match" => Token::Match,

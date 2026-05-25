@@ -101,6 +101,8 @@ impl Compiler {
         };
         checker.insert_var("device_out".into(), device_out_ty, false, ast::Span { line: 0, col: 0 });
 
+        self.register_builtin_effects(checker);
+
         for decl in self.host_fns.values() {
             let fn_ty = TyType::Function {
                 params: decl.params.clone(),
@@ -121,7 +123,6 @@ impl Compiler {
             checker.insert_var(name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
         }
         self.register_builtin_traits(checker);
-        self.register_builtin_effects(checker);
     }
 
     fn register_builtin_traits(&self, checker: &mut crate::typeck::Checker) {
@@ -196,6 +197,9 @@ impl Compiler {
         for name in &["rand", "srand"] {
             checker.register_function_effects(name.to_string(), nondet.clone());
         }
+        // Graphics: a built-in user effect for screen/draw natives, kept
+        // separate from <IO> so a cart can declare "draws but no file/net".
+        checker.register_effect("Graphics".into(), vec![]);
     }
 
     pub(super) fn seed_builtin_method_dispatch(

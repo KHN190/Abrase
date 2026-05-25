@@ -58,6 +58,8 @@ pub struct VirtualMachine {
     pub(crate) failing_pc: usize,
     pub(crate) last_result_is_handle: bool,
     pub(crate) int32_safe: bool,
+    pub(crate) module_table_raw: u64,
+    pub(crate) module_table_is_handle: bool,
 }
 
 pub struct HandlerFrame {
@@ -119,6 +121,8 @@ impl VirtualMachine {
             failing_pc: 0,
             last_result_is_handle: false,
             int32_safe: false,
+            module_table_raw: polka::HANDLE_NONE,
+            module_table_is_handle: false,
         }
     }
 

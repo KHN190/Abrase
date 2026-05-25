@@ -157,6 +157,34 @@ impl Checker {
                 }
             },
 
+            ast::Decl::Static { name, ty, is_pub, is_mut, .. } => {
+                let static_type = self.convert_type(ty);
+                if matches!(static_type, Type::Shared { .. }) {
+                    self.report_error(
+                        format!("`static {}` cannot hold `Shared<T>`; Shared must be constructed inside a region", name),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                }
+                if matches!(static_type, Type::Reference { .. }) {
+                    self.report_error(
+                        format!("`static {}` cannot hold `&T`; references are region-scoped", name),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                }
+                let module_path = self.current_module.clone();
+                if self.lookup_module_item(&module_path, name).is_some() {
+                    self.report_error(
+                        format!("`{}` is already declared in this module", name),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                }
+                self.register_module_item(&module_path, name.clone(), static_type.clone());
+                self.insert_static_var(name.clone(), static_type, *is_mut);
+                if *is_pub {
+                    self.mark_public(name.clone());
+                }
+            },
+
             ast::Decl::Effect { name, is_pub, ops } => {
                 // Register effect name and per-op Function types for call-site resolution.
                 let module_path = self.current_module.clone();
@@ -227,6 +255,18 @@ impl Checker {
                     self.report_error(
                         format!("Const expression type mismatch: expected {}, got {}",
                             format!("{:?}", const_type), format!("{:?}", inferred)),
+                        value.span,
+                    );
+                }
+            },
+
+            ast::Decl::Static { name, value, ty, .. } => {
+                let static_type = self.convert_type(ty);
+                let inferred = self.infer_expr(value);
+                if !self.types_compatible(&static_type, &inferred) {
+                    self.report_error(
+                        format!("`static {}` expression type mismatch: expected {:?}, got {:?}",
+                            name, static_type, inferred),
                         value.span,
                     );
                 }

@@ -94,6 +94,14 @@ impl Compiler {
             ast::BinaryOp::Assign => {
                 match &left.node {
                     ast::Expr::Identifier(name) => {
+                        if let Some(&offset) = self.static_offsets.get(name) {
+                            let rr = self.compile_expr(right)?;
+                            let table = self.load_module_table()?;
+                            let tmp = self.alloc_register()?;
+                            self.emit(OpCode::Copy(tmp, rr));
+                            self.emit(OpCode::St(tmp, table, offset));
+                            return Ok(rr);
+                        }
                         let rr = self.compile_expr(right)?;
                         let ty = self.var_types.get(name).cloned();
                         let is_heap = ty.as_ref().map(is_move_type).unwrap_or(false);

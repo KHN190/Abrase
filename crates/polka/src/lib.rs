@@ -21,6 +21,9 @@ pub const REGION_PORT_PUSH: u8 = 0x00;
 pub const REGION_PORT_POP: u8 = 0x01;
 pub const REGION_PORT_FORGET: u8 = 0x02;
 
+pub const MODULE_ID: u8 = 0xE2;
+pub const MODULE_PORT_TABLE: u8 = 0x00;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Register(pub u8);
 

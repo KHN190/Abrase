@@ -67,6 +67,14 @@ fn test_const_decl() {
 }
 
 #[test]
+fn test_static_mut() {
+    // bump/bump → COUNT=2 (persists across calls), then +STEP twice → 16.
+    let v = run_file("tests/scripts/static_mut.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(16));
+}
+
+#[test]
 fn test_field_assign() {
     let v = run_file("tests/scripts/field_assign.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));

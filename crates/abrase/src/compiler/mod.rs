@@ -99,6 +99,9 @@ pub struct Compiler {
     pub(super) int32_mode: bool,
     pub(super) no_built_in: bool,
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
+    pub(super) static_offsets: HashMap<String, u16>,
+    pub(super) static_types: HashMap<String, ast::Type>,
+    pub(super) static_mut_set: std::collections::HashSet<String>,
 }
 
 impl Compiler {
@@ -163,6 +166,9 @@ impl Compiler {
             int32_mode: false,
             no_built_in: false,
             const_values: HashMap::new(),
+            static_offsets: HashMap::new(),
+            static_types: HashMap::new(),
+            static_mut_set: std::collections::HashSet::new(),
         }
     }
 
@@ -386,6 +392,12 @@ impl Compiler {
                         )),
                     }
                 }
+                ast::Decl::Static { name, ty, is_mut, .. } => {
+                    let offset = self.static_offsets.len() as u16;
+                    self.static_offsets.insert(name.clone(), offset);
+                    self.static_types.insert(name.clone(), ty.clone());
+                    if *is_mut { self.static_mut_set.insert(name.clone()); }
+                }
                 _ => {}
             }
         }
@@ -416,6 +428,28 @@ impl Compiler {
             let chunk = self.compile_fn(&fn_decl)?;
             self.functions[idx] = chunk;
         }
+
+        let module_init_id = if self.static_offsets.is_empty() {
+            None
+        } else {
+            let mut ordered: Vec<(String, u16)> = self.static_offsets.iter()
+                .map(|(n, o)| (n.clone(), *o)).collect();
+            ordered.sort_by_key(|(_, o)| *o);
+            let static_values: Vec<ast::Spanned<ast::Expr>> = ast.iter().filter_map(|d| {
+                if let ast::Decl::Static { name, value, .. } = d {
+                    if self.static_offsets.contains_key(name) {
+                        Some(value.clone())
+                    } else { None }
+                } else { None }
+            }).collect();
+            let table_size = ordered.len() as u16;
+            let init_id = self.functions.len();
+            self.func_map.insert("__module_init".into(), init_id);
+            self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
+            let chunk = self.compile_module_init(table_size, &ordered, &static_values)?;
+            self.functions[init_id] = chunk;
+            Some(init_id as u16)
+        };
 
         if let Some(sink) = &mut self.debug_sink {
             sink("[FUNC_MAP]");
@@ -456,6 +490,11 @@ impl Compiler {
             if !exports.iter().any(|e| e.name == "main") {
                 exports.push(crate::bytecode::Export { name: "main".into(), fn_id: id });
             }
+        }
+        // Export the static initializer so the runtime can run it once before
+        // the entry/exports. (Synthetic name; not a user-callable fn.)
+        if let Some(id) = module_init_id {
+            exports.push(crate::bytecode::Export { name: "__module_init".into(), fn_id: id });
         }
         Ok(Module {
             functions: self.functions.clone(),
@@ -615,6 +654,102 @@ impl Compiler {
         self.current_closure_layout = saved_closure_layout;
         self.cell_bindings = saved_cell_bindings;
 
+        Ok(chunk)
+    }
+
+    // Synthesize `__module_init`: allocate the module table, evaluate each
+    // static's initializer in offset order and store it into the table, then
+    // publish the table handle via the MODULE device. `static_values` is in
+    // offset order (offset == AST order of statics).
+    fn compile_module_init(
+        &mut self,
+        table_size: u16,
+        _ordered: &[(String, u16)],
+        static_values: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Chunk, Vec<Error>> {
+        let saved_code = std::mem::take(&mut self.code);
+        let saved_constants = std::mem::take(&mut self.constants);
+        let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
+        let saved_string_constants = std::mem::take(&mut self.string_constants);
+        let saved_next_reg = self.next_reg;
+        let saved_max_reg = self.max_reg;
+        let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
+        let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
+        let saved_var_types = std::mem::take(&mut self.var_types);
+        let saved_fn_name = std::mem::take(&mut self.current_fn_name);
+        self.next_reg = 0;
+        self.max_reg = 0;
+        self.current_fn_name = "__module_init".into();
+
+        macro_rules! bail {
+            ($span:expr, $msg:expr) => {{
+                self.errors.push(Error::new(ErrorCode::CodegenError, $span, $msg));
+                return Err(self.errors.clone());
+            }};
+        }
+
+        let table = match self.alloc_register() {
+            Ok(r) => r,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        self.emit(OpCode::Alloc(table, table_size));
+        for (i, value) in static_values.iter().enumerate() {
+            let off = i as u16;
+            let mark = self.snapshot_register_high_water();
+            let v = match self.compile_expr(value) {
+                Ok(r) => r,
+                Err(m) => bail!(value.span, m),
+            };
+            self.emit(OpCode::St(v, table, off));
+            self.restore_register_high_water(mark);
+        }
+        // Publish: Deo(table -> MODULE_ID:MODULE_PORT_TABLE).
+        let port_reg = match self.alloc_register() {
+            Ok(r) => r,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        let port_val = ((crate::bytecode::MODULE_ID as i64) << 8)
+            | (crate::bytecode::MODULE_PORT_TABLE as i64);
+        let port_idx = match self.add_constant(Value::from_int(port_val)) {
+            Ok(i) => i,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        self.emit(OpCode::PushConst(port_reg, port_idx));
+        self.emit(OpCode::Deo(table, port_reg));
+        // Return Unit (a non-handle scalar; the result is discarded).
+        let unit = match self.alloc_register() {
+            Ok(r) => r,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        let unit_idx = match self.add_constant(Value::from_int(0)) {
+            Ok(i) => i,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        self.emit(OpCode::PushConst(unit, unit_idx));
+        self.emit(OpCode::Ret(unit));
+
+        let reg_count = self.max_reg as usize;
+        let taken_constants = std::mem::take(&mut self.constants);
+        let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);
+        let chunk = Chunk::Bytecode(BytecodeChunk {
+            code: std::mem::take(&mut self.code),
+            constants: taken_constants.iter().map(|v| v.raw()).collect(),
+            const_mask: pack_mask_bits(&taken_mask_bits),
+            string_constants: std::mem::take(&mut self.string_constants),
+            reg_count,
+            param_count: 0,
+        });
+
+        self.code = saved_code;
+        self.constants = saved_constants;
+        self.const_mask_bits = saved_const_mask_bits;
+        self.string_constants = saved_string_constants;
+        self.next_reg = saved_next_reg;
+        self.max_reg = saved_max_reg;
+        self.reg_holds_handle = saved_reg_holds_handle;
+        self.var_to_reg = saved_var_to_reg;
+        self.var_types = saved_var_types;
+        self.current_fn_name = saved_fn_name;
         Ok(chunk)
     }
 

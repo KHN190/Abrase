@@ -13,7 +13,7 @@ impl<'a> Parser<'a> {
                 Ok(decl) => {
                     decls.push(decl);
                     if self.current_token != Token::Eof &&
-                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Import | Token::Effect | Token::Mod | Token::Pub) {
+                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Static | Token::Import | Token::Effect | Token::Mod | Token::Pub) {
                         self.report_error(top_level_token_error(&self.current_token), self.current_span);
                         self.synchronize();
                     }
@@ -53,6 +53,7 @@ impl<'a> Parser<'a> {
             Token::Trait => self.parse_trait_decl(is_pub),
             Token::Impl => self.parse_impl_decl(),
             Token::Const => self.parse_const_decl(is_pub),
+            Token::Static => self.parse_static_decl(is_pub),
             Token::Import => self.parse_import_decl(),
             Token::Effect => {
                 self.next_token();
@@ -463,6 +464,39 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Decl::Const { is_pub, is_fn, name, generics, params, ty, value })
+    }
+
+    fn parse_static_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        self.next_token();
+        let is_mut = self.current_token == Token::Mut;
+        if is_mut {
+            self.next_token();
+        }
+        let name = if let Token::Ident(n) = &self.current_token {
+            n.clone()
+        } else {
+            return Err("Expected static name".into());
+        };
+        if !self.expect_peek(Token::Colon) {
+            return Err("Expected ':' in static".into());
+        }
+        self.next_token();
+        let ty = self.parse_type()?;
+        if !self.expect_peek(Token::Assign) {
+            return Err("Expected '=' in static".into());
+        }
+        self.next_token();
+        let value = self.parse_expr(Precedence::Lowest);
+        let was_block = is_block_terminated(&value.node);
+        if !was_block {
+            if self.peek_token == Token::Semicolon {
+                self.next_token();
+            }
+            self.next_token();
+        } else if self.current_token == Token::Semicolon {
+            self.next_token();
+        }
+        Ok(Decl::Static { is_pub, is_mut, name, ty, value })
     }
 
     fn parse_type_alias_decl(&mut self, is_pub: bool) -> Result<Decl, String> {

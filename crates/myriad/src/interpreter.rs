@@ -69,6 +69,11 @@ impl VirtualMachine {
             self.heap.clear();
             self.string_const_handles.clear();
             self.resolve_constants(module)?;
+            // First entry into this module: build statics once. They persist
+            // across later call_export invocations (heap is not cleared below).
+            self.module_table_raw = HANDLE_NONE;
+            self.module_table_is_handle = false;
+            self.run_module_init(module)?;
         } else {
             self.frames.clear();
             self.handlers.clear();
@@ -104,6 +109,8 @@ impl VirtualMachine {
         self.exit_code = None;
         self.pc = 0;
         self.base_reg = 0;
+        self.module_table_raw = HANDLE_NONE;
+        self.module_table_is_handle = false;
     }
 
     fn run_module_inner(&mut self, module: &Module) -> Result<Value, String> {
@@ -115,6 +122,9 @@ impl VirtualMachine {
         self.heap.clear();
         self.string_const_handles.clear();
         self.resolve_constants(module)?;
+        self.module_table_raw = HANDLE_NONE;
+        self.module_table_is_handle = false;
+        self.run_module_init(module)?;
         self.pc = 0;
         self.base_reg = 0;
         self.current_func = module.entry;
@@ -128,6 +138,29 @@ impl VirtualMachine {
         } else {
             self.run_loop::<false>(module)
         }
+    }
+
+    // Run the synthetic `__module_init` (if the module has statics) exactly
+    // once, before the entry/export. It builds the module table and stores it
+    // via the MODULE device; its result is discarded.
+    fn run_module_init(&mut self, module: &Module) -> Result<(), String> {
+        let Some(fn_id) = module.exports.iter()
+            .find(|e| e.name == "__module_init")
+            .map(|e| e.fn_id as usize)
+        else { return Ok(()); };
+        self.pc = 0;
+        self.base_reg = 0;
+        self.current_func = fn_id;
+        self.halted = false;
+        self.exit_code = None;
+        let needed = FRAME_REGS + STAGE_SLACK;
+        self.ensure_registers(needed);
+        if self.debug_sink.is_some() {
+            self.run_loop::<true>(module)?;
+        } else {
+            self.run_loop::<false>(module)?;
+        }
+        Ok(())
     }
 
     fn run_loop<const TRACE: bool>(&mut self, module: &Module) -> Result<Value, String> {
@@ -689,6 +722,13 @@ impl VirtualMachine {
                 if is_handle { self.rc_inc_handle(raw)?; }
                 self.write(d, raw, is_handle)
             }
+            (polka::MODULE_ID, polka::MODULE_PORT_TABLE) => {
+                let (raw, is_handle) = (self.module_table_raw, self.module_table_is_handle);
+                // Hand the cart a fresh observer; the stored rc keeps the table
+                // alive across calls (same contract as a stateful device).
+                if is_handle && raw != HANDLE_NONE { self.rc_inc_handle(raw)?; }
+                self.write(d, raw, is_handle)
+            }
             _ => {
                 let dev = self.devices.get_mut(device_id)
                     .ok_or_else(|| format!("dei: device {:#04x} not installed", device_id))?;
@@ -783,6 +823,17 @@ impl VirtualMachine {
                 Ok(())
             }
             (polka::REGION_ID, _) => Err(format!("region: unknown port {:#x}", port)),
+            (polka::MODULE_ID, polka::MODULE_PORT_TABLE) => {
+                // Module storage takes ownership of one rc; release the prior
+                // table if being replaced.
+                if self.module_table_is_handle && self.module_table_raw != HANDLE_NONE {
+                    self.rc_dec_handle(self.module_table_raw)?;
+                }
+                if is_handle && raw != HANDLE_NONE { self.rc_inc_handle(raw)?; }
+                self.module_table_raw = raw;
+                self.module_table_is_handle = is_handle;
+                Ok(())
+            }
             _ => {
                 if is_handle { self.rc_inc_handle(raw)?; }
                 let dev = self.devices.get_mut(device_id)

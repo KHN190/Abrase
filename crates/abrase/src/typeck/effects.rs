@@ -216,6 +216,11 @@ impl Checker {
         self.const_vars.insert(name.clone());
         self.const_registry.insert(name, ty);
     }
+
+    pub fn insert_static_var(&mut self, name: String, ty: Type, is_mut: bool) {
+        self.static_vars.insert(name.clone(), is_mut);
+        self.const_registry.insert(name, ty);
+    }
     fn has_pure_effects(effects: &[ast::EffectItem]) -> bool {
         effects.is_empty()
     }

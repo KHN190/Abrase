@@ -25,6 +25,17 @@ impl Compiler {
 }
 
 impl Compiler {
+    pub(in crate::compiler) fn load_module_table(&mut self) -> Result<Register, String> {
+        let port_reg = self.alloc_register()?;
+        let port_val = ((crate::bytecode::MODULE_ID as i64) << 8)
+            | (crate::bytecode::MODULE_PORT_TABLE as i64);
+        let idx = self.add_constant(Value::from_int(port_val))?;
+        self.emit(OpCode::PushConst(port_reg, idx));
+        let table = self.alloc_register()?;
+        self.emit(OpCode::Dei(table, port_reg));
+        Ok(table)
+    }
+
     pub(in crate::compiler) fn compile_const_value(
         &mut self,
         cv: &super::inference::ConstValue,
@@ -167,6 +178,12 @@ impl Compiler {
         }
         if let Some(cv) = self.const_values.get(name).cloned() {
             return self.compile_const_value(&cv);
+        }
+        if let Some(&offset) = self.static_offsets.get(name) {
+            let table = self.load_module_table()?;
+            let dest = self.alloc_register()?;
+            self.emit(OpCode::Ld(dest, table, offset));
+            return Ok(dest);
         }
         if let Some(info) = self.layouts.variants.get(name).cloned() {
             let dest = self.alloc_register()?;

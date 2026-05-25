@@ -1,0 +1,14 @@
+// Module-level mutable state: a `static mut` persists across separate calls,
+// an immutable `static` is a named constant. main stays pure.
+static mut COUNT: Int = 0
+static STEP: Int = 7
+
+fn bump() -> Int { COUNT = COUNT + 1; COUNT }
+fn add(x: Int) -> Int { COUNT = COUNT + x; COUNT }
+
+fn main() -> Int {
+    let _a = bump();    // COUNT = 1
+    let _b = bump();    // COUNT = 2  (persisted across the two calls)
+    let _c = add(STEP); // COUNT = 9  (reads immutable static, accumulates)
+    add(STEP)           // COUNT = 16
+}

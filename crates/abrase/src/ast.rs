@@ -311,6 +311,13 @@ pub enum Decl {
         ty: Type,
         value: Spanned<Expr>,
     },
+    Static {
+        is_pub: bool,
+        is_mut: bool,
+        name: String,
+        ty: Type,
+        value: Spanned<Expr>,
+    },
     Effect {
         is_pub: bool,
         name: String,
