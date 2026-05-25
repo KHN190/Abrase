@@ -81,6 +81,13 @@ fn test_static_handle_drop_is_safe() {
 }
 
 #[test]
+fn test_static_init_call() {
+    let v = run_file("tests/scripts/static_init_call.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(330));
+}
+
+#[test]
 fn test_field_assign() {
     let v = run_file("tests/scripts/field_assign.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));

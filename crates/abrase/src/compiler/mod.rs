@@ -728,6 +728,10 @@ impl Compiler {
         self.emit(OpCode::PushConst(unit, unit_idx));
         self.emit(OpCode::Ret(unit));
 
+        if let Err(msg) = self.finalize_arg_patches() {
+            bail!(ast::Span::new(0, 0), msg);
+        }
+
         let reg_count = self.max_reg as usize;
         let taken_constants = std::mem::take(&mut self.constants);
         let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);
