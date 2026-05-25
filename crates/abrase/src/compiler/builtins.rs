@@ -104,10 +104,13 @@ impl Compiler {
         for decl in self.host_fns.values() {
             let fn_ty = TyType::Function {
                 params: decl.params.clone(),
-                effects: vec![],
+                effects: checker.convert_effect_items(&decl.effects),
                 ret: Box::new(decl.ret.clone()),
             };
             checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+            if !decl.effects.is_empty() {
+                checker.register_function_effects(decl.name.clone(), decl.effects.clone());
+            }
         }
         for (name, (params, ret)) in &self.builtin_types {
             let fn_ty = TyType::Function {

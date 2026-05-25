@@ -37,6 +37,7 @@ pub struct HostFnDecl {
     pub name: String,
     pub params: Vec<TyType>,
     pub ret: TyType,
+    pub effects: Vec<ast::EffectItem>,
 }
 
 pub struct Compiler {
@@ -222,6 +223,7 @@ impl Compiler {
         name: &str,
         params: Vec<TyType>,
         ret: TyType,
+        effects: Vec<ast::EffectItem>,
     ) -> Result<u16, String> {
         if self.host_fns.contains_key(name) || self.func_map.contains_key(name) {
             return Err(format!("name '{}' already registered", name));
@@ -237,7 +239,7 @@ impl Compiler {
         }));
         self.fn_signatures.insert(id, (params.clone(), ret.clone()));
         self.host_fns.insert(name.into(), HostFnDecl {
-            name: name.into(), params, ret,
+            name: name.into(), params, ret, effects,
         });
         Ok(fn_id)
     }
