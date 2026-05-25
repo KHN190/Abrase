@@ -88,6 +88,29 @@ fn test_static_init_call() {
 }
 
 #[test]
+fn test_static_update_frames_no_leak() {
+    let source = fs::read_to_string("tests/scripts/static_update_frames.abe").unwrap();
+    let mut parser = Parser::new(Lexer::new(&source)).with_source(source.clone());
+    let ast = parser.parse_program();
+    assert!(parser.errors.is_empty(), "{}", parser.pretty_print_errors());
+    let mut compiler = Compiler::new().with_source(source);
+    let module = compiler.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
+
+    let mut vm = VirtualMachine::new();
+    let mut counts = Vec::new();
+    for _ in 0..50 {
+        let v = vm.call_export(&module, "update", &[])
+            .unwrap_or_else(|e| panic!("\n{}", e));
+        assert_eq!(v, Value::from_int(330));
+        counts.push(vm.heap_live_count());
+    }
+    let plateau = counts[1];
+    assert!(counts[1..].iter().all(|&c| c == plateau),
+        "heap not flat across frames: {:?}", &counts);
+}
+
+#[test]
 fn test_field_assign() {
     let v = run_file("tests/scripts/field_assign.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
