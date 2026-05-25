@@ -60,6 +60,7 @@ pub struct VirtualMachine {
     pub(crate) int32_safe: bool,
     pub(crate) module_table_raw: u64,
     pub(crate) module_table_is_handle: bool,
+    pub(crate) steps: u64,
 }
 
 pub struct HandlerFrame {
@@ -123,8 +124,12 @@ impl VirtualMachine {
             int32_safe: false,
             module_table_raw: polka::HANDLE_NONE,
             module_table_is_handle: false,
+            steps: 0,
         }
     }
+
+    // N of instructions executed. Monotonic; a profiler reads the per-frame delta.
+    pub fn steps(&self) -> u64 { self.steps }
 
     pub fn with_debug(mut self, on: bool) -> Self {
         self.debug_sink = if on { Some(debug::stderr_sink()) } else { None };

@@ -111,6 +111,13 @@ fn test_static_update_frames_no_leak() {
 }
 
 #[test]
+fn vm_counts_executed_steps() {
+    let (_v, vm) = run_file_full("tests/scripts/arithmetic.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert!(vm.steps() > 0, "step counter must advance after a run");
+}
+
+#[test]
 fn test_field_assign() {
     let v = run_file("tests/scripts/field_assign.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));

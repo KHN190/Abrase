@@ -208,6 +208,7 @@ impl VirtualMachine {
                     self.emit_debug(&event);
                 }
                 self.pc = opcode_pc + 1;
+                self.steps = self.steps.wrapping_add(1);
                 if let Err(e) = self.exec(module, bc, opcode) {
                     self.failing_pc = opcode_pc;
                     return Err(e);
