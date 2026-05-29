@@ -44,7 +44,7 @@ fn errs(input: &str) -> Vec<String> {
 // <import> without an import-list  (items are optional in the BNF)
 #[test]
 fn import_no_items() {
-    let ds = prog("use std.io; fn main() -> Int { 0 }");
+    let ds = prog("use std::io; fn main() -> Int { 0 }");
     assert_eq!(ds.len(), 2);
     if let Decl::Use { path, items } = &ds[0] {
         assert_eq!(path, &vec!["std".to_string(), "io".to_string()]);
@@ -55,7 +55,7 @@ fn import_no_items() {
 // <import-item> with 'as' rename
 #[test]
 fn import_item_as_rename() {
-    let ds = prog("use io.{File as F, Read}; fn main() -> Int { 0 }");
+    let ds = prog("use io::{File as F, Read}; fn main() -> Int { 0 }");
     assert_eq!(ds.len(), 2);
     if let Decl::Use { items, .. } = &ds[0] {
         assert_eq!(items.len(), 2);
@@ -65,13 +65,6 @@ fn import_item_as_rename() {
     } else { panic!("expected Import"); }
 }
 
-// <mod-decl> must come first; second fn follows cleanly
-#[test]
-fn mod_decl_dotted_path_then_effect() {
-    let ds = prog("mod a.b effect E { } fn main() -> Int { 0 }");
-    assert_eq!(ds.len(), 3);
-    assert!(matches!(ds[0], Decl::Mod(ref s) if s == "a.b"));
-}
 
 // §2  Type declarations 
 

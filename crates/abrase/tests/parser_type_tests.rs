@@ -24,8 +24,8 @@ fn test_type_generic() {
 
 #[test]
 fn test_type_qualified() {
-    assert_eq!(ty("io.Error"), Type::Qualified(vec!["io".into(), "Error".into()]));
-    assert_eq!(ty("a.b.c"), Type::Qualified(vec!["a".into(), "b".into(), "c".into()]));
+    assert_eq!(ty("io::Error"), Type::Qualified(vec!["io".into(), "Error".into()]));
+    assert_eq!(ty("a::b::c"), Type::Qualified(vec!["a".into(), "b".into(), "c".into()]));
 }
 
 #[test]

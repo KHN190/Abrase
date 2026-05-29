@@ -13,7 +13,7 @@ impl<'a> Parser<'a> {
                 Ok(decl) => {
                     decls.push(decl);
                     if self.current_token != Token::Eof &&
-                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Static | Token::Use | Token::Effect | Token::Mod | Token::Pub) {
+                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Static | Token::Use | Token::Effect | Token::Pub) {
                         self.report_error(top_level_token_error(&self.current_token), self.current_span);
                         self.synchronize();
                     }
@@ -63,26 +63,6 @@ impl<'a> Parser<'a> {
                 } else {
                     self.parse_effect_decl(is_pub)
                 }
-            }
-            Token::Mod => {
-                self.next_token();
-                let mut path = Vec::new();
-                if let Token::Ident(p) = &self.current_token {
-                    path.push(p.clone());
-                } else {
-                    return Err("Expected module name".into());
-                }
-                while self.peek_token == Token::Dot {
-                    self.next_token();
-                    self.next_token();
-                    if let Token::Ident(p) = &self.current_token {
-                        path.push(p.clone());
-                    } else {
-                        return Err("Expected ident in module path".into());
-                    }
-                }
-                self.next_token();
-                Ok(Decl::Mod(path.join(".")))
             }
             _ => Err(top_level_token_error(&self.current_token)),
         }
@@ -618,7 +598,7 @@ impl<'a> Parser<'a> {
         } else {
             return Err("Expected module path".into());
         }
-        while self.peek_token == Token::Dot {
+        while self.peek_token == Token::ColonColon {
             self.next_token();
             if self.peek_token == Token::LBrace {
                 break;
@@ -627,14 +607,14 @@ impl<'a> Parser<'a> {
             if let Token::Ident(p) = &self.current_token {
                 path.push(p.clone());
             } else {
-                return Err("Expected ident in import path".into());
+                return Err("Expected ident in use path".into());
             }
         }
 
         let mut items = Vec::new();
-        let has_list = self.current_token == Token::Dot && self.peek_token == Token::LBrace;
+        let has_list = self.current_token == Token::ColonColon && self.peek_token == Token::LBrace;
         if self.peek_token == Token::LBrace && !has_list {
-            return Err("Expected '.' before '{' in use list".into());
+            return Err("Expected '::' before '{' in use list".into());
         }
         if has_list {
             self.next_token();

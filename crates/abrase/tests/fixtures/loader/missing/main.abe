@@ -1,3 +1,3 @@
-use nowhere.{thing};
+use nowhere::{thing};
 
 fn main() -> Int { 0 }

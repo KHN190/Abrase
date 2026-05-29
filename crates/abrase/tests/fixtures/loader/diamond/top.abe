@@ -1,4 +1,4 @@
-use left.{left_one};
-use right.{right_one};
+use left::{left_one};
+use right::{right_one};
 
 fn main() -> Int { left_one() + right_one() }

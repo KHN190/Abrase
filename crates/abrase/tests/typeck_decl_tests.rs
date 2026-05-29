@@ -342,20 +342,6 @@ fn verify_check_program_registers_import_with_alias() {
 
 // Module Declaration Tests
 
-#[test]
-fn verify_check_program_pushes_module() {
-    let mut checker = Checker::new();
-
-    let decl = abrase::ast::Decl::Mod("mymodule".into());
-
-    checker.check_program(&[decl]);
-
-    // Module should be in scope - verify by checking if items in this module are accessible
-    checker.push_module("test".into());
-
-    // If the module was properly pushed and then we can navigate, it worked
-    checker.pop_module();
-}
 
 // Multi-Declaration Tests
 

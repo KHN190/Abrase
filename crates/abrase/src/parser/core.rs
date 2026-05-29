@@ -89,7 +89,7 @@ impl<'a> Parser<'a> {
             // outer loop can resume parsing it instead of consuming past it.
             match self.current_token {
                 Token::Fn | Token::Type | Token::Trait | Token::Impl
-                | Token::Const | Token::Use | Token::Effect | Token::Mod
+                | Token::Const | Token::Use | Token::Effect
                 | Token::Pub | Token::At => return,
                 Token::Semicolon => { self.next_token(); return; }
                 _ => {}

@@ -6,9 +6,9 @@ impl<'a> Parser<'a> {
     pub fn parse_type(&mut self) -> Result<Type, String> {
         match self.current_token.clone() {
             Token::Ident(name) => {
-                if self.peek_token == Token::Dot {
+                if self.peek_token == Token::ColonColon {
                     let mut path = vec![name];
-                    while self.peek_token == Token::Dot {
+                    while self.peek_token == Token::ColonColon {
                         self.next_token();
                         self.next_token();
                         match self.current_token.clone() {

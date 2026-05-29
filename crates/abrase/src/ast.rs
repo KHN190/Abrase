@@ -272,7 +272,6 @@ pub struct ImportItem {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Decl {
     Fn(FnDecl),
-    Mod(String),
     ModEnter(Vec<String>),
     ModExit,
     Use { path: Vec<String>, items: Vec<ImportItem> },

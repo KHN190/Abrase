@@ -1,3 +1,0 @@
-use state.{read};
-
-fn main() -> Int { read() }

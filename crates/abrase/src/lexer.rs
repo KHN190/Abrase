@@ -5,7 +5,7 @@ pub use crate::ast::StringPart;
 pub enum Token {
     // Keywords
     Fn, Let, Const, Static, If, Else, Match, For, While, Loop, Break, Continue,
-    Return, Type, Trait, Impl, Use, Mod, Pub, Region, Handle, Resume,
+    Return, Type, Trait, Impl, Use, Pub, Region, Handle, Resume,
     Throw, True, False, Where, In, As, SelfKW, SelfUpper, Mut, Move, Thread,
     Effect, Underscore,
 
@@ -25,7 +25,7 @@ pub enum Token {
     Range, RangeInclusive, Arrow, FatArrow,
 
     // Punctuation
-    Comma, Colon, Semicolon, Dot, Question,
+    Comma, Colon, ColonColon, Semicolon, Dot, Question,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Ampersand, Pipe, At,
 
@@ -53,7 +53,6 @@ impl Token {
             Token::Trait => "trait".into(),
             Token::Impl => "impl".into(),
             Token::Use => "use".into(),
-            Token::Mod => "mod".into(),
             Token::Pub => "pub".into(),
             Token::Region => "region".into(),
             Token::Handle => "handle".into(),
@@ -103,6 +102,7 @@ impl Token {
             Token::FatArrow => "=>".into(),
             Token::Comma => ",".into(),
             Token::Colon => ":".into(),
+            Token::ColonColon => "::".into(),
             Token::Semicolon => ";".into(),
             Token::Dot => ".".into(),
             Token::Question => "?".into(),
@@ -200,7 +200,6 @@ impl<'a> Lexer<'a> {
             "trait" => Token::Trait,
             "impl" => Token::Impl,
             "use" => Token::Use,
-            "mod" => Token::Mod,
             "pub" => Token::Pub,
             "region" => Token::Region,
             "handle" => Token::Handle,
@@ -287,7 +286,10 @@ impl<'a> Lexer<'a> {
                 } else { self.read_char(); Token::Dot }
             }
             Some(';') => { self.read_char(); Token::Semicolon }
-            Some(':') => { self.read_char(); Token::Colon }
+            Some(':') => {
+                if self.peek_char == Some(':') { self.read_char(); self.read_char(); Token::ColonColon }
+                else { self.read_char(); Token::Colon }
+            }
             Some(',') => { self.read_char(); Token::Comma }
             Some('?') => { self.read_char(); Token::Question }
             Some('(') => { self.read_char(); Token::LParen }

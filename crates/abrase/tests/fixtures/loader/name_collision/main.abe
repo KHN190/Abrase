@@ -1,4 +1,4 @@
-use lib.{double};
+use lib::{double};
 
 fn helper(x: Int) -> Int { x + 1 }
 

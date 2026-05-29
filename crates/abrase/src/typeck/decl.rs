@@ -224,18 +224,6 @@ impl Checker {
                 }
             },
 
-            ast::Decl::Mod(name) => {
-                let parts: Vec<&str> = name.split('.').collect();
-                let already = self.current_module.len() >= parts.len()
-                    && self.current_module[self.current_module.len() - parts.len()..]
-                        .iter().zip(parts.iter()).all(|(a, b)| a == b);
-                if already { return; }
-                let parent_module = self.current_module.clone();
-                self.register_module_item(&parent_module, name.clone(), Type::Named(format!("module::{}", name)));
-                self.mark_public(name.clone()); // sub-modules are public so they can be traversed
-                self.push_module(name.clone());
-            },
-
             ast::Decl::ModEnter(path) => {
                 self.enter_imported_module(path.clone());
             },
