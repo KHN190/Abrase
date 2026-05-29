@@ -182,6 +182,28 @@ fn imported_module_self_recursion_resolves_to_its_own_mangled_name() {
     assert!(!calls_entry_helper, "lib::double accidentally calls entry's helper");
 }
 
+// ---- Redundant top-of-file `mod X` matches loader-injected ModEnter ----
+
+#[test]
+fn file_top_mod_matching_import_path_is_idempotent() {
+    let errors = typeck_errors("mod_redundant/main.abe");
+    assert!(errors.is_empty(),
+        "redundant `mod state` should be a no-op when loader already entered [state]; got: {:?}",
+        errors);
+}
+
+#[test]
+fn redundant_mod_does_not_nest_public_items() {
+    let program = loader::load_program(&fixture("mod_redundant/main.abe")).unwrap();
+    let mut checker = Checker::new();
+    checker.check_program(&program.decls);
+    let pubs = checker.get_public_items();
+    assert!(pubs.iter().any(|q| q == "state::read"),
+        "expected `state::read` public, got: {:?}", pubs);
+    assert!(!pubs.iter().any(|q| q == "state::state::read"),
+        "redundant `mod state` must not nest into state::state::read, got: {:?}", pubs);
+}
+
 // ---- Cross-module static: pub readable, private guarded, mut shared ----
 
 #[test]

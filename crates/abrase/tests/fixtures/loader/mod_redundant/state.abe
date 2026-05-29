@@ -1,0 +1,3 @@
+mod state
+
+pub fn read() -> Int { 42 }
