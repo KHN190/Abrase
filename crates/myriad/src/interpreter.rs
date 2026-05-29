@@ -60,6 +60,9 @@ impl VirtualMachine {
         fn_id: usize,
         args: &[Value],
     ) -> Result<Value, String> {
+        if self.exit_code.is_some() {
+            return Ok(Value::from_int(self.exit_code.unwrap()));
+        }
         validate_module_register_budget(module)?;
         self.int32_safe = (module.flags & polka::CART_FLAG_INT32_SAFE) != 0;
         if self.resolved_constants.is_empty() {
@@ -82,7 +85,6 @@ impl VirtualMachine {
         self.base_reg = 0;
         self.current_func = fn_id;
         self.halted = false;
-        self.exit_code = None;
         let needed = FRAME_REGS + STAGE_SLACK;
         self.ensure_registers(needed);
         for (i, v) in args.iter().enumerate() {

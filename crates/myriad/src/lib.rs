@@ -131,6 +131,10 @@ impl VirtualMachine {
     // N of instructions executed. Monotonic; a profiler reads the per-frame delta.
     pub fn steps(&self) -> u64 { self.steps }
 
+    pub fn halted(&self) -> bool { self.exit_code.is_some() }
+
+    pub fn exit_code(&self) -> Option<i64> { self.exit_code }
+
     pub fn with_debug(mut self, on: bool) -> Self {
         self.debug_sink = if on { Some(debug::stderr_sink()) } else { None };
         self
