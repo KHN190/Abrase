@@ -55,7 +55,7 @@ fn import_no_items() {
 // <import-item> with 'as' rename
 #[test]
 fn import_item_as_rename() {
-    let ds = prog("use io { File as F, Read }; fn main() -> Int { 0 }");
+    let ds = prog("use io.{File as F, Read}; fn main() -> Int { 0 }");
     assert_eq!(ds.len(), 2);
     if let Decl::Use { items, .. } = &ds[0] {
         assert_eq!(items.len(), 2);

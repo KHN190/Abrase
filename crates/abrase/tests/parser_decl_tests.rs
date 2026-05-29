@@ -64,7 +64,7 @@ fn test_decl_const() {
 
 #[test]
 fn test_decl_import() {
-    let input = "use std.io { Read, Write };";
+    let input = "use std.io.{Read, Write};";
     let mut p = Parser::new(Lexer::new(input));
     let decl = p.parse_decl().unwrap();
     if let Decl::Use { path, items } = decl {
@@ -75,6 +75,15 @@ fn test_decl_import() {
     } else {
         panic!("Expected Import declaration");
     }
+}
+
+#[test]
+fn test_decl_use_without_dot_before_brace_is_rejected() {
+    let input = "use std.io {Read, Write};";
+    let mut p = Parser::new(Lexer::new(input));
+    let _ = p.parse_decl();
+    assert!(p.errors.iter().any(|e| e.message.contains("Expected '.' before '{'")),
+        "expected dot-required error, got: {:?}", p.errors);
 }
 
 #[test]

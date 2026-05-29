@@ -632,14 +632,12 @@ impl<'a> Parser<'a> {
         }
 
         let mut items = Vec::new();
-        let has_list = (self.current_token == Token::Dot && self.peek_token == Token::LBrace)
-            || self.peek_token == Token::LBrace;
+        let has_list = self.current_token == Token::Dot && self.peek_token == Token::LBrace;
+        if self.peek_token == Token::LBrace && !has_list {
+            return Err("Expected '.' before '{' in use list".into());
+        }
         if has_list {
-            if self.current_token == Token::Dot {
-                self.next_token();
-            } else {
-                self.next_token();
-            }
+            self.next_token();
             self.next_token();
             while self.current_token != Token::RBrace && self.current_token != Token::Eof {
                 if let Token::Ident(n) = &self.current_token {

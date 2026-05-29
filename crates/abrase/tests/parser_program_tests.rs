@@ -234,7 +234,7 @@ fn test_program_const_block_value_then_fn() {
 
 #[test]
 fn test_program_import_then_fn() {
-    let decls = parse_program_no_errors("use std.io { Read, Write }; fn main() -> Int { 0 }");
+    let decls = parse_program_no_errors("use std.io.{Read, Write}; fn main() -> Int { 0 }");
     assert_eq!(decls.len(), 2);
     assert!(matches!(decls[0], Decl::Use { .. }));
 }
