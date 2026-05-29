@@ -64,10 +64,10 @@ fn test_decl_const() {
 
 #[test]
 fn test_decl_import() {
-    let input = "import std.io { Read, Write };";
+    let input = "use std.io { Read, Write };";
     let mut p = Parser::new(Lexer::new(input));
     let decl = p.parse_decl().unwrap();
-    if let Decl::Import { path, items } = decl {
+    if let Decl::Use { path, items } = decl {
         assert_eq!(path.len(), 2);
         assert_eq!(path[0], "std");
         assert_eq!(path[1], "io");

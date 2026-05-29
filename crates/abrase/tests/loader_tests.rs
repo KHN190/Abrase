@@ -56,7 +56,7 @@ fn concatenates_imported_module_decls() {
 #[test]
 fn entry_source_is_only_the_entry_file() {
     let p = loader::load_program(&fixture("piano.abe")).unwrap();
-    assert!(p.entry_source.contains("import visuals"));
+    assert!(p.entry_source.contains("use visuals"));
     assert!(!p.entry_source.contains("pub fn circle"));
 }
 

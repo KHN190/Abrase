@@ -13,7 +13,7 @@ impl<'a> Parser<'a> {
                 Ok(decl) => {
                     decls.push(decl);
                     if self.current_token != Token::Eof &&
-                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Static | Token::Import | Token::Effect | Token::Mod | Token::Pub) {
+                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Static | Token::Use | Token::Effect | Token::Mod | Token::Pub) {
                         self.report_error(top_level_token_error(&self.current_token), self.current_span);
                         self.synchronize();
                     }
@@ -54,7 +54,7 @@ impl<'a> Parser<'a> {
             Token::Impl => self.parse_impl_decl(),
             Token::Const => self.parse_const_decl(is_pub),
             Token::Static => self.parse_static_decl(is_pub),
-            Token::Import => self.parse_import_decl(),
+            Token::Use => self.parse_use_decl(),
             Token::Effect => {
                 self.next_token();
                 if self.current_token == Token::Ident("alias".into()) {
@@ -610,7 +610,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_import_decl(&mut self) -> Result<Decl, String> {
+    fn parse_use_decl(&mut self) -> Result<Decl, String> {
         self.next_token();
         let mut path = Vec::new();
         if let Token::Ident(p) = &self.current_token {
@@ -666,7 +666,7 @@ impl<'a> Parser<'a> {
         }
         self.next_token();
 
-        Ok(Decl::Import { path, items })
+        Ok(Decl::Use { path, items })
     }
 
     pub fn parse_fn_decl(&mut self, is_pub: bool) -> Result<Decl, String> {

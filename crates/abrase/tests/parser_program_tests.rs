@@ -234,16 +234,16 @@ fn test_program_const_block_value_then_fn() {
 
 #[test]
 fn test_program_import_then_fn() {
-    let decls = parse_program_no_errors("import std.io { Read, Write }; fn main() -> Int { 0 }");
+    let decls = parse_program_no_errors("use std.io { Read, Write }; fn main() -> Int { 0 }");
     assert_eq!(decls.len(), 2);
-    assert!(matches!(decls[0], Decl::Import { .. }));
+    assert!(matches!(decls[0], Decl::Use { .. }));
 }
 
 #[test]
 fn test_program_import_dot_brace_syntax() {
-    let decls = parse_program_no_errors("import io.{File, Read}; fn main() -> Int { 0 }");
+    let decls = parse_program_no_errors("use io.{File, Read}; fn main() -> Int { 0 }");
     assert_eq!(decls.len(), 2);
-    if let Decl::Import { path, items } = &decls[0] {
+    if let Decl::Use { path, items } = &decls[0] {
         assert_eq!(path, &vec!["io".to_string()]);
         assert_eq!(items.len(), 2);
     } else { panic!("expected Import"); }

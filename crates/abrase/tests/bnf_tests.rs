@@ -44,9 +44,9 @@ fn errs(input: &str) -> Vec<String> {
 // <import> without an import-list  (items are optional in the BNF)
 #[test]
 fn import_no_items() {
-    let ds = prog("import std.io; fn main() -> Int { 0 }");
+    let ds = prog("use std.io; fn main() -> Int { 0 }");
     assert_eq!(ds.len(), 2);
-    if let Decl::Import { path, items } = &ds[0] {
+    if let Decl::Use { path, items } = &ds[0] {
         assert_eq!(path, &vec!["std".to_string(), "io".to_string()]);
         assert!(items.is_empty());
     } else { panic!("expected Import"); }
@@ -55,9 +55,9 @@ fn import_no_items() {
 // <import-item> with 'as' rename
 #[test]
 fn import_item_as_rename() {
-    let ds = prog("import io { File as F, Read }; fn main() -> Int { 0 }");
+    let ds = prog("use io { File as F, Read }; fn main() -> Int { 0 }");
     assert_eq!(ds.len(), 2);
-    if let Decl::Import { items, .. } = &ds[0] {
+    if let Decl::Use { items, .. } = &ds[0] {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].name, "File");
         assert_eq!(items[0].alias, Some("F".to_string()));

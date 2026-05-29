@@ -205,7 +205,7 @@ impl Checker {
                 }
             },
 
-            ast::Decl::Import { path, items } => {
+            ast::Decl::Use { path, items } => {
                 self.register_import_items(path.clone(), items.clone());
 
                 for item in items {
@@ -225,10 +225,6 @@ impl Checker {
             },
 
             ast::Decl::Mod(name) => {
-                // Loader-driven mode injects ModEnter([path]) before the file's
-                // decls. If the file *also* writes `mod path` at the top, the
-                // declaration is redundant — skip to avoid pushing the same
-                // segment twice (e.g. current_module = ["state", "state"]).
                 let parts: Vec<&str> = name.split('.').collect();
                 let already = self.current_module.len() >= parts.len()
                     && self.current_module[self.current_module.len() - parts.len()..]

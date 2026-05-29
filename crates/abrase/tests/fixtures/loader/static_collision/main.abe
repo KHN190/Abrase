@@ -1,4 +1,4 @@
-import lib.{read_lib_k};
+use lib.{read_lib_k};
 
 static K: Int = 1;
 

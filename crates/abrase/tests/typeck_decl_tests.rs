@@ -302,7 +302,7 @@ fn verify_check_program_marks_public_effect() {
 fn verify_check_program_registers_imports() {
     let mut checker = Checker::new();
 
-    let decl = abrase::ast::Decl::Import {
+    let decl = abrase::ast::Decl::Use {
         path: vec!["std".into()],
         items: vec![
             abrase::ast::ImportItem {
@@ -323,7 +323,7 @@ fn verify_check_program_registers_imports() {
 fn verify_check_program_registers_import_with_alias() {
     let mut checker = Checker::new();
 
-    let decl = abrase::ast::Decl::Import {
+    let decl = abrase::ast::Decl::Use {
         path: vec!["io".into()],
         items: vec![
             abrase::ast::ImportItem {

@@ -56,10 +56,10 @@ fn aliased_import_from_second_module_is_accessible() {
 fn two_import_statements_parse() {
     use abrase::lexer::Lexer;
     use abrase::parser::Parser;
-    let src = "import math.{PI}; import text.{EMPTY}; fn main() -> Int { 0 }";
+    let src = "use math.{PI}; use text.{EMPTY}; fn main() -> Int { 0 }";
     let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
     let decls = p.parse_program();
     assert!(p.errors.is_empty(), "parse errors: {:?}", p.errors);
-    let imports = decls.iter().filter(|d| matches!(d, ast::Decl::Import { .. })).count();
+    let imports = decls.iter().filter(|d| matches!(d, ast::Decl::Use { .. })).count();
     assert_eq!(imports, 2);
 }

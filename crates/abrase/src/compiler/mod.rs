@@ -400,7 +400,7 @@ impl Compiler {
             match decl {
                 ast::Decl::ModEnter(p) => { module_stack.push(p.clone()); }
                 ast::Decl::ModExit => { module_stack.pop(); }
-                ast::Decl::Import { path, items } => {
+                ast::Decl::Use { path, items } => {
                     let owner = module_stack.last().cloned().unwrap_or_default();
                     let bucket = self.module_imports.entry(owner).or_default();
                     for item in items {

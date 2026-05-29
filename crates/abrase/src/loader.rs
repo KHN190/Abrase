@@ -81,7 +81,7 @@ fn load_recursive(
     }
 
     for decl in &decls {
-        if let ast::Decl::Import { path, .. } = decl {
+        if let ast::Decl::Use { path, .. } = decl {
             let dep_path = resolve_import(root, path);
             if !dep_path.exists() {
                 return Err(LoadError::MissingImport {

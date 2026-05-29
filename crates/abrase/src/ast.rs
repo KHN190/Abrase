@@ -275,7 +275,7 @@ pub enum Decl {
     Mod(String),
     ModEnter(Vec<String>),
     ModExit,
-    Import { path: Vec<String>, items: Vec<ImportItem> },
+    Use { path: Vec<String>, items: Vec<ImportItem> },
     Type {
         attrs: Vec<Attribute>,
         is_pub: bool,
