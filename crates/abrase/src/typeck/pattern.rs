@@ -541,6 +541,18 @@ impl Checker {
         if let Some(ty) = self.get_const(name) {
             return ty;
         }
+        if let Some((module_path, original)) = self.get_imported_name(name) {
+            if let Some(ty) = self.lookup_module_item(&module_path, &original) {
+                if self.is_accessible(&original, &module_path) {
+                    return ty;
+                }
+                return self.report_error(
+                    format!("'{}' is private in module {}; cannot import",
+                        original, module_path.join(".")),
+                    usage_span,
+                );
+            }
+        }
         self.report_error(format!("Undefined variable: {}", name), usage_span)
     }
 

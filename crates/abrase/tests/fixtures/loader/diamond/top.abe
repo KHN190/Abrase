@@ -1,0 +1,4 @@
+import left.{left_one};
+import right.{right_one};
+
+fn main() -> Int { left_one() + right_one() }

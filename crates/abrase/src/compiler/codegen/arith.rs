@@ -94,7 +94,7 @@ impl Compiler {
             ast::BinaryOp::Assign => {
                 match &left.node {
                     ast::Expr::Identifier(name) => {
-                        if let Some(&offset) = self.static_offsets.get(name) {
+                        if let Some(offset) = self.resolve_static_offset(name) {
                             let rr = self.compile_expr(right)?;
                             let table = self.load_module_table()?;
                             let tmp = self.alloc_register()?;
@@ -188,6 +188,26 @@ impl Compiler {
                     }
                     _ => Err("Assignment target must be a variable".to_string())
                 }
+            }
+            ast::BinaryOp::And | ast::BinaryOp::Or => {
+                let lr = self.compile_expr(left)?;
+                let dest = self.alloc_register()?;
+                self.emit(OpCode::Copy(dest, lr));
+                let branch_pc = self.code.len();
+                if matches!(op, ast::BinaryOp::And) {
+                    self.emit(OpCode::Jz(dest, 0));
+                } else {
+                    self.emit(OpCode::Jnz(dest, 0));
+                }
+                let rr = self.compile_expr(right)?;
+                self.emit(OpCode::Copy(dest, rr));
+                let end_pc = self.code.len();
+                if matches!(op, ast::BinaryOp::And) {
+                    self.patch_jz_at(branch_pc, end_pc)?;
+                } else {
+                    self.patch_jnz_at(branch_pc, end_pc)?;
+                }
+                Ok(dest)
             }
             _ => {
                 // Fuse `x ± i8-literal` into a single AddImm/SubImm.

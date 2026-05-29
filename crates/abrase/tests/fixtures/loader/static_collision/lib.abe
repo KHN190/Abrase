@@ -1,0 +1,3 @@
+static K: Int = 100;
+
+pub fn read_lib_k() -> Int { K }

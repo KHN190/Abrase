@@ -62,6 +62,9 @@ pub struct Compiler {
     pub(super) pending_arg_patches: Vec<(usize, u8)>,
     pub(super) current_fn_fallible: bool,
     pub(super) current_fn_name: String,
+    pub(super) current_fn_module: Vec<String>,
+    pub(super) fn_origin: HashMap<usize, Vec<String>>,
+    pub(super) module_imports: HashMap<Vec<String>, HashMap<String, Vec<String>>>,
     pub(super) effect_ids: HashMap<String, u16>,
     pub(super) op_ids: HashMap<(String, String), u8>,
     pub(super) effect_op_counts: HashMap<String, u8>,
@@ -129,6 +132,9 @@ impl Compiler {
             pending_arg_patches: Vec::new(),
             current_fn_fallible: false,
             current_fn_name: String::new(),
+            current_fn_module: Vec::new(),
+            fn_origin: HashMap::new(),
+            module_imports: HashMap::new(),
             effect_ids: HashMap::new(),
             op_ids: HashMap::new(),
             effect_op_counts: HashMap::new(),
@@ -222,6 +228,39 @@ impl Compiler {
         if let Some(sink) = &mut self.debug_sink {
             sink(msg);
         }
+    }
+
+    pub(super) fn fqn(module: &[String], name: &str) -> String {
+        if module.is_empty() { name.into() }
+        else { format!("{}__{}", module.join("_"), name) }
+    }
+
+    pub(in crate::compiler) fn resolve_static_offset(&self, name: &str) -> Option<u16> {
+        if !self.current_fn_module.is_empty() {
+            let local = Self::fqn(&self.current_fn_module, name);
+            if let Some(&o) = self.static_offsets.get(&local) { return Some(o); }
+        }
+        if let Some(imports) = self.module_imports.get(&self.current_fn_module) {
+            if let Some(mod_path) = imports.get(name) {
+                let imp = Self::fqn(mod_path, name);
+                if let Some(&o) = self.static_offsets.get(&imp) { return Some(o); }
+            }
+        }
+        self.static_offsets.get(name).copied()
+    }
+
+    pub(in crate::compiler) fn resolve_fn_callee(&self, name: &str) -> Option<usize> {
+        if !self.current_fn_module.is_empty() {
+            let local = Self::fqn(&self.current_fn_module, name);
+            if let Some(&id) = self.func_map.get(&local) { return Some(id); }
+        }
+        if let Some(imports) = self.module_imports.get(&self.current_fn_module) {
+            if let Some(mod_path) = imports.get(name) {
+                let imp = Self::fqn(mod_path, name);
+                if let Some(&id) = self.func_map.get(&imp) { return Some(id); }
+            }
+        }
+        self.func_map.get(name).copied()
     }
 
     pub fn register_host_fn(
@@ -355,13 +394,26 @@ impl Compiler {
         self.effect_op_counts = handler_lowering.effect_op_counts;
 
         let mut fn_decls = Vec::new();
+        let mut module_stack: Vec<Vec<String>> = Vec::new();
 
         for decl in ast {
             match decl {
+                ast::Decl::ModEnter(p) => { module_stack.push(p.clone()); }
+                ast::Decl::ModExit => { module_stack.pop(); }
+                ast::Decl::Import { path, items } => {
+                    let owner = module_stack.last().cloned().unwrap_or_default();
+                    let bucket = self.module_imports.entry(owner).or_default();
+                    for item in items {
+                        let alias = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                        bucket.insert(alias, path.clone());
+                    }
+                }
                 ast::Decl::Fn(fn_decl) => {
+                    let mod_path = module_stack.last().cloned().unwrap_or_default();
+                    let mangled = Self::fqn(&mod_path, &fn_decl.name);
                     if matches!(fn_decl.name.as_str(), "device_in" | "device_out")
-                        || self.host_fns.contains_key(&fn_decl.name)
-                        || self.func_map.contains_key(&fn_decl.name)
+                        || self.host_fns.contains_key(&mangled)
+                        || self.func_map.contains_key(&mangled)
                     {
                         self.errors.push(Error::new(
                             ErrorCode::TypeError,
@@ -374,7 +426,8 @@ impl Compiler {
                         continue;
                     }
                     let idx = self.functions.len();
-                    self.func_map.insert(fn_decl.name.clone(), idx);
+                    self.func_map.insert(mangled, idx);
+                    self.fn_origin.insert(idx, mod_path);
                     self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
                     register_user_fn_signature(&mut self.fn_signatures, idx, fn_decl);
                     fn_decls.push((idx, fn_decl.clone()));
@@ -393,10 +446,12 @@ impl Compiler {
                     }
                 }
                 ast::Decl::Static { name, ty, is_mut, .. } => {
+                    let mod_path = module_stack.last().cloned().unwrap_or_default();
+                    let mangled = Self::fqn(&mod_path, name);
                     let offset = self.static_offsets.len() as u16;
-                    self.static_offsets.insert(name.clone(), offset);
-                    self.static_types.insert(name.clone(), ty.clone());
-                    if *is_mut { self.static_mut_set.insert(name.clone()); }
+                    self.static_offsets.insert(mangled.clone(), offset);
+                    self.static_types.insert(mangled.clone(), ty.clone());
+                    if *is_mut { self.static_mut_set.insert(mangled); }
                 }
                 _ => {}
             }
@@ -425,7 +480,11 @@ impl Compiler {
             if self.debug_sink.is_some() {
                 self.emit_debug(&format!("[COMPILE] idx={}, name={}", idx, fn_decl.name));
             }
-            let chunk = self.compile_fn(&fn_decl)?;
+            let saved_module = std::mem::take(&mut self.current_fn_module);
+            self.current_fn_module = self.fn_origin.get(&idx).cloned().unwrap_or_default();
+            let chunk_res = self.compile_fn(&fn_decl);
+            self.current_fn_module = saved_module;
+            let chunk = chunk_res?;
             self.functions[idx] = chunk;
         }
 
@@ -435,12 +494,20 @@ impl Compiler {
             let mut ordered: Vec<(String, u16)> = self.static_offsets.iter()
                 .map(|(n, o)| (n.clone(), *o)).collect();
             ordered.sort_by_key(|(_, o)| *o);
-            let static_values: Vec<ast::Spanned<ast::Expr>> = ast.iter().filter_map(|d| {
-                if let ast::Decl::Static { name, value, .. } = d {
-                    if self.static_offsets.contains_key(name) {
-                        Some(value.clone())
-                    } else { None }
-                } else { None }
+            let mut init_stack: Vec<Vec<String>> = Vec::new();
+            let static_values: Vec<(Vec<String>, ast::Spanned<ast::Expr>)> = ast.iter().filter_map(|d| {
+                match d {
+                    ast::Decl::ModEnter(p) => { init_stack.push(p.clone()); None }
+                    ast::Decl::ModExit => { init_stack.pop(); None }
+                    ast::Decl::Static { name, value, .. } => {
+                        let mod_path = init_stack.last().cloned().unwrap_or_default();
+                        let key = Self::fqn(&mod_path, name);
+                        if self.static_offsets.contains_key(&key) {
+                            Some((mod_path, value.clone()))
+                        } else { None }
+                    }
+                    _ => None,
+                }
             }).collect();
             let table_size = ordered.len() as u16;
             let init_id = self.functions.len();
@@ -475,15 +542,19 @@ impl Compiler {
         let mut flags = 0u16;
         if self.int32_mode { flags |= crate::bytecode::CART_FLAG_INT32_SAFE; }
         let mut exports: Vec<crate::bytecode::Export> = Vec::new();
+        let mut export_stack: Vec<Vec<String>> = Vec::new();
         for decl in ast {
-            if let ast::Decl::Fn(fn_decl) = decl {
-                if fn_decl.is_pub {
+            match decl {
+                ast::Decl::ModEnter(p) => { export_stack.push(p.clone()); }
+                ast::Decl::ModExit => { export_stack.pop(); }
+                ast::Decl::Fn(fn_decl) if export_stack.is_empty() && fn_decl.is_pub => {
                     if let Some(&idx) = self.func_map.get(&fn_decl.name) {
                         if let Ok(id) = u16::try_from(idx) {
                             exports.push(crate::bytecode::Export { name: fn_decl.name.clone(), fn_id: id });
                         }
                     }
                 }
+                _ => {}
             }
         }
         if let Ok(id) = u16::try_from(entry) {
@@ -537,7 +608,9 @@ impl Compiler {
         self.remaining_uses = liveness::count_uses(&fn_decl.body);
         self.current_fn_fallible = effects::fn_is_fallible(fn_decl);
         self.current_fn_name = fn_decl.name.clone();
-        self.current_self_fn_id = self.func_map.get(&fn_decl.name)
+        let self_key = Self::fqn(&self.current_fn_module, &fn_decl.name);
+        self.current_self_fn_id = self.func_map.get(&self_key)
+            .or_else(|| self.func_map.get(&fn_decl.name))
             .and_then(|id| u16::try_from(*id).ok());
         self.tail_call_spans = collect_tail_self_calls(&fn_decl.body, &fn_decl.name);
         self.next_reg = 0;
@@ -665,7 +738,7 @@ impl Compiler {
         &mut self,
         table_size: u16,
         _ordered: &[(String, u16)],
-        static_values: &[ast::Spanned<ast::Expr>],
+        static_values: &[(Vec<String>, ast::Spanned<ast::Expr>)],
     ) -> Result<Chunk, Vec<Error>> {
         let saved_code = std::mem::take(&mut self.code);
         let saved_constants = std::mem::take(&mut self.constants);
@@ -693,9 +766,11 @@ impl Compiler {
             Err(m) => bail!(ast::Span::new(0, 0), m),
         };
         self.emit(OpCode::Alloc(table, table_size));
-        for (i, value) in static_values.iter().enumerate() {
+        let saved_init_module = std::mem::take(&mut self.current_fn_module);
+        for (i, (mod_path, value)) in static_values.iter().enumerate() {
             let off = i as u16;
             let mark = self.snapshot_register_high_water();
+            self.current_fn_module = mod_path.clone();
             let v = match self.compile_expr(value) {
                 Ok(r) => r,
                 Err(m) => bail!(value.span, m),
@@ -703,6 +778,7 @@ impl Compiler {
             self.emit(OpCode::St(v, table, off));
             self.restore_register_high_water(mark);
         }
+        self.current_fn_module = saved_init_module;
         // Publish: Deo(table -> MODULE_ID:MODULE_PORT_TABLE).
         let port_reg = match self.alloc_register() {
             Ok(r) => r,

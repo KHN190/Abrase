@@ -1,0 +1,2 @@
+pub fn circle(r: Int) -> Int { r + r }
+pub fn line(a: Int, b: Int) -> Int { a + b }

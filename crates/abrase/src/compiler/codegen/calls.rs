@@ -99,7 +99,7 @@ impl Compiler {
         let ast::Expr::Identifier(name) = &callee.node else {
             return Err("Call target must be a function identifier".to_string());
         };
-        let func_id = self.func_map.get(name).copied()
+        let func_id = self.resolve_fn_callee(name)
             .ok_or_else(|| format!("Undefined function: {}", name))?;
         let fid = super::scaffold::to_u16(func_id, &format!("Function id for '{}'", name))?;
         Ok(CallTarget::Function { func_id: fid, env: CallEnv::None })

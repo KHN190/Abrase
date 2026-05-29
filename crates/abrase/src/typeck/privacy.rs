@@ -25,6 +25,23 @@ impl Checker {
         }
     }
 
+    pub fn enter_imported_module(&mut self, module_path: Vec<String>) {
+        self.module_scope_stack.push(self.current_module.clone());
+        self.current_module = module_path.clone();
+        let scope = self.module_scopes.remove(&module_path)
+            .unwrap_or_else(|| Scope { vars: std::collections::HashMap::new() });
+        self.scopes.push(scope);
+    }
+
+    pub fn exit_imported_module(&mut self) {
+        if let Some(scope) = self.scopes.pop() {
+            self.module_scopes.insert(self.current_module.clone(), scope);
+        }
+        if let Some(prev) = self.module_scope_stack.pop() {
+            self.current_module = prev;
+        }
+    }
+
     pub fn mark_public(&mut self, item_name: String) {
         let qualified_name = format!("{}::{}", self.current_module.join("::"), item_name);
         self.public_items.insert(qualified_name.clone());

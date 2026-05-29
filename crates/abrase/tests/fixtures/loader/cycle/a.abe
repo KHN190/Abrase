@@ -1,0 +1,4 @@
+import b.{x};
+
+pub fn ax() -> Int { x() }
+fn main() -> Int { ax() }

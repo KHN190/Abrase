@@ -20,8 +20,7 @@ struct Mono {
     /// `(receiver_type_name, method_name) -> mangled fn name`. Empty for
     /// plain `monomorphize` callers; populated when impl-lift has run.
     method_dispatch: HashMap<(String, String), String>,
-    out_passthrough: Vec<Decl>,
-    out_concrete: Vec<FnDecl>,
+    out: Vec<Decl>,
     out_specials: Vec<FnDecl>,
     pending: Vec<(String, Vec<Type>)>,
     done: HashSet<String>,
@@ -32,8 +31,7 @@ impl Mono {
     fn new(decls: Vec<Decl>, method_dispatch: HashMap<(String, String), String>) -> Self {
         let mut generic_fns = HashMap::new();
         let mut fn_sigs = HashMap::new();
-        let mut out_passthrough = Vec::new();
-        let mut out_concrete = Vec::new();
+        let mut out = Vec::with_capacity(decls.len());
         for decl in decls {
             match decl {
                 Decl::Fn(fd) if !fd.generics.is_empty() => {
@@ -41,17 +39,16 @@ impl Mono {
                 }
                 Decl::Fn(fd) => {
                     fn_sigs.insert(fd.name.clone(), fn_sig(&fd));
-                    out_concrete.push(fd);
+                    out.push(Decl::Fn(fd));
                 }
-                other => out_passthrough.push(other),
+                other => out.push(other),
             }
         }
         Self {
             generic_fns,
             fn_sigs,
             method_dispatch,
-            out_passthrough,
-            out_concrete,
+            out,
             out_specials: Vec::new(),
             pending: Vec::new(),
             done: HashSet::new(),
@@ -60,14 +57,16 @@ impl Mono {
     }
 
     fn run(mut self) -> Result<Vec<Decl>, Vec<Error>> {
-        // Walk every concrete fn
-        let concrete: Vec<FnDecl> = std::mem::take(&mut self.out_concrete);
-        let mut rewritten_concrete = Vec::with_capacity(concrete.len());
-        for mut fd in concrete {
-            self.rewrite_fn_body(&mut fd, &HashMap::new());
-            rewritten_concrete.push(fd);
+        let len = self.out.len();
+        for i in 0..len {
+            if matches!(self.out[i], Decl::Fn(_)) {
+                let taken = std::mem::replace(&mut self.out[i], Decl::ModExit);
+                if let Decl::Fn(mut fd) = taken {
+                    self.rewrite_fn_body(&mut fd, &HashMap::new());
+                    self.out[i] = Decl::Fn(fd);
+                }
+            }
         }
-        self.out_concrete = rewritten_concrete;
 
         // Drain the worklist. Each pop emits a single specialization.
         while let Some((fn_name, type_args)) = self.pending.pop() {
@@ -114,15 +113,13 @@ impl Mono {
             self.out_specials.push(new_fd);
         }
 
-        // Assemble output: always include passthrough and concrete functions.
-        let mut out = self.out_passthrough;
-        for fd in self.out_concrete { out.push(Decl::Fn(fd)); }
+        let mut out = self.out;
 
         if !self.errors.is_empty() {
             return Ok(out);
         }
 
-        // Only add specializations if no errors occurred.
+        // Specializations append at the end (entry-module scope).
         for fd in self.out_specials { out.push(Decl::Fn(fd)); }
         Ok(out)
     }

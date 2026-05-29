@@ -2,9 +2,10 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
+use std::path::Path;
+
 use abrase::compiler::Compiler;
-use abrase::lexer::Lexer;
-use abrase::parser::Parser;
+use abrase::loader;
 use abrase::typeck::Checker;
 use myriad::{Host, Value, VirtualMachine, read_string};
 
@@ -66,19 +67,16 @@ fn main() -> ExitCode {
         return cmd_export(path, &args[3], int32, no_built_in);
     }
 
-    let source = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("ect: cannot read {}: {}", path, e);
-            return ExitCode::from(66);
-        }
+    let program = match loader::load_program(Path::new(path)) {
+        Ok(p) => p,
+        Err(e) => { eprintln!("{}", e); return ExitCode::from(66); }
     };
 
     match cmd {
-        "run" => cmd_run(&source, debug, int32, no_built_in),
-        "check" => cmd_check(&source, int32, no_built_in),
-        "parse" => cmd_parse(&source),
-        "disasm" => cmd_disasm(&source, int32, no_built_in),
+        "run" => cmd_run(&program, debug, int32, no_built_in),
+        "check" => cmd_check(&program, int32, no_built_in),
+        "parse" => cmd_parse(&program),
+        "disasm" => cmd_disasm(&program, int32, no_built_in),
         _ => {
             eprint!("{}", USAGE);
             ExitCode::from(64)
@@ -86,31 +84,22 @@ fn main() -> ExitCode {
     }
 }
 
-fn parse(source: &str) -> Result<Vec<abrase::ast::Decl>, ExitCode> {
-    let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
-    let ast = parser.parse_program();
-    if !parser.errors.is_empty() {
-        eprint!("{}", parser.pretty_print_errors());
-        return Err(ExitCode::from(1));
-    }
-    Ok(ast)
-}
-
-fn cmd_run(source: &str, debug: bool, int32: bool, no_built_in: bool) -> ExitCode {
+fn cmd_run(program: &loader::LoadedProgram, debug: bool, int32: bool, no_built_in: bool) -> ExitCode {
     if debug {
         eprintln!("# debug fmt:");
         eprintln!("#   compile-time: [lower] [COMPILE] [CALL] [emit_handle_install] [FUNC_MAP] [BYTECODE]");
         eprintln!("#   runtime trace: [<fn_name>#<fn_id>:<pc>] <op>");
         eprintln!("#   handler events: [handle] push ... / [resume] -> ...");
     }
-    let ast = match parse(source) { Ok(a) => a, Err(c) => return c };
+    let ast = &program.decls;
+    let source = &program.entry_source;
 
     let mut compiler = Compiler::new()
-        .with_source(source.to_string())
+        .with_source(source.clone())
         .with_debug(debug)
         .with_int32_mode(int32)
         .with_no_built_in(no_built_in);
-    let module = match compiler.compile_module(&ast) {
+    let module = match compiler.compile_module(ast) {
         Ok(m) => m,
         Err(_) => {
             eprint!("{}", compiler.pretty_print_errors());
@@ -124,7 +113,7 @@ fn cmd_run(source: &str, debug: bool, int32: bool, no_built_in: bool) -> ExitCod
         .with_fn_names(fn_names);
 
     Host::default().install_into(&mut vm);
-    let main_returns_unit = main_returns_unit(&ast);
+    let main_returns_unit = main_returns_unit(ast);
     match vm.run_module(&module) {
         Ok(v) => {
             if !main_returns_unit { print_result(&vm, v); }
@@ -164,20 +153,21 @@ fn print_result(vm: &VirtualMachine, v: Value) {
     println!("{}", v.as_int());
 }
 
-fn cmd_check(source: &str, int32: bool, no_built_in: bool) -> ExitCode {
-    let ast = match parse(source) { Ok(a) => a, Err(c) => return c };
+fn cmd_check(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -> ExitCode {
+    let ast = &program.decls;
+    let source = &program.entry_source;
     let mut checker = Checker::new();
-    checker.check_program(&ast);
+    checker.check_program(ast);
     if !checker.errors.is_empty() {
         eprint!("{}", checker.pretty_print_errors(source));
         return ExitCode::from(1);
     }
     if int32 || no_built_in {
         let mut compiler = Compiler::new()
-            .with_source(source.to_string())
+            .with_source(source.clone())
             .with_int32_mode(int32)
             .with_no_built_in(no_built_in);
-        if compiler.compile_module(&ast).is_err() {
+        if compiler.compile_module(ast).is_err() {
             eprint!("{}", compiler.pretty_print_errors());
             return ExitCode::from(1);
         }
@@ -186,37 +176,44 @@ fn cmd_check(source: &str, int32: bool, no_built_in: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_parse(source: &str) -> ExitCode {
-    let mut parser = Parser::new(Lexer::new(source)).with_source(source.to_string());
-    let ast = parser.parse_program();
-    for d in &ast {
-        println!("{:#?}", d);
+fn cmd_parse(program: &loader::LoadedProgram) -> ExitCode {
+    if program.sources.len() > 1 {
+        println!("// merged AST from {} files:", program.sources.len());
+        for (path, _) in &program.sources {
+            println!("//   {}", path.display());
+        }
+        println!();
     }
-    if !parser.errors.is_empty() {
-        eprint!("{}", parser.pretty_print_errors());
-        return ExitCode::from(1);
+    for d in &program.decls {
+        println!("{:#?}", d);
     }
     ExitCode::SUCCESS
 }
 
-fn cmd_disasm(source: &str, int32: bool, no_built_in: bool) -> ExitCode {
-    let ast = match parse(source) { Ok(a) => a, Err(c) => return c };
+fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -> ExitCode {
+    let ast = &program.decls;
+    let source = &program.entry_source;
+    let origins = fn_origins(program);
     let mut compiler = Compiler::new()
-        .with_source(source.to_string())
+        .with_source(source.clone())
         .with_int32_mode(int32)
         .with_no_built_in(no_built_in);
-    let module = match compiler.compile_module(&ast) {
+    let module = match compiler.compile_module(ast) {
         Ok(m) => m,
         Err(_) => {
             eprint!("{}", compiler.pretty_print_errors());
             return ExitCode::from(1);
         }
     };
+    let names = compiler.fn_names();
     for (i, chunk) in module.functions.iter().enumerate() {
-        let marker = if i == module.entry { " <entry>" } else { "" };
+        let entry_marker = if i == module.entry { " <entry>" } else { "" };
+        let name = names.get(i).cloned().unwrap_or_default();
+        let origin = origins.get(&name).map(|s| format!(" <from: {}>", s)).unwrap_or_default();
         match chunk {
             abrase::bytecode::Chunk::Bytecode(bc) => {
-                println!("fn #{}{} (regs={}, consts={})", i, marker, bc.reg_count, bc.constants.len());
+                println!("fn #{} {}{}{} (regs={}, consts={})",
+                    i, name, entry_marker, origin, bc.reg_count, bc.constants.len());
                 for (j, c) in bc.constants.iter().enumerate() {
                     println!("  const[{}] = {:?}", j, c);
                 }
@@ -225,24 +222,49 @@ fn cmd_disasm(source: &str, int32: bool, no_built_in: bool) -> ExitCode {
                 }
             }
             abrase::bytecode::Chunk::Native(n) => {
-                println!("fn #{}{} <native, params={}>", i, marker, n.param_count);
+                println!("fn #{} {}{}{} <native, params={}>",
+                    i, name, entry_marker, origin, n.param_count);
             }
         }
     }
     ExitCode::SUCCESS
 }
 
+fn fn_origins(program: &loader::LoadedProgram) -> std::collections::HashMap<String, String> {
+    use abrase::ast::Decl;
+    let entry_label = program.sources.last()
+        .and_then(|(p, _)| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("<entry>")
+        .to_string();
+    let mut out = std::collections::HashMap::new();
+    let mut stack: Vec<String> = Vec::new();
+    for d in &program.decls {
+        match d {
+            Decl::ModEnter(path) => stack.push(path.join(".")),
+            Decl::ModExit => { stack.pop(); }
+            Decl::Fn(f) => {
+                let label = stack.last().cloned().unwrap_or_else(|| entry_label.clone());
+                out.insert(f.name.clone(), label);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 fn cmd_export(src_path: &str, out_path: &str, int32: bool, no_built_in: bool) -> ExitCode {
-    let source = match fs::read_to_string(src_path) {
-        Ok(s) => s,
-        Err(e) => { eprintln!("ect: cannot read {}: {}", src_path, e); return ExitCode::from(66); }
+    let program = match loader::load_program(Path::new(src_path)) {
+        Ok(p) => p,
+        Err(e) => { eprintln!("{}", e); return ExitCode::from(66); }
     };
-    let ast = match parse(&source) { Ok(a) => a, Err(c) => return c };
+    let ast = &program.decls;
+    let source = &program.entry_source;
     let mut compiler = Compiler::new()
         .with_source(source.clone())
         .with_int32_mode(int32)
         .with_no_built_in(no_built_in);
-    let module = match compiler.compile_module(&ast) {
+    let module = match compiler.compile_module(ast) {
         Ok(m) => m,
         Err(_) => { eprint!("{}", compiler.pretty_print_errors()); return ExitCode::from(1); }
     };

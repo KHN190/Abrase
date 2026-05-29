@@ -1,0 +1,3 @@
+import leaf.{one};
+
+pub fn left_one() -> Int { one() }

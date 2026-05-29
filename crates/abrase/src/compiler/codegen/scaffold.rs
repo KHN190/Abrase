@@ -341,6 +341,14 @@ impl Compiler {
         Ok(())
     }
 
+    pub(in crate::compiler) fn patch_jnz_at(&mut self, branch_pc: usize, target_pc: usize) -> Result<(), String> {
+        let off = self.rel_offset(target_pc, branch_pc)?;
+        if let OpCode::Jnz(r, _) = self.code[branch_pc] {
+            self.code[branch_pc] = OpCode::Jnz(r, off);
+        }
+        Ok(())
+    }
+
     pub(in crate::compiler) fn wrap_ok(&mut self, value: Register) -> Result<Register, String> {
         self.wrap_result(value, effects::OK_TAG)
     }

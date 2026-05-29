@@ -130,6 +130,8 @@ pub struct Checker {
     current_module: Vec<String>,
     public_items: std::collections::HashSet<String>,
     private_items: std::collections::HashSet<String>,
+    module_scope_stack: Vec<Vec<String>>,
+    module_scopes: HashMap<Vec<String>, Scope>,
 
     // Qualified Name Resolution
     qualified_names: HashMap<String, Vec<Vec<String>>>,
@@ -204,6 +206,8 @@ impl Checker {
             current_module: vec!["root".into()],
             public_items: std::collections::HashSet::new(),
             private_items: std::collections::HashSet::new(),
+            module_scope_stack: Vec::new(),
+            module_scopes: HashMap::new(),
             qualified_names: HashMap::new(),
             variance_registry: {
                 let mut m = HashMap::new();

@@ -52,7 +52,7 @@ impl Compiler {
                         if let Some(info) = self.closure_by_var.get(name) {
                             self.func_map.get(&info.lifted_fn).copied()?
                         } else {
-                            self.func_map.get(name).copied()?
+                            self.resolve_fn_callee(name)?
                         }
                     }
                     ast::Expr::FieldAccess { base, field } => {

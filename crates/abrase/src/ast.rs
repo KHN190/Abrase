@@ -273,6 +273,8 @@ pub struct ImportItem {
 pub enum Decl {
     Fn(FnDecl),
     Mod(String),
+    ModEnter(Vec<String>),
+    ModExit,
     Import { path: Vec<String>, items: Vec<ImportItem> },
     Type {
         attrs: Vec<Attribute>,

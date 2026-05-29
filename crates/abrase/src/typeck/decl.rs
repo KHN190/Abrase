@@ -211,6 +211,16 @@ impl Checker {
                 for item in items {
                     let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
                     self.check_import_collision(&import_name, path.clone());
+
+                    if self.lookup_module_item(path, &item.name).is_some()
+                        && !self.is_accessible(&item.name, path)
+                    {
+                        self.report_error(
+                            format!("Cannot import '{}' from {}: item is private",
+                                item.name, path.join(".")),
+                            ast::Span { line: 0, col: 0 },
+                        );
+                    }
                 }
             },
 
@@ -220,6 +230,14 @@ impl Checker {
                 self.register_module_item(&parent_module, name.clone(), Type::Named(format!("module::{}", name)));
                 self.mark_public(name.clone()); // sub-modules are public so they can be traversed
                 self.push_module(name.clone());
+            },
+
+            ast::Decl::ModEnter(path) => {
+                self.enter_imported_module(path.clone());
+            },
+
+            ast::Decl::ModExit => {
+                self.exit_imported_module();
             },
 
             ast::Decl::Impl { methods, for_type, trait_name, .. } => {
@@ -274,6 +292,14 @@ impl Checker {
 
             ast::Decl::Impl { methods, for_type, trait_name, generics, where_clause, .. } => {
                 self.check_impl_decl(for_type, trait_name, generics, where_clause, methods);
+            },
+
+            ast::Decl::ModEnter(path) => {
+                self.enter_imported_module(path.clone());
+            },
+
+            ast::Decl::ModExit => {
+                self.exit_imported_module();
             },
 
             _ => {},

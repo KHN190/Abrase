@@ -179,7 +179,7 @@ impl Compiler {
         if let Some(cv) = self.const_values.get(name).cloned() {
             return self.compile_const_value(&cv);
         }
-        if let Some(&offset) = self.static_offsets.get(name) {
+        if let Some(offset) = self.resolve_static_offset(name) {
             let table = self.load_module_table()?;
             let dest = self.alloc_register()?;
             self.emit(OpCode::Ld(dest, table, offset));
