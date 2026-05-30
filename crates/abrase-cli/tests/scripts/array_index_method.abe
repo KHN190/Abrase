@@ -1,0 +1,8 @@
+fn first_str(xs: Array<Float>) -> String {
+    xs[0].to_s()
+}
+
+fn main() -> String {
+    let fa = [1.5; 4];
+    first_str(fa)
+}

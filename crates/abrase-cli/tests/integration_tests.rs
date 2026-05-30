@@ -326,3 +326,10 @@ fn built_ins() {
     assert!(out.contains("false.to_s()=false"),"Bool.to_s broken in: {:?}", out);
     assert!(out.contains("'Z'.to_s()=Z"),     "Char.to_s broken in: {:?}", out);
 }
+
+#[test]
+fn method_call_on_array_index_infers_element_type() {
+    let v = run_file_string("tests/scripts/array_index_method.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, "1.5");
+}

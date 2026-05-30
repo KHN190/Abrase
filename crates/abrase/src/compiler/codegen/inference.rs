@@ -65,6 +65,11 @@ impl Compiler {
                 let (_, ret) = self.fn_signatures.get(&fid)?;
                 ty_to_ast(ret)
             }
+            ast::Expr::Index { base, .. } => match self.infer_expr_type(base)? {
+                ast::Type::Array { elem, .. } => Some(*elem),
+                ast::Type::Generic { name, args } if name == "Array" => args.into_iter().next(),
+                _ => None,
+            },
             ast::Expr::FieldAccess { base, field } => {
                 let base_ty = self.infer_expr_type(base)?;
                 let recv = receiver_name_of(&base_ty)?;
