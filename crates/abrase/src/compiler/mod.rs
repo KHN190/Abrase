@@ -336,7 +336,7 @@ impl Compiler {
                 ErrorCode::TypeError,
                 te.span,
                 te.message.clone(),
-            )));
+            ).with_module(te.module.clone())));
             return Err(self.errors.clone());
         }
 
@@ -483,8 +483,17 @@ impl Compiler {
             let saved_module = std::mem::take(&mut self.current_fn_module);
             self.current_fn_module = self.fn_origin.get(&idx).cloned().unwrap_or_default();
             let chunk_res = self.compile_fn(&fn_decl);
+            let chunk = match chunk_res {
+                Ok(c) => c,
+                Err(mut es) => {
+                    for e in &mut es {
+                        if e.module.is_empty() { e.module = self.current_fn_module.clone(); }
+                    }
+                    self.current_fn_module = saved_module;
+                    return Err(es);
+                }
+            };
             self.current_fn_module = saved_module;
-            let chunk = chunk_res?;
             self.functions[idx] = chunk;
         }
 

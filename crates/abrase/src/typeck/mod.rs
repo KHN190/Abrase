@@ -9,6 +9,7 @@ pub struct TypeError {
     pub message: String,
     pub span: Span,
     pub context: Vec<String>,
+    pub module: Vec<String>,
 }
 
 impl TypeError {
@@ -310,6 +311,7 @@ impl Checker {
             message,
             span,
             context: self.context_stack.clone(),
+            module: self.current_module.clone(),
         });
         Type::Unknown
     }

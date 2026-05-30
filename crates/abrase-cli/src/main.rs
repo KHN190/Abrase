@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use std::path::Path;
 
 use abrase::compiler::Compiler;
+use abrase::error::{Error, ErrorCode};
 use abrase::loader;
 use abrase::typeck::Checker;
 use myriad::{Host, Value, VirtualMachine, read_string};
@@ -101,8 +102,8 @@ fn cmd_run(program: &loader::LoadedProgram, debug: bool, int32: bool, no_built_i
         .with_no_built_in(no_built_in);
     let module = match compiler.compile_module(ast) {
         Ok(m) => m,
-        Err(_) => {
-            eprint!("{}", compiler.pretty_print_errors());
+        Err(errs) => {
+            eprint!("{}", program.render_errors(&errs));
             return ExitCode::from(1);
         }
     };
@@ -159,7 +160,11 @@ fn cmd_check(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) ->
     let mut checker = Checker::new();
     checker.check_program(ast);
     if !checker.errors.is_empty() {
-        eprint!("{}", checker.pretty_print_errors(source));
+        let errs: Vec<Error> = checker.errors.iter()
+            .map(|te| Error::new(ErrorCode::TypeError, te.span, te.message.clone())
+                .with_module(te.module.clone()))
+            .collect();
+        eprint!("{}", program.render_errors(&errs));
         return ExitCode::from(1);
     }
     if int32 || no_built_in {
@@ -167,8 +172,8 @@ fn cmd_check(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) ->
             .with_source(source.clone())
             .with_int32_mode(int32)
             .with_no_built_in(no_built_in);
-        if compiler.compile_module(ast).is_err() {
-            eprint!("{}", compiler.pretty_print_errors());
+        if let Err(errs) = compiler.compile_module(ast) {
+            eprint!("{}", program.render_errors(&errs));
             return ExitCode::from(1);
         }
     }
@@ -200,8 +205,8 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
         .with_no_built_in(no_built_in);
     let module = match compiler.compile_module(ast) {
         Ok(m) => m,
-        Err(_) => {
-            eprint!("{}", compiler.pretty_print_errors());
+        Err(errs) => {
+            eprint!("{}", program.render_errors(&errs));
             return ExitCode::from(1);
         }
     };
@@ -266,7 +271,7 @@ fn cmd_export(src_path: &str, out_path: &str, int32: bool, no_built_in: bool) ->
         .with_no_built_in(no_built_in);
     let module = match compiler.compile_module(ast) {
         Ok(m) => m,
-        Err(_) => { eprint!("{}", compiler.pretty_print_errors()); return ExitCode::from(1); }
+        Err(errs) => { eprint!("{}", program.render_errors(&errs)); return ExitCode::from(1); }
     };
     let bytes = match polka::cartridge::write_pk(&module) {
         Ok(b) => b,

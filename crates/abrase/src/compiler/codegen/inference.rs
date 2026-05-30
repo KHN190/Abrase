@@ -65,6 +65,18 @@ impl Compiler {
                 let (_, ret) = self.fn_signatures.get(&fid)?;
                 ty_to_ast(ret)
             }
+            ast::Expr::Array(items) => {
+                let elem = self.infer_expr_type(items.first()?)?;
+                Some(ast::Type::Array { elem: Box::new(elem), size: items.len() })
+            }
+            ast::Expr::ArrayRepeat { elem, count } => {
+                let elem_ty = self.infer_expr_type(elem)?;
+                let size = self.try_const_fold(count)
+                    .and_then(|c| c.into_lit())
+                    .and_then(|l| match l { ast::Literal::Int(n) => usize::try_from(n).ok(), _ => None })
+                    .unwrap_or(0);
+                Some(ast::Type::Array { elem: Box::new(elem_ty), size })
+            }
             ast::Expr::Index { base, .. } => match self.infer_expr_type(base)? {
                 ast::Type::Array { elem, .. } => Some(*elem),
                 ast::Type::Generic { name, args } if name == "Array" => args.into_iter().next(),

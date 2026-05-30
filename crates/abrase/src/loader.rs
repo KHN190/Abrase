@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::ast;
+use crate::error::Error;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
@@ -36,6 +37,22 @@ pub struct LoadedProgram {
     pub decls: Vec<ast::Decl>,
     pub sources: Vec<(PathBuf, String)>,
     pub entry_source: String,
+    pub module_sources: HashMap<Vec<String>, (PathBuf, String)>,
+}
+
+impl LoadedProgram {
+    // Render each error against the source of the module it came from (errors
+    // carry their module path); fall back to the entry file otherwise.
+    pub fn render_errors(&self, errors: &[Error]) -> String {
+        errors.iter().map(|e| {
+            match self.module_sources.get(&e.module) {
+                Some((path, src)) if !e.module.is_empty() =>
+                    format!("  --> {}\n{}", path.display(), e.pretty_print(src)),
+                Some((_, src)) => e.pretty_print(src),
+                None => e.pretty_print(&self.entry_source),
+            }
+        }).collect::<Vec<_>>().join("\n")
+    }
 }
 
 pub fn load_program(entry: &Path) -> Result<LoadedProgram, LoadError> {
@@ -44,6 +61,7 @@ pub fn load_program(entry: &Path) -> Result<LoadedProgram, LoadError> {
         decls: Vec::new(),
         sources: Vec::new(),
         entry_source: String::new(),
+        module_sources: HashMap::new(),
     };
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut in_progress: HashSet<PathBuf> = HashSet::new();
@@ -100,6 +118,7 @@ fn load_recursive(
     in_progress.remove(&canon);
     visited.insert(canon);
     if is_entry { out.entry_source = source.clone(); }
+    out.module_sources.insert(module_path.to_vec(), (file.to_path_buf(), source.clone()));
     out.sources.push((file.to_path_buf(), source));
     if is_entry {
         out.decls.extend(decls);

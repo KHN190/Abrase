@@ -26,6 +26,7 @@ pub struct Error {
     pub span: Span,
     pub message: String,
     pub context: Vec<String>,
+    pub module: Vec<String>,
 }
 
 impl Error {
@@ -35,7 +36,13 @@ impl Error {
             span,
             message: message.into(),
             context: Vec::new(),
+            module: Vec::new(),
         }
+    }
+
+    pub fn with_module(mut self, module: Vec<String>) -> Self {
+        self.module = module;
+        self
     }
 
     pub fn with_context(mut self, context: Vec<String>) -> Self {
