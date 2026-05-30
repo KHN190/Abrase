@@ -295,18 +295,7 @@ impl VirtualMachine {
             }
             OpCode::Ret(reg) => self.do_ret(module, *reg),
 
-            OpCode::PushConst(reg, pool_idx) => {
-                let idx = *pool_idx as usize;
-                let consts = &self.resolved_constants[self.current_func];
-                let mask  = &self.resolved_const_mask[self.current_func];
-                if idx >= consts.len() {
-                    return Err("Constant index out of bounds".to_string());
-                }
-                let raw = consts[idx];
-                let is_handle = mask_bit(mask, idx);
-                if is_handle { self.rc_inc_handle(raw)?; }
-                self.write(*reg, raw, is_handle)
-            }
+            OpCode::PushConst(reg, pool_idx) => self.exec_push_const(*reg, *pool_idx),
             OpCode::Copy(d, s) => {
                 let (v, is_handle) = self.read(*s)?;
                 if is_handle { self.rc_inc_handle(v)?; }
@@ -317,40 +306,10 @@ impl VirtualMachine {
                 self.write(*d, v, is_handle)
             }
 
-            OpCode::Ld(d, b, off) => {
-                let (slot, gen_) = self.read_handle(*b)?;
-                let (raw, is_handle) = self.heap.ld(slot, gen_, *off as usize)?;
-                if is_handle { self.rc_inc_handle(raw)?; }
-                self.write(*d, raw, is_handle)
-            }
-            OpCode::St(src, b, off) => {
-                let (slot, gen_) = self.read_handle(*b)?;
-                let (raw, is_handle) = self.take(*src)?;
-                let (old_raw, old_is_handle) = self.heap.st(slot, gen_, *off as usize, raw, is_handle)?;
-                if old_is_handle { self.rc_dec_handle(old_raw)?; }
-                Ok(())
-            }
-            OpCode::LdIdx(d, b, i) => {
-                let (slot, gen_) = self.read_handle(*b)?;
-                let off = self.read_i64(*i)?;
-                if off < 0 {
-                    return Err(format!("ldidx: negative index {}", off));
-                }
-                let (raw, is_handle) = self.heap.ld(slot, gen_, off as usize)?;
-                if is_handle { self.rc_inc_handle(raw)?; }
-                self.write(*d, raw, is_handle)
-            }
-            OpCode::StIdx(src, b, i) => {
-                let (slot, gen_) = self.read_handle(*b)?;
-                let off = self.read_i64(*i)?;
-                if off < 0 {
-                    return Err(format!("stidx: negative index {}", off));
-                }
-                let (raw, is_handle) = self.take(*src)?;
-                let (old_raw, old_is_handle) = self.heap.st(slot, gen_, off as usize, raw, is_handle)?;
-                if old_is_handle { self.rc_dec_handle(old_raw)?; }
-                Ok(())
-            }
+            OpCode::Ld(d, b, off)      => self.exec_ld(*d, *b, *off as i64),
+            OpCode::St(src, b, off)    => self.exec_st(*src, *b, *off as i64),
+            OpCode::LdIdx(d, b, i)     => { let off = self.read_i64(*i)?; if off < 0 { return Err(format!("ldidx: negative index {}", off)); } self.exec_ld(*d, *b, off) }
+            OpCode::StIdx(src, b, i)   => { let off = self.read_i64(*i)?; if off < 0 { return Err(format!("stidx: negative index {}", off)); } self.exec_st(*src, *b, off) }
             OpCode::AddImm(d, s, imm) => {
                 let x = self.read_i64(*s)?;
                 self.write(*d, x.wrapping_add(*imm as i64) as u64, false)
@@ -375,30 +334,64 @@ impl VirtualMachine {
 
             OpCode::Dei(d, port_reg) => self.do_dei(*d, *port_reg),
             OpCode::Deo(src, port_reg) => self.do_deo(module, *src, *port_reg),
-            OpCode::Handle(table_reg, effect_id) => {
-                let (table_raw, table_is_handle) = self.read_at(*table_reg);
-                let (table_slot, table_gen) = if table_is_handle && table_raw != HANDLE_NONE {
-                    let (s, g) = Self::decode_handle(table_raw);
-                    (Some(s), g)
-                } else { (None, 0) };
-                self.handlers.push(super::HandlerFrame {
-                    effect_id: *effect_id,
-                    dispatch_table_slot: table_slot,
-                    dispatch_table_gen: table_gen,
-                    cell_slot: 0,
-                    cell_gen: 0,
-                    cells_allocated: Vec::new(),
-                    body_frame_index: None,
-                    pending_return_arm_fn: None,
-                    pending_return_arm_env: HANDLE_NONE,
-                    pending_return_arm_env_is_handle: false,
-                });
-                self.trace_frame_event("HANDLER push", format_args!("effect={:#04x}", effect_id));
-                Ok(())
-            }
+            OpCode::Handle(table_reg, effect_id) => self.exec_handler_push(*table_reg, *effect_id),
             OpCode::Resume(dest_reg, val_reg) => self.do_resume(module, *dest_reg, *val_reg),
             OpCode::Raise(dest, key_reg, args_base) => self.do_raise(module, bc, *dest, *key_reg, *args_base),
         }
+    }
+
+    #[inline(always)]
+    fn exec_push_const(&mut self, reg: Register, pool_idx: u16) -> Result<(), String> {
+        let idx = pool_idx as usize;
+        let consts = &self.resolved_constants[self.current_func];
+        let mask  = &self.resolved_const_mask[self.current_func];
+        if idx >= consts.len() {
+            return Err("Constant index out of bounds".to_string());
+        }
+        let raw = consts[idx];
+        let is_handle = mask_bit(mask, idx);
+        if is_handle { self.rc_inc_handle(raw)?; }
+        self.write(reg, raw, is_handle)
+    }
+
+    #[inline(always)]
+    fn exec_ld(&mut self, d: Register, b: Register, off: i64) -> Result<(), String> {
+        let (slot, gen_) = self.read_handle(b)?;
+        let (raw, is_handle) = self.heap.ld(slot, gen_, off as usize)?;
+        if is_handle { self.rc_inc_handle(raw)?; }
+        self.write(d, raw, is_handle)
+    }
+
+    #[inline(always)]
+    fn exec_st(&mut self, src: Register, b: Register, off: i64) -> Result<(), String> {
+        let (slot, gen_) = self.read_handle(b)?;
+        let (raw, is_handle) = self.take(src)?;
+        let (old_raw, old_is_handle) = self.heap.st(slot, gen_, off as usize, raw, is_handle)?;
+        if old_is_handle { self.rc_dec_handle(old_raw)?; }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn exec_handler_push(&mut self, table_reg: Register, effect_id: u16) -> Result<(), String> {
+        let (table_raw, table_is_handle) = self.read_at(table_reg);
+        let (table_slot, table_gen) = if table_is_handle && table_raw != HANDLE_NONE {
+            let (s, g) = Self::decode_handle(table_raw);
+            (Some(s), g)
+        } else { (None, 0) };
+        self.handlers.push(super::HandlerFrame {
+            effect_id,
+            dispatch_table_slot: table_slot,
+            dispatch_table_gen: table_gen,
+            cell_slot: 0,
+            cell_gen: 0,
+            cells_allocated: Vec::new(),
+            body_frame_index: None,
+            pending_return_arm_fn: None,
+            pending_return_arm_env: HANDLE_NONE,
+            pending_return_arm_env_is_handle: false,
+        });
+        self.trace_frame_event("HANDLER push", format_args!("effect={:#04x}", effect_id));
+        Ok(())
     }
 
     fn do_call(&mut self, module: &Module, caller_bc: &BytecodeChunk, dest: Register, fn_id: usize) -> Result<(), String> {

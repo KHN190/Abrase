@@ -276,90 +276,7 @@ impl Checker {
                 };
                 result
             }
-            ast::Expr::Match { scrutinee, arms } => {
-                self.context_stack.push("In match expression".into());
-                let required_before = self.fn_required_effects.clone();
-                let scrutinee_ty = if let ast::Expr::Identifier(name) = &scrutinee.node {
-                    self.get_var(name, true, scrutinee.span)
-                } else {
-                    self.infer_expr(scrutinee)
-                };
-                let exn_added: Vec<_> = self.fn_required_effects.iter()
-                    .filter(|e| !required_before.iter().any(|b| self.effects_equal(b, e))
-                        && matches!(e, crate::ty::Effect::Exn(_)))
-                    .cloned()
-                    .collect();
-
-                // Pattern type checking and exhaustiveness analysis
-                for arm in arms {
-                    self.check_pattern(&arm.pattern, &scrutinee_ty, arm.pattern.span);
-                }
-
-                // If scrutinee produced an exn effect and arms cover Ok+Err, treat as handled
-                if !exn_added.is_empty() && Self::arms_cover_ok_err(arms) {
-                    self.fn_required_effects.retain(|e| !matches!(e, crate::ty::Effect::Exn(_)));
-                    for e in required_before.iter() {
-                        if matches!(e, crate::ty::Effect::Exn(_))
-                            && !self.fn_required_effects.iter().any(|x| std::mem::discriminant(x) == std::mem::discriminant(e) && x == e)
-                        {
-                            self.fn_required_effects.push(e.clone());
-                        }
-                    }
-                }
-
-                // Check variant exhaustiveness for Named types
-                if let Type::Named(type_name) = &scrutinee_ty {
-                    let type_name = type_name.clone();
-                    let (covered, has_wildcard) = Self::collect_arm_patterns(arms);
-                    self.check_variant_exhaustiveness(&type_name, &covered, has_wildcard, expr.span);
-                }
-
-                let mut arm_types = Vec::new();
-                // Mutually exclusive arms: snapshot scope/effects before each, union deltas.
-                let pre_arm_snapshot = self.scopes.clone();
-                let pre_arm_effects = self.fn_required_effects.clone();
-                let mut arm_effects: Vec<crate::ty::Effect> = Vec::new();
-                for arm in arms {
-                    self.scopes = pre_arm_snapshot.clone();
-                    self.fn_required_effects = pre_arm_effects.clone();
-                    self.check_pattern(&arm.pattern, &scrutinee_ty, arm.pattern.span);
-                    if let Some(guard) = &arm.guard {
-                        let guard_ty = self.infer_expr(guard);
-                        if guard_ty != Type::Bool && guard_ty != Type::Unknown {
-                            self.report_error("Guard must be Bool".into(), guard.span);
-                        }
-                    }
-                    let body_ty = self.infer_expr(&arm.body);
-                    for e in self.fn_required_effects.iter() {
-                        if !pre_arm_effects.iter().any(|p| self.effects_equal(p, e))
-                            && !arm_effects.iter().any(|x| self.effects_equal(x, e))
-                        {
-                            arm_effects.push(e.clone());
-                        }
-                    }
-                    arm_types.push(body_ty);
-                }
-                self.scopes = pre_arm_snapshot;
-                self.fn_required_effects = pre_arm_effects;
-                for e in arm_effects {
-                    if !self.fn_required_effects.iter().any(|p| self.effects_equal(p, &e)) {
-                        self.fn_required_effects.push(e);
-                    }
-                }
-
-                // All arms must have same type
-                if !arm_types.is_empty() {
-                    let first = arm_types[0].clone();
-                    for ty in arm_types.iter().skip(1) {
-                        if *ty != first && first != Type::Unknown && *ty != Type::Unknown {
-                            self.report_error("Match arm types do not match".into(), expr.span);
-                        }
-                    }
-                }
-
-                self.context_stack.pop();
-                if arm_types.is_empty() { Type::Unknown } else { arm_types[0].clone() }
-            }
+            ast::Expr::Match { scrutinee, arms } => self.infer_match(scrutinee, arms, expr.span),
             ast::Expr::For { pattern, iter, body } => {
                 self.context_stack.push("In for loop".into());
                 let iter_ty = self.infer_expr(iter);
@@ -580,113 +497,7 @@ impl Checker {
                 self.context_stack.pop();
                 field_type
             }
-            ast::Expr::Closure { is_move, params, effects, return_type, body } => {
-                self.context_stack.push("In closure expression".into());
-
-                // closure captures must be Move/Copy.
-                {
-                    use std::collections::HashSet;
-                    let mut bound: HashSet<String> = HashSet::new();
-                    for p in params {
-                        if let ast::Pattern::Bind(n) = &p.pattern.node {
-                            bound.insert(n.clone());
-                        }
-                    }
-                    let mut seen = HashSet::new();
-                    let mut frees = Vec::new();
-                    crate::compiler::closures::collect_free_vars(body, &bound, &mut seen, &mut frees);
-                    for name in &frees {
-                        if let Some(ty) = self.peek_var(name) {
-                            if matches!(ty, Type::Reference { .. }) {
-                                self.report_error(
-                                    format!(
-                                        "closure cannot capture reference '{}'", name
-                                    ),
-                                    body.span,
-                                );
-                            }
-                            if self.type_contains_shared(&ty) {
-                                self.report_error(
-                                    format!(
-                                        "closure cannot capture Shared binding '{}' \
-                                         from an enclosing region", name
-                                    ),
-                                    body.span,
-                                );
-                            }
-                            if !*is_move {
-                                if let Some(true) = self.peek_var_is_mut(name) {
-                                    self.report_error(
-                                        format!(
-                                            "mutable binding '{}' cannot be captured by a non-move closure; \
-                                             use `move |...|` to transfer ownership, or model mutation \
-                                             through the `state` effect",
-                                            name
-                                        ),
-                                        body.span,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-
-                self.enter_scope();
-
-                // Set declared effects for the closure
-                let declared_effects = self.convert_effect_items(effects);
-                let saved_required = std::mem::take(&mut self.fn_required_effects);
-
-                self.fn_declared_effects = declared_effects.clone();
-
-                for param in params {
-                    let converted_ty = param.ty.as_ref()
-                        .map(|t| self.convert_type(t))
-                        .unwrap_or(Type::Unknown);
-                    if let ast::Pattern::Bind(n) = &param.pattern.node {
-                        self.insert_var(n.clone(), converted_ty, false, param.pattern.span);
-                    }
-                }
-                let body_ty = self.infer_expr(body);
-                if let Some(expected_ret) = return_type {
-                    let expected = self.convert_type(expected_ret);
-                    if expected != body_ty && expected != Type::Unknown && body_ty != Type::Unknown {
-                        self.report_error("Closure body type mismatch".into(), body.span);
-                    }
-                }
-
-                // Validate closure effect declarations
-                if !declared_effects.is_empty() {
-                    let inferred = self.fn_required_effects.clone();
-                    let exceeds = self.inferred_effects_exceed_declared(&declared_effects, &inferred);
-                    if !exceeds.is_empty() {
-                        self.report_error(
-                            format!("Closure body produces effects not in declared effect set"),
-                            body.span
-                        );
-                    }
-                }
-
-                // Infer closure effects and clear context
-                let inferred_effects = self.infer_closure_effects(&self.fn_required_effects);
-                self.fn_declared_effects.clear();
-                self.fn_required_effects = saved_required;
-
-                self.exit_scope();
-
-                // Return function type with inferred effects; missing annotations become Unknown.
-                let param_tys: Vec<Type> = params.iter()
-                    .map(|p| p.ty.as_ref().map(|t| self.convert_type(t)).unwrap_or(Type::Unknown))
-                    .collect();
-                let result = Type::Function {
-                    params: param_tys,
-                    effects: inferred_effects,
-                    ret: Box::new(body_ty),
-                };
-
-                self.context_stack.pop();
-                result
-            }
+            ast::Expr::Closure { is_move, params, effects, return_type, body } => self.infer_closure(*is_move, params, effects, return_type, body),
             ast::Expr::Record { ty, fields } => {
                 let type_name = ty.join(".");
                 self.context_stack.push(format!("In record construction of '{}'", type_name));
@@ -844,155 +655,7 @@ impl Checker {
 
                 body_ty
             }
-            ast::Expr::Handle { expr: handler_expr, arms } => {
-                if matches!(handler_expr.node, ast::Expr::Handle { .. }) {
-                    self.report_error(
-                        "inline nested handle is not allowed; extract the inner handle into a function and call it".into(),
-                        handler_expr.span,
-                    );
-                }
-                self.context_stack.push("In handle expression".into());
-                let saved_handled = std::mem::take(&mut self.handled_effects);
-
-                let required_before = self.fn_required_effects.clone();
-                let _expr_ty = self.infer_expr(handler_expr);
-                let required_from_inner: Vec<_> = self.fn_required_effects.iter()
-                    .filter(|e| !required_before.iter().any(|b| self.effects_equal(b, e)))
-                    .cloned()
-                    .collect();
-
-                let mut seen_effect: Option<String> = None;
-                for arm in arms.iter() {
-                    if let ast::HandleArmKind::Effect(path) = &arm.kind {
-                        if path.len() >= 2 {
-                            let eff = path[..path.len() - 1].join(".");
-                            match &seen_effect {
-                                None => seen_effect = Some(eff),
-                                Some(prev) if prev == &eff => {}
-                                Some(prev) => {
-                                    self.report_error(
-                                        format!("`handle` may only cover arms of a single effect; \
-                                                 saw arms for both `{}` and `{}` (split into separate `handle` blocks)",
-                                            prev, eff),
-                                        expr.span,
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let mut arm_types = Vec::new();
-                for (arm_idx, arm) in arms.iter().enumerate() {
-                    // Validate arm pattern if present (introduces binder visible to body)
-                    if let Some(pat) = &arm.pattern {
-                        if let ast::Pattern::Bind(name) = &pat.node {
-                            let pat_ty = if let ast::HandleArmKind::Effect(path) = &arm.kind {
-                                if path.len() >= 2 {
-                                    let op_key = format!("{}::{}", path[0], path[1]);
-                                    match self.effect_ops_registry.get(&op_key).cloned() {
-                                        Some(Type::Function { params, .. }) if params.len() == 1 => {
-                                            params.into_iter().next().unwrap()
-                                        }
-                                        Some(Type::Function { params, .. }) if params.is_empty() => {
-                                            Type::Unit
-                                        }
-                                        _ => Type::Unknown,
-                                    }
-                                } else {
-                                    Type::Unknown
-                                }
-                            } else {
-                                Type::Unknown
-                            };
-                            self.insert_var(name.clone(), pat_ty, false, pat.span);
-                        }
-                    }
-
-                    // Non-return arm bodies are implicit regions and the body is a
-                    // handler context where `resume` is valid.
-                    let is_non_return = !matches!(arm.kind, ast::HandleArmKind::Return);
-                    let saved_in_arm = self.in_handler_arm;
-                    if is_non_return {
-                        self.in_handler_arm = true;
-                        let region_name = format!("handle_arm_{}", arm_idx);
-                        self.push_region(region_name);
-                    }
-
-                    if let Some(nested_span) = Self::find_nested_handle(&arm.body) {
-                        self.report_error(
-                            "nested `handle` inside a handler arm body is not yet supported".into(),
-                            nested_span,
-                        );
-                    }
-
-                    let arm_ty = self.infer_expr(&arm.body);
-                    arm_types.push(arm_ty);
-
-                    if matches!(arm.kind, ast::HandleArmKind::Effect(_))
-                        && !Self::arm_resumes_or_diverges(&arm.body)
-                    {
-                        self.report_error(
-                            "effect handler arm must call `resume`/`return`/`throw` \
-                             on every path; missing leaks the captured continuation"
-                                .into(),
-                            arm.body.span,
-                        );
-                    }
-
-                    if is_non_return {
-                        self.pop_region();
-                        self.in_handler_arm = saved_in_arm;
-                    }
-
-                    match &arm.kind {
-                        ast::HandleArmKind::Return => {
-                            // Return handler doesn't remove an effect
-                        }
-                        ast::HandleArmKind::Exn => {
-                            if !required_from_inner.iter().any(|e| matches!(e, crate::ty::Effect::Exn(_))) {
-                                self.report_error(
-                                    "Handling exn but inner expression produces no exn effect".into(),
-                                    expr.span
-                                );
-                            }
-                            self.mark_effect_handled("exn".into());
-                        }
-                        ast::HandleArmKind::Effect(effect_path) => {
-                            if let Some(eff_name) = effect_path.first() {
-                                self.mark_effect_handled(eff_name.clone());
-                            }
-                            self.mark_effect_handled(effect_path.join("."));
-                        }
-                    }
-                }
-
-                // Remove handled effects from fn_required_effects
-                let required = self.fn_required_effects.clone();
-                self.compute_unhandled_effects(&required);
-                self.fn_required_effects = self.unhandled_effects.clone();
-
-                let result_ty = arm_types.iter()
-                    .find(|t| **t != Type::Never && **t != Type::Unknown)
-                    .cloned()
-                    .or_else(|| arm_types.first().cloned())
-                    .unwrap_or(Type::Unknown);
-                for ty in &arm_types {
-                    if *ty != result_ty
-                        && *ty != Type::Never
-                        && *ty != Type::Unknown
-                        && result_ty != Type::Unknown
-                    {
-                        self.report_error("Handle arm types do not match".into(), expr.span);
-                    }
-                }
-
-                self.context_stack.pop();
-                self.handled_effects = saved_handled;
-                self.unhandled_effects.clear();
-                result_ty
-            }
+            ast::Expr::Handle { expr: handler_expr, arms } => self.infer_handle(handler_expr, arms, expr.span),
         }
     }
 
@@ -1374,6 +1037,366 @@ impl Checker {
 
                 self.context_stack.pop();
                 result
+    }
+
+    fn infer_match(
+        &mut self,
+        scrutinee: &Spanned<ast::Expr>,
+        arms: &[ast::MatchArm],
+        span: ast::Span,
+    ) -> Type {
+                self.context_stack.push("In match expression".into());
+                let required_before = self.fn_required_effects.clone();
+                let scrutinee_ty = if let ast::Expr::Identifier(name) = &scrutinee.node {
+                    self.get_var(name, true, scrutinee.span)
+                } else {
+                    self.infer_expr(scrutinee)
+                };
+                let exn_added: Vec<_> = self.fn_required_effects.iter()
+                    .filter(|e| !required_before.iter().any(|b| self.effects_equal(b, e))
+                        && matches!(e, crate::ty::Effect::Exn(_)))
+                    .cloned()
+                    .collect();
+
+                // Pattern type checking and exhaustiveness analysis
+                for arm in arms {
+                    self.check_pattern(&arm.pattern, &scrutinee_ty, arm.pattern.span);
+                }
+
+                // If scrutinee produced an exn effect and arms cover Ok+Err, treat as handled
+                if !exn_added.is_empty() && Self::arms_cover_ok_err(arms) {
+                    self.fn_required_effects.retain(|e| !matches!(e, crate::ty::Effect::Exn(_)));
+                    for e in required_before.iter() {
+                        if matches!(e, crate::ty::Effect::Exn(_))
+                            && !self.fn_required_effects.iter().any(|x| std::mem::discriminant(x) == std::mem::discriminant(e) && x == e)
+                        {
+                            self.fn_required_effects.push(e.clone());
+                        }
+                    }
+                }
+
+                // Check variant exhaustiveness for Named types
+                if let Type::Named(type_name) = &scrutinee_ty {
+                    let type_name = type_name.clone();
+                    let (covered, has_wildcard) = Self::collect_arm_patterns(arms);
+                    self.check_variant_exhaustiveness(&type_name, &covered, has_wildcard, span);
+                }
+
+                let mut arm_types = Vec::new();
+                // Mutually exclusive arms: snapshot scope/effects before each, union deltas.
+                let pre_arm_snapshot = self.scopes.clone();
+                let pre_arm_effects = self.fn_required_effects.clone();
+                let mut arm_effects: Vec<crate::ty::Effect> = Vec::new();
+                for arm in arms {
+                    self.scopes = pre_arm_snapshot.clone();
+                    self.fn_required_effects = pre_arm_effects.clone();
+                    self.check_pattern(&arm.pattern, &scrutinee_ty, arm.pattern.span);
+                    if let Some(guard) = &arm.guard {
+                        let guard_ty = self.infer_expr(guard);
+                        if guard_ty != Type::Bool && guard_ty != Type::Unknown {
+                            self.report_error("Guard must be Bool".into(), guard.span);
+                        }
+                    }
+                    let body_ty = self.infer_expr(&arm.body);
+                    for e in self.fn_required_effects.iter() {
+                        if !pre_arm_effects.iter().any(|p| self.effects_equal(p, e))
+                            && !arm_effects.iter().any(|x| self.effects_equal(x, e))
+                        {
+                            arm_effects.push(e.clone());
+                        }
+                    }
+                    arm_types.push(body_ty);
+                }
+                self.scopes = pre_arm_snapshot;
+                self.fn_required_effects = pre_arm_effects;
+                for e in arm_effects {
+                    if !self.fn_required_effects.iter().any(|p| self.effects_equal(p, &e)) {
+                        self.fn_required_effects.push(e);
+                    }
+                }
+
+                // All arms must have same type
+                if !arm_types.is_empty() {
+                    let first = arm_types[0].clone();
+                    for ty in arm_types.iter().skip(1) {
+                        if *ty != first && first != Type::Unknown && *ty != Type::Unknown {
+                            self.report_error("Match arm types do not match".into(), span);
+                        }
+                    }
+                }
+
+                self.context_stack.pop();
+                if arm_types.is_empty() { Type::Unknown } else { arm_types[0].clone() }
+    }
+
+    fn infer_closure(
+        &mut self,
+        is_move: bool,
+        params: &[ast::ClosureParam],
+        effects: &[ast::EffectItem],
+        return_type: &Option<ast::Type>,
+        body: &Spanned<ast::Expr>,
+    ) -> Type {
+                self.context_stack.push("In closure expression".into());
+
+                // closure captures must be Move/Copy.
+                {
+                    use std::collections::HashSet;
+                    let mut bound: HashSet<String> = HashSet::new();
+                    for p in params {
+                        if let ast::Pattern::Bind(n) = &p.pattern.node {
+                            bound.insert(n.clone());
+                        }
+                    }
+                    let mut seen = HashSet::new();
+                    let mut frees = Vec::new();
+                    crate::compiler::closures::collect_free_vars(body, &bound, &mut seen, &mut frees);
+                    for name in &frees {
+                        if let Some(ty) = self.peek_var(name) {
+                            if matches!(ty, Type::Reference { .. }) {
+                                self.report_error(
+                                    format!(
+                                        "closure cannot capture reference '{}'", name
+                                    ),
+                                    body.span,
+                                );
+                            }
+                            if self.type_contains_shared(&ty) {
+                                self.report_error(
+                                    format!(
+                                        "closure cannot capture Shared binding '{}' \
+                                         from an enclosing region", name
+                                    ),
+                                    body.span,
+                                );
+                            }
+                            if !is_move {
+                                if let Some(true) = self.peek_var_is_mut(name) {
+                                    self.report_error(
+                                        format!(
+                                            "mutable binding '{}' cannot be captured by a non-move closure; \
+                                             use `move |...|` to transfer ownership, or model mutation \
+                                             through the `state` effect",
+                                            name
+                                        ),
+                                        body.span,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                self.enter_scope();
+
+                // Set declared effects for the closure
+                let declared_effects = self.convert_effect_items(effects);
+                let saved_required = std::mem::take(&mut self.fn_required_effects);
+
+                self.fn_declared_effects = declared_effects.clone();
+
+                for param in params {
+                    let converted_ty = param.ty.as_ref()
+                        .map(|t| self.convert_type(t))
+                        .unwrap_or(Type::Unknown);
+                    if let ast::Pattern::Bind(n) = &param.pattern.node {
+                        self.insert_var(n.clone(), converted_ty, false, param.pattern.span);
+                    }
+                }
+                let body_ty = self.infer_expr(body);
+                if let Some(expected_ret) = return_type {
+                    let expected = self.convert_type(expected_ret);
+                    if expected != body_ty && expected != Type::Unknown && body_ty != Type::Unknown {
+                        self.report_error("Closure body type mismatch".into(), body.span);
+                    }
+                }
+
+                // Validate closure effect declarations
+                if !declared_effects.is_empty() {
+                    let inferred = self.fn_required_effects.clone();
+                    let exceeds = self.inferred_effects_exceed_declared(&declared_effects, &inferred);
+                    if !exceeds.is_empty() {
+                        self.report_error(
+                            format!("Closure body produces effects not in declared effect set"),
+                            body.span
+                        );
+                    }
+                }
+
+                // Infer closure effects and clear context
+                let inferred_effects = self.infer_closure_effects(&self.fn_required_effects);
+                self.fn_declared_effects.clear();
+                self.fn_required_effects = saved_required;
+
+                self.exit_scope();
+
+                // Return function type with inferred effects; missing annotations become Unknown.
+                let param_tys: Vec<Type> = params.iter()
+                    .map(|p| p.ty.as_ref().map(|t| self.convert_type(t)).unwrap_or(Type::Unknown))
+                    .collect();
+                let result = Type::Function {
+                    params: param_tys,
+                    effects: inferred_effects,
+                    ret: Box::new(body_ty),
+                };
+
+                self.context_stack.pop();
+                result
+    }
+
+    fn infer_handle(
+        &mut self,
+        handler_expr: &Spanned<ast::Expr>,
+        arms: &[ast::HandleArm],
+        span: ast::Span,
+    ) -> Type {
+                if matches!(handler_expr.node, ast::Expr::Handle { .. }) {
+                    self.report_error(
+                        "inline nested handle is not allowed; extract the inner handle into a function and call it".into(),
+                        handler_expr.span,
+                    );
+                }
+                self.context_stack.push("In handle expression".into());
+                let saved_handled = std::mem::take(&mut self.handled_effects);
+
+                let required_before = self.fn_required_effects.clone();
+                let _expr_ty = self.infer_expr(handler_expr);
+                let required_from_inner: Vec<_> = self.fn_required_effects.iter()
+                    .filter(|e| !required_before.iter().any(|b| self.effects_equal(b, e)))
+                    .cloned()
+                    .collect();
+
+                let mut seen_effect: Option<String> = None;
+                for arm in arms.iter() {
+                    if let ast::HandleArmKind::Effect(path) = &arm.kind {
+                        if path.len() >= 2 {
+                            let eff = path[..path.len() - 1].join(".");
+                            match &seen_effect {
+                                None => seen_effect = Some(eff),
+                                Some(prev) if prev == &eff => {}
+                                Some(prev) => {
+                                    self.report_error(
+                                        format!("`handle` may only cover arms of a single effect; \
+                                                 saw arms for both `{}` and `{}` (split into separate `handle` blocks)",
+                                            prev, eff),
+                                        span,
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut arm_types = Vec::new();
+                for (arm_idx, arm) in arms.iter().enumerate() {
+                    // Validate arm pattern if present (introduces binder visible to body)
+                    if let Some(pat) = &arm.pattern {
+                        if let ast::Pattern::Bind(name) = &pat.node {
+                            let pat_ty = if let ast::HandleArmKind::Effect(path) = &arm.kind {
+                                if path.len() >= 2 {
+                                    let op_key = format!("{}::{}", path[0], path[1]);
+                                    match self.effect_ops_registry.get(&op_key).cloned() {
+                                        Some(Type::Function { params, .. }) if params.len() == 1 => {
+                                            params.into_iter().next().unwrap()
+                                        }
+                                        Some(Type::Function { params, .. }) if params.is_empty() => {
+                                            Type::Unit
+                                        }
+                                        _ => Type::Unknown,
+                                    }
+                                } else {
+                                    Type::Unknown
+                                }
+                            } else {
+                                Type::Unknown
+                            };
+                            self.insert_var(name.clone(), pat_ty, false, pat.span);
+                        }
+                    }
+
+                    // Non-return arm bodies are implicit regions and the body is a
+                    // handler context where `resume` is valid.
+                    let is_non_return = !matches!(arm.kind, ast::HandleArmKind::Return);
+                    let saved_in_arm = self.in_handler_arm;
+                    if is_non_return {
+                        self.in_handler_arm = true;
+                        let region_name = format!("handle_arm_{}", arm_idx);
+                        self.push_region(region_name);
+                    }
+
+                    if let Some(nested_span) = Self::find_nested_handle(&arm.body) {
+                        self.report_error(
+                            "nested `handle` inside a handler arm body is not yet supported".into(),
+                            nested_span,
+                        );
+                    }
+
+                    let arm_ty = self.infer_expr(&arm.body);
+                    arm_types.push(arm_ty);
+
+                    if matches!(arm.kind, ast::HandleArmKind::Effect(_))
+                        && !Self::arm_resumes_or_diverges(&arm.body)
+                    {
+                        self.report_error(
+                            "effect handler arm must call `resume`/`return`/`throw` \
+                             on every path; missing leaks the captured continuation"
+                                .into(),
+                            arm.body.span,
+                        );
+                    }
+
+                    if is_non_return {
+                        self.pop_region();
+                        self.in_handler_arm = saved_in_arm;
+                    }
+
+                    match &arm.kind {
+                        ast::HandleArmKind::Return => {
+                            // Return handler doesn't remove an effect
+                        }
+                        ast::HandleArmKind::Exn => {
+                            if !required_from_inner.iter().any(|e| matches!(e, crate::ty::Effect::Exn(_))) {
+                                self.report_error(
+                                    "Handling exn but inner expression produces no exn effect".into(),
+                                    span
+                                );
+                            }
+                            self.mark_effect_handled("exn".into());
+                        }
+                        ast::HandleArmKind::Effect(effect_path) => {
+                            if let Some(eff_name) = effect_path.first() {
+                                self.mark_effect_handled(eff_name.clone());
+                            }
+                            self.mark_effect_handled(effect_path.join("."));
+                        }
+                    }
+                }
+
+                // Remove handled effects from fn_required_effects
+                let required = self.fn_required_effects.clone();
+                self.compute_unhandled_effects(&required);
+                self.fn_required_effects = self.unhandled_effects.clone();
+
+                let result_ty = arm_types.iter()
+                    .find(|t| **t != Type::Never && **t != Type::Unknown)
+                    .cloned()
+                    .or_else(|| arm_types.first().cloned())
+                    .unwrap_or(Type::Unknown);
+                for ty in &arm_types {
+                    if *ty != result_ty
+                        && *ty != Type::Never
+                        && *ty != Type::Unknown
+                        && result_ty != Type::Unknown
+                    {
+                        self.report_error("Handle arm types do not match".into(), span);
+                    }
+                }
+
+                self.context_stack.pop();
+                self.handled_effects = saved_handled;
+                self.unhandled_effects.clear();
+                result_ty
     }
     
     pub fn infer_block(&mut self, block: &ast::Block) -> Type {
