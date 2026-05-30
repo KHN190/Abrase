@@ -20,8 +20,8 @@ impl Compiler {
         self.register_typed_native("print",    vec![s.clone()],            u.clone(), 1);
         self.register_typed_native("println",  vec![s.clone()],            u.clone(), 1);
         // Float-only math
-        self.register_typed_native("ceil",     vec![f.clone()],            i.clone(), 1);
-        self.register_typed_native("flr",      vec![f.clone()],            i.clone(), 1);
+        self.register_typed_native("ceil",     vec![f.clone()],            f.clone(), 1);
+        self.register_typed_native("flr",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("cos",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("sin",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("sqrt",     vec![f.clone()],            f.clone(), 1);

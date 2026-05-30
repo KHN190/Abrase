@@ -310,11 +310,11 @@ fn unit_to_s_native() -> NativeFn {
 }
 
 fn ceil_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_int(args[0].as_float().ceil() as i64))))
+    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().ceil()))))
 }
 
 fn flr_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_int(args[0].as_float().floor() as i64))))
+    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().floor()))))
 }
 
 fn cos_native()  -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().cos())))) }
