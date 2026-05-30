@@ -299,7 +299,9 @@ impl Compiler {
         let src = self.compile_expr(&args[0])?;
         let dest = self.alloc_register()?;
         self.emit(OpCode::Alloc(dest, 1));
-        self.emit(OpCode::St(src, dest, 0));
+        let tmp = self.alloc_register()?;
+        self.emit(OpCode::Copy(tmp, src));
+        self.emit(OpCode::St(tmp, dest, 0));
         Ok(dest)
     }
 

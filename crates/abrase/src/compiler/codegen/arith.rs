@@ -34,6 +34,12 @@ impl Compiler {
                     inner_ty.as_ref(),
                     Some(ast::Type::Reference { inner, .. }) if is_move_type(inner)
                 );
+                let pointee_unboxed = match inner_ty.as_ref() {
+                    Some(ast::Type::Reference { inner, .. }) => super::data::type_is_unboxed(inner),
+                    Some(ast::Type::Generic { name, args }) if name == "Shared" =>
+                        args.first().map_or(false, super::data::type_is_unboxed),
+                    _ => false,
+                };
                 let src = self.compile_expr(right)?;
                 let dest = self.alloc_register()?;
                 if inner_is_cell {
@@ -41,6 +47,7 @@ impl Compiler {
                 } else {
                     self.emit(OpCode::Ld(dest, src, 0));
                 }
+                if pointee_unboxed { self.set_reg_handle(dest, false); }
                 Ok(dest)
             }
             ast::UnaryOp::Neg => {

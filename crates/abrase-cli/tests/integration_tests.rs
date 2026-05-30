@@ -715,3 +715,19 @@ fn allocating_loop_keeps_region_and_frees_per_iteration() {
     assert_eq!(v, Value::from_int(15));
     assert_eq!(vm.heap_live_count(), 0, "per-iteration Shared must be freed, got live={}", vm.heap_live_count());
 }
+
+const SHARED_OF_VAR: &str = r#"
+fn main() -> Int {
+  let mut acc = 0;
+  let mut i = 0;
+  while i < 3 { let s = Shared(i); acc = acc + *s; i = i + 1 };
+  acc
+}
+"#;
+
+#[test]
+fn shared_ctor_of_bare_var_does_not_consume_it() {
+    let (v, vm) = run_src_full(SHARED_OF_VAR).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(3));
+    assert_eq!(vm.heap_live_count(), 0);
+}

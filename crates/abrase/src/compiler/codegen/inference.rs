@@ -43,8 +43,12 @@ impl Compiler {
                 }
                 _ => self.infer_expr_type(right),
             },
-            ast::Expr::Call { callee, args: _ } => {
+            ast::Expr::Call { callee, args } => {
                 if let ast::Expr::Identifier(name) = &callee.node {
+                    if name == "Shared" && args.len() == 1 {
+                        let elem = self.infer_expr_type(&args[0])?;
+                        return Some(ast::Type::Generic { name: "Shared".into(), args: vec![elem] });
+                    }
                     if let Some(info) = self.layouts.variants.get(name) {
                         return Some(ast::Type::Named(info.type_name.clone()));
                     }
