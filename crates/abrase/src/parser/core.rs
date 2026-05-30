@@ -24,6 +24,7 @@ pub struct Parser<'a> {
     pub(crate) current_span: Span,
     pub(crate) peek_token: Token,
     pub(crate) peek_span: Span,
+    pub(crate) pending_token: Option<(Token, Span)>,
     pub errors: Vec<Error>,
     pub source: String,
     pub(crate) no_record_literal: bool,
@@ -40,6 +41,7 @@ impl<'a> Parser<'a> {
             current_span: cur_span,
             peek_token: peek_tok,
             peek_span,
+            pending_token: None,
             errors: Vec::new(),
             source: String::new(),
             no_record_literal: false,
@@ -73,9 +75,38 @@ impl<'a> Parser<'a> {
     pub(crate) fn next_token(&mut self) {
         self.current_token = self.peek_token.clone();
         self.current_span = self.peek_span;
-        let (next_tok, next_span) = self.lexer.next_token();
-        self.peek_token = next_tok;
-        self.peek_span = next_span;
+        if let Some((t, s)) = self.pending_token.take() {
+            self.peek_token = t;
+            self.peek_span = s;
+        } else {
+            let (next_tok, next_span) = self.lexer.next_token();
+            self.peek_token = next_tok;
+            self.peek_span = next_span;
+        }
+    }
+
+    pub(crate) fn peek_is_generic_close(&self) -> bool {
+        matches!(self.peek_token, Token::Gt | Token::Shr)
+    }
+
+    pub(crate) fn expect_peek_generic_close(&mut self) -> bool {
+        match self.peek_token {
+            Token::Gt => { self.next_token(); true }
+            Token::Shr => {
+                let span = self.peek_span;
+                self.peek_token = Token::Gt;
+                self.peek_span = span;
+                let after = Span::new(span.line, span.col + 1);
+                self.pending_token = Some((Token::Gt, after));
+                self.next_token();
+                true
+            }
+            _ => {
+                let msg = format!("Expected \">\", got \"{}\"", self.peek_token.display());
+                self.report_error(msg, self.peek_span);
+                false
+            }
+        }
     }
 
     pub(crate) fn report_error(&mut self, message: String, span: Span) {

@@ -119,7 +119,7 @@ impl Compiler {
                     }
                     B::Eq | B::Neq | B::Lt | B::Gt | B::Lte | B::Gte
                     | B::And | B::Or => Some(ast::Type::Named("Bool".into())),
-                    B::BitAnd | B::BitOr | B::BitXor | B::Shl => Some(ast::Type::Named("Int".into())),
+                    B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr => Some(ast::Type::Named("Int".into())),
                     B::Assign => None,
                 }
             }

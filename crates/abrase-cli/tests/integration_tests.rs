@@ -766,3 +766,19 @@ fn bitwise_ops_int_with_c_precedence() {
     assert_eq!(run_src(BITWISE_INT).unwrap_or_else(|e| panic!("\n{}", e)),
         Value::from_int(30_432_748));
 }
+
+const SHR_WITH_NESTED_GENERIC: &str = r#"
+fn shr(b: Int) -> <exn<Int>> Int { if b < 0 { throw 1 } else { b >> 1 } }
+fn main() -> Int {
+  match shr(64) { Ok(v) => v, Err(_) => -1, _ => 0 }
+}
+"#;
+
+#[test]
+fn shr_token_splits_at_nested_generic_close() {
+    // `<exn<Int>>` ends in a `>>` Shr token; the parser must split it into two
+    // `>` to close the inner+outer generics. And `b >> 1` in the body must
+    // still parse as a shift, not as anything else.
+    assert_eq!(run_src(SHR_WITH_NESTED_GENERIC).unwrap_or_else(|e| panic!("\n{}", e)),
+        Value::from_int(32));
+}

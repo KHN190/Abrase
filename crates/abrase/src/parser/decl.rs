@@ -545,8 +545,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, String> {
-        if self.peek_token == Token::Gt {
-            self.next_token();
+        if self.peek_is_generic_close() {
+            self.expect_peek_generic_close();
             return Ok(vec![]);
         }
         self.next_token();
@@ -562,7 +562,7 @@ impl<'a> Parser<'a> {
                 self.next_token();
             } else { break; }
         }
-        if !self.expect_peek(Token::Gt) {
+        if !self.expect_peek_generic_close() {
             return Err("Expected '>' in generic params".into());
         }
         Ok(params)
