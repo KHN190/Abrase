@@ -268,8 +268,7 @@ impl ConstValue {
 
 // Primitive ty::Type -> ast::Type bridge. Only the cases that show up as fn
 // return types in current builtins; complex returns yield None.
-pub(in crate::compiler) fn ty_to_ast_public(ty: &crate::ty::Type) -> Option<ast::Type> { ty_to_ast(ty) }
-fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
+pub(in crate::compiler) fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
     use crate::ty::Type as T;
     Some(match ty {
         T::Int    => ast::Type::Named("Int".into()),

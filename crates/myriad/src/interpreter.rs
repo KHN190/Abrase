@@ -651,23 +651,46 @@ impl VirtualMachine {
                 .unwrap_or(false);
 
             if tag_is_err {
-                let (payload_raw, payload_is_handle) = self.heap.ld(s, g, 1)
-                    .unwrap_or((0, false));
-                if payload_is_handle && payload_raw != HANDLE_NONE {
-                    self.rc_inc_handle(payload_raw)?;
-                }
-                self.rc_dec_handle(return_raw)?;
                 let body_call_frame = self.frames.pop()
                     .ok_or("arm-throw: missing body-call frame to unwind into")?;
-                self.pc = body_call_frame.ip;
-                self.base_reg = body_call_frame.base_reg;
-                self.current_func = body_call_frame.func_id;
-                let dest_abs = body_call_frame.dest_reg;
+                if let Some(handler) = self.handlers.pop() {
+                    for (slot, generation) in handler.cells_allocated {
+                        self.region_table.forget(slot, generation);
+                        if self.heap.is_live(slot, generation) {
+                            self.heap.rc_dec(slot, generation)?;
+                        }
+                    }
+                }
+                let inner_base = body_call_frame.base_reg;
+                let inner_func = body_call_frame.func_id;
+                let inner_reg_count = match module.functions.get(inner_func) {
+                    Some(Chunk::Bytecode(b)) => b.reg_count,
+                    _ => 0,
+                };
+                for i in 0..inner_reg_count {
+                    let abs = inner_base + i;
+                    if self.reg_mask_bit(abs) {
+                        let raw = self.read_abs_raw(abs);
+                        if raw != HANDLE_NONE && raw != return_raw {
+                            self.rc_dec_handle(raw)?;
+                        }
+                        self.set_reg_mask_bit(abs, false);
+                        self.write_abs_raw(abs, HANDLE_NONE);
+                    }
+                }
+                let outer_frame = self.frames.pop()
+                    .ok_or("arm-throw: missing outer (handle-expr caller) frame")?;
+                self.pc = outer_frame.ip;
+                self.base_reg = outer_frame.base_reg;
+                self.current_func = outer_frame.func_id;
+                let dest_abs = outer_frame.dest_reg;
                 if self.reg_mask_bit(dest_abs) {
                     let prior = self.read_abs_raw(dest_abs);
-                    if prior != HANDLE_NONE { self.rc_dec_handle(prior)?; }
+                    if prior != HANDLE_NONE && prior != return_raw {
+                        self.rc_dec_handle(prior)?;
+                    }
                 }
-                self.write_abs(dest_abs, payload_raw, payload_is_handle);
+                self.write_abs(dest_abs, return_raw, true);
                 return Ok(());
             }
         }

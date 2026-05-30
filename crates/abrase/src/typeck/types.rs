@@ -7,18 +7,6 @@ impl Checker {
 
     // Type Environment Management
 
-    pub fn register_function(&mut self, name: String, params: Vec<Type>, ret: Type) {
-        self.fn_registry.insert(name, (params, ret));
-    }
-
-    pub fn get_function(&self, name: &str) -> Option<(Vec<Type>, Type)> {
-        self.fn_registry.get(name).cloned()
-    }
-
-    pub fn register_function_type(&mut self, name: String, sig: (Vec<Type>, Type)) {
-        self.fn_registry.insert(name, sig);
-    }
-
     pub fn register_type(&mut self, name: String, body: ast::TypeBody) {
         if let ast::TypeBody::Variant(cases) = &body {
             let case_names: Vec<String> = cases.iter().map(|c| match c {
@@ -41,10 +29,6 @@ impl Checker {
 
     pub fn get_variant_cases(&self, type_name: &str) -> Option<&Vec<String>> {
         self.variant_registry.get(type_name)
-    }
-
-    pub fn register_const(&mut self, name: String, ty: Type) {
-        self.const_registry.insert(name, ty);
     }
 
     pub fn get_const(&self, name: &str) -> Option<Type> {

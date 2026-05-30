@@ -3,17 +3,6 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::error::{Error, ErrorCode};
 
-pub fn monomorphize(decls: Vec<Decl>) -> Result<Vec<Decl>, Vec<Error>> {
-    Mono::new(decls, HashMap::new(), HashMap::new()).run()
-}
-
-pub fn monomorphize_with_methods(
-    decls: Vec<Decl>,
-    method_dispatch: HashMap<(String, String), String>,
-) -> Result<Vec<Decl>, Vec<Error>> {
-    Mono::new(decls, method_dispatch, HashMap::new()).run()
-}
-
 pub fn monomorphize_with_methods_and_builtins(
     decls: Vec<Decl>,
     method_dispatch: HashMap<(String, String), String>,

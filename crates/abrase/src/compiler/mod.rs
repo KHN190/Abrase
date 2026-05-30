@@ -374,7 +374,7 @@ impl Compiler {
         }
 
         let builtin_returns: std::collections::HashMap<String, ast::Type> = self.builtin_types.iter()
-            .filter_map(|(name, (_, ret))| codegen::inference::ty_to_ast_public(ret).map(|t| (name.clone(), t)))
+            .filter_map(|(name, (_, ret))| codegen::inference::ty_to_ast(ret).map(|t| (name.clone(), t)))
             .collect();
         let owned = match mono::monomorphize_with_methods_and_builtins(
             decls_with_impls, self.method_dispatch.clone(), builtin_returns,

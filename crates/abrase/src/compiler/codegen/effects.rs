@@ -168,6 +168,9 @@ impl Compiler {
                     None => { self.var_to_reg.remove(n); }
                 }
             }
+            for env_reg in arm_envs.values() {
+                self.emit(OpCode::Drop(*env_reg));
+            }
             let jmp_to_end = self.code.len();
             self.emit(OpCode::Jmp(0));
 
@@ -175,16 +178,30 @@ impl Compiler {
             self.patch_jz_at(jz_to_ok, ok_addr)?;
             let ok_val = self.alloc_register()?;
             self.emit(OpCode::Ld(ok_val, body_reg, 1));
-            self.emit(OpCode::Copy(final_dest, ok_val));
+            let env_reg = arm_envs.get(&ret_arm_name).copied()
+                .ok_or_else(|| format!("internal: no env packed for return arm '{}'", ret_arm_name))?;
+            let pos = self.code.len();
+            self.emit(OpCode::Move(Register(0), env_reg));
+            self.pending_arg_patches.push((pos, 0));
+            let zero_reg = self.alloc_register()?;
+            let zero_idx = self.add_constant(Value::from_int(0))?;
+            self.emit(OpCode::PushConst(zero_reg, zero_idx));
+            let pos = self.code.len();
+            self.emit(OpCode::Copy(Register(0), zero_reg));
+            self.pending_arg_patches.push((pos, 1));
+            let pos = self.code.len();
+            self.emit(OpCode::Copy(Register(0), ok_val));
+            self.pending_arg_patches.push((pos, 2));
+            let ret_dest = self.alloc_register()?;
+            let fid = super::scaffold::to_u16(return_arm_fn_id, "Handler return arm fn_id")?;
+            self.emit(OpCode::Call(ret_dest, fid));
+            self.emit(OpCode::Copy(final_dest, ret_dest));
 
             let end_addr = self.code.len();
             self.patch_jmp_at(jmp_to_end, end_addr)?;
 
             if installed_frame {
                 self.emit_handle_pop()?;
-            }
-            for env_reg in arm_envs.values() {
-                self.emit(OpCode::Drop(*env_reg));
             }
             self.emit(OpCode::Drop(body_reg));
             return Ok(final_dest);

@@ -47,8 +47,6 @@ struct VarMeta {
     ty: Type,
     is_mut: bool,
     is_moved: bool,
-    #[allow(dead_code)]
-    defined_at: Span,
     moved_at: Option<Span>,
     immut_borrow_count: usize,
     mut_borrow_active: bool,
@@ -73,7 +71,6 @@ pub struct Checker {
     effect_stack: Vec<Vec<String>>,
 
     // Type Environment
-    fn_registry: HashMap<String, (Vec<Type>, Type)>,
     type_registry: HashMap<String, ast::TypeBody>,
     variant_registry: HashMap<String, Vec<String>>, // type_name -> [case_names]
     const_registry: HashMap<String, Type>,
@@ -181,7 +178,6 @@ impl Checker {
             loop_body_region_depth: Vec::new(),
             active_effects: Vec::new(),
             effect_stack: vec![Vec::new()],
-            fn_registry: HashMap::new(),
             type_registry: HashMap::new(),
             variant_registry: HashMap::new(),
             const_registry: HashMap::new(),
@@ -272,14 +268,13 @@ impl Checker {
     pub fn pretty_print_errors(&self, source: &str) -> String {
         self.errors.iter().map(|e| e.pretty_print(source)).collect::<Vec<_>>().join("\n")
     }
-    pub fn insert_var(&mut self, name: String, ty: Type, is_mut: bool, defined_at: Span) {
+    pub fn insert_var(&mut self, name: String, ty: Type, is_mut: bool, _defined_at: Span) {
         let depth = self.region_stack.len();
         if let Some(scope) = self.scopes.last_mut() {
             scope.vars.insert(name, VarMeta {
                 ty,
                 is_mut,
                 is_moved: false,
-                defined_at,
                 moved_at: None,
                 immut_borrow_count: 0,
                 mut_borrow_active: false,
