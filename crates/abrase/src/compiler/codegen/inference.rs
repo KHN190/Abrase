@@ -19,6 +19,7 @@ impl Compiler {
             ast::Expr::Identifier(name) => {
                 if let Some(ty) = self.var_types.get(name) { return Some(ty.clone()); }
                 if let Some(ty) = self.resolve_static_type(name) { return Some(ty.clone()); }
+                if let Some(cv) = self.const_values.get(name) { return const_value_type(cv); }
                 // Zero-ary variant ctor used as a bare identifier (e.g. `Nil`).
                 self.layouts.variants.get(name)
                     .map(|info| ast::Type::Named(info.type_name.clone()))
@@ -262,6 +263,24 @@ fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
         },
         _ => return None,
     })
+}
+
+fn const_value_type(cv: &ConstValue) -> Option<ast::Type> {
+    match cv {
+        ConstValue::Lit(lit) => Some(match lit {
+            ast::Literal::Int(_) => ast::Type::Named("Int".into()),
+            ast::Literal::Float(_) => ast::Type::Named("Float".into()),
+            ast::Literal::Bool(_) => ast::Type::Named("Bool".into()),
+            ast::Literal::Char(_) => ast::Type::Named("Char".into()),
+            ast::Literal::String(_) => ast::Type::Named("String".into()),
+            ast::Literal::Unit => ast::Type::Tuple(vec![]),
+            _ => return None,
+        }),
+        ConstValue::Array(elems) => {
+            let elem = const_value_type(elems.first()?)?;
+            Some(ast::Type::Array { elem: Box::new(elem), size: elems.len() })
+        }
+    }
 }
 
 fn receiver_name_of(ty: &ast::Type) -> Option<String> {

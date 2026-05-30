@@ -1,8 +1,0 @@
-type Pt = { x: Int, y: Int }
-
-fn main() -> Int {
-    let mut p = Pt { x: 10, y: 20 };
-    p.x = 100;
-    p.y = p.x + p.y;
-    p.x + p.y
-}

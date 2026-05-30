@@ -1,8 +1,0 @@
-fn main() -> Int {
-    region r {
-        let s = Shared(1);
-        *s = 7;
-        *s = *s + 35;
-        *s
-    }
-}
