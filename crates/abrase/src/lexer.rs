@@ -27,7 +27,7 @@ pub enum Token {
     // Punctuation
     Comma, Colon, ColonColon, Semicolon, Dot, Question,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
-    Ampersand, Pipe, At,
+    Ampersand, Pipe, At, Caret, Shl, Shr,
 
     Eof,
     Illegal(String),
@@ -115,6 +115,9 @@ impl Token {
             Token::Ampersand => "&".into(),
             Token::Pipe => "|".into(),
             Token::At => "@".into(),
+            Token::Caret => "^".into(),
+            Token::Shl => "<<".into(),
+            Token::Shr => ">>".into(),
             Token::Eof => "end of input".into(),
             Token::Illegal(s) => format!("illegal token `{}`", s),
         }
@@ -264,10 +267,12 @@ impl<'a> Lexer<'a> {
             }
             Some('<') => {
                 if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::Lte }
+                else if self.peek_char == Some('<') { self.read_char(); self.read_char(); Token::Shl }
                 else { self.read_char(); Token::Lt }
             }
             Some('>') => {
                 if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::Gte }
+                else if self.peek_char == Some('>') { self.read_char(); self.read_char(); Token::Shr }
                 else { self.read_char(); Token::Gt }
             }
             Some('&') => {
@@ -299,6 +304,7 @@ impl<'a> Lexer<'a> {
             Some('[') => { self.read_char(); Token::LBracket }
             Some(']') => { self.read_char(); Token::RBracket }
             Some('@') => { self.read_char(); Token::At }
+            Some('^') => { self.read_char(); Token::Caret }
             Some('"') => return self.read_string(start_span),
             Some('\'') => return self.read_char_literal(start_span),
             Some(c) if c.is_alphabetic() || c == '_' => {

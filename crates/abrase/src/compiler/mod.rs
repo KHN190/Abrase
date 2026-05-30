@@ -103,6 +103,7 @@ pub struct Compiler {
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
     pub(super) static_mut_set: std::collections::HashSet<String>,
+    pub(super) typeck_expr_types: HashMap<(ast::Span, std::mem::Discriminant<ast::Expr>), crate::ty::Type>,
 }
 
 impl Compiler {
@@ -174,6 +175,7 @@ impl Compiler {
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
             static_mut_set: std::collections::HashSet::new(),
+            typeck_expr_types: HashMap::new(),
         }
     }
 
@@ -344,6 +346,7 @@ impl Compiler {
         }
 
         checker.check_program(ast);
+        self.typeck_expr_types = std::mem::take(&mut checker.expr_types);
         if !checker.errors.is_empty() {
             self.errors.extend(checker.errors.iter().map(|te| Error::new(
                 ErrorCode::TypeError,

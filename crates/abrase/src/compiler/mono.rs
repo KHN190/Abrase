@@ -186,6 +186,7 @@ impl Mono {
         let call_span = expr.span;
         match &mut expr.node {
             Expr::Literal(lit) => Some(lit_type(lit)),
+            Expr::Paren(inner) => self.rewrite_expr(&mut **inner, env, subst),
             Expr::Identifier(name) => env.get(name).cloned()
                 .or_else(|| self.fn_sigs.get(name).map(|(p, r, e)| Type::Function {
                     params: p.clone(),

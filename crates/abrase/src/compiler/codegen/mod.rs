@@ -29,6 +29,7 @@ impl Compiler {
             }
         }
         match &expr.node {
+            ast::Expr::Paren(inner) => self.compile_expr(inner),
             ast::Expr::Error => Err(
                 "Compilation aborted: parser error was not recovered; fix parser errors first"
                     .to_string()

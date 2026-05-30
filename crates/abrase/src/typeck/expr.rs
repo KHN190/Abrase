@@ -119,8 +119,17 @@ impl Checker {
     }
 
     pub fn infer_expr(&mut self, expr: &Spanned<ast::Expr>) -> Type {
+        let ty = self.infer_expr_inner(expr);
+        if !matches!(ty, Type::Unknown) {
+            self.expr_types.insert((expr.span, std::mem::discriminant(&expr.node)), ty.clone());
+        }
+        ty
+    }
+
+    fn infer_expr_inner(&mut self, expr: &Spanned<ast::Expr>) -> Type {
         match &expr.node {
             ast::Expr::Error => Type::Unknown,
+            ast::Expr::Paren(inner) => self.infer_expr(inner),
             // single source of truth for literal typing.
             ast::Expr::Literal(lit) => self.infer_literal(lit, expr.span),
             ast::Expr::Identifier(name) => self.get_var(name, false, expr.span),
@@ -209,6 +218,9 @@ impl Checker {
                         }
                         ast::BinaryOp::And | ast::BinaryOp::Or => {
                             if l_ty == Type::Bool { Type::Bool } else { self.report_error("Expected Bool".into(), expr.span) }
+                        }
+                        ast::BinaryOp::BitAnd | ast::BinaryOp::BitOr | ast::BinaryOp::BitXor | ast::BinaryOp::Shl | ast::BinaryOp::Shr => {
+                            if l_ty == Type::Int { Type::Int } else { self.report_error("Bitwise operators require Int operands".into(), expr.span) }
                         }
                         ast::BinaryOp::Assign
                         | ast::BinaryOp::AddAssign | ast::BinaryOp::SubAssign

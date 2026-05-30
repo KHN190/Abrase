@@ -227,6 +227,7 @@ impl Checker {
 
     pub fn infer_expr_effects(&self, expr: &ast::Expr) -> Vec<ast::EffectItem> {
         match expr {
+            ast::Expr::Paren(inner) => self.infer_expr_effects(&inner.node),
             ast::Expr::Literal(_) => vec![],
             ast::Expr::Identifier(name) => {
                 // If referencing a const var, it's pure

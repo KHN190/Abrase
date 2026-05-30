@@ -136,7 +136,7 @@ impl Compiler {
         match &e.node {
             Identifier(n) => self.resolve_static_offset(n).is_some(),
             Binary { left, right, .. } => u(left) || u(right),
-            Unary { right, .. } | Question(right) | Throw(right) => u(right),
+            Unary { right, .. } | Question(right) | Throw(right) | Paren(right) => u(right),
             Call { callee, args } => u(callee) || args.iter().any(u),
             Index { base, index } => u(base) || u(index),
             Block(b) => self.block_uses_static(b),
@@ -193,6 +193,7 @@ impl Compiler {
             If { condition, consequence, alternative } =>
                 f(condition) && f(consequence) && alternative.as_deref().map_or(true, f),
             Block(b) => self.block_alloc_free(b),
+            Paren(inner) => f(inner),
             Break(opt) | Return(opt) => opt.as_deref().map_or(true, f),
             Continue => true,
             _ => false,

@@ -6,6 +6,18 @@ use crate::compiler::Compiler;
 
 impl Compiler {
     pub(in crate::compiler) fn infer_expr_type(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Type> {
+        if expr.span != ast::Span::new(0, 0) {
+            let key = (expr.span, std::mem::discriminant(&expr.node));
+            if let Some(ty) = self.typeck_expr_types.get(&key) {
+                if let Some(ast_ty) = ty_to_ast(ty) {
+                    return Some(ast_ty);
+                }
+            }
+        }
+        self.infer_expr_type_fallback(expr)
+    }
+
+    fn infer_expr_type_fallback(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Type> {
         match &expr.node {
             ast::Expr::Literal(lit) => Some(match lit {
                 ast::Literal::Int(_) => ast::Type::Named("Int".into()),
@@ -107,6 +119,7 @@ impl Compiler {
                     }
                     B::Eq | B::Neq | B::Lt | B::Gt | B::Lte | B::Gte
                     | B::And | B::Or => Some(ast::Type::Named("Bool".into())),
+                    B::BitAnd | B::BitOr | B::BitXor | B::Shl => Some(ast::Type::Named("Int".into())),
                     B::Assign => None,
                 }
             }
@@ -140,6 +153,7 @@ impl Compiler {
             ast::Expr::Block(b) => {
                 b.ret.as_deref().and_then(|r| self.infer_expr_type(r))
             }
+            ast::Expr::Paren(inner) => self.infer_expr_type(inner),
             _ => None,
         }
     }
@@ -265,6 +279,11 @@ fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
             name: name.clone(),
             args: args.iter().map(ty_to_ast).collect::<Option<Vec<_>>>()?,
         },
+        T::Shared { inner, .. } => ast::Type::Generic {
+            name: "Shared".into(),
+            args: vec![ty_to_ast(inner)?],
+        },
+        T::Never => ast::Type::Named("Never".into()),
         _ => return None,
     })
 }

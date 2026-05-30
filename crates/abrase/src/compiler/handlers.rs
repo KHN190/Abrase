@@ -178,7 +178,7 @@ impl HandleLowering {
             }
             Expr::Loop { body } => self.walk_block(body, op_sigs, scope),
             Expr::Region { body, .. } => self.walk_block(body, op_sigs, scope),
-            Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) => self.walk_expr(e, op_sigs, scope),
+            Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) | Expr::Paren(e) => self.walk_expr(e, op_sigs, scope),
             Expr::Resume(Some(e)) => self.walk_expr(e, op_sigs, scope),
             Expr::Index { base, index } => {
                 self.walk_expr(base, op_sigs, scope);
@@ -427,7 +427,7 @@ impl HandleLowering {
                 body.ret.as_ref().map(|r| self.count_resumes_in_expr(r)).unwrap_or(0)
             }
             Expr::Break(Some(e)) => self.count_resumes_in_expr(e),
-            Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) => self.count_resumes_in_expr(e),
+            Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) | Expr::Paren(e) => self.count_resumes_in_expr(e),
             Expr::Tuple(elems) | Expr::Array(elems) => {
                 elems.iter().map(|e| self.count_resumes_in_expr(e)).sum::<usize>()
             }

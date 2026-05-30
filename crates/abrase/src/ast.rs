@@ -81,6 +81,7 @@ pub enum BinaryOp {
     Add, Sub, Mul, Div, Mod,
     Eq, Neq, Lt, Gt, Lte, Gte,
     And, Or,
+    BitAnd, BitOr, BitXor, Shl, Shr,
     Assign, AddAssign, SubAssign, MulAssign, DivAssign, ModAssign,
 }
 
@@ -174,6 +175,7 @@ pub enum Expr {
     Throw    (Box<Spanned<Expr>>),
 
     Question (Box<Spanned<Expr>>),
+    Paren    (Box<Spanned<Expr>>),
     Tuple    (Vec<Spanned<Expr>>),
     Array    (Vec<Spanned<Expr>>),
 

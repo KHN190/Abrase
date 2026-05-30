@@ -731,3 +731,38 @@ fn shared_ctor_of_bare_var_does_not_consume_it() {
     assert_eq!(v, Value::from_int(3));
     assert_eq!(vm.heap_live_count(), 0);
 }
+
+const PARENTHESIZED_IF: &str = r#"
+fn main() -> Int {
+  let c = true;
+  10 + (if c { 5 } else { 1 }) * 2
+}
+"#;
+
+#[test]
+fn block_expr_composes_inside_parens() {
+    // A parenthesized if/match composes in arithmetic with correct precedence:
+    // 10 + (5 * 2) = 20, not (10 + 5) * 2 = 30.
+    assert_eq!(run_src(PARENTHESIZED_IF).unwrap_or_else(|e| panic!("\n{}", e)),
+        Value::from_int(20));
+}
+
+const BITWISE_INT: &str = r#"
+fn main() -> Int {
+  let a = 12 & 10;
+  let b = 12 | 10;
+  let c = 12 ^ 10;
+  let d = 1 << 5;
+  let e = 1 << 2 & 7;
+  let f = 3 & 1 + 2;
+  a + b * 10 + c * 100 + d * 1000 + e * 100000 + f * 10000000
+}
+"#;
+
+#[test]
+fn bitwise_ops_int_with_c_precedence() {
+    // a=8 b=14 c=6 d=32 e=(1<<2)&7=4 f=3&(1+2)=3
+    // 8 + 140 + 600 + 32000 + 400000 + 30000000 = 30432748
+    assert_eq!(run_src(BITWISE_INT).unwrap_or_else(|e| panic!("\n{}", e)),
+        Value::from_int(30_432_748));
+}

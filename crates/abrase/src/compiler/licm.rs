@@ -59,7 +59,7 @@ fn collect_modified_in_expr(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
             collect_modified_in_expr(left, out);
             collect_modified_in_expr(right, out);
         }
-        Expr::Unary { right, .. } => collect_modified_in_expr(right, out),
+        Expr::Unary { right, .. } | Expr::Paren(right) => collect_modified_in_expr(right, out),
         Expr::If { condition, consequence, alternative } => {
             collect_modified_in_expr(condition, out);
             collect_modified_in_expr(consequence, out);

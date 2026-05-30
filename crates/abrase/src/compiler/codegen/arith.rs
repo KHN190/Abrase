@@ -274,6 +274,10 @@ impl Compiler {
                     ast::BinaryOp::Gt  => OpCode::Gt(dr, lr, rr),
                     ast::BinaryOp::Lte => OpCode::Lte(dr, lr, rr),
                     ast::BinaryOp::Gte => OpCode::Gte(dr, lr, rr),
+                    ast::BinaryOp::BitAnd => OpCode::And(dr, lr, rr),
+                    ast::BinaryOp::BitOr  => OpCode::Or(dr, lr, rr),
+                    ast::BinaryOp::BitXor => OpCode::Xor(dr, lr, rr),
+                    ast::BinaryOp::Shl    => OpCode::Shl(dr, lr, rr),
                     _ => return Err(format!("Unsupported binary op: {:?}", op)),
                 };
                 self.emit(instr);

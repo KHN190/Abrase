@@ -152,6 +152,9 @@ pub struct Checker {
 
     // Type Aliases
     type_alias_registry: HashMap<String, Type>,
+
+    // Authoritative per-expression types, keyed by (span, expr-kind). Populated by infer_expr.
+    pub expr_types: HashMap<(ast::Span, std::mem::Discriminant<ast::Expr>), Type>,
 }
 
 
@@ -231,6 +234,7 @@ impl Checker {
             imported_names: HashMap::new(),
             import_collisions: std::collections::HashSet::new(),
             module_registry: HashMap::new(),
+            expr_types: HashMap::new(),
         }
     }
     pub fn enter_scope(&mut self) {

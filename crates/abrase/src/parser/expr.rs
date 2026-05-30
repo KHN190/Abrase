@@ -387,6 +387,13 @@ impl<'a> Parser<'a> {
         }
         self.next_token();
         let first = self.parse_expr(Precedence::Lowest);
+        if is_block_terminated(&first.node) {
+            if self.current_token == Token::RParen {
+                return Spanned { node: Expr::Paren(Box::new(first)), span };
+            }
+            self.report_error("Expected ')' in parenthesized expression".into(), self.current_span);
+            return Spanned { node: Expr::Error, span };
+        }
         if self.peek_token == Token::Comma {
             let mut elems = vec![first];
             while self.peek_token == Token::Comma {
@@ -560,6 +567,11 @@ impl<'a> Parser<'a> {
             Token::Gte => BinaryOp::Gte,
             Token::Or => BinaryOp::Or,
             Token::And => BinaryOp::And,
+            Token::Ampersand => BinaryOp::BitAnd,
+            Token::Pipe => BinaryOp::BitOr,
+            Token::Caret => BinaryOp::BitXor,
+            Token::Shl => BinaryOp::Shl,
+            Token::Shr => BinaryOp::Shr,
             Token::Assign => BinaryOp::Assign,
             Token::LParen => return self.parse_call_expr(left),
             Token::LBracket => {
