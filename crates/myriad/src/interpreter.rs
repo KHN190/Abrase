@@ -211,6 +211,12 @@ impl VirtualMachine {
                 }
                 self.pc = opcode_pc + 1;
                 self.steps = self.steps.wrapping_add(1);
+                if let Some(cap) = self.step_cap {
+                    if self.steps > cap {
+                        self.failing_pc = opcode_pc;
+                        return Err(format!("step cap exceeded ({} ops)", cap));
+                    }
+                }
                 if let Err(e) = self.exec(module, bc, opcode) {
                     self.failing_pc = opcode_pc;
                     return Err(e);

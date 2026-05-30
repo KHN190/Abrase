@@ -6,8 +6,6 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use myriad::VirtualMachine;
-use std::sync::mpsc;
-use std::time::Duration;
 
 struct Rng(u64);
 impl Rng {
@@ -198,16 +196,11 @@ impl Bucket {
 
 enum Outcome { Ok, ParseFail, CompileFail, RunErr(String), Leak(usize), WrongRet(i64), Hang }
 
-fn try_run_with_timeout(src: String, timeout: Duration) -> Outcome {
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || { let _ = tx.send(try_run(&src)); });
-    match rx.recv_timeout(timeout) {
-        Ok(o) => o,
-        Err(_) => Outcome::Hang, // worker leaks; acceptable for fuzz at low hang-rate
-    }
+fn try_run_with_timeout(src: String, step_cap: u64) -> Outcome {
+    try_run(&src, step_cap)
 }
 
-fn try_run(src: &str) -> Outcome {
+fn try_run(src: &str, step_cap: u64) -> Outcome {
     let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let ast = p.parse_program();
     if !p.errors.is_empty() { return Outcome::ParseFail; }
@@ -216,10 +209,13 @@ fn try_run(src: &str) -> Outcome {
         Ok(m) => m,
         Err(_) => return Outcome::CompileFail,
     };
-    let mut vm = VirtualMachine::new();
+    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
     let v = match vm.run_module(&module) {
         Ok(v) => v,
-        Err(e) => return Outcome::RunErr(e.to_string()),
+        Err(e) => {
+            if e.starts_with("step cap exceeded") { return Outcome::Hang; }
+            return Outcome::RunErr(e);
+        }
     };
     let live = vm.heap_live_count();
     if live != 0 { return Outcome::Leak(live); }
@@ -229,7 +225,7 @@ fn try_run(src: &str) -> Outcome {
 }
 
 const ITER: u64 = 2_000;
-const TIMEOUT_MS: u64 = 500;
+const STEP_CAP: u64 = 1_000_000;
 const EXAMPLES_PER_BUCKET: usize = 3;
 
 #[test]
@@ -239,17 +235,16 @@ fn fuzz_no_leak_no_panic() {
     let mut leaks = Bucket::default();
     let mut wrongs = Bucket::default();
     let mut errs = Bucket::default();
-    let timeout = Duration::from_millis(TIMEOUT_MS);
     for seed in 0..ITER {
         st.total += 1;
         let src = Gen::new(seed).gen_program();
-        match try_run_with_timeout(src.clone(), timeout) {
+        match try_run_with_timeout(src.clone(), STEP_CAP) {
             Outcome::Ok => { st.parsed += 1; st.compiled += 1; st.ran += 1; }
             Outcome::ParseFail => {}
             Outcome::CompileFail => { st.parsed += 1; }
             Outcome::Hang => {
                 st.parsed += 1; st.compiled += 1; st.hung += 1;
-                hangs.record(seed, format!(">{}ms", TIMEOUT_MS), src, EXAMPLES_PER_BUCKET);
+                hangs.record(seed, format!(">{} ops", STEP_CAP), src, EXAMPLES_PER_BUCKET);
             }
             Outcome::RunErr(e) => {
                 st.parsed += 1; st.compiled += 1; st.run_err += 1;

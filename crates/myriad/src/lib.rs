@@ -61,6 +61,7 @@ pub struct VirtualMachine {
     pub(crate) module_table_raw: u64,
     pub(crate) module_table_is_handle: bool,
     pub(crate) steps: u64,
+    pub(crate) step_cap: Option<u64>,
 }
 
 pub struct HandlerFrame {
@@ -125,7 +126,13 @@ impl VirtualMachine {
             module_table_raw: polka::HANDLE_NONE,
             module_table_is_handle: false,
             steps: 0,
+            step_cap: None,
         }
+    }
+
+    pub fn with_step_cap(mut self, cap: u64) -> Self {
+        self.step_cap = Some(cap);
+        self
     }
 
     // N of instructions executed. Monotonic; a profiler reads the per-frame delta.
@@ -175,14 +182,18 @@ impl VirtualMachine {
         }
     }
 
-    // User-visible live count. Excludes module-lifetime string-constant cells,
-    // since they are owned by the loader, not by user code.
+    // User-visible live count. Excludes module-lifetime cells owned by the
+    // loader/runtime (not by user code): string constants and the module table.
     pub fn heap_live_count(&self) -> usize {
         let total = self.heap.live_count();
         let const_live = self.string_const_handles.iter()
             .filter(|(s, g)| self.heap.is_live(*s, *g))
             .count();
-        total.saturating_sub(const_live)
+        let module_live = if self.module_table_is_handle && self.module_table_raw != polka::HANDLE_NONE {
+            let (s, g) = crate::memory::handle_parts(self.module_table_raw);
+            if self.heap.is_live(s, g) { 1 } else { 0 }
+        } else { 0 };
+        total.saturating_sub(const_live).saturating_sub(module_live)
     }
 
 
