@@ -47,9 +47,7 @@ pub struct Compiler {
     pub(super) code: Vec<OpCode>,
     pub(super) next_reg: u16,
     pub(super) max_reg: u16,
-    // Compile-time tracking: which regs may currently hold a heap handle.
-    // Updated by `emit()` based on opcode kind. Used by reclaim to skip
-    // Drop emission for regs that provably do not hold a handle.
+    pub(super) module_table_reg: Option<Register>,
     pub(super) reg_holds_handle: Vec<bool>,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
@@ -116,6 +114,7 @@ impl Compiler {
             code: Vec::new(),
             next_reg: 0,
             max_reg: 0,
+            module_table_reg: None,
             reg_holds_handle: Vec::new(),
             var_to_reg: HashMap::new(),
             var_types: HashMap::new(),
@@ -638,6 +637,7 @@ impl Compiler {
         self.tail_call_spans = collect_tail_self_calls(&fn_decl.body, &fn_decl.name);
         self.next_reg = 0;
         self.max_reg = 0;
+        self.module_table_reg = None;
         self.compiler_region_depth = 0;
         self.fn_compiler_depth_baseline = 0;
         self.fn_block_baseline = 0;
@@ -753,10 +753,6 @@ impl Compiler {
         Ok(chunk)
     }
 
-    // Synthesize `__module_init`: allocate the module table, evaluate each
-    // static's initializer in offset order and store it into the table, then
-    // publish the table handle via the MODULE device. `static_values` is in
-    // offset order (offset == AST order of statics).
     fn compile_module_init(
         &mut self,
         table_size: u16,

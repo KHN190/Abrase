@@ -1,9 +1,24 @@
+use abrase::bytecode::{Chunk, OpCode};
 use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
 use myriad::{Value, VirtualMachine, read_string};
 use std::fs;
+
+// Compile `src` and return the entry function's opcodes (for bytecode-shape tests).
+fn compile_entry_ops(src: &str) -> Vec<OpCode> {
+    let mut parser = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = parser.parse_program();
+    assert!(parser.errors.is_empty(), "{}", parser.pretty_print_errors());
+    let mut compiler = Compiler::new().with_source(src.to_string());
+    let module = compiler.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
+    match &module.functions[module.entry] {
+        Chunk::Bytecode(bc) => bc.code.clone(),
+        _ => panic!("entry is not a bytecode chunk"),
+    }
+}
 
 fn run_file(path: &str) -> Result<Value, String> {
     let (v, _) = run_file_full(path)?;
@@ -595,4 +610,54 @@ fn const_float_times_call_uses_float_mul() {
     let v = run_src(CONST_FLOAT_TIMES_CALL)
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(4));
+}
+
+const STATIC_SUM3: &str = r#"
+static mut A: Int = 10
+static mut B: Int = 20
+static mut C: Int = 30
+fn main() -> Int { A + B + C }
+"#;
+
+#[test]
+fn static_reads_share_one_module_table_load() {
+    let ops = compile_entry_ops(STATIC_SUM3);
+    // O1: the three static reads share a single module-table load (Dei).
+    let deis: Vec<_> = ops.iter()
+        .filter_map(|o| if let OpCode::Dei(d, _) = o { Some(*d) } else { None })
+        .collect();
+    assert_eq!(deis.len(), 1, "expected 1 Dei for 3 static reads, got {}: {ops:?}", deis.len());
+    let table = deis[0];
+
+    // O2: every scalar static value (Ld from the table) is never Drop-ed.
+    let scalar_vals: Vec<_> = ops.iter()
+        .filter_map(|o| if let OpCode::Ld(d, b, _) = o { (*b == table).then_some(*d) } else { None })
+        .collect();
+    assert_eq!(scalar_vals.len(), 3, "expected 3 static Lds: {ops:?}");
+    for d in &scalar_vals {
+        assert!(!ops.iter().any(|o| matches!(o, OpCode::Drop(x) if x == d)),
+            "scalar static value r{} must not be Drop-ed (O2): {ops:?}", d.0);
+    }
+}
+
+const STATIC_LOOP_ACCUM: &str = r#"
+static mut A: Int = 10
+static mut B: Int = 20
+static mut C: Int = 30
+fn main() -> Int {
+  let r = A + B + C;
+  let mut i = 0;
+  let mut acc = 0;
+  while i < 3 { acc = acc + A + B + C; i = i + 1 };
+  r + acc
+}
+"#;
+
+#[test]
+fn cached_module_table_stays_correct_across_loop_iterations() {
+    // The per-statement module-table cache must be invalidated at the loop
+    // back-edge so each iteration reloads — value must still accumulate.
+    let v = run_src(STATIC_LOOP_ACCUM)
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(240)); // 60 + 3*60
 }

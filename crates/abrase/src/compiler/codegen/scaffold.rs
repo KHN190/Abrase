@@ -37,6 +37,9 @@ impl Compiler {
         if mark < self.next_reg {
             self.next_reg = mark;
         }
+        if let Some(r) = self.module_table_reg {
+            if r.0 as u16 >= self.next_reg { self.module_table_reg = None; }
+        }
     }
 
     pub(in crate::compiler) fn emit(&mut self, op: OpCode) {
@@ -70,6 +73,14 @@ impl Compiler {
             _ => return,
         };
         let i = dest.0 as usize;
+        if i >= self.reg_holds_handle.len() {
+            self.reg_holds_handle.resize(i + 1, false);
+        }
+        self.reg_holds_handle[i] = holds;
+    }
+
+    pub(in crate::compiler) fn set_reg_handle(&mut self, reg: Register, holds: bool) {
+        let i = reg.0 as usize;
         if i >= self.reg_holds_handle.len() {
             self.reg_holds_handle.resize(i + 1, false);
         }
