@@ -180,21 +180,7 @@ impl Compiler {
             self.emit(OpCode::Ld(ok_val, body_reg, 1));
             let env_reg = arm_envs.get(&ret_arm_name).copied()
                 .ok_or_else(|| format!("internal: no env packed for return arm '{}'", ret_arm_name))?;
-            let pos = self.code.len();
-            self.emit(OpCode::Move(Register(0), env_reg));
-            self.pending_arg_patches.push((pos, 0));
-            let zero_reg = self.alloc_register()?;
-            let zero_idx = self.add_constant(Value::from_int(0))?;
-            self.emit(OpCode::PushConst(zero_reg, zero_idx));
-            let pos = self.code.len();
-            self.emit(OpCode::Copy(Register(0), zero_reg));
-            self.pending_arg_patches.push((pos, 1));
-            let pos = self.code.len();
-            self.emit(OpCode::Copy(Register(0), ok_val));
-            self.pending_arg_patches.push((pos, 2));
-            let ret_dest = self.alloc_register()?;
-            let fid = super::scaffold::to_u16(return_arm_fn_id, "Handler return arm fn_id")?;
-            self.emit(OpCode::Call(ret_dest, fid));
+            let ret_dest = self.emit_arm_call(return_arm_fn_id, env_reg, ok_val)?;
             self.emit(OpCode::Copy(final_dest, ret_dest));
 
             let end_addr = self.code.len();
@@ -209,26 +195,7 @@ impl Compiler {
 
         let env_reg = arm_envs.get(&ret_arm_name).copied()
             .ok_or_else(|| format!("internal: no env packed for return arm '{}'", ret_arm_name))?;
-
-        let pos = self.code.len();
-        self.emit(OpCode::Move(Register(0), env_reg));
-        self.pending_arg_patches.push((pos, 0));
-
-        let return_env_reg = self.alloc_register()?;
-        let zero_idx = self.add_constant(Value::from_int(0))?;
-        self.emit(OpCode::PushConst(return_env_reg, zero_idx));
-        let pos = self.code.len();
-        self.emit(OpCode::Copy(Register(0), return_env_reg));
-        self.pending_arg_patches.push((pos, 1));
-
-        let pos = self.code.len();
-        self.emit(OpCode::Copy(Register(0), body_reg));
-        self.pending_arg_patches.push((pos, 2));
-
-        let dest = self.alloc_register()?;
-        let fid = super::scaffold::to_u16(return_arm_fn_id, "Handler arm fn_id")?;
-        self.emit(OpCode::Call(dest, fid));
-        Ok(dest)
+        self.emit_arm_call(return_arm_fn_id, env_reg, body_reg)
     }
 
     fn emit_install_return_arm(
@@ -394,5 +361,32 @@ impl Compiler {
             envs.insert(name.clone(), env_reg);
         }
         Ok(envs)
+    }
+
+    fn emit_arm_call(
+        &mut self,
+        arm_fn_id: usize,
+        env_reg: Register,
+        value_reg: Register,
+    ) -> Result<Register, String> {
+        let pos = self.code.len();
+        self.emit(OpCode::Move(Register(0), env_reg));
+        self.pending_arg_patches.push((pos, 0));
+
+        let zero_reg = self.alloc_register()?;
+        let zero_idx = self.add_constant(Value::from_int(0))?;
+        self.emit(OpCode::PushConst(zero_reg, zero_idx));
+        let pos = self.code.len();
+        self.emit(OpCode::Copy(Register(0), zero_reg));
+        self.pending_arg_patches.push((pos, 1));
+
+        let pos = self.code.len();
+        self.emit(OpCode::Copy(Register(0), value_reg));
+        self.pending_arg_patches.push((pos, 2));
+
+        let dest = self.alloc_register()?;
+        let fid = super::scaffold::to_u16(arm_fn_id, "Handler arm fn_id")?;
+        self.emit(OpCode::Call(dest, fid));
+        Ok(dest)
     }
 }

@@ -306,11 +306,6 @@ impl Compiler {
         Ok(fn_id)
     }
 
-    pub fn lookup_fn_id(&self, name: &str) -> Option<u16> {
-        let id = *self.func_map.get(name)?;
-        u16::try_from(id).ok()
-    }
-
     pub fn pretty_print_errors(&self) -> String {
         self.errors
             .iter()
@@ -339,86 +334,45 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
-        if !self.no_built_in {
-            self.register_builtins();
-        }
-        let mut checker = crate::typeck::Checker::new();
-        if !self.no_built_in {
-            self.register_builtins_to_checker(&mut checker);
+        if !self.no_built_in { self.register_builtins(); }
+        self.run_typeck(ast)?;
+        let decls_with_impls = self.run_impl_lift(ast)?;
+        let owned = self.run_mono(decls_with_impls)?;
+        let decls_with_closures = self.run_closure_lift(&owned);
+        let handler_synthetic_fns = self.run_handler_lift(&decls_with_closures);
+        let ast: &[ast::Decl] = &decls_with_closures;
+
+        let mut fn_decls = self.seed_decls(ast);
+        for arm_fn in handler_synthetic_fns {
+            let idx = self.functions.len();
+            self.func_map.insert(arm_fn.name.clone(), idx);
+            self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
+            fn_decls.push((idx, arm_fn));
         }
 
-        checker.check_program(ast);
-        self.typeck_expr_types = std::mem::take(&mut checker.expr_types);
-        if !checker.errors.is_empty() {
-            self.errors.extend(checker.errors.iter().map(|te| Error::new(
-                ErrorCode::TypeError,
-                te.span,
-                te.message.clone(),
-            ).with_module(te.module.clone())));
-            return Err(self.errors.clone());
-        }
-
-        let mut impl_lowering = impls::ImplLowering::new();
-        Self::seed_builtin_method_dispatch(&mut impl_lowering.method_dispatch);
-        impl_lowering.lower(ast);
-        if !impl_lowering.errors.is_empty() {
-            for msg in impl_lowering.errors {
-                self.errors.push(Error::new(ErrorCode::TypeError, ast::Span::new(0, 0), msg));
-            }
-            return Err(self.errors.clone());
-        }
-        self.method_dispatch = impl_lowering.method_dispatch.clone();
-        let mut decls_with_impls: Vec<ast::Decl> = ast.to_vec();
-        for fd in impl_lowering.synthetic_fns {
-            decls_with_impls.push(ast::Decl::Fn(fd));
-        }
-
-        let builtin_returns: std::collections::HashMap<String, ast::Type> = self.builtin_types.iter()
-            .filter_map(|(name, (_, ret))| codegen::inference::ty_to_ast(ret).map(|t| (name.clone(), t)))
-            .collect();
-        let owned = match mono::monomorphize_with_methods_and_builtins(
-            decls_with_impls, self.method_dispatch.clone(), builtin_returns,
-        ) {
-            Ok(o) => o,
-            Err(es) => {
-                self.errors.extend(es);
+        let entry = match self.func_map.get("main").copied() {
+            Some(idx) => idx,
+            None => {
+                self.errors.push(Error::new(
+                    ErrorCode::CodegenError, ast::Span::new(0, 0), "No main function found",
+                ));
                 return Err(self.errors.clone());
             }
         };
-        let ast: &[ast::Decl] = &owned;
 
-        let mut closure_lowering = closures::ClosureLowering::new();
-        closure_lowering.lower(ast);
-        self.closure_by_span = closure_lowering.by_span;
-        let mut decls_with_closures: Vec<ast::Decl> = ast.to_vec();
-        for fd in closure_lowering.synthetic_fns {
-            decls_with_closures.push(ast::Decl::Fn(fd));
-        }
-        let ast: &[ast::Decl] = &decls_with_closures;
+        self.compile_all_fns(fn_decls)?;
+        let module_init_id = self.compile_static_init(ast)?;
+        self.emit_debug_dump();
 
-        let mut handler_lowering = handlers::HandleLowering::new();
-        if self.debug_sink.is_some() {
-            handler_lowering = handler_lowering.with_debug_sink(debug::stderr_sink());
-        }
-        handler_lowering.lower(ast);
-        for err in handler_lowering.errors {
-            self.errors.push(Error::new(ErrorCode::CodegenError, ast::Span::new(0, 0), err));
-        }
-        self.effect_op_to_arm = handler_lowering.effect_op_to_arm;
-        self.op_call_to_arm = handler_lowering.op_call_to_arm;
-        self.return_arm_by_handle = handler_lowering.return_arm_by_handle;
-        self.effect_arms_by_handle = handler_lowering.effect_arms_by_handle;
-        self.arm_captures = handler_lowering.arm_captures;
-        self.cell_vars = handler_lowering.cell_vars;
-        self.arm_resume_counts = handler_lowering.arm_resume_counts;
-        self.arm_resume_in_tail = handler_lowering.arm_resume_in_tail;
-        self.effect_ids = handler_lowering.effect_ids;
-        self.op_ids = handler_lowering.op_ids;
-        self.effect_op_counts = handler_lowering.effect_op_counts;
+        let mut flags = 0u16;
+        if self.int32_mode { flags |= crate::bytecode::CART_FLAG_INT32_SAFE; }
+        let exports = self.build_exports(ast, entry, module_init_id);
+        Ok(Module { functions: self.functions.clone(), entry, flags, exports })
+    }
 
+    fn seed_decls(&mut self, ast: &[ast::Decl]) -> Vec<(usize, ast::FnDecl)> {
         let mut fn_decls = Vec::new();
         let mut module_stack: Vec<Vec<String>> = Vec::new();
-
         for decl in ast {
             match decl {
                 ast::Decl::ModEnter(p) => { module_stack.push(p.clone()); }
@@ -439,12 +393,8 @@ impl Compiler {
                         || self.func_map.contains_key(&mangled)
                     {
                         self.errors.push(Error::new(
-                            ErrorCode::TypeError,
-                            ast::Span::new(0, 0),
-                            format!(
-                                "cannot redefine fn `{}` — name is reserved or already declared",
-                                fn_decl.name
-                            ),
+                            ErrorCode::TypeError, ast::Span::new(0, 0),
+                            format!("cannot redefine fn `{}` — name is reserved or already declared", fn_decl.name),
                         ));
                         continue;
                     }
@@ -462,8 +412,7 @@ impl Compiler {
                     match self.try_const_fold(value) {
                         Some(cv) => { self.const_values.insert(name.clone(), cv); }
                         None => self.errors.push(Error::new(
-                            ErrorCode::CodegenError,
-                            value.span,
+                            ErrorCode::CodegenError, value.span,
                             format!("const `{}` value is not a compile-time constant", name),
                         )),
                     }
@@ -479,34 +428,17 @@ impl Compiler {
                 _ => {}
             }
         }
+        fn_decls
+    }
 
-        for arm_fn in handler_lowering.synthetic_fns {
-            let idx = self.functions.len();
-            self.func_map.insert(arm_fn.name.clone(), idx);
-            self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
-            fn_decls.push((idx, arm_fn));
-        }
-
-        let entry = match self.func_map.get("main").copied() {
-            Some(idx) => idx,
-            None => {
-                self.errors.push(Error::new(
-                    ErrorCode::CodegenError,
-                    ast::Span::new(0, 0),
-                    "No main function found",
-                ));
-                return Err(self.errors.clone());
-            }
-        };
-
+    fn compile_all_fns(&mut self, fn_decls: Vec<(usize, ast::FnDecl)>) -> Result<(), Vec<Error>> {
         for (idx, fn_decl) in fn_decls {
             if self.debug_sink.is_some() {
                 self.emit_debug(&format!("[COMPILE] idx={}, name={}", idx, fn_decl.name));
             }
             let saved_module = std::mem::take(&mut self.current_fn_module);
             self.current_fn_module = self.fn_origin.get(&idx).cloned().unwrap_or_default();
-            let chunk_res = self.compile_fn(&fn_decl);
-            let chunk = match chunk_res {
+            let chunk = match self.compile_fn(&fn_decl) {
                 Ok(c) => c,
                 Err(mut es) => {
                     for e in &mut es {
@@ -519,60 +451,63 @@ impl Compiler {
             self.current_fn_module = saved_module;
             self.functions[idx] = chunk;
         }
+        Ok(())
+    }
 
-        let module_init_id = if self.static_offsets.is_empty() {
-            None
-        } else {
-            let mut ordered: Vec<(String, u16)> = self.static_offsets.iter()
-                .map(|(n, o)| (n.clone(), *o)).collect();
-            ordered.sort_by_key(|(_, o)| *o);
-            let mut init_stack: Vec<Vec<String>> = Vec::new();
-            let static_values: Vec<(Vec<String>, ast::Spanned<ast::Expr>)> = ast.iter().filter_map(|d| {
-                match d {
-                    ast::Decl::ModEnter(p) => { init_stack.push(p.clone()); None }
-                    ast::Decl::ModExit => { init_stack.pop(); None }
-                    ast::Decl::Static { name, value, .. } => {
-                        let mod_path = init_stack.last().cloned().unwrap_or_default();
-                        let key = Self::fqn(&mod_path, name);
-                        if self.static_offsets.contains_key(&key) {
-                            Some((mod_path, value.clone()))
-                        } else { None }
-                    }
-                    _ => None,
+    fn compile_static_init(&mut self, ast: &[ast::Decl]) -> Result<Option<u16>, Vec<Error>> {
+        if self.static_offsets.is_empty() { return Ok(None); }
+        let mut ordered: Vec<(String, u16)> = self.static_offsets.iter()
+            .map(|(n, o)| (n.clone(), *o)).collect();
+        ordered.sort_by_key(|(_, o)| *o);
+        let mut init_stack: Vec<Vec<String>> = Vec::new();
+        let static_values: Vec<(Vec<String>, ast::Spanned<ast::Expr>)> = ast.iter().filter_map(|d| {
+            match d {
+                ast::Decl::ModEnter(p) => { init_stack.push(p.clone()); None }
+                ast::Decl::ModExit => { init_stack.pop(); None }
+                ast::Decl::Static { name, value, .. } => {
+                    let mod_path = init_stack.last().cloned().unwrap_or_default();
+                    let key = Self::fqn(&mod_path, name);
+                    if self.static_offsets.contains_key(&key) {
+                        Some((mod_path, value.clone()))
+                    } else { None }
                 }
-            }).collect();
-            let table_size = ordered.len() as u16;
-            let init_id = self.functions.len();
-            self.func_map.insert("__module_init".into(), init_id);
-            self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
-            let chunk = self.compile_module_init(table_size, &ordered, &static_values)?;
-            self.functions[init_id] = chunk;
-            Some(init_id as u16)
-        };
-
-        if let Some(sink) = &mut self.debug_sink {
-            sink("[FUNC_MAP]");
-            let mut entries: Vec<(&String, &usize)> = self.func_map.iter().collect();
-            entries.sort_by_key(|(_, idx)| **idx);
-            for (name, idx) in entries {
-                sink(&format!("  {} -> {}", name, idx));
+                _ => None,
             }
-            sink("[BYTECODE]");
-            for (i, func) in self.functions.iter().enumerate() {
-                match func {
-                    Chunk::Bytecode(bc) => {
-                        sink(&format!("[{}] {} instrs:", i, bc.code.len()));
-                        for (j, op) in bc.code.iter().enumerate() {
-                            sink(&format!("    [{}] {:?}", j, op));
-                        }
+        }).collect();
+        let table_size = ordered.len() as u16;
+        let init_id = self.functions.len();
+        self.func_map.insert("__module_init".into(), init_id);
+        self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
+        let chunk = self.compile_module_init(table_size, &ordered, &static_values)?;
+        self.functions[init_id] = chunk;
+        Ok(Some(init_id as u16))
+    }
+
+    fn emit_debug_dump(&mut self) {
+        let Some(sink) = &mut self.debug_sink else { return };
+        sink("[FUNC_MAP]");
+        let mut entries: Vec<(&String, &usize)> = self.func_map.iter().collect();
+        entries.sort_by_key(|(_, idx)| **idx);
+        for (name, idx) in entries {
+            sink(&format!("  {} -> {}", name, idx));
+        }
+        sink("[BYTECODE]");
+        for (i, func) in self.functions.iter().enumerate() {
+            match func {
+                Chunk::Bytecode(bc) => {
+                    sink(&format!("[{}] {} instrs:", i, bc.code.len()));
+                    for (j, op) in bc.code.iter().enumerate() {
+                        sink(&format!("    [{}] {:?}", j, op));
                     }
-                    Chunk::Native(n) => sink(&format!("[{}] Native {}", i, n.name)),
                 }
+                Chunk::Native(n) => sink(&format!("[{}] Native {}", i, n.name)),
             }
         }
+    }
 
-        let mut flags = 0u16;
-        if self.int32_mode { flags |= crate::bytecode::CART_FLAG_INT32_SAFE; }
+    fn build_exports(&self, ast: &[ast::Decl], entry: usize, module_init_id: Option<u16>)
+        -> Vec<crate::bytecode::Export>
+    {
         let mut exports: Vec<crate::bytecode::Export> = Vec::new();
         let mut export_stack: Vec<Vec<String>> = Vec::new();
         for decl in ast {
@@ -594,17 +529,81 @@ impl Compiler {
                 exports.push(crate::bytecode::Export { name: "main".into(), fn_id: id });
             }
         }
-        // Export the static initializer so the runtime can run it once before
-        // the entry/exports. (Synthetic name; not a user-callable fn.)
         if let Some(id) = module_init_id {
             exports.push(crate::bytecode::Export { name: "__module_init".into(), fn_id: id });
         }
-        Ok(Module {
-            functions: self.functions.clone(),
-            entry,
-            flags,
-            exports,
-        })
+        exports
+    }
+
+    fn run_typeck(&mut self, ast: &[ast::Decl]) -> Result<(), Vec<Error>> {
+        let mut checker = crate::typeck::Checker::new();
+        if !self.no_built_in { self.register_builtins_to_checker(&mut checker); }
+        checker.check_program(ast);
+        self.typeck_expr_types = std::mem::take(&mut checker.expr_types);
+        if !checker.errors.is_empty() {
+            self.errors.extend(checker.errors.iter().map(|te| Error::new(
+                ErrorCode::TypeError, te.span, te.message.clone(),
+            ).with_module(te.module.clone())));
+            return Err(self.errors.clone());
+        }
+        Ok(())
+    }
+
+    fn run_impl_lift(&mut self, ast: &[ast::Decl]) -> Result<Vec<ast::Decl>, Vec<Error>> {
+        let mut impl_lowering = impls::ImplLowering::new();
+        Self::seed_builtin_method_dispatch(&mut impl_lowering.method_dispatch);
+        impl_lowering.lower(ast);
+        if !impl_lowering.errors.is_empty() {
+            for msg in impl_lowering.errors {
+                self.errors.push(Error::new(ErrorCode::TypeError, ast::Span::new(0, 0), msg));
+            }
+            return Err(self.errors.clone());
+        }
+        self.method_dispatch = impl_lowering.method_dispatch;
+        let mut decls = ast.to_vec();
+        for fd in impl_lowering.synthetic_fns { decls.push(ast::Decl::Fn(fd)); }
+        Ok(decls)
+    }
+
+    fn run_mono(&mut self, decls: Vec<ast::Decl>) -> Result<Vec<ast::Decl>, Vec<Error>> {
+        let builtin_returns: std::collections::HashMap<String, ast::Type> = self.builtin_types.iter()
+            .filter_map(|(name, (_, ret))| codegen::inference::ty_to_ast(ret).map(|t| (name.clone(), t)))
+            .collect();
+        mono::monomorphize_with_methods_and_builtins(
+            decls, self.method_dispatch.clone(), builtin_returns,
+        ).map_err(|es| { self.errors.extend(es); self.errors.clone() })
+    }
+
+    fn run_closure_lift(&mut self, ast: &[ast::Decl]) -> Vec<ast::Decl> {
+        let mut closure_lowering = closures::ClosureLowering::new();
+        closure_lowering.lower(ast);
+        self.closure_by_span = closure_lowering.by_span;
+        let mut decls = ast.to_vec();
+        for fd in closure_lowering.synthetic_fns { decls.push(ast::Decl::Fn(fd)); }
+        decls
+    }
+
+    fn run_handler_lift(&mut self, ast: &[ast::Decl]) -> Vec<ast::FnDecl> {
+        let mut h = handlers::HandleLowering::new();
+        if self.debug_sink.is_some() {
+            h = h.with_debug_sink(debug::stderr_sink());
+        }
+        h.lower(ast);
+        for err in h.errors {
+            self.errors.push(Error::new(ErrorCode::CodegenError, ast::Span::new(0, 0), err));
+        }
+        self.effect_op_to_arm = h.effect_op_to_arm;
+        self.op_call_to_arm = h.op_call_to_arm;
+        self.return_arm_by_handle = h.return_arm_by_handle;
+        self.effect_arms_by_handle = h.effect_arms_by_handle;
+        self.arm_captures = h.arm_captures;
+        self.cell_vars = h.cell_vars;
+        self.arm_resume_counts = h.arm_resume_counts;
+        self.arm_resume_in_tail = h.arm_resume_in_tail;
+        self.effect_ids = h.effect_ids;
+        self.op_ids = h.op_ids;
+        self.effect_op_counts = h.effect_op_counts;
+        h.synthetic_fns
     }
 
     fn compile_fn(&mut self, fn_decl: &ast::FnDecl) -> Result<Chunk, Vec<Error>> {

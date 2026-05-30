@@ -78,6 +78,22 @@ pub struct HandlerFrame {
     pub pending_return_arm_env_is_handle: bool,
 }
 
+impl HandlerFrame {
+    pub fn release_cells(
+        &self,
+        heap: &mut crate::memory::Heap,
+        regions: &mut crate::region::RegionTable,
+    ) -> Result<(), String> {
+        for (slot, generation) in &self.cells_allocated {
+            regions.forget(*slot, *generation);
+            if heap.is_live(*slot, *generation) {
+                heap.rc_dec(*slot, *generation)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub mod cont_slot {
     pub const SUSPEND_PC: usize = 0;
     pub const SUSPEND_BASE: usize = 1;

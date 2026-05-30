@@ -654,12 +654,7 @@ impl VirtualMachine {
                 let body_call_frame = self.frames.pop()
                     .ok_or("arm-throw: missing body-call frame to unwind into")?;
                 if let Some(handler) = self.handlers.pop() {
-                    for (slot, generation) in handler.cells_allocated {
-                        self.region_table.forget(slot, generation);
-                        if self.heap.is_live(slot, generation) {
-                            self.heap.rc_dec(slot, generation)?;
-                        }
-                    }
+                    handler.release_cells(&mut self.heap, &mut self.region_table)?;
                 }
                 let inner_base = body_call_frame.base_reg;
                 let inner_func = body_call_frame.func_id;
@@ -860,12 +855,7 @@ impl VirtualMachine {
                 let frame = self.handlers.pop()
                     .ok_or("dispatch.pop_handler: no active handler frame")?;
                 let n_cells = frame.cells_allocated.len();
-                for (slot, generation) in frame.cells_allocated.iter() {
-                    self.region_table.forget(*slot, *generation);
-                    if self.heap.is_live(*slot, *generation) {
-                        self.heap.rc_dec(*slot, *generation)?;
-                    }
-                }
+                frame.release_cells(&mut self.heap, &mut self.region_table)?;
                 self.trace_frame_event("HANDLER pop", format_args!("released {} cont cells", n_cells));
                 Ok(())
             }
