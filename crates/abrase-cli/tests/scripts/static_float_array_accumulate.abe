@@ -1,0 +1,9 @@
+static AR: Array<Float> = [0.0; 5]
+
+fn run() -> Float {
+  let mut i = 0;
+  while i < 5 { AR[3] = AR[3] + 1.0; i = i + 1 };
+  AR[3]
+}
+
+fn main() -> Int { run().to_i() }

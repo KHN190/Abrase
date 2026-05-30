@@ -333,3 +333,12 @@ fn method_call_on_array_index_infers_element_type() {
         .unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, "1.5");
 }
+
+#[test]
+fn static_float_array_in_place_add_accumulates() {
+    // AR[3] = AR[3] + 1.0 in a loop must use float add, not int add on the
+    // bit pattern — static element types must be inferred as Float.
+    let v = run_file("tests/scripts/static_float_array_accumulate.abe")
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(5));
+}

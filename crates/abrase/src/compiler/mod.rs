@@ -249,6 +249,20 @@ impl Compiler {
         self.static_offsets.get(name).copied()
     }
 
+    pub(in crate::compiler) fn resolve_static_type(&self, name: &str) -> Option<&ast::Type> {
+        if !self.current_fn_module.is_empty() {
+            let local = Self::fqn(&self.current_fn_module, name);
+            if let Some(t) = self.static_types.get(&local) { return Some(t); }
+        }
+        if let Some(imports) = self.module_imports.get(&self.current_fn_module) {
+            if let Some(mod_path) = imports.get(name) {
+                let imp = Self::fqn(mod_path, name);
+                if let Some(t) = self.static_types.get(&imp) { return Some(t); }
+            }
+        }
+        self.static_types.get(name)
+    }
+
     pub(in crate::compiler) fn resolve_fn_callee(&self, name: &str) -> Option<usize> {
         if !self.current_fn_module.is_empty() {
             let local = Self::fqn(&self.current_fn_module, name);

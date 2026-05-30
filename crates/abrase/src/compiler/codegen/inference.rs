@@ -18,6 +18,7 @@ impl Compiler {
             }),
             ast::Expr::Identifier(name) => {
                 if let Some(ty) = self.var_types.get(name) { return Some(ty.clone()); }
+                if let Some(ty) = self.resolve_static_type(name) { return Some(ty.clone()); }
                 // Zero-ary variant ctor used as a bare identifier (e.g. `Nil`).
                 self.layouts.variants.get(name)
                     .map(|info| ast::Type::Named(info.type_name.clone()))
