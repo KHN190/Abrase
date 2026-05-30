@@ -29,7 +29,6 @@ fn verify_compile_array_indexing_constant() {
 }
 
 #[test]
-#[ignore = "codegen: can't infer record element type from Array<Pt> indexing → `.x` lookup fails"]
 fn verify_compile_nested_record_in_array() {
     let src = r#"
         type Pt = { x: Int, y: Int }
