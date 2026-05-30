@@ -83,7 +83,7 @@ fn load_recursive(
     for decl in &mut decls {
         if let ast::Decl::Use { path, .. } = decl {
             let base = file.parent().unwrap_or(root);
-            let dep_path = resolve_import(base, path);
+            let dep_path = resolve_import(base, root, path);
             if !dep_path.exists() {
                 return Err(LoadError::MissingImport {
                     from: file.to_path_buf(),
@@ -111,7 +111,19 @@ fn load_recursive(
     Ok(())
 }
 
-fn resolve_import(base: &Path, path: &[String]) -> PathBuf {
+fn resolve_import(base: &Path, root: &Path, path: &[String]) -> PathBuf {
+    let relative = join_import(base, path);
+    if relative.exists() {
+        return relative;
+    }
+    let from_root = join_import(root, path);
+    if from_root.exists() {
+        return from_root;
+    }
+    relative
+}
+
+fn join_import(base: &Path, path: &[String]) -> PathBuf {
     let mut p = base.to_path_buf();
     let n = path.len();
     for (i, seg) in path.iter().enumerate() {
