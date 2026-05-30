@@ -146,19 +146,25 @@ impl<'a> Parser<'a> {
                 self.report_error(format!("Expected field name, got {:?}", self.current_token), self.current_span);
                 break;
             };
-            let value = if self.peek_token == Token::Colon {
+            let (value, value_block_terminated) = if self.peek_token == Token::Colon {
                 self.next_token();
                 self.next_token();
-                Some(self.parse_expr(Precedence::Lowest))
+                let v = self.parse_expr(Precedence::Lowest);
+                let bt = is_block_terminated(&v.node);
+                (Some(v), bt)
             } else {
-                None
+                (None, false)
             };
             if !seen.insert(fname.clone()) {
                 self.report_error(format!("Duplicate field '{}' in record literal", fname), fname_span);
             } else {
                 fields.push(FieldInit { name: fname, value });
             }
-            if self.peek_token == Token::Comma {
+            if value_block_terminated {
+                if self.current_token == Token::Comma {
+                    self.next_token();
+                }
+            } else if self.peek_token == Token::Comma {
                 self.next_token();
                 self.next_token();
             } else {
@@ -178,8 +184,11 @@ impl<'a> Parser<'a> {
             return Spanned { node: Expr::Array(vec![]), span };
         }
         let first = self.parse_expr(Precedence::Lowest);
-        if self.peek_token == Token::Semicolon {
-            self.next_token();
+        let first_block_terminated = is_block_terminated(&first.node);
+        let sees_semi = self.peek_token == Token::Semicolon
+            || (first_block_terminated && self.current_token == Token::Semicolon);
+        if sees_semi {
+            if self.current_token != Token::Semicolon { self.next_token(); }
             self.next_token();
             let count = self.parse_expr(Precedence::Lowest);
             if !self.expect_peek(Token::RBracket) {
@@ -387,9 +396,28 @@ impl<'a> Parser<'a> {
         }
         self.next_token();
         let first = self.parse_expr(Precedence::Lowest);
-        if is_block_terminated(&first.node) {
+        let first_block_terminated = is_block_terminated(&first.node);
+        if first_block_terminated {
             if self.current_token == Token::RParen {
                 return Spanned { node: Expr::Paren(Box::new(first)), span };
+            }
+            if self.current_token == Token::Comma {
+                let mut elems = vec![first];
+                while self.current_token == Token::Comma {
+                    self.next_token();
+                    if self.current_token == Token::RParen { break; }
+                    elems.push(self.parse_expr(Precedence::Lowest));
+                    if !is_block_terminated(&elems.last().unwrap().node) {
+                        if self.peek_token == Token::Comma || self.peek_token == Token::RParen {
+                            self.next_token();
+                        }
+                    }
+                }
+                if self.current_token != Token::RParen {
+                    self.report_error("Expected ')' in tuple expression".into(), self.current_span);
+                    return Spanned { node: Expr::Error, span };
+                }
+                return Spanned { node: Expr::Tuple(elems), span };
             }
             self.report_error("Expected ')' in parenthesized expression".into(), self.current_span);
             return Spanned { node: Expr::Error, span };
@@ -585,11 +613,17 @@ impl<'a> Parser<'a> {
             }
             Token::Dot => {
                 self.next_token();
-                if let Token::Ident(field) = &self.current_token {
-                    return Spanned { node: Expr::FieldAccess { base: Box::new(left), field: field.clone() }, span: self.current_span };
-                } else {
-                    self.report_error("Expected field name after dot".into(), self.current_span);
-                    return Spanned { node: Expr::Error, span: self.current_span };
+                match &self.current_token {
+                    Token::Ident(field) => {
+                        return Spanned { node: Expr::FieldAccess { base: Box::new(left), field: field.clone() }, span: self.current_span };
+                    }
+                    Token::Int(n) if *n >= 0 => {
+                        return Spanned { node: Expr::FieldAccess { base: Box::new(left), field: n.to_string() }, span: self.current_span };
+                    }
+                    _ => {
+                        self.report_error("Expected field name or tuple index after dot".into(), self.current_span);
+                        return Spanned { node: Expr::Error, span: self.current_span };
+                    }
                 }
             }
             Token::Question => {

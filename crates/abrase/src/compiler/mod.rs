@@ -86,6 +86,7 @@ pub struct Compiler {
     pub(super) builtin_types: HashMap<String, (Vec<TyType>, TyType)>,
     pub(super) fn_signatures: HashMap<usize, (Vec<TyType>, TyType)>,
     pub(super) current_closure_layout: HashMap<String, usize>,
+    pub(super) current_closure_capture_types: HashMap<usize, ast::Type>,
     pub(super) current_span: ast::Span,
     pub(super) compiler_region_depth: usize,
     pub(super) fn_compiler_depth_baseline: usize,
@@ -158,6 +159,7 @@ impl Compiler {
             builtin_types: HashMap::new(),
             fn_signatures: HashMap::new(),
             current_closure_layout: HashMap::new(),
+            current_closure_capture_types: HashMap::new(),
             current_span: ast::Span::new(0, 0),
             compiler_region_depth: 0,
             fn_compiler_depth_baseline: 0,
@@ -371,7 +373,12 @@ impl Compiler {
             decls_with_impls.push(ast::Decl::Fn(fd));
         }
 
-        let owned = match mono::monomorphize_with_methods(decls_with_impls, self.method_dispatch.clone()) {
+        let builtin_returns: std::collections::HashMap<String, ast::Type> = self.builtin_types.iter()
+            .filter_map(|(name, (_, ret))| codegen::inference::ty_to_ast_public(ret).map(|t| (name.clone(), t)))
+            .collect();
+        let owned = match mono::monomorphize_with_methods_and_builtins(
+            decls_with_impls, self.method_dispatch.clone(), builtin_returns,
+        ) {
             Ok(o) => o,
             Err(es) => {
                 self.errors.extend(es);
@@ -623,10 +630,14 @@ impl Compiler {
         let saved_fn_handler_baseline = self.fn_handler_baseline;
         let saved_remaining_uses = std::mem::take(&mut self.remaining_uses);
         let saved_closure_layout = std::mem::take(&mut self.current_closure_layout);
+        let saved_closure_capture_types = std::mem::take(&mut self.current_closure_capture_types);
         let saved_cell_bindings = std::mem::take(&mut self.cell_bindings);
         if let Some(info) = self.closure_by_span.values().find(|i| i.lifted_fn == fn_decl.name).cloned() {
             self.current_closure_layout = info.captures.iter().enumerate()
                 .map(|(i, c)| (c.name.clone(), i))
+                .collect();
+            self.current_closure_capture_types = info.captures.iter().enumerate()
+                .map(|(i, c)| (i, c.ty.clone()))
                 .collect();
         }
 
@@ -650,20 +661,31 @@ impl Compiler {
 
         for param in &fn_decl.params {
             if let ast::Param::Named { pattern, ty } = param {
-                if let ast::Pattern::Bind(name) = &pattern.node {
-                    match self.alloc_register() {
-                        Ok(reg) => {
-                            self.var_to_reg.insert(name.clone(), reg);
-                            self.var_types.insert(name.clone(), ty.clone());
-                            if let Some(top) = self.block_locals_stack.last_mut() {
-                                top.push(reg);
-                            }
-                        }
-                        Err(_) => {
+                let reg = match self.alloc_register() {
+                    Ok(r) => r,
+                    Err(_) => {
+                        self.errors.push(Error::new(
+                            ErrorCode::CodegenError,
+                            pattern.span,
+                            "Failed to allocate register for parameter",
+                        ));
+                        continue;
+                    }
+                };
+                if let Some(top) = self.block_locals_stack.last_mut() {
+                    top.push(reg);
+                }
+                match &pattern.node {
+                    ast::Pattern::Bind(name) => {
+                        self.var_to_reg.insert(name.clone(), reg);
+                        self.var_types.insert(name.clone(), ty.clone());
+                    }
+                    _ => {
+                        if let Err(msg) = self.compile_destructure(pattern, reg, Some(ty)) {
                             self.errors.push(Error::new(
                                 ErrorCode::CodegenError,
                                 pattern.span,
-                                format!("Failed to allocate register for parameter '{}'", name),
+                                msg,
                             ));
                         }
                     }
@@ -751,6 +773,7 @@ impl Compiler {
         self.fn_handler_baseline = saved_fn_handler_baseline;
         self.remaining_uses = saved_remaining_uses;
         self.current_closure_layout = saved_closure_layout;
+        self.current_closure_capture_types = saved_closure_capture_types;
         self.cell_bindings = saved_cell_bindings;
 
         Ok(chunk)

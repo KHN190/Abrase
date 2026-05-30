@@ -775,18 +775,28 @@ impl<'a> Parser<'a> {
                 }
                 Token::Ident(n) => {
                     let name = n.clone();
-                    if !self.expect_peek(Token::Colon) {
-                        return Err("Expected ':'".into());
-                    }
-                    self.next_token();
-                    let ty = self.parse_type()?;
-                    match (&name[..], &ty) {
-                        ("self", Type::Reference { is_mut, .. }) => Param::SelfRef { is_mut: *is_mut },
-                        ("self", _) => Param::SelfVal,
-                        _ => Param::Named {
-                            pattern: Spanned { node: Pattern::Bind(name), span },
-                            ty,
-                        },
+                    if self.peek_token == Token::LBrace {
+                        let pattern = self.parse_pattern()?;
+                        if !self.expect_peek(Token::Colon) {
+                            return Err("Expected ':' after destructure pattern".into());
+                        }
+                        self.next_token();
+                        let ty = self.parse_type()?;
+                        Param::Named { pattern, ty }
+                    } else {
+                        if !self.expect_peek(Token::Colon) {
+                            return Err("Expected ':'".into());
+                        }
+                        self.next_token();
+                        let ty = self.parse_type()?;
+                        match (&name[..], &ty) {
+                            ("self", Type::Reference { is_mut, .. }) => Param::SelfRef { is_mut: *is_mut },
+                            ("self", _) => Param::SelfVal,
+                            _ => Param::Named {
+                                pattern: Spanned { node: Pattern::Bind(name), span },
+                                ty,
+                            },
+                        }
                     }
                 }
                 _ => return Err(format!("Unexpected param token: {:?}", self.current_token)),

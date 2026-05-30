@@ -68,6 +68,7 @@ impl Compiler {
             }
             ast::Expr::Region { body, .. } => {
                 let body_ty = body.ret.as_ref().and_then(|e| self.infer_expr_type(e));
+                let pre_push_high = self.snapshot_register_high_water();
                 self.emit_region_push()?;
                 let result = self.compile_block(body)?;
                 if let Some(ty) = &body_ty {
@@ -76,6 +77,14 @@ impl Compiler {
                     self.emit_region_forget(result)?;
                 }
                 self.emit_region_pop()?;
+                let high = self.snapshot_register_high_water();
+                for r in pre_push_high..high {
+                    if r as usize != result.0 as usize
+                        && (r as usize) < self.reg_holds_handle.len()
+                    {
+                        self.reg_holds_handle[r as usize] = false;
+                    }
+                }
                 Ok(result)
             }
         }

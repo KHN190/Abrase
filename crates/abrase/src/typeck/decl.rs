@@ -321,8 +321,13 @@ impl Checker {
             match param {
                 ast::Param::Named { pattern, ty } => {
                     let param_type = self.convert_type(ty);
-                    if let ast::Pattern::Bind(name) = &pattern.node {
-                        self.insert_var(name.clone(), param_type, false, ast::Span { line: 0, col: 0 });
+                    match &pattern.node {
+                        ast::Pattern::Bind(name) => {
+                            self.insert_var(name.clone(), param_type, false, ast::Span { line: 0, col: 0 });
+                        }
+                        _ => {
+                            self.check_pattern(pattern, &param_type, pattern.span);
+                        }
                     }
                 },
                 ast::Param::SelfVal | ast::Param::SelfRef { .. } => {
@@ -610,6 +615,15 @@ impl Checker {
 
     pub fn resolve_field_access(&mut self, base_ty: &Type, field_name: &str, span: Span) -> Type {
         match base_ty {
+            Type::Reference { inner, .. } => self.resolve_field_access(inner, field_name, span),
+            Type::Tuple(elems) => {
+                if let Ok(idx) = field_name.parse::<usize>() {
+                    if let Some(t) = elems.get(idx) { return t.clone(); }
+                }
+                self.report_error(
+                    format!("Tuple has no element '{}'", field_name), span);
+                Type::Unknown
+            }
             Type::Named(type_name) => {
                 if let Some(type_body) = self.type_registry.get(type_name).cloned() {
                     match type_body {

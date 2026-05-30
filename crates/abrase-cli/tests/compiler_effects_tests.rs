@@ -241,15 +241,20 @@ fn handler_pop_frees_cont_cell_after_resume() {
 }
 
 #[test]
-#[ignore = "arm body that throws needs exn handler arm; pending proper throw-arm wiring"]
 fn handler_pop_frees_cont_cell_when_arm_throws() {
     let src = r#"
         effect e { op ask() -> Int }
         fn produce() -> <e> Int { e.ask() + 1 }
-        fn main() -> Int {
+        fn inner() -> <exn<Int>> Int {
             handle produce() {
                 return v => v,
                 e.ask => throw 42
+            }
+        }
+        fn main() -> Int {
+            handle inner() {
+                return v => v,
+                exn n => n
             }
         }
     "#;

@@ -289,13 +289,16 @@ impl HandleLowering {
                     );
                     self.arm_resume_counts.insert(fn_name.clone(), resume_count);
                     self.arm_resume_in_tail.insert(fn_name.clone(), resume_in_tail);
+                    let arm_effects = if Self::body_contains_throw(&arm.body) {
+                        vec![EffectItem { name: vec!["exn".into()], arg: None }]
+                    } else { vec![] };
                     self.synthetic_fns.push(FnDecl {
                         attrs: vec![],
                         is_pub: false,
                         name: fn_name.clone(),
                         generics: vec![],
                         params,
-                        effects: vec![],
+                        effects: arm_effects,
                         return_type: None,
                         where_clause: vec![],
                         body,
@@ -384,6 +387,36 @@ impl HandleLowering {
             ret: Some(Box::new(rewritten_body)),
         };
         (params, body)
+    }
+
+    fn body_contains_throw(expr: &Spanned<Expr>) -> bool {
+        match &expr.node {
+            Expr::Throw(_) => true,
+            Expr::Block(b) => b.stmts.iter().any(|s| match &s.node {
+                Stmt::Expr(e) => Self::body_contains_throw(e),
+                Stmt::Let { value, .. } => Self::body_contains_throw(value),
+                _ => false,
+            }) || b.ret.as_deref().map_or(false, Self::body_contains_throw),
+            Expr::If { condition, consequence, alternative } =>
+                Self::body_contains_throw(condition) || Self::body_contains_throw(consequence)
+                    || alternative.as_deref().map_or(false, Self::body_contains_throw),
+            Expr::Match { scrutinee, arms } =>
+                Self::body_contains_throw(scrutinee)
+                    || arms.iter().any(|a| Self::body_contains_throw(&a.body)),
+            Expr::Binary { left, right, .. } =>
+                Self::body_contains_throw(left) || Self::body_contains_throw(right),
+            Expr::Unary { right, .. } | Expr::Paren(right) | Expr::Question(right) =>
+                Self::body_contains_throw(right),
+            Expr::Call { callee, args } =>
+                Self::body_contains_throw(callee) || args.iter().any(Self::body_contains_throw),
+            Expr::Region { body, .. } => body.ret.as_deref().map_or(false, Self::body_contains_throw)
+                || body.stmts.iter().any(|s| match &s.node {
+                    Stmt::Expr(e) => Self::body_contains_throw(e),
+                    Stmt::Let { value, .. } => Self::body_contains_throw(value),
+                    _ => false,
+                }),
+            _ => false,
+        }
     }
 
     fn count_resumes_in_expr(&self, expr: &Spanned<Expr>) -> usize {

@@ -907,7 +907,11 @@ impl Checker {
             }
             ast::Expr::Index { base, index } => {
                 self.context_stack.push("In array indexing".into());
-                let base_ty = self.infer_expr(base);
+                let base_ty = if let ast::Expr::Identifier(name) = &base.node {
+                    self.get_var(name, true, base.span)
+                } else {
+                    self.infer_expr(base)
+                };
                 let index_ty = self.infer_expr(index);
 
                 if index_ty != Type::Int && index_ty != Type::Unknown {

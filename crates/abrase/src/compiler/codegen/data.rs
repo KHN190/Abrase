@@ -197,6 +197,13 @@ impl Compiler {
             if unboxed { self.set_reg_handle(dest, false); }
             return Ok(dest);
         }
+        if let Some(fid) = self.resolve_fn_callee(name) {
+            let dest = self.alloc_register()?;
+            let idx = self.add_constant(Value::from_int(fid as i64))?;
+            self.emit(OpCode::PushConst(dest, idx));
+            self.set_reg_handle(dest, false);
+            return Ok(dest);
+        }
         if let Some(info) = self.layouts.variants.get(name).cloned() {
             let dest = self.alloc_register()?;
             self.emit(OpCode::Alloc(dest, 1));
@@ -284,11 +291,24 @@ impl Compiler {
                 }
             }
         }
+        let base_ty = self.infer_expr_type(base);
         let base_reg = self.compile_expr(base)?;
-        let type_name = self.infer_expr_type(base).and_then(|t| match t {
-            ast::Type::Named(n) => Some(n),
-            _ => None,
-        }).ok_or_else(|| format!("Cannot determine record type for field access '.{}'", field))?;
+        if let Some(ast::Type::Tuple(_)) = base_ty {
+            let idx: u16 = field.parse()
+                .map_err(|_| format!("Tuple field must be a non-negative integer, got '{}'", field))?;
+            let dest = self.alloc_register()?;
+            self.emit(OpCode::Ld(dest, base_reg, idx));
+            return Ok(dest);
+        }
+        fn unwrap_named(t: ast::Type) -> Option<String> {
+            match t {
+                ast::Type::Named(n) => Some(n),
+                ast::Type::Reference { inner, .. } => unwrap_named(*inner),
+                _ => None,
+            }
+        }
+        let type_name = base_ty.and_then(unwrap_named)
+            .ok_or_else(|| format!("Cannot determine record type for field access '.{}'", field))?;
         let layout = self.layouts.records.get(&type_name)
             .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
         let idx = layout.offset_of(field)

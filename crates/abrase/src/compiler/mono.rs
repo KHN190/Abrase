@@ -4,14 +4,22 @@ use crate::ast::*;
 use crate::error::{Error, ErrorCode};
 
 pub fn monomorphize(decls: Vec<Decl>) -> Result<Vec<Decl>, Vec<Error>> {
-    Mono::new(decls, HashMap::new()).run()
+    Mono::new(decls, HashMap::new(), HashMap::new()).run()
 }
 
 pub fn monomorphize_with_methods(
     decls: Vec<Decl>,
     method_dispatch: HashMap<(String, String), String>,
 ) -> Result<Vec<Decl>, Vec<Error>> {
-    Mono::new(decls, method_dispatch).run()
+    Mono::new(decls, method_dispatch, HashMap::new()).run()
+}
+
+pub fn monomorphize_with_methods_and_builtins(
+    decls: Vec<Decl>,
+    method_dispatch: HashMap<(String, String), String>,
+    builtin_returns: HashMap<String, Type>,
+) -> Result<Vec<Decl>, Vec<Error>> {
+    Mono::new(decls, method_dispatch, builtin_returns).run()
 }
 
 struct Mono {
@@ -20,6 +28,8 @@ struct Mono {
     /// `(receiver_type_name, method_name) -> mangled fn name`. Empty for
     /// plain `monomorphize` callers; populated when impl-lift has run.
     method_dispatch: HashMap<(String, String), String>,
+    /// mangled fn name -> return type, for builtins that aren't in `fn_sigs`.
+    builtin_returns: HashMap<String, Type>,
     out: Vec<Decl>,
     out_specials: Vec<FnDecl>,
     pending: Vec<(String, Vec<Type>)>,
@@ -28,7 +38,11 @@ struct Mono {
 }
 
 impl Mono {
-    fn new(decls: Vec<Decl>, method_dispatch: HashMap<(String, String), String>) -> Self {
+    fn new(
+        decls: Vec<Decl>,
+        method_dispatch: HashMap<(String, String), String>,
+        builtin_returns: HashMap<String, Type>,
+    ) -> Self {
         let mut generic_fns = HashMap::new();
         let mut fn_sigs = HashMap::new();
         let mut out = Vec::with_capacity(decls.len());
@@ -48,6 +62,7 @@ impl Mono {
             generic_fns,
             fn_sigs,
             method_dispatch,
+            builtin_returns,
             out,
             out_specials: Vec::new(),
             pending: Vec::new(),
@@ -181,7 +196,7 @@ impl Mono {
         subst: &HashMap<String, Type>,
     ) -> Option<Type> {
 
-        self.try_rewrite_method_call(expr, env);
+        self.try_rewrite_method_call(expr, env, subst);
 
         let call_span = expr.span;
         match &mut expr.node {
@@ -208,6 +223,18 @@ impl Mono {
                 let mut arg_types: Vec<Option<Type>> = Vec::with_capacity(args.len());
                 for a in args.iter_mut() {
                     arg_types.push(self.rewrite_expr(a, env, subst));
+                }
+                if matches!(callee.node, Expr::FieldAccess { .. }) {
+                    self.rewrite_expr(&mut **callee, env, subst);
+                    self.try_rewrite_method_call(expr, env, subst);
+                    if let Expr::Call { callee: cb, .. } = &expr.node {
+                        if let Expr::Identifier(name) = &cb.node {
+                            if let Some((_, ret, _)) = self.fn_sigs.get(name) {
+                                return Some(ret.clone());
+                            }
+                        }
+                    }
+                    return None;
                 }
                 let callee_name = if let Expr::Identifier(n) = &callee.node {
                     Some(n.clone())
@@ -393,12 +420,16 @@ impl Mono {
         &mut self,
         expr: &mut Spanned<Expr>,
         env: &HashMap<String, Type>,
+        subst: &HashMap<String, Type>,
     ) {
         let mangled_opt: Option<String> = if let Expr::Call { callee, .. } = &expr.node {
             if let Expr::FieldAccess { base, field } = &callee.node {
-                let base_ty = peek_type(base, env, &self.fn_sigs);
-                base_ty.as_ref()
-                    .and_then(|t| receiver_name_of(t))
+                let base_ty = peek_type_with_builtins(base, env, &self.fn_sigs, &self.builtin_returns);
+                let recv = base_ty.as_ref().and_then(|t| receiver_name_of(t));
+                let recv_sub = recv.as_ref().and_then(|n| {
+                    subst.get(n).and_then(|t| receiver_name_of(t))
+                });
+                recv_sub.or(recv)
                     .and_then(|n| self.method_dispatch.get(&(n, field.clone())).cloned())
             } else { None }
         } else { None };
@@ -542,8 +573,29 @@ fn peek_type(
                 _ => Some(inner),
             }
         }
+        Expr::Call { callee, .. } => {
+            if let Expr::Identifier(name) = &callee.node {
+                fn_sigs.get(name).map(|(_, r, _)| r.clone())
+            } else { None }
+        }
+        Expr::Paren(inner) => peek_type(inner, env, fn_sigs),
+        Expr::Block(b) => b.ret.as_deref().and_then(|e| peek_type(e, env, fn_sigs)),
         _ => None,
     }
+}
+
+fn peek_type_with_builtins(
+    expr: &Spanned<Expr>,
+    env: &HashMap<String, Type>,
+    fn_sigs: &HashMap<String, (Vec<Type>, Type, Vec<EffectItem>)>,
+    builtin_returns: &HashMap<String, Type>,
+) -> Option<Type> {
+    if let Expr::Call { callee, .. } = &expr.node {
+        if let Expr::Identifier(name) = &callee.node {
+            if let Some(t) = builtin_returns.get(name) { return Some(t.clone()); }
+        }
+    }
+    peek_type(expr, env, fn_sigs)
 }
 
 fn receiver_name_of(ty: &Type) -> Option<String> {

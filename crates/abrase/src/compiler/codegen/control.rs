@@ -81,6 +81,7 @@ impl Compiler {
         let block_depth_at_entry = self.block_locals_stack.len();
         let handler_depth_at_entry = self.handler_table_stack.len();
         let regioned = !self.block_alloc_free(&filtered_body);
+        let pre_push_high = self.snapshot_register_high_water();
         if regioned { self.emit_region_push()?; }
 
         self.loop_stack.push(LoopCtx {
@@ -113,6 +114,16 @@ impl Compiler {
         self.patch_jz_at(jz_idx, exit_addr)?;
         for pidx in ctx.break_patches {
             self.patch_jmp_at(pidx, exit_addr)?;
+        }
+        if regioned {
+            let high = self.snapshot_register_high_water();
+            for r in pre_push_high..high {
+                if r as usize != result_reg.0 as usize
+                    && (r as usize) < self.reg_holds_handle.len()
+                {
+                    self.reg_holds_handle[r as usize] = false;
+                }
+            }
         }
         Ok(result_reg)
     }
@@ -224,6 +235,7 @@ impl Compiler {
         let block_depth_at_entry = self.block_locals_stack.len();
         let handler_depth_at_entry = self.handler_table_stack.len();
         let regioned = !self.block_alloc_free(body);
+        let pre_push_high = self.snapshot_register_high_water();
         if regioned { self.emit_region_push()?; }
 
         self.loop_stack.push(LoopCtx {
@@ -254,6 +266,16 @@ impl Compiler {
         let exit_addr = self.code.len();
         for pidx in ctx.break_patches {
             self.patch_jmp_at(pidx, exit_addr)?;
+        }
+        if regioned {
+            let high = self.snapshot_register_high_water();
+            for r in pre_push_high..high {
+                if r as usize != result_reg.0 as usize
+                    && (r as usize) < self.reg_holds_handle.len()
+                {
+                    self.reg_holds_handle[r as usize] = false;
+                }
+            }
         }
         Ok(result_reg)
     }

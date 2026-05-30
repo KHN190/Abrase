@@ -54,6 +54,7 @@ pub struct VirtualMachine {
     pub(crate) region_table: RegionTable,
     pub(crate) natives: NativeRegistry,
     pub(crate) debug_sink: Option<DebugSink>,
+    pub(crate) trace_frames: bool,
     pub(crate) fn_names: Vec<String>,
     pub(crate) failing_pc: usize,
     pub(crate) last_result_is_handle: bool,
@@ -119,6 +120,7 @@ impl VirtualMachine {
             region_table: RegionTable::new(),
             natives,
             debug_sink: None,
+            trace_frames: false,
             fn_names: Vec::new(),
             failing_pc: 0,
             last_result_is_handle: false,
@@ -147,6 +149,11 @@ impl VirtualMachine {
         self
     }
 
+    pub fn with_trace_frames(mut self, on: bool) -> Self {
+        self.trace_frames = on;
+        self
+    }
+
     pub fn with_debug_sink(mut self, sink: DebugSink) -> Self {
         self.debug_sink = Some(sink);
         self
@@ -161,6 +168,14 @@ impl VirtualMachine {
         if let Some(sink) = &mut self.debug_sink {
             sink(event, &self.fn_names);
         }
+    }
+
+    #[inline]
+    pub(crate) fn trace_frame_event(&self, kind: &str, detail: std::fmt::Arguments<'_>) {
+        if !self.trace_frames { return; }
+        let bfi = self.handlers.last().and_then(|h| h.body_frame_index);
+        eprintln!("[{}] {} | frames={} handlers={} bfi={:?}",
+            kind, detail, self.frames.len(), self.handlers.len(), bfi);
     }
 
     pub fn region_push(&mut self) {

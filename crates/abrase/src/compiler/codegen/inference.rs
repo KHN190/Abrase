@@ -57,6 +57,13 @@ impl Compiler {
             },
             ast::Expr::Call { callee, args } => {
                 if let ast::Expr::Identifier(name) = &callee.node {
+                    if name == "__env_load" && args.len() == 2 {
+                        if let ast::Expr::Literal(ast::Literal::Int(idx)) = &args[1].node {
+                            if let Some(ty) = self.current_closure_capture_types.get(&(*idx as usize)) {
+                                return Some(ty.clone());
+                            }
+                        }
+                    }
                     if name == "Shared" && args.len() == 1 {
                         let elem = self.infer_expr_type(&args[0])?;
                         return Some(ast::Type::Generic { name: "Shared".into(), args: vec![elem] });
@@ -102,6 +109,10 @@ impl Compiler {
             },
             ast::Expr::FieldAccess { base, field } => {
                 let base_ty = self.infer_expr_type(base)?;
+                if let ast::Type::Tuple(elems) = &base_ty {
+                    let idx: usize = field.parse().ok()?;
+                    return elems.get(idx).cloned();
+                }
                 let recv = receiver_name_of(&base_ty)?;
                 let layout = self.layouts.records.get(&recv)?;
                 let idx = layout.fields.iter().position(|n| n == field)?;
@@ -257,6 +268,7 @@ impl ConstValue {
 
 // Primitive ty::Type -> ast::Type bridge. Only the cases that show up as fn
 // return types in current builtins; complex returns yield None.
+pub(in crate::compiler) fn ty_to_ast_public(ty: &crate::ty::Type) -> Option<ast::Type> { ty_to_ast(ty) }
 fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
     use crate::ty::Type as T;
     Some(match ty {

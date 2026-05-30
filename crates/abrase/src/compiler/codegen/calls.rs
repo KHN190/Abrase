@@ -11,6 +11,7 @@ pub(in crate::compiler) enum CallEnv {
 
 pub(in crate::compiler) enum CallTarget<'a> {
     Function { func_id: u16, env: CallEnv },
+    FuncReg  { fn_id_reg: Register },
     Method   { func_id: u16, receiver: &'a ast::Spanned<ast::Expr> },
     EnvLoad  { env_reg: Register, idx: u16 },
     CellLoad { env_reg: Register, idx: u16 },
@@ -57,6 +58,7 @@ impl Compiler {
                 self.emit_tail_self_call(args)
             }
             CallTarget::Function { func_id, env } => self.emit_func_call(func_id, env, args),
+            CallTarget::FuncReg { fn_id_reg } => self.emit_func_call_reg(fn_id_reg, args),
             CallTarget::Method { func_id, receiver } => self.emit_method_call(func_id, receiver, args),
             CallTarget::DeviceIn => self.emit_device_in(args),
             CallTarget::DeviceOut => self.emit_device_out(args),
@@ -99,6 +101,11 @@ impl Compiler {
         let ast::Expr::Identifier(name) = &callee.node else {
             return Err("Call target must be a function identifier".to_string());
         };
+        if let Some(&reg) = self.var_to_reg.get(name) {
+            if matches!(self.var_types.get(name), Some(ast::Type::Function { .. })) {
+                return Ok(CallTarget::FuncReg { fn_id_reg: reg });
+            }
+        }
         let func_id = self.resolve_fn_callee(name)
             .ok_or_else(|| format!("Undefined function: {}", name))?;
         let fid = super::scaffold::to_u16(func_id, &format!("Function id for '{}'", name))?;
@@ -410,6 +417,24 @@ impl Compiler {
         self.reclaim_temp_regs_above(mark);
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id));
+        Ok(dest)
+    }
+
+    fn emit_func_call_reg(
+        &mut self,
+        fn_id_reg: Register,
+        args: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Register, String> {
+        let mark = self.snapshot_register_high_water();
+        let mut staged: Vec<(Register, bool)> = Vec::new();
+        for arg in args {
+            let r = self.compile_expr(arg)?;
+            staged.push((r, self.arg_should_move(arg)));
+        }
+        self.stage_call_args(&staged)?;
+        self.reclaim_temp_regs_above(mark);
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::CallReg(dest, fn_id_reg));
         Ok(dest)
     }
 

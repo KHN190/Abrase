@@ -38,7 +38,6 @@ fn verify_compile_nested_record_in_array() {
 }
 
 #[test]
-#[ignore = "ownership: Array<Move-type> indexing moves the binding; second index triggers use-after-move"]
 fn verify_compile_array_of_records_type() {
     let src = r#"
         type Val = { n: Int }

@@ -673,6 +673,9 @@ fn infer_type_from_expr(expr: &Spanned<Expr>) -> Option<Type> {
         Expr::Literal(Literal::Bool(_)) => Some(Type::Named("Bool".into())),
         Expr::Literal(Literal::String(_)) => Some(Type::Named("String".into())),
         Expr::Literal(Literal::Unit) => Some(Type::Named("Unit".into())),
+        Expr::Record { ty, .. } => ty.last().map(|n| Type::Named(n.clone())),
+        Expr::Variant { ty, .. } => ty.last().map(|n| Type::Named(n.clone())),
+        Expr::Paren(inner) => infer_type_from_expr(inner),
         _ => None,
     }
 }

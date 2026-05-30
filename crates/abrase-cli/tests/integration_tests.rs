@@ -501,7 +501,6 @@ fn generic_overload_restriction() {
 }
 
 #[test]
-#[ignore = "codegen: chained generic method call .max().to_s() — receiver type inference loses T's bounds"]
 fn generic_chained_method_via_bound() {
     let src = r#"
         fn show_max<T>(a: T, b: T) -> String where T: Ord, T: ToS {

@@ -39,12 +39,14 @@ flags:
 fn main() -> ExitCode {
     let raw: Vec<String> = env::args().collect();
     let mut debug = false;
+    let mut trace_frames = false;
     let mut int32 = false;
     let mut no_built_in = false;
     let mut args: Vec<String> = Vec::with_capacity(raw.len());
     for a in raw {
         match a.as_str() {
             "--debug" => debug = true,
+            "--trace-frames" => trace_frames = true,
             "--int32" => int32 = true,
             "--no-built-in" => no_built_in = true,
             _ => args.push(a),
@@ -74,7 +76,7 @@ fn main() -> ExitCode {
     };
 
     match cmd {
-        "run" => cmd_run(&program, debug, int32, no_built_in),
+        "run" => cmd_run(&program, debug, trace_frames, int32, no_built_in),
         "check" => cmd_check(&program, int32, no_built_in),
         "parse" => cmd_parse(&program),
         "disasm" => cmd_disasm(&program, int32, no_built_in),
@@ -85,7 +87,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn cmd_run(program: &loader::LoadedProgram, debug: bool, int32: bool, no_built_in: bool) -> ExitCode {
+fn cmd_run(program: &loader::LoadedProgram, debug: bool, trace_frames: bool, int32: bool, no_built_in: bool) -> ExitCode {
     if debug {
         eprintln!("# debug fmt:");
         eprintln!("#   compile-time: [lower] [COMPILE] [CALL] [emit_handle_install] [FUNC_MAP] [BYTECODE]");
@@ -111,6 +113,7 @@ fn cmd_run(program: &loader::LoadedProgram, debug: bool, int32: bool, no_built_i
 
     let mut vm = VirtualMachine::new()
         .with_debug(debug)
+        .with_trace_frames(trace_frames)
         .with_fn_names(fn_names);
 
     Host::default().install_into(&mut vm);

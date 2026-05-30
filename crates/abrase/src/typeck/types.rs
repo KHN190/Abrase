@@ -413,7 +413,7 @@ impl Checker {
 
                 if let Some(expected_ast_ty) = ty {
                     let expected_ty = self.convert_type(expected_ast_ty);
-                    if expected_ty != val_ty && val_ty != Type::Unknown {
+                    if !shared_region_relaxed_eq(&expected_ty, &val_ty) && val_ty != Type::Unknown {
                         self.report_error(
                             format!("Type mismatch: expected {:?}, found {:?}", expected_ty, val_ty),
                             value.span
@@ -602,5 +602,15 @@ fn type_mentions(ty: &ast::Type, self_type: &str) -> bool {
         ast::Type::Function { params, ret, .. } => {
             params.iter().any(|p| type_mentions(p, self_type)) || type_mentions(ret, self_type)
         }
+    }
+}
+
+fn shared_region_relaxed_eq(expected: &Type, actual: &Type) -> bool {
+    if expected == actual { return true; }
+    match (expected, actual) {
+        (Type::Shared { inner: ei, region: None }, Type::Shared { inner: ai, region: _ }) => {
+            shared_region_relaxed_eq(ei, ai)
+        }
+        _ => false,
     }
 }

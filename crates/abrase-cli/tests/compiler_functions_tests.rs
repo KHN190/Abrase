@@ -201,7 +201,6 @@ fn verify_callreg_closure_captures_outer_binding() {
 }
 
 #[test]
-#[ignore = "codegen: first-class fn args need CallReg dispatch on a local var, not func_map lookup"]
 fn verify_callreg_first_class_function_passed_as_arg() {
     let src = r#"
         fn add_one(x: Int) -> Int { x + 1 }

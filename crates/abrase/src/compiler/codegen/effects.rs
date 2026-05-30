@@ -132,10 +132,62 @@ impl Compiler {
         let arm_envs = self.arm_env_stack.pop()
             .ok_or_else(|| "internal: arm_env_stack underflow at compile_handle".to_string())?;
 
-        if installed_frame {
+        let exn_arm = arms.iter().find(|a| matches!(a.kind, ast::HandleArmKind::Exn));
+
+        if installed_frame && exn_arm.is_none() {
             self.emit_handle_pop()?;
             self.emit(OpCode::Drop(return_arm_env_reg));
             return Ok(body_reg);
+        }
+
+        if let Some(exn_arm) = exn_arm {
+            let final_dest = self.alloc_register()?;
+            let tag_reg = self.alloc_register()?;
+            self.emit(OpCode::Ld(tag_reg, body_reg, 0));
+            let err_tag_reg = self.alloc_register()?;
+            let err_idx = self.add_constant(Value::from_int(effects::ERR_TAG as i64))?;
+            self.emit(OpCode::PushConst(err_tag_reg, err_idx));
+            let is_err = self.alloc_register()?;
+            self.emit(OpCode::Eq(is_err, tag_reg, err_tag_reg));
+            let jz_to_ok = self.code.len();
+            self.emit(OpCode::Jz(is_err, 0));
+
+            let err_val = self.alloc_register()?;
+            self.emit(OpCode::Ld(err_val, body_reg, 1));
+            let pat_name = exn_arm.pattern.as_ref().and_then(|p| match &p.node {
+                ast::Pattern::Bind(n) => Some(n.clone()),
+                _ => None,
+            });
+            let saved = pat_name.as_ref().and_then(|n| self.var_to_reg.get(n).copied());
+            if let Some(n) = &pat_name { self.var_to_reg.insert(n.clone(), err_val); }
+            let err_result = self.compile_expr(&exn_arm.body)?;
+            self.emit(OpCode::Copy(final_dest, err_result));
+            if let Some(n) = &pat_name {
+                match saved {
+                    Some(r) => { self.var_to_reg.insert(n.clone(), r); }
+                    None => { self.var_to_reg.remove(n); }
+                }
+            }
+            let jmp_to_end = self.code.len();
+            self.emit(OpCode::Jmp(0));
+
+            let ok_addr = self.code.len();
+            self.patch_jz_at(jz_to_ok, ok_addr)?;
+            let ok_val = self.alloc_register()?;
+            self.emit(OpCode::Ld(ok_val, body_reg, 1));
+            self.emit(OpCode::Copy(final_dest, ok_val));
+
+            let end_addr = self.code.len();
+            self.patch_jmp_at(jmp_to_end, end_addr)?;
+
+            if installed_frame {
+                self.emit_handle_pop()?;
+            }
+            for env_reg in arm_envs.values() {
+                self.emit(OpCode::Drop(*env_reg));
+            }
+            self.emit(OpCode::Drop(body_reg));
+            return Ok(final_dest);
         }
 
         let env_reg = arm_envs.get(&ret_arm_name).copied()

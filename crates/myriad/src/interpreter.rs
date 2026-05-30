@@ -393,6 +393,7 @@ impl VirtualMachine {
                     pending_return_arm_env: HANDLE_NONE,
                     pending_return_arm_env_is_handle: false,
                 });
+                self.trace_frame_event("HANDLER push", format_args!("effect={:#04x}", effect_id));
                 Ok(())
             }
             OpCode::Resume(dest_reg, val_reg) => self.do_resume(module, *dest_reg, *val_reg),
@@ -471,6 +472,7 @@ impl VirtualMachine {
         self.base_reg = new_base;
         self.current_func = fn_id;
         self.pc = 0;
+        self.trace_frame_event("CALL push", format_args!("func={} dest=r{}", fn_id, dest.0));
         Ok(())
     }
 
@@ -573,6 +575,7 @@ impl VirtualMachine {
         self.base_reg = new_base;
         self.current_func = arm_fn_id;
         self.pc = 0;
+        self.trace_frame_event("RAISE", format_args!("eff={:#04x} op={} arm_fn={}", effect_id, op_id, arm_fn_id));
         Ok(())
     }
 
@@ -614,6 +617,9 @@ impl VirtualMachine {
                 return Ok(());
             }
         };
+        self.trace_frame_event("RET pop",
+            format_args!("func={} ret({})={:#x}", frame.func_id,
+                if return_is_handle {"handle"} else {"scalar"}, return_raw));
 
         if self.handlers.is_empty() && frame.cont.is_none() {
             self.pc = frame.ip;
@@ -634,6 +640,37 @@ impl VirtualMachine {
             .map_or(false, |idx| idx == self.frames.len());
         let route_through_return_arm = (frame.cont.is_some() || is_body_frame)
             && self.handlers.last().map_or(false, |h| h.pending_return_arm_fn.is_some());
+
+        let is_arm_ret = self.handlers.last()
+            .and_then(|h| h.body_frame_index)
+            .map_or(false, |idx| self.frames.len() == idx + 1);
+        if is_arm_ret && frame.cont.is_none() && return_is_handle && return_raw != HANDLE_NONE {
+            let (s, g) = Self::decode_handle(return_raw);
+            let tag_is_err = self.heap.ld(s, g, 0).ok()
+                .map(|(t, _)| (t as u32) == 1)
+                .unwrap_or(false);
+
+            if tag_is_err {
+                let (payload_raw, payload_is_handle) = self.heap.ld(s, g, 1)
+                    .unwrap_or((0, false));
+                if payload_is_handle && payload_raw != HANDLE_NONE {
+                    self.rc_inc_handle(payload_raw)?;
+                }
+                self.rc_dec_handle(return_raw)?;
+                let body_call_frame = self.frames.pop()
+                    .ok_or("arm-throw: missing body-call frame to unwind into")?;
+                self.pc = body_call_frame.ip;
+                self.base_reg = body_call_frame.base_reg;
+                self.current_func = body_call_frame.func_id;
+                let dest_abs = body_call_frame.dest_reg;
+                if self.reg_mask_bit(dest_abs) {
+                    let prior = self.read_abs_raw(dest_abs);
+                    if prior != HANDLE_NONE { self.rc_dec_handle(prior)?; }
+                }
+                self.write_abs(dest_abs, payload_raw, payload_is_handle);
+                return Ok(());
+            }
+        }
 
         if !route_through_return_arm {
             if let Some(cont) = frame.cont.as_ref() {
@@ -799,12 +836,14 @@ impl VirtualMachine {
             (polka::DISPATCH_ID, polka::DISPATCH_PORT_POP_HANDLER) => {
                 let frame = self.handlers.pop()
                     .ok_or("dispatch.pop_handler: no active handler frame")?;
+                let n_cells = frame.cells_allocated.len();
                 for (slot, generation) in frame.cells_allocated.iter() {
                     self.region_table.forget(*slot, *generation);
                     if self.heap.is_live(*slot, *generation) {
                         self.heap.rc_dec(*slot, *generation)?;
                     }
                 }
+                self.trace_frame_event("HANDLER pop", format_args!("released {} cont cells", n_cells));
                 Ok(())
             }
             (polka::DISPATCH_ID, polka::DISPATCH_PORT_RETURN_FN) => {
