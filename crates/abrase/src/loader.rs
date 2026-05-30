@@ -72,7 +72,7 @@ fn load_recursive(
         error: e.to_string(),
     })?;
     let mut parser = Parser::new(Lexer::new(&source)).with_source(source.clone());
-    let decls = parser.parse_program();
+    let mut decls = parser.parse_program();
     if !parser.errors.is_empty() {
         return Err(LoadError::Parse {
             path: file.to_path_buf(),
@@ -80,9 +80,10 @@ fn load_recursive(
         });
     }
 
-    for decl in &decls {
+    for decl in &mut decls {
         if let ast::Decl::Use { path, .. } = decl {
-            let dep_path = resolve_import(root, path);
+            let base = file.parent().unwrap_or(root);
+            let dep_path = resolve_import(base, path);
             if !dep_path.exists() {
                 return Err(LoadError::MissingImport {
                     from: file.to_path_buf(),
@@ -90,7 +91,9 @@ fn load_recursive(
                     segments: path.clone(),
                 });
             }
-            load_recursive(&dep_path, root, path, out, visited, in_progress, false)?;
+            let canonical = module_path_from_file(root, &dep_path);
+            *path = canonical.clone();
+            load_recursive(&dep_path, root, &canonical, out, visited, in_progress, false)?;
         }
     }
 
@@ -108,8 +111,8 @@ fn load_recursive(
     Ok(())
 }
 
-fn resolve_import(root: &Path, path: &[String]) -> PathBuf {
-    let mut p = root.to_path_buf();
+fn resolve_import(base: &Path, path: &[String]) -> PathBuf {
+    let mut p = base.to_path_buf();
     let n = path.len();
     for (i, seg) in path.iter().enumerate() {
         if i + 1 == n {
@@ -119,4 +122,18 @@ fn resolve_import(root: &Path, path: &[String]) -> PathBuf {
         }
     }
     p
+}
+
+fn module_path_from_file(root: &Path, file: &Path) -> Vec<String> {
+    let rel = file.strip_prefix(root).unwrap_or(file);
+    let mut segs: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    if let Some(last) = segs.last_mut() {
+        if let Some(stripped) = last.strip_suffix(".abe") {
+            *last = stripped.to_string();
+        }
+    }
+    segs
 }
