@@ -103,3 +103,44 @@ fn array_indexed_assign_in_place_through_mut_borrow() {
     "#;
     assert_eq!(run_source(src), Ok(Value::from_int(0 + 1 + 4 + 9 + 16)));
 }
+
+#[test]
+fn float_arith_on_element_indexed_from_array_returning_fn() {
+    let src = r#"
+        fn make() -> Array<Float> { [1.0, 2.0, 3.0] }
+        fn main() -> Float { let v = make(); v[0] + v[1] }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_float(3.0)));
+}
+
+#[test]
+fn float_sub_assign_on_var_from_array_returning_fn() {
+    let src = r#"
+        fn make() -> Array<Float> { [1.0, 2.0, 3.0] }
+        fn main() -> Float {
+            let v = make();
+            let mut x = v[0];
+            x = x - 0.5;
+            x
+        }
+    "#;
+    let result = run_source(src).unwrap();
+    assert!(!result.as_float().is_nan(), "got NaN: integer Sub emitted instead of FSub");
+    assert_eq!(result, Value::from_float(0.5));
+}
+
+#[test]
+fn float_mul_assign_on_var_from_array_returning_fn() {
+    let src = r#"
+        fn make() -> Array<Float> { [1.5, 2.5, 3.5] }
+        fn main() -> Float {
+            let v = make();
+            let mut x = v[0];
+            x = x * 2.0;
+            x
+        }
+    "#;
+    let result = run_source(src).unwrap();
+    assert!(!result.as_float().is_nan(), "got NaN: integer Mul emitted instead of FMul");
+    assert_eq!(result, Value::from_float(3.0));
+}

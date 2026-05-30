@@ -24,8 +24,6 @@ impl Compiler {
     }
 }
 
-// Primitives that live entirely in a register (never a heap handle), so a
-// value of this type needs no rc Drop.
 pub(in crate::compiler) fn type_is_unboxed(ty: &ast::Type) -> bool {
     match ty {
         ast::Type::Named(n) => matches!(n.as_str(), "Int" | "Float" | "Bool" | "Char"),
@@ -192,8 +190,6 @@ impl Compiler {
             return self.compile_const_value(&cv);
         }
         if let Some(offset) = self.resolve_static_offset(name) {
-            // O2: a scalar (non-handle) static never needs an rc Drop; clear the
-            // pessimistic handle bit `Ld` sets so reclaim skips the no-op Drop.
             let unboxed = self.resolve_static_type(name).map(type_is_unboxed).unwrap_or(false);
             let table = self.load_module_table()?;
             let dest = self.alloc_register()?;

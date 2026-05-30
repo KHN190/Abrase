@@ -883,6 +883,19 @@ fn ast_type_to_ty(t: &ast::Type) -> TyType {
             _ => TyType::Named(n.clone()),
         },
         ast::Type::Tuple(items) if items.is_empty() => TyType::Unit,
+        ast::Type::Tuple(items) => TyType::Tuple(items.iter().map(ast_type_to_ty).collect()),
+        ast::Type::Generic { name, args } => TyType::Generic {
+            name: name.clone(),
+            args: args.iter().map(ast_type_to_ty).collect(),
+        },
+        ast::Type::Array { elem, .. } => TyType::Generic {
+            name: "Array".into(),
+            args: vec![ast_type_to_ty(elem)],
+        },
+        ast::Type::Reference { is_mut, inner, .. } => TyType::Reference {
+            is_mut: *is_mut,
+            inner: Box::new(ast_type_to_ty(inner)),
+        },
         _ => TyType::Unknown,
     }
 }

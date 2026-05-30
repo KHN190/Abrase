@@ -655,9 +655,63 @@ fn main() -> Int {
 
 #[test]
 fn cached_module_table_stays_correct_across_loop_iterations() {
-    // The per-statement module-table cache must be invalidated at the loop
-    // back-edge so each iteration reloads — value must still accumulate.
     let v = run_src(STATIC_LOOP_ACCUM)
         .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(240)); // 60 + 3*60
+    assert_eq!(v, Value::from_int(240));
+}
+
+const STATIC_IN_LOOP: &str = r#"
+static mut A: Int = 1
+static mut B: Int = 2
+fn main() -> Int {
+  let mut i = 0;
+  let mut acc = 0;
+  while i < 4 { acc = acc + A + B; i = i + 1 };
+  acc
+}
+"#;
+
+#[test]
+fn loop_hoists_module_table_load_out_of_body() {
+    let ops = compile_entry_ops(STATIC_IN_LOOP);
+    let dei = ops.iter().filter(|o| matches!(o, OpCode::Dei(..))).count();
+    assert_eq!(dei, 1, "O3: module-table load must be hoisted before the loop, got {dei} Dei: {ops:?}");
+    let v = run_src(STATIC_IN_LOOP).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(12));
+}
+
+const ARITH_LOOP: &str = r#"
+fn main() -> Int {
+  let mut i = 0;
+  let mut acc = 0;
+  while i < 10 { acc = acc + i * 2; i = i + 1 };
+  acc
+}
+"#;
+
+#[test]
+fn alloc_free_loop_elides_region_markers() {
+    let ops = compile_entry_ops(ARITH_LOOP);
+    let deo = ops.iter().filter(|o| matches!(o, OpCode::Deo(..))).count();
+    assert_eq!(deo, 0, "alloc-free loop must emit no per-iteration region markers: {ops:?}");
+    assert_eq!(run_src(ARITH_LOOP).unwrap_or_else(|e| panic!("\n{}", e)), Value::from_int(90));
+}
+
+const SHARED_LOOP: &str = r#"
+fn main() -> Int {
+  let mut i = 0;
+  let mut acc = 0;
+  while i < 5 { let s = Shared(i + 1); acc = acc + *s; i = i + 1 };
+  acc
+}
+"#;
+
+#[test]
+fn allocating_loop_keeps_region_and_frees_per_iteration() {
+    let ops = compile_entry_ops(SHARED_LOOP);
+    let deo = ops.iter().filter(|o| matches!(o, OpCode::Deo(..))).count();
+    assert!(deo >= 2, "allocating loop must keep its per-iteration region push/pop: {ops:?}");
+    let (v, vm) = run_src_full(SHARED_LOOP).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(15));
+    assert_eq!(vm.heap_live_count(), 0, "per-iteration Shared must be freed, got live={}", vm.heap_live_count());
 }
