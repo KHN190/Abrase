@@ -22,9 +22,11 @@ impl Compiler {
         let scrutinee_reg = self.compile_expr(scrutinee)?;
         let result_reg = self.alloc_register()?;
         let arm_mark = self.snapshot_register_high_water();
+        let pre_match_table_reg = self.module_table_reg;
         let mut exit_jumps = Vec::new();
 
         for arm in arms {
+            self.module_table_reg = pre_match_table_reg;
             let pre_vars: std::collections::HashSet<String> =
                 self.var_to_reg.keys().cloned().collect();
             let terminal = match &arm.pattern.node {
