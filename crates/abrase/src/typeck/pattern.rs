@@ -431,10 +431,11 @@ impl Checker {
                         .find(|(n, _)| n == &field.name)
                         .map(|(_, t)| t.clone())
                         .unwrap_or(Type::Unknown);
+                    let eff_mut = is_mut || field.is_mut;
                     if let Some(pat) = &field.pattern {
-                        self.check_pattern_mut(pat, &field_ty, is_mut);
+                        self.check_pattern_mut(pat, &field_ty, eff_mut);
                     } else {
-                        self.insert_var(field.name.clone(), field_ty, is_mut, pattern.span);
+                        self.insert_var(field.name.clone(), field_ty, eff_mut, pattern.span);
                     }
                 }
             }

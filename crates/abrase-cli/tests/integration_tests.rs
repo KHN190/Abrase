@@ -933,3 +933,37 @@ fn mut_tuple_destructure_binds_are_mutable() {
     let v = run_src(MUT_TUPLE_DESTRUCTURE).unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(32)); // 15 + 17
 }
+
+const FIELD_MUT_ANNOTATION: &str = r#"
+type Flow = { x: Int, y: Int }
+fn main() -> Int {
+  let fl = Flow { x: 5, y: 10 };
+  let Flow { mut x, y } = fl;
+  x = x * 3;
+  x + y
+}
+"#;
+
+#[test]
+fn per_field_mut_annotation_in_record_pattern() {
+    // { mut x } makes only x mutable; y stays immutable
+    let v = run_src(FIELD_MUT_ANNOTATION).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(25)); // 5*3 + 10
+}
+
+const MIXED_MUT_FIELD: &str = r#"
+type Pt = { x: Int, y: Int, z: Int }
+fn main() -> Int {
+  let p = Pt { x: 1, y: 2, z: 3 };
+  let Pt { mut x, y, mut z } = p;
+  x = x + 10;
+  z = z * 4;
+  x + y + z
+}
+"#;
+
+#[test]
+fn mixed_mut_and_immut_fields_in_destructure() {
+    let v = run_src(MIXED_MUT_FIELD).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(25)); // 11 + 2 + 12
+}

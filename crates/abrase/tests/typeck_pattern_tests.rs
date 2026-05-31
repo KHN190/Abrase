@@ -515,6 +515,7 @@ fn verify_pattern_record() {
         fields: vec![
             ast::FieldPattern {
                 name: "x".into(),
+                is_mut: false,
                 pattern: Some(sp(Pattern::Bind("px".into()))),
             },
         ],
@@ -569,7 +570,7 @@ fn verify_record_pattern_with_rest_is_valid() {
     ]));
     let pattern = sp(Pattern::Record {
         ty: vec!["Point".into()],
-        fields: vec![ast::FieldPattern { name: "x".into(), pattern: Some(sp(Pattern::Bind("px".into()))) }],
+        fields: vec![ast::FieldPattern { name: "x".into(), is_mut: false, pattern: Some(sp(Pattern::Bind("px".into()))) }],
         rest: true,
     });
     checker.check_pattern(&pattern, &Type::Named("Point".into()), d_span());

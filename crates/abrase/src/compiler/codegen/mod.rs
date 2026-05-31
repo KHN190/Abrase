@@ -217,10 +217,11 @@ impl Compiler {
                     };
                     let dest = self.alloc_register()?;
                     self.emit(OpCode::Ld(dest, src_reg, off));
+                    let eff_mut = is_mut || fp.is_mut;
                     if let Some(sub) = &fp.pattern {
-                        self.compile_destructure_mut(sub, dest, None, is_mut)?;
+                        self.compile_destructure_mut(sub, dest, None, eff_mut)?;
                     } else {
-                        let final_dest = if is_mut && self.cell_vars.contains(&fp.name) {
+                        let final_dest = if eff_mut && self.cell_vars.contains(&fp.name) {
                             let cell = self.alloc_register()?;
                             self.emit(OpCode::Alloc(cell, 1));
                             self.emit(OpCode::St(dest, cell, 0));
@@ -231,6 +232,12 @@ impl Compiler {
                         };
                         self.var_to_reg.insert(fp.name.clone(), final_dest);
                         self.var_bound_at_region.insert(fp.name.clone(), self.compiler_region_depth);
+                        if let Some(t) = layout.as_ref().and_then(|l| {
+                            let idx = l.fields.iter().position(|n| n == &fp.name)?;
+                            l.field_types.get(idx).cloned()
+                        }) {
+                            self.var_types.insert(fp.name.clone(), t);
+                        }
                     }
                 }
                 Ok(())
