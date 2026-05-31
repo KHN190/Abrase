@@ -759,3 +759,62 @@ fn shr_token_splits_at_nested_generic_close() {
     assert_eq!(run_src(SHR_WITH_NESTED_GENERIC).unwrap_or_else(|e| panic!("\n{}", e)),
         Value::from_int(32));
 }
+
+const RANGE_PATTERN_EXCLUSIVE: &str = r#"
+fn classify(n: Int) -> Int {
+  match n {
+    0..10  => 0,
+    10..20 => 1,
+    _      => 2,
+  }
+}
+fn main() -> Int {
+  classify(0) + classify(5) + classify(9) * 10
+  + classify(10) * 100 + classify(19) * 1000
+  + classify(20) * 10000
+}
+"#;
+
+#[test]
+fn range_pattern_exclusive_classifies_correctly() {
+    // 0+0+0 + 100 + 1000 + 20000 = 21100
+    let v = run_src(RANGE_PATTERN_EXCLUSIVE).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(21100));
+}
+
+const RANGE_PATTERN_INCLUSIVE: &str = r#"
+fn grade(n: Int) -> Int {
+  match n {
+    90..=100 => 4,
+    75..=89  => 3,
+    60..=74  => 2,
+    _        => 1,
+  }
+}
+fn main() -> Int { grade(95) * 1000 + grade(80) * 100 + grade(65) * 10 + grade(50) }
+"#;
+
+#[test]
+fn range_pattern_inclusive_grades_correctly() {
+    // 4000 + 300 + 20 + 1 = 4321
+    let v = run_src(RANGE_PATTERN_INCLUSIVE).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(4321));
+}
+
+const RANGE_PATTERN_OPEN_END: &str = r#"
+fn sign(n: Int) -> Int {
+  match n {
+    0..1 => 0,
+    1..  => 1,
+    _    => -1,
+  }
+}
+fn main() -> Int { sign(-5) + sign(0) * 10 + sign(7) * 100 }
+"#;
+
+#[test]
+fn range_pattern_open_end_matches_correctly() {
+    // -1 + 0 + 100 = 99
+    let v = run_src(RANGE_PATTERN_OPEN_END).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(99));
+}
