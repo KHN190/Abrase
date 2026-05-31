@@ -78,7 +78,7 @@ impl Gen {
         for _ in 0..stmts {
             if self.fuel == 0 { break; }
             self.fuel -= 1;
-            let choices = if region_depth > 0 { 13 } else { 6 };
+            let choices = if region_depth > 0 { 15 } else { 8 };
             match self.rng.pick(choices) {
                 0 => {
                     let name = self.fresh();
@@ -165,6 +165,18 @@ impl Gen {
                     self.gen_block(region_depth, shareds, ints, shared_recs, loop_depth + 1);
                     self.push("    break;\n");
                     self.push("  }\n");
+                }
+                13 if self.has_static => {
+                    // if/else: static only in else branch (non-first).
+                    let name = self.fresh();
+                    self.push(&format!("  let {}: Int = if false {{ 0 }} else {{ S }};\n", name));
+                    ints.push(name);
+                }
+                14 if self.has_static => {
+                    // match wildcard: static only in non-first arm.
+                    let name = self.fresh();
+                    self.push(&format!("  let {}: Int = match 1 {{ 0 => 0, _ => S }};\n", name));
+                    ints.push(name);
                 }
                 _ => {
                     let name = self.fresh();
