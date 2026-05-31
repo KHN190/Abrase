@@ -17,6 +17,7 @@ pub(in crate::compiler) enum CallTarget<'a> {
     CellLoad { env_reg: Register, idx: u16 },
     CellStore { env_reg: Register, idx: u16, value: &'a ast::Spanned<ast::Expr> },
     SharedCtor,
+    CloneVal { receiver: &'a ast::Spanned<ast::Expr> },
     HostFn { fn_id: u16 },
     VariantCtor { tag: u32 },
     UnresolvedMethod { receiver: String, field: String },
@@ -50,6 +51,7 @@ impl Compiler {
             CallTarget::CellLoad { env_reg, idx } => self.emit_cell_load(env_reg, idx),
             CallTarget::CellStore { env_reg, idx, value } => self.emit_cell_store(env_reg, idx, value),
             CallTarget::SharedCtor => self.emit_shared_ctor(args),
+            CallTarget::CloneVal { receiver } => self.emit_clone(receiver),
             CallTarget::HostFn { fn_id } => self.emit_host_fn_call(fn_id, args),
             CallTarget::VariantCtor { tag } => self.emit_variant_ctor(tag, args),
             CallTarget::Function { func_id, env: CallEnv::None }
@@ -88,6 +90,11 @@ impl Compiler {
         if let Some(t) = self.resolve_env_load_closure_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_effect_op_call(callee, call_span)? { return Ok(t); }
         if let Some(t) = self.resolve_method_call(callee)? { return Ok(t); }
+        if let ast::Expr::FieldAccess { base, field } = &callee.node {
+            if field == "clone" && args.is_empty() {
+                return Ok(CallTarget::CloneVal { receiver: base });
+            }
+        }
         if let Some(t) = self.resolve_host_or_ctor(callee, args)? { return Ok(t); }
         if let ast::Expr::FieldAccess { base, field } = &callee.node {
             let Some(recv) = self.receiver_type_name(base) else {
@@ -309,6 +316,13 @@ impl Compiler {
         let tmp = self.alloc_register()?;
         self.emit(OpCode::Copy(tmp, src));
         self.emit(OpCode::St(tmp, dest, 0));
+        Ok(dest)
+    }
+
+    fn emit_clone(&mut self, receiver: &ast::Spanned<ast::Expr>) -> Result<Register, String> {
+        let src = self.compile_expr(receiver)?;
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Copy(dest, src));
         Ok(dest)
     }
 

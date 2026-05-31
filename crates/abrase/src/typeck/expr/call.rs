@@ -75,6 +75,9 @@ impl Checker {
                     self.context_stack.push(format!("In method call '.{}'", field));
                     let base_ty = self.infer_expr(base);
                     self.context_stack.pop();
+                    if field == "clone" && args.is_empty() {
+                        return base_ty;
+                    }
                     let receiver_name = match &base_ty {
                         Type::Int => Some("Int".to_string()),
                         Type::Float => Some("Float".to_string()),
