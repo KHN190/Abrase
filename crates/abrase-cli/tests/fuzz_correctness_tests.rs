@@ -9,8 +9,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static DIR_CTR: AtomicU64 = AtomicU64::new(0);
 
-// ── RNG ──────────────────────────────────────────────────────────────────────
-
 struct Rng(u64);
 impl Rng {
     fn new(seed: u64) -> Self {
@@ -25,8 +23,6 @@ impl Rng {
         lo + (self.pick((hi - lo) as u64) as i64)
     }
 }
-
-// ── run helpers ──────────────────────────────────────────────────────────────
 
 fn run_src_expect(src: &str, expected: i64) -> Result<(), String> {
     let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
@@ -70,9 +66,6 @@ fn run_files_expect(lib_src: &str, main_src: &str, expected: i64) -> Result<(), 
     result
 }
 
-// ── generators ───────────────────────────────────────────────────────────────
-
-/// Int arithmetic: a*b + c - d, verify to_i of float path matches int path.
 fn gen_int_arith(rng: &mut Rng) -> (String, i64) {
     let a = rng.range(1, 50);
     let b = rng.range(1, 30);
@@ -85,7 +78,6 @@ fn gen_int_arith(rng: &mut Rng) -> (String, i64) {
     (src, expected)
 }
 
-/// Float arithmetic: (a + b) * c - d, converted back to Int.
 fn gen_float_arith(rng: &mut Rng) -> (String, i64) {
     let a = rng.range(1, 20);
     let b = rng.range(1, 20);
@@ -104,7 +96,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Match with guard conditions.
 fn gen_int_match(rng: &mut Rng) -> (String, i64) {
     let b1 = rng.range(2, 8);
     let b2 = rng.range(b1 + 2, 18);
@@ -129,7 +120,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Range patterns in match.
 fn gen_range_match(rng: &mut Rng) -> (String, i64) {
     let vals: Vec<i64> = (0..5).map(|_| rng.range(0, 30)).collect();
     let bucket = |n: i64| if n < 10 { 0 } else if n < 20 { 1 } else { 2 };
@@ -149,7 +139,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Loop accumulation.
 fn gen_loop(rng: &mut Rng) -> (String, i64) {
     let n = rng.range(3, 25);
     let step = rng.range(1, 4);
@@ -165,7 +154,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Static mut accumulation across function calls.
 fn gen_static_mut(rng: &mut Rng) -> (String, i64) {
     let start = rng.range(0, 5);
     let end = start + rng.range(2, 15);
@@ -182,7 +170,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Record pack / unpack / field access.
 fn gen_record_pack(rng: &mut Rng) -> (String, i64) {
     let ax = rng.range(-8, 8);
     let ay = rng.range(-8, 8);
@@ -203,7 +190,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Mutable record destructure and write-back.
 fn gen_record_mut_unpack(rng: &mut Rng) -> (String, i64) {
     let x = rng.range(1, 15);
     let y = rng.range(1, 15);
@@ -226,7 +212,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Effect handler counter.
 fn gen_effect_counter(rng: &mut Rng) -> (String, i64) {
     let n = rng.range(1, 20) as i64;
     let expected = n;
@@ -247,7 +232,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Effect handler accumulator (passes a value via resume).
 fn gen_effect_accumulate(rng: &mut Rng) -> (String, i64) {
     let vals: Vec<i64> = (0..5).map(|_| rng.range(1, 10)).collect();
     let expected: i64 = vals.iter().sum();
@@ -270,7 +254,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Recursion: fibonacci.
 fn gen_recursion_fib(rng: &mut Rng) -> (String, i64) {
     let n = rng.range(1, 12) as usize;
     let fib = {
@@ -287,7 +270,6 @@ fn main() -> Int {{ fib({n}) }}
     (src, fib)
 }
 
-/// Recursion: sum 1..n.
 fn gen_recursion_sum(rng: &mut Rng) -> (String, i64) {
     let n = rng.range(1, 30);
     let expected = n * (n + 1) / 2;
@@ -300,7 +282,6 @@ fn main() -> Int {{ sum_to({n}) }}
     (src, expected)
 }
 
-/// Combined: static mut + match + loop.
 fn gen_static_match_loop(rng: &mut Rng) -> (String, i64) {
     let n = rng.range(5, 20);
     let b1 = 5i64; let b2 = 10i64; let b3 = 15i64;
@@ -333,7 +314,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Combined: record array + loop + float field.
 fn gen_record_array_float(rng: &mut Rng) -> (String, i64) {
     let n = rng.range(2, 6) as usize;
     let xs: Vec<i64> = (0..n).map(|_| rng.range(1, 10)).collect();
@@ -361,7 +341,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Multi-module: statics + function calls across modules.
 fn gen_multi_module(rng: &mut Rng) -> (String, String, i64) {
     let base = rng.range(1, 20);
     let vals: Vec<i64> = (0..4).map(|_| rng.range(0, 10)).collect();
@@ -383,7 +362,6 @@ fn main() -> Int {{ 0 }}
     (lib, main, expected)
 }
 
-/// Multi-module: record type defined in lib, used in main.
 fn gen_multi_module_record(rng: &mut Rng) -> (String, String, i64) {
     let ax = rng.range(1, 10);
     let ay = rng.range(1, 10);
@@ -406,7 +384,6 @@ fn main() -> Int {{
     (lib, main, expected)
 }
 
-/// Variant: construction + match on each arm.
 fn gen_variant_match(rng: &mut Rng) -> (String, i64) {
     // type Shape = Circle(Int) | Rect(Int, Int) | Point
     let r  = rng.range(1, 15);
@@ -430,7 +407,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Variant: match with guard selects correct arm.
 fn gen_variant_guard_match(rng: &mut Rng) -> (String, i64) {
     let vals: Vec<i64> = (0..4).map(|_| rng.range(0, 20)).collect();
     let thresh = rng.range(5, 15);
@@ -455,7 +431,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Variant: static mut array of variants, pack write then read.
 fn gen_variant_static_array(rng: &mut Rng) -> (String, i64) {
     let vals: Vec<i64> = (0..4).map(|_| rng.range(1, 20)).collect();
     let expected: i64 = vals.iter().sum();
@@ -484,7 +459,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// for loop: range accumulation.
 fn gen_for_loop(rng: &mut Rng) -> (String, i64) {
     let start = rng.range(0, 5);
     let end   = start + rng.range(3, 15);
@@ -500,7 +474,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// for loop with break.
 fn gen_for_break(rng: &mut Rng) -> (String, i64) {
     let n     = rng.range(5, 20);
     let stop  = rng.range(2, n - 1);
@@ -518,7 +491,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// loop { break value }.
 fn gen_loop_break_value(rng: &mut Rng) -> (String, i64) {
     let n        = rng.range(3, 15);
     let target   = rng.range(1, n - 1);
@@ -536,7 +508,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Closure: capture and call.
 fn gen_closure_capture(rng: &mut Rng) -> (String, i64) {
     let base = rng.range(1, 20);
     let step = rng.range(1, 10);
@@ -557,7 +528,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Exception: throw + handle exn.
 fn gen_exception(rng: &mut Rng) -> (String, i64) {
     let good = rng.range(2, 10);
     let bad  = 0i64;
@@ -579,7 +549,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Effect + static: handler accumulates into a static.
 fn gen_effect_static(rng: &mut Rng) -> (String, i64) {
     let n = rng.range(2, 12);
     let expected = n * (n - 1) / 2; // sum 0..n-1
@@ -600,7 +569,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Char: to_i / to_c round-trip.
 fn gen_char_ops(rng: &mut Rng) -> (String, i64) {
     let n     = rng.range(0, 26) as u8;
     let code  = b'A' + n;
@@ -614,7 +582,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Tuple destructure.
 fn gen_tuple_destructure(rng: &mut Rng) -> (String, i64) {
     let a = rng.range(1, 50);
     let b = rng.range(1, 50);
@@ -630,7 +597,6 @@ fn main() -> Int {{ swap_add(({a}, {b}), {c}) }}
     (src, expected)
 }
 
-/// Recursion + static: recursive fn reads a static multiplier.
 fn gen_recursion_static(rng: &mut Rng) -> (String, i64) {
     let mul = rng.range(1, 5);
     let n   = rng.range(1, 8);
@@ -646,8 +612,6 @@ fn main() -> Int {{ sum_mul({n}) }}
     (src, expected)
 }
 
-/// Multi-module + variant: lib exports a variant type and match function.
-/// Multi-module + variant: lib owns the type and constructors, main calls factory fns.
 fn gen_multi_module_variant(rng: &mut Rng) -> (String, String, i64) {
     let present_val = rng.range(1, 30);
     let default_val = rng.range(1, 20);
@@ -672,7 +636,6 @@ fn main() -> Int {{
     (lib, main, expected)
 }
 
-/// Array literal, indexing, in-place mutation.
 fn gen_array_ops(rng: &mut Rng) -> (String, i64) {
     let vals: Vec<i64> = (0..5).map(|_| rng.range(1, 20)).collect();
     let add = rng.range(1, 10);
@@ -691,7 +654,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Bitwise operations: &, |, ^, <<, >>.
 fn gen_bitwise(rng: &mut Rng) -> (String, i64) {
     let a = rng.range(0, 255);
     let b = rng.range(0, 255);
@@ -708,7 +670,38 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Move closure captures ownership of local array.
+fn gen_closure_record_capture(rng: &mut Rng) -> (String, i64) {
+    let x = rng.range(1, 20);
+    let y = rng.range(1, 20);
+    let scale = rng.range(1, 5);
+    let expected = (x + y) * scale;
+    let src = format!(r#"
+type Pt = {{ x: Int, y: Int }}
+fn main() -> Int {{
+  let p = Pt {{ x: {x}, y: {y} }};
+  let dot = move |s| (p.x + p.y) * s;
+  dot({scale})
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_closure_array_capture(rng: &mut Rng) -> (String, i64) {
+    let vals: Vec<i64> = (0..4).map(|_| rng.range(1, 15)).collect();
+    let idx = rng.range(0, 4) as usize;
+    let add = rng.range(1, 10);
+    let expected = vals[idx] + add;
+    let items = vals.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+    let src = format!(r#"
+fn main() -> Int {{
+  let arr = [{items}];
+  let get = move |i| arr[i] + {add};
+  get({idx})
+}}
+"#);
+    (src, expected)
+}
+
 fn gen_move_closure(rng: &mut Rng) -> (String, i64) {
     let offset = rng.range(1, 15);
     let vals: Vec<i64> = (0..4).map(|_| rng.range(1, 10)).collect();
@@ -725,7 +718,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Region block: value escapes to outer scope.
 fn gen_region_escape(rng: &mut Rng) -> (String, i64) {
     let a = rng.range(1, 20);
     let b = rng.range(1, 20);
@@ -741,7 +733,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-/// Multi-frame: static Float array across call_export frames.
 fn gen_multi_frame_float(rng: &mut Rng) -> (String, Vec<Value>, i64) {
     let vals: Vec<f64> = (0..4).map(|_| rng.range(1, 10) as f64).collect();
     let inc = rng.range(1, 5) as f64;
@@ -764,7 +755,6 @@ fn main() -> Int {{ 0 }}
     (src, vec![Value::from_int(slot as i64), Value::from_float(inc)], expected)
 }
 
-/// Multi-frame: for loop + static across call_export.
 fn gen_multi_frame_for_loop(rng: &mut Rng) -> (String, Vec<Value>, i64) {
     let n = rng.range(2, 10);
     let expected: i64 = (0..n).sum(); // each call adds one pass of 0..n to TOTAL
@@ -782,7 +772,6 @@ fn main() -> Int {{ 0 }}
     (src, vec![Value::from_int(n)], expected)
 }
 
-/// Multi-module + effect: lib exports a stateful effect runner.
 fn gen_multi_module_effect(rng: &mut Rng) -> (String, String, i64) {
     let n = rng.range(2, 10);
     let expected = n * (n + 1) / 2; // 1+2+...+n
@@ -807,7 +796,6 @@ fn main() -> Int {{
     (lib, main, expected)
 }
 
-/// Multi-frame: static array of variants, pack write then call_export read.
 fn gen_static_variant_array_multiframe(rng: &mut Rng) -> (String, Vec<Value>, i64) {
     let v    = rng.range(1, 50);
     let slot = rng.range(0, 4);
@@ -831,8 +819,6 @@ fn main() -> Int {{ 0 }}
 "#);
     (src, vec![Value::from_int(slot), Value::from_int(v)], expected)
 }
-
-// ── test harness ─────────────────────────────────────────────────────────────
 
 type Gen = fn(&mut Rng) -> (String, i64);
 type MMGen = fn(&mut Rng) -> (String, String, i64);
@@ -872,8 +858,10 @@ const SINGLE_GENS: &[(&str, Gen)] = &[
     ("for_loop",            gen_for_loop),
     ("for_break",           gen_for_break),
     ("loop_break_value",    gen_loop_break_value),
-    ("closure_capture",     gen_closure_capture),
-    ("move_closure",        gen_move_closure),
+    ("closure_capture",          gen_closure_capture),
+    ("move_closure",             gen_move_closure),
+    ("closure_record_capture",   gen_closure_record_capture),
+    ("closure_array_capture",    gen_closure_array_capture),
     ("exception",           gen_exception),
     ("effect_static",       gen_effect_static),
     ("char_ops",            gen_char_ops),
