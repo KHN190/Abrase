@@ -7,6 +7,11 @@ impl Compiler {
         &mut self,
         span: ast::Span,
     ) -> Result<Register, String> {
+        if !self.closure_as_value_ok {
+            return Err("WIP: closures are only supported when bound directly to a local \
+                        (`let f = |..| ..`) and called in the same scope; passing, returning, \
+                        or storing a closure is not yet implemented".to_string());
+        }
         let info = self.closure_by_span.get(&span).cloned()
             .ok_or_else(|| format!(
                 "internal: closure at {:?} not registered by pre-pass", span

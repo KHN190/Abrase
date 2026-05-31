@@ -166,9 +166,15 @@ impl Compiler {
                                 }
                             }
                         }
-                        let tmp = self.alloc_register()?;
-                        self.emit(OpCode::Copy(tmp, val_reg));
-                        self.emit(OpCode::StIdx(tmp, arr_reg, idx_reg));
+                        let want_move = self.arg_should_move(right);
+                        let store_src = if want_move {
+                            val_reg
+                        } else {
+                            let tmp = self.alloc_register()?;
+                            self.emit(OpCode::Copy(tmp, val_reg));
+                            tmp
+                        };
+                        self.emit(OpCode::StIdx(store_src, arr_reg, idx_reg));
                         Ok(val_reg)
                     }
                     ast::Expr::Unary { op: ast::UnaryOp::Deref, right: target } => {

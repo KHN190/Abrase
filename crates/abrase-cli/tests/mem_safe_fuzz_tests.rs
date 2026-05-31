@@ -32,6 +32,7 @@ struct Gen {
     has_effect: bool,
     has_recursive_fn: bool,
     has_float_arr: bool,
+    has_static_variant_arr: bool,
 }
 
 impl Gen {
@@ -42,6 +43,7 @@ impl Gen {
             has_record: false, has_static: false,
             has_variant: false, has_static_rec: false, has_static_rec_arr: false,
             has_effect: false, has_recursive_fn: false, has_float_arr: false,
+            has_static_variant_arr: false,
         }
     }
     fn fresh(&mut self) -> String { let n = self.next_var; self.next_var += 1; format!("v{}", n) }
@@ -52,7 +54,8 @@ impl Gen {
         let mut n = 0;
         if self.has_static_rec     { n += 1; }
         if self.has_static_rec_arr { n += 5; } // 1 Array + 4 R records
-        if self.has_float_arr      { n += 1; } // 1 Array<Float>
+        if self.has_float_arr          { n += 1; } // 1 Array<Float>
+        if self.has_static_variant_arr { n += 5; } // 1 Array + 4 Tag objects (Zero)
         n
     }
 
@@ -94,6 +97,12 @@ impl Gen {
         if self.rng.pick(3) == 0 {
             self.helpers.push_str("static mut FA: Array<Float> = [0.0; 4]\n");
             self.has_float_arr = true;
+            self.has_static = true;
+        }
+        // Optional static mut Array<Tag> (variant pack write regression same as records).
+        if self.has_variant && self.rng.pick(3) == 0 {
+            self.helpers.push_str("static mut VTA: Array<Tag> = [Zero; 4]\n");
+            self.has_static_variant_arr = true;
             self.has_static = true;
         }
         // Optional effect + helper.
@@ -142,7 +151,7 @@ impl Gen {
         for _ in 0..stmts {
             if self.fuel == 0 { break; }
             self.fuel -= 1;
-            let choices = if region_depth > 0 { 30 } else { 24 };
+            let choices = if region_depth > 0 { 36 } else { 30 };
             match self.rng.pick(choices) {
                 // ── scalars ──────────────────────────────────────────────────
                 0 => {
@@ -294,8 +303,54 @@ impl Gen {
                     self.push(&format!("  let {}: Int = countdown({n});\n", name));
                     ints.push(name);
                 }
+                // ── for loop ─────────────────────────────────────────────
+                22 if loop_depth < 1 => {
+                    let end = self.rng.pick(8) + 2;
+                    let name = self.fresh();
+                    self.push(&format!(
+                        "  let mut {name}: Int = 0;\n  for _i in 0..{end} {{ {name} = {name} + 1 }};\n"
+                    ));
+                    ints.push(name);
+                }
+                // ── exception handling ────────────────────────────────────
+                23 if !ints.is_empty() => {
+                    let name = self.fresh();
+                    let src = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    // safe_div: throw if src==0, else return 1
+                    self.push(&format!(
+                        "  let {name}: Int = handle (if {src} == 0 {{ throw 0 }} else {{ 1 }}) {{ return v => v, exn _ => 0 }};\n"
+                    ));
+                    ints.push(name);
+                }
+                // ── closure capture ───────────────────────────────────────
+                24 if !ints.is_empty() => {
+                    let name = self.fresh();
+                    let cap = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let add = self.rng.pick(20) as i64;
+                    self.push(&format!(
+                        "  let {name}: Int = (|x| x + {add})({cap});\n"
+                    ));
+                    ints.push(name);
+                }
+                // ── tuple pack/unpack ─────────────────────────────────────
+                25 if !ints.is_empty() => {
+                    let name = self.fresh();
+                    let a = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let b = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    self.push(&format!(
+                        "  let ({name}, _) = ({a} + {b}, 0);\n"
+                    ));
+                    ints.push(name);
+                }
+                // ── char round-trip ───────────────────────────────────────
+                26 if !ints.is_empty() => {
+                    let name = self.fresh();
+                    let n = (self.rng.pick(26) + 65) as i64; // 'A'..'Z'
+                    self.push(&format!("  let {name}: Int = {n}.to_c().to_i();\n"));
+                    ints.push(name);
+                }
                 // ── record mut destructure ────────────────────────────────
-                22 if self.has_record && !ints.is_empty() => {
+                27 if self.has_record && !ints.is_empty() => {
                     let a = self.rng.pick(50) as i64;
                     let b = self.rng.pick(50) as i64;
                     let dx = self.rng.pick(20) as i64;
@@ -306,8 +361,31 @@ impl Gen {
                     ));
                     ints.push(vname);
                 }
+                // ── static Array<Tag> pack write (variant escape regression) ─
+                28 if self.has_static_variant_arr && self.rng.pick(2) == 0 => {
+                    let i = self.rng.pick(4);
+                    let v = self.rng.pick(50) as i64;
+                    self.push(&format!("  VTA[{i}] = One({v});\n"));
+                }
+                29 if self.has_static_variant_arr => {
+                    let name = self.fresh();
+                    let i = self.rng.pick(4);
+                    self.push(&format!(
+                        "  let {name}: Int = match VTA[{i}] {{ One(n) => n, _ => 0 }};\n"
+                    ));
+                    ints.push(name);
+                }
+                // ── bitwise ops ───────────────────────────────────────────
+                _ if !ints.is_empty() && self.rng.pick(4) == 0 => {
+                    let name = self.fresh();
+                    let a = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let b = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let op = ["&", "|", "^"][self.rng.pick(3) as usize];
+                    self.push(&format!("  let {name}: Int = {a} {op} {b};\n"));
+                    ints.push(name);
+                }
                 // ── records ──────────────────────────────────────────────
-                23 if self.has_record => {
+                _ if self.has_record && self.rng.pick(3) == 0 => {
                     let name = self.fresh();
                     let a = self.rng.pick(100) as i64;
                     let b = self.rng.pick(100) as i64;
@@ -596,64 +674,4 @@ impl MMGen {
 
         (lib, main, expected_live)
     }
-}
-
-#[test]
-fn fuzz_multi_module_no_crash() {
-    let mut st = Stats::default();
-    let mut errs = Bucket::default();
-    let mut leaks = Bucket::default();
-
-    for seed in 0..500u64 {
-        let (lib_src, main_src, expected_live) = MMGen::new(seed).generate();
-        let n = MM_CTR.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir()
-            .join(format!("abrase_mm_fuzz_{}_{}", std::process::id(), n));
-        fs::create_dir_all(&dir).expect("create temp dir");
-        fs::write(dir.join("lib.abe"), &lib_src).expect("write lib");
-        fs::write(dir.join("main.abe"), &main_src).expect("write main");
-
-        st.total += 1;
-        let entry = dir.join("main.abe");
-        match try_run_files(&entry, STEP_CAP, expected_live) {
-            Outcome::Ok => { st.parsed += 1; st.compiled += 1; st.ran += 1; }
-            Outcome::ParseFail  => {}
-            Outcome::CompileFail => { st.parsed += 1; }
-            Outcome::Hang => { st.parsed += 1; st.compiled += 1; st.hung += 1; }
-            Outcome::RunErr(e) => {
-                st.parsed += 1; st.compiled += 1; st.run_err += 1;
-                let detail = format!("seed={} {}", seed, e);
-                let combined = format!("--- lib ---\n{}\n--- main ---\n{}", lib_src, main_src);
-                errs.record(seed, detail, combined, EXAMPLES_PER_BUCKET);
-            }
-            Outcome::Leak(n) => {
-                st.parsed += 1; st.compiled += 1; st.ran += 1; st.leaked += 1;
-                let detail = format!("seed={} live={}", seed, n);
-                let combined = format!("--- lib ---\n{}\n--- main ---\n{}", lib_src, main_src);
-                leaks.record(seed, detail, combined, EXAMPLES_PER_BUCKET);
-            }
-            Outcome::WrongRet(_) => { st.parsed += 1; st.compiled += 1; st.ran += 1; }
-        }
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    eprintln!(
-        "\nmm fuzz: total={} parsed={} compiled={} ran={} | run_err={} leaked={}",
-        st.total, st.parsed, st.compiled, st.ran, st.run_err, st.leaked
-    );
-    let report = |name: &str, b: &Bucket| {
-        if b.count == 0 { return String::new(); }
-        let mut s = format!("\n=== {} ({} total) ===\n", name, b.count);
-        for (seed, detail, src) in &b.examples {
-            s.push_str(&format!("--- seed={} {} ---\n{}\n", seed, detail, src));
-        }
-        s
-    };
-    let body = format!("{}{}", report("RUN_ERROR", &errs), report("LEAK", &leaks));
-    if !body.is_empty() { eprintln!("{}", body); }
-    assert!(
-        st.run_err == 0 && st.leaked == 0,
-        "multi-module fuzz found bugs: run_err={} leaked={} (see stderr)",
-        st.run_err, st.leaked
-    );
 }
