@@ -291,6 +291,10 @@ impl Checker {
     // Pattern Matching
 
     pub fn check_pattern(&mut self, pattern: &Spanned<ast::Pattern>, value_ty: &Type, _pattern_span: Span) {
+        self.check_pattern_mut(pattern, value_ty, false);
+    }
+
+    pub fn check_pattern_mut(&mut self, pattern: &Spanned<ast::Pattern>, value_ty: &Type, is_mut: bool) {
         match &pattern.node {
             ast::Pattern::Bind(name) => {
                 // Ident in pattern position: if it matches a variant case, treat as nullary variant, not binding.
@@ -298,7 +302,7 @@ impl Checker {
                     // Nullary variant: no binding, type compatibility checked in exhaustiveness pass.
                     return;
                 }
-                self.insert_var(name.clone(), value_ty.clone(), false, pattern.span);
+                self.insert_var(name.clone(), value_ty.clone(), is_mut, pattern.span);
             }
             ast::Pattern::Wildcard => {
                 // Wildcard: accept any type
@@ -333,7 +337,7 @@ impl Checker {
                                 );
                             }
                             for (pat, elem_ty) in pats.iter().zip(elem_types.iter()) {
-                                self.check_pattern(pat, elem_ty, pat.span);
+                                self.check_pattern_mut(pat, elem_ty, is_mut);
                             }
                         }
                         Some(i) => {
@@ -347,11 +351,11 @@ impl Checker {
                                 );
                             }
                             for (pat, ty) in head.iter().zip(elem_types.iter()) {
-                                self.check_pattern(pat, ty, pat.span);
+                                self.check_pattern_mut(pat, ty, is_mut);
                             }
                             let tail_start = elem_types.len().saturating_sub(tail.len());
                             for (pat, ty) in tail.iter().zip(elem_types[tail_start..].iter()) {
-                                self.check_pattern(pat, ty, pat.span);
+                                self.check_pattern_mut(pat, ty, is_mut);
                             }
                         }
                     }
@@ -363,9 +367,8 @@ impl Checker {
                 }
             }
             ast::Pattern::Or(pats) => {
-                // Or pattern: all branches must be compatible
                 for pat in pats {
-                    self.check_pattern(pat, value_ty, pat.span);
+                    self.check_pattern_mut(pat, value_ty, is_mut);
                 }
             }
             ast::Pattern::Range { start: _, end: _, inclusive: _ } => {
@@ -383,7 +386,7 @@ impl Checker {
                     Type::Generic { name, args } if name == "Array" => {
                         let elem_ty = args.get(0).cloned().unwrap_or(Type::Unknown);
                         for pat in pats {
-                            self.check_pattern(pat, &elem_ty, pat.span);
+                            self.check_pattern_mut(pat, &elem_ty, is_mut);
                         }
                     }
                     _ => {
@@ -429,9 +432,9 @@ impl Checker {
                         .map(|(_, t)| t.clone())
                         .unwrap_or(Type::Unknown);
                     if let Some(pat) = &field.pattern {
-                        self.check_pattern(pat, &field_ty, pat.span);
+                        self.check_pattern_mut(pat, &field_ty, is_mut);
                     } else {
-                        self.insert_var(field.name.clone(), field_ty, false, pattern.span);
+                        self.insert_var(field.name.clone(), field_ty, is_mut, pattern.span);
                     }
                 }
             }
@@ -483,13 +486,12 @@ impl Checker {
                 }
                 for (i, pat) in args.iter().enumerate() {
                     let arg_ty = payload_tys.get(i).cloned().unwrap_or(Type::Unknown);
-                    self.check_pattern(pat, &arg_ty, pat.span);
+                    self.check_pattern_mut(pat, &arg_ty, is_mut);
                 }
             }
             ast::Pattern::Ref(pat) => {
-                // Reference pattern: unwrap reference type
                 if let Type::Reference { inner, .. } = value_ty {
-                    self.check_pattern(pat, inner, pattern.span);
+                    self.check_pattern_mut(pat, inner, is_mut);
                 } else {
                     self.report_error(
                         format!("Expected reference pattern, got {:?}", value_ty),

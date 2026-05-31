@@ -376,14 +376,26 @@ impl Compiler {
         let dest = self.alloc_register()?;
         let n_u16 = to_u16(n, "Array-repeat length")?;
         self.emit(OpCode::Alloc(dest, n_u16));
-        let src = self.compile_expr(elem)?;
-        let mark = self.snapshot_register_high_water();
-        for i in 0..n {
-            let offset = to_u16(i, "Array-repeat offset")?;
-            let copy = self.alloc_register()?;
-            self.emit(OpCode::Copy(copy, src));
-            self.emit(OpCode::St(copy, dest, offset));
-            self.restore_register_high_water(mark);
+        let elem_ty = self.infer_expr_type(elem);
+        let is_heap = elem_ty.as_ref().map(super::is_move_type).unwrap_or(false);
+        if is_heap {
+            for i in 0..n {
+                let offset = to_u16(i, "Array-repeat offset")?;
+                let mark = self.snapshot_register_high_water();
+                let src = self.compile_expr(elem)?;
+                self.emit(OpCode::St(src, dest, offset));
+                self.restore_register_high_water(mark);
+            }
+        } else {
+            let src = self.compile_expr(elem)?;
+            let mark = self.snapshot_register_high_water();
+            for i in 0..n {
+                let offset = to_u16(i, "Array-repeat offset")?;
+                let copy = self.alloc_register()?;
+                self.emit(OpCode::Copy(copy, src));
+                self.emit(OpCode::St(copy, dest, offset));
+                self.restore_register_high_water(mark);
+            }
         }
         Ok(dest)
     }
