@@ -102,6 +102,8 @@ impl<'a> Parser<'a> {
                             self.next_token();
                             break;
                         }
+                        let field_mut = self.current_token == Token::Mut;
+                        if field_mut { self.next_token(); }
                         let fname = if let Token::Ident(n) = &self.current_token { n.clone() } else {
                             return Err(format!("Expected field name in record pattern, got {:?}", self.current_token));
                         };
@@ -110,7 +112,7 @@ impl<'a> Parser<'a> {
                             self.next_token();
                             Some(self.parse_pattern()?)
                         } else { None };
-                        fields.push(FieldPattern { name: fname, pattern: inner });
+                        fields.push(FieldPattern { name: fname, is_mut: field_mut, pattern: inner });
                         if self.peek_token == Token::Comma {
                             self.next_token();
                             self.next_token();

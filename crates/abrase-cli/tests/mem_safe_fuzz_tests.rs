@@ -29,6 +29,9 @@ struct Gen {
     has_variant: bool,
     has_static_rec: bool,
     has_static_rec_arr: bool,
+    has_effect: bool,
+    has_recursive_fn: bool,
+    has_float_arr: bool,
 }
 
 impl Gen {
@@ -38,6 +41,7 @@ impl Gen {
             out: String::new(), helpers: String::new(), fuel: 250,
             has_record: false, has_static: false,
             has_variant: false, has_static_rec: false, has_static_rec_arr: false,
+            has_effect: false, has_recursive_fn: false, has_float_arr: false,
         }
     }
     fn fresh(&mut self) -> String { let n = self.next_var; self.next_var += 1; format!("v{}", n) }
@@ -48,6 +52,7 @@ impl Gen {
         let mut n = 0;
         if self.has_static_rec     { n += 1; }
         if self.has_static_rec_arr { n += 5; } // 1 Array + 4 R records
+        if self.has_float_arr      { n += 1; } // 1 Array<Float>
         n
     }
 
@@ -79,11 +84,37 @@ impl Gen {
             self.has_static_rec = true;
             self.has_static = true;
         }
-        // Optional static mut Array<R> (exercises the alias-fix for heap array-repeat).
+        // Optional static mut Array<R>.
         if self.has_record && self.rng.pick(3) == 0 {
             self.helpers.push_str("static mut SRA: Array<R> = [R { a: 0, b: 0 }; 4]\n");
             self.has_static_rec_arr = true;
             self.has_static = true;
+        }
+        // Optional static mut Array<Float>.
+        if self.rng.pick(3) == 0 {
+            self.helpers.push_str("static mut FA: Array<Float> = [0.0; 4]\n");
+            self.has_float_arr = true;
+            self.has_static = true;
+        }
+        // Optional effect + helper.
+        if self.rng.pick(3) == 0 {
+            self.helpers.push_str(
+                "effect Tick { op go() -> Unit }\n\
+                 fn tick_n(n: Int) -> <Tick> Unit {\n\
+                   let mut i = 0;\n\
+                   while i < n { Tick.go(); i = i + 1 }\n\
+                 }\n"
+            );
+            self.has_effect = true;
+        }
+        // Optional recursive fn.
+        if self.rng.pick(3) == 0 {
+            self.helpers.push_str(
+                "fn countdown(n: Int) -> Int {\n\
+                   if n <= 0 { 0 } else { 1 + countdown(n - 1) }\n\
+                 }\n"
+            );
+            self.has_recursive_fn = true;
         }
         self.push("fn main() -> Int {\n");
         self.gen_block(0, &mut vec![], &mut vec![], &mut vec![], &mut vec![], &mut vec![], 0);
@@ -111,7 +142,7 @@ impl Gen {
         for _ in 0..stmts {
             if self.fuel == 0 { break; }
             self.fuel -= 1;
-            let choices = if region_depth > 0 { 23 } else { 16 };
+            let choices = if region_depth > 0 { 30 } else { 24 };
             match self.rng.pick(choices) {
                 // ── scalars ──────────────────────────────────────────────────
                 0 => {
@@ -209,8 +240,74 @@ impl Gen {
                     self.push(&format!("  let {}: Int = match 1 {{ 0 => 0, _ => S }};\n", name));
                     ints.push(name);
                 }
+                // ── match with guard (guard codegen regression) ──────────
+                15 if !ints.is_empty() => {
+                    let name = self.fresh();
+                    let src = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let thresh = self.rng.pick(200) as i64 - 100;
+                    self.push(&format!(
+                        "  let {}: Int = match {src} {{ _ if {src} > {thresh} => 0, _ => 0 }};\n",
+                        name, src=src, thresh=thresh
+                    ));
+                    ints.push(name);
+                }
+                // ── float conversion ──────────────────────────────────────
+                16 if !ints.is_empty() => {
+                    let name = self.fresh();
+                    let a = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let b = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    self.push(&format!(
+                        "  let {}: Int = ({a}.to_f() + {b}.to_f()).to_i();\n",
+                        name, a=a, b=b
+                    ));
+                    ints.push(name);
+                }
+                // ── float static array ────────────────────────────────────
+                17 if self.has_float_arr => {
+                    let i = self.rng.pick(4);
+                    let v = self.rng.pick(100) as i64;
+                    self.push(&format!("  FA[{i}] = {v}.to_f();\n"));
+                }
+                18 if self.has_float_arr => {
+                    let name = self.fresh();
+                    let i = self.rng.pick(4);
+                    self.push(&format!("  let {}: Int = FA[{i}].to_i();\n", name));
+                    ints.push(name);
+                }
+                // ── float static array arithmetic ─────────────────────────
+                19 if self.has_float_arr => {
+                    let i = self.rng.pick(4);
+                    let j = self.rng.pick(4);
+                    self.push(&format!("  FA[{i}] = FA[{i}] + FA[{j}];\n"));
+                }
+                // ── effect handler ────────────────────────────────────────
+                20 if self.has_effect && loop_depth < 1 => {
+                    let n = self.rng.pick(8) + 1;
+                    self.push(&format!(
+                        "  handle tick_n({n}) {{ return _ => (), Tick.go => resume(()) }};\n"
+                    ));
+                }
+                // ── recursion ─────────────────────────────────────────────
+                21 if self.has_recursive_fn => {
+                    let name = self.fresh();
+                    let n = self.rng.pick(8) as i64;
+                    self.push(&format!("  let {}: Int = countdown({n});\n", name));
+                    ints.push(name);
+                }
+                // ── record mut destructure ────────────────────────────────
+                22 if self.has_record && !ints.is_empty() => {
+                    let a = self.rng.pick(50) as i64;
+                    let b = self.rng.pick(50) as i64;
+                    let dx = self.rng.pick(20) as i64;
+                    let vname = self.fresh();
+                    let rname = self.fresh();
+                    self.push(&format!(
+                        "  let {rname}: R = R {{ a: {a}, b: {b} }};\n  let mut R {{ a: {vname}, .. }} = {rname};\n  {vname} = {vname} + {dx};\n"
+                    ));
+                    ints.push(vname);
+                }
                 // ── records ──────────────────────────────────────────────
-                15 if self.has_record => {
+                23 if self.has_record => {
                     let name = self.fresh();
                     let a = self.rng.pick(100) as i64;
                     let b = self.rng.pick(100) as i64;
@@ -218,7 +315,7 @@ impl Gen {
                     records.push(name);
                 }
                 // ── record field reads ────────────────────────────────────
-                _ if !records.is_empty() && self.has_record => {
+                _ if !records.is_empty() && self.has_record && self.rng.pick(2) == 0 => {
                     let name = self.fresh();
                     let rec = records[self.rng.pick(records.len() as u64) as usize].clone();
                     let field = if self.rng.pick(2) == 0 { "a" } else { "b" };
@@ -504,9 +601,7 @@ fn fuzz_multi_module_no_crash() {
         let dir = std::env::temp_dir()
             .join(format!("abrase_mm_fuzz_{}_{}", std::process::id(), n));
         fs::create_dir_all(&dir).expect("create temp dir");
-        let lib_dir = dir.join("lib");
-        fs::create_dir_all(&lib_dir).expect("create lib dir");
-        fs::write(lib_dir.join("mod.abe"), &lib_src).expect("write lib");
+        fs::write(dir.join("lib.abe"), &lib_src).expect("write lib");
         fs::write(dir.join("main.abe"), &main_src).expect("write main");
 
         st.total += 1;

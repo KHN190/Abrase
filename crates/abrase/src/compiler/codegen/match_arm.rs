@@ -29,15 +29,31 @@ impl Compiler {
             self.module_table_reg = pre_match_table_reg;
             let pre_vars: std::collections::HashSet<String> =
                 self.var_to_reg.keys().cloned().collect();
+            let has_guard = arm.guard.is_some();
             let terminal = match &arm.pattern.node {
                 ast::Pattern::Wildcard => {
-                    let body_reg = self.compile_expr(&arm.body)?;
-                    self.emit(OpCode::Copy(result_reg, body_reg));
-                    true
+                    if let Some(guard) = &arm.guard {
+                        // Guard on wildcard: evaluate guard; if false skip to next arm.
+                        let g = self.compile_expr(guard)?;
+                        let jz_idx = self.code.len();
+                        self.emit(OpCode::Jz(g, 0));
+                        let body_reg = self.compile_expr(&arm.body)?;
+                        self.emit(OpCode::Copy(result_reg, body_reg));
+                        exit_jumps.push(self.code.len());
+                        self.emit(OpCode::Jmp(0));
+                        let next_addr = self.code.len();
+                        self.patch_jz_at(jz_idx, next_addr)?;
+                        false
+                    } else {
+                        let body_reg = self.compile_expr(&arm.body)?;
+                        self.emit(OpCode::Copy(result_reg, body_reg));
+                        true
+                    }
                 }
                 ast::Pattern::Literal(lit) => {
                     self.compile_literal_arm(
-                        lit, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps)?;
+                        lit, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps,
+                        arm.guard.as_ref())?;
                     false
                 }
                 ast::Pattern::Bind(name) => {
@@ -48,24 +64,47 @@ impl Compiler {
                                 name
                             ))?;
                         self.compile_variant_tag_arm(
-                            info.tag, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps)?;
+                            info.tag, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps,
+                            arm.guard.as_ref())?;
                         false
                     } else {
-                        self.var_to_reg.insert(name.clone(), scrutinee_reg);
-                        let body_reg = self.compile_expr(&arm.body)?;
-                        self.emit(OpCode::Copy(result_reg, body_reg));
-                        true
+                        if let Some(guard) = &arm.guard {
+                            self.var_to_reg.insert(name.clone(), scrutinee_reg);
+                            let g = self.compile_expr(guard)?;
+                            let jz_idx = self.code.len();
+                            self.emit(OpCode::Jz(g, 0));
+                            let body_reg = self.compile_expr(&arm.body)?;
+                            self.emit(OpCode::Copy(result_reg, body_reg));
+                            exit_jumps.push(self.code.len());
+                            self.emit(OpCode::Jmp(0));
+                            let next_addr = self.code.len();
+                            self.patch_jz_at(jz_idx, next_addr)?;
+                            false
+                        } else {
+                            self.var_to_reg.insert(name.clone(), scrutinee_reg);
+                            let body_reg = self.compile_expr(&arm.body)?;
+                            self.emit(OpCode::Copy(result_reg, body_reg));
+                            true
+                        }
                     }
                 }
                 ast::Pattern::Variant { ty: vty, args } => {
                     self.compile_variant_pattern_arm(
-                        vty, args, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps)?;
+                        vty, args, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps,
+                        arm.guard.as_ref())?;
                     false
                 }
                 ast::Pattern::Record { ty: rty, fields, .. } => {
-                    self.compile_record_pattern_arm(
-                        rty, fields, &arm.body, scrutinee_reg, result_reg)?;
-                    true
+                    if has_guard {
+                        self.compile_record_pattern_arm_guarded(
+                            rty, fields, &arm.body, scrutinee_reg, result_reg,
+                            arm.guard.as_ref(), &mut exit_jumps)?;
+                        false
+                    } else {
+                        self.compile_record_pattern_arm(
+                            rty, fields, &arm.body, scrutinee_reg, result_reg)?;
+                        true
+                    }
                 }
                 ast::Pattern::Range { start, end, inclusive } => {
                     self.compile_range_arm(
@@ -160,6 +199,7 @@ impl Compiler {
         scrutinee_reg: Register,
         result_reg: Register,
         exit_jumps: &mut Vec<usize>,
+        guard: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<(), String> {
         let pat_idx = match lit {
             ast::Literal::Int(n)    => {
@@ -185,6 +225,7 @@ impl Compiler {
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(eq_reg, 0));
 
+        let guard_jz = self.compile_guard_check(guard)?;
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
         exit_jumps.push(self.code.len());
@@ -192,6 +233,7 @@ impl Compiler {
 
         let next_addr = self.code.len();
         self.patch_jz_at(jz_idx, next_addr)?;
+        if let Some(idx) = guard_jz { self.patch_jz_at(idx, next_addr)?; }
         Ok(())
     }
 
@@ -202,6 +244,7 @@ impl Compiler {
         scrutinee_reg: Register,
         result_reg: Register,
         exit_jumps: &mut Vec<usize>,
+        guard: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<(), String> {
         let tag_reg = self.alloc_register()?;
         self.emit(OpCode::Ld(tag_reg, scrutinee_reg, 0));
@@ -212,12 +255,14 @@ impl Compiler {
         self.emit(OpCode::Eq(eq_reg, tag_reg, expected));
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(eq_reg, 0));
+        let guard_jz = self.compile_guard_check(guard)?;
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
         exit_jumps.push(self.code.len());
         self.emit(OpCode::Jmp(0));
         let next_addr = self.code.len();
         self.patch_jz_at(jz_idx, next_addr)?;
+        if let Some(idx) = guard_jz { self.patch_jz_at(idx, next_addr)?; }
         Ok(())
     }
 
@@ -229,6 +274,7 @@ impl Compiler {
         scrutinee_reg: Register,
         result_reg: Register,
         exit_jumps: &mut Vec<usize>,
+        guard: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<(), String> {
         let vname = vty.last().cloned()
             .ok_or_else(|| "Variant pattern missing name".to_string())?;
@@ -257,6 +303,7 @@ impl Compiler {
             }
         }
 
+        let guard_jz = self.compile_guard_check(guard)?;
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
         exit_jumps.push(self.code.len());
@@ -264,6 +311,45 @@ impl Compiler {
 
         let next_addr = self.code.len();
         self.patch_jz_at(jz_idx, next_addr)?;
+        if let Some(idx) = guard_jz { self.patch_jz_at(idx, next_addr)?; }
+        Ok(())
+    }
+
+    fn compile_record_pattern_arm_guarded(
+        &mut self,
+        rty: &[String],
+        fields: &[ast::FieldPattern],
+        body: &ast::Spanned<ast::Expr>,
+        scrutinee_reg: Register,
+        result_reg: Register,
+        guard: Option<&ast::Spanned<ast::Expr>>,
+        exit_jumps: &mut Vec<usize>,
+    ) -> Result<(), String> {
+        let type_name = rty.last().cloned()
+            .ok_or_else(|| "Record pattern missing type name".to_string())?;
+        let field_order = self.layouts.records.get(&type_name).cloned()
+            .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
+        for fp in fields {
+            if let Some(idx) = field_order.fields.iter().position(|n| n == &fp.name) {
+                let bind_name = match &fp.pattern {
+                    Some(p) => if let ast::Pattern::Bind(n) = &p.node { Some(n.clone()) } else { None },
+                    None => Some(fp.name.clone()),
+                };
+                if let Some(n) = bind_name {
+                    let r = self.alloc_register()?;
+                    let offset = super::scaffold::to_u16(idx, "Record pattern field offset")?;
+                    self.emit(OpCode::Ld(r, scrutinee_reg, offset));
+                    self.var_to_reg.insert(n, r);
+                }
+            }
+        }
+        let guard_jz = self.compile_guard_check(guard)?;
+        let body_reg = self.compile_expr(body)?;
+        self.emit(OpCode::Copy(result_reg, body_reg));
+        exit_jumps.push(self.code.len());
+        self.emit(OpCode::Jmp(0));
+        let next_addr = self.code.len();
+        if let Some(idx) = guard_jz { self.patch_jz_at(idx, next_addr)?; }
         Ok(())
     }
 
@@ -299,5 +385,16 @@ impl Compiler {
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
         Ok(())
+    }
+
+    fn compile_guard_check(
+        &mut self,
+        guard: Option<&ast::Spanned<ast::Expr>>,
+    ) -> Result<Option<usize>, String> {
+        let Some(g) = guard else { return Ok(None) };
+        let g_reg = self.compile_expr(g)?;
+        let idx = self.code.len();
+        self.emit(OpCode::Jz(g_reg, 0));
+        Ok(Some(idx))
     }
 }
