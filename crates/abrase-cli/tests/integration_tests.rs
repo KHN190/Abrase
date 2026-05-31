@@ -229,69 +229,6 @@ fn vm_counts_executed_steps() {
     assert!(vm.steps() > 0, "step counter must advance after a run");
 }
 
-const FIELD_ASSIGN: &str = r#"
-type Pt = { x: Int, y: Int }
-
-fn main() -> Int {
-    let mut p = Pt { x: 10, y: 20 };
-    p.x = 100;
-    p.y = p.x + p.y;
-    p.x + p.y
-}
-"#;
-
-#[test]
-fn test_field_assign() {
-    let v = run_src(FIELD_ASSIGN)
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(220));
-}
-
-const SHARED_DEREF_WRITE: &str = r#"
-fn main() -> Int {
-    region r {
-        let s = Shared(1);
-        *s = 7;
-        *s = *s + 35;
-        *s
-    }
-}
-"#;
-
-#[test]
-fn test_shared_deref_write() {
-    let v = run_src(SHARED_DEREF_WRITE)
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(42));
-}
-
-const HANDLER_LET_MUT_CELL: &str = r#"
-effect Counter { op tick() -> Unit }
-
-fn fire_three() -> <Counter> Unit {
-    Counter.tick();
-    Counter.tick();
-    Counter.tick();
-}
-
-fn main() -> Int {
-    let mut n = 0;
-    handle fire_three() {
-        return _   => n,
-        Counter.tick => {
-            n = n + 1;
-            resume(())
-        }
-    }
-}
-"#;
-
-#[test]
-fn test_handler_let_mut_cell() {
-    let v = run_src(HANDLER_LET_MUT_CELL)
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(3));
-}
 
 #[test]
 fn test_field_assign() {
