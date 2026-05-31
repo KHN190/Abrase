@@ -63,6 +63,7 @@ pub struct VirtualMachine {
     pub(crate) steps: u64,
     pub(crate) step_cap: Option<u64>,
     pub(crate) static_names: Vec<String>,
+    pub(crate) trace_static_filter: Option<String>,
 }
 
 pub struct HandlerFrame {
@@ -146,6 +147,8 @@ impl VirtualMachine {
             steps: 0,
             step_cap: None,
             static_names: Vec::new(),
+            trace_static_filter: std::env::var("TRACE_STATIC").ok()
+                .filter(|s| !s.is_empty()),
         }
     }
 

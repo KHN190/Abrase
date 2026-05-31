@@ -378,8 +378,7 @@ impl VirtualMachine {
     }
 
     fn trace_static_access(&self, op: &str, slot: u32, off: i64, raw: u64, is_handle: bool) {
-        let traced = std::env::var("TRACE_STATIC").ok();
-        let traced = match traced.as_deref() { Some(s) if !s.is_empty() => s, _ => return };
+        let traced = match self.trace_static_filter.as_deref() { Some(s) => s, None => return };
         let idx = off as usize;
         let name = self.static_names.get(idx).map(|s| s.as_str()).unwrap_or("");
         if name.is_empty() { return; }

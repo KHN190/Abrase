@@ -731,6 +731,26 @@ fn shared_ctor_of_bare_var_does_not_consume_it() {
     assert_eq!(vm.heap_live_count(), 0);
 }
 
+const SEQUENTIAL_WHILE_STATIC: &str = r#"
+static mut A: Int = 3
+fn main() -> Int {
+  let mut i = 0; let mut s1 = 0;
+  while i < 3 { s1 = s1 + A; i = i + 1 };
+  let mut j = 0; let mut s2 = 0;
+  while j < 3 { s2 = s2 + A; j = j + 1 };
+  s1 + s2
+}
+"#;
+
+#[test]
+fn sequential_while_loops_share_one_module_table_load() {
+    let ops = compile_entry_ops(SEQUENTIAL_WHILE_STATIC);
+    let dei = ops.iter().filter(|o| matches!(o, OpCode::Dei(..))).count();
+    assert_eq!(dei, 1, "two sequential while loops must share one Dei, got {dei}: {ops:?}");
+    let v = run_src(SEQUENTIAL_WHILE_STATIC).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(18));
+}
+
 const PARENTHESIZED_IF: &str = r#"
 fn main() -> Int {
   let c = true;

@@ -228,6 +228,9 @@ impl Compiler {
                 protect = protect.max(reg.0 as u16 + 1);
             }
         }
+        if let Some(r) = self.module_table_reg {
+            protect = protect.max(r.0 as u16 + 1);
+        }
         let high = self.snapshot_register_high_water();
         for r in protect..high {
             if self.reg_holds_handle.get(r as usize).copied().unwrap_or(false) {
