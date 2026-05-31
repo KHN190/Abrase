@@ -1,4 +1,5 @@
 use polka::{HANDLE_NONE, HANDLE_SLOT_MAX};
+use std::collections::HashMap;
 
 #[inline(always)]
 pub fn handle_parts(raw: u64) -> (u32, u32) {
@@ -25,6 +26,7 @@ pub struct Heap {
     free_list: Vec<u32>,
     bytes_used: usize,
     trace_slot: Option<u32>,
+    buffer_pool: HashMap<usize, Vec<Cell>>,
 }
 
 #[inline]
@@ -55,6 +57,7 @@ impl Heap {
             free_list: Vec::new(),
             bytes_used: 0,
             trace_slot: std::env::var("TRACE_SLOT").ok().and_then(|v| v.parse::<u32>().ok()),
+            buffer_pool: HashMap::new(),
         }
     }
 
@@ -69,8 +72,24 @@ impl Heap {
         Cell { data, mask: mask.into_boxed_slice() }
     }
 
+    fn take_cell(&mut self, size: usize, init_mask: &[u64]) -> Cell {
+        if let Some(mut cell) = self.buffer_pool.get_mut(&size).and_then(|v| v.pop()) {
+            for d in cell.data.iter_mut() { *d = HANDLE_NONE; }
+            for w in cell.mask.iter_mut() { *w = 0; }
+            let copy_n = init_mask.len().min(cell.mask.len());
+            cell.mask[..copy_n].copy_from_slice(&init_mask[..copy_n]);
+            cell
+        } else {
+            Self::make_cell(size, init_mask)
+        }
+    }
+
+    fn recycle(&mut self, cell: Cell) {
+        self.buffer_pool.entry(cell.data.len()).or_default().push(cell);
+    }
+
     fn alloc_inner(&mut self, size: usize, init_mask: &[u64]) -> Result<(u32, u32), String> {
-        let cell = Self::make_cell(size, init_mask);
+        let cell = self.take_cell(size, init_mask);
         self.bytes_used = self.bytes_used.saturating_add(
             size * 8 + mask_words_for(size) * 8
         );
@@ -250,6 +269,7 @@ impl Heap {
                 }
             }
         }
+        self.recycle(cell);
         Ok(true)
     }
 
@@ -286,6 +306,7 @@ impl Heap {
                 }
             }
         }
+        self.recycle(cell);
         Ok(())
     }
 
@@ -299,5 +320,6 @@ impl Heap {
         self.generation.clear();
         self.free_list.clear();
         self.bytes_used = 0;
+        self.buffer_pool.clear();
     }
 }
