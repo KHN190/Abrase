@@ -412,17 +412,17 @@ impl Compiler {
         let mark = self.snapshot_register_high_water();
         let env_to_pass = match env {
             CallEnv::None => None,
-            CallEnv::Reg(r) => Some(r),
+            CallEnv::Reg(r) => Some((r, false)),
             CallEnv::EnvLoadOffset(off) => {
                 let outer_env = *self.var_to_reg.get("__env")
                     .ok_or_else(|| "internal: env-load call site outside closure body".to_string())?;
                 let tmp = self.alloc_register()?;
                 let off16 = super::scaffold::to_u16(off, "outer env offset")?;
                 self.emit(OpCode::Ld(tmp, outer_env, off16));
-                Some(tmp)
+                Some((tmp, true))
             }
         };
-        let mut staged: Vec<(Register, bool)> = env_to_pass.into_iter().map(|r| (r, true)).collect();
+        let mut staged: Vec<(Register, bool)> = env_to_pass.into_iter().collect();
         for arg in args {
             let r = self.compile_expr(arg)?;
             staged.push((r, self.arg_should_move(arg)));

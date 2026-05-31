@@ -9,14 +9,15 @@ impl Compiler {
         scrutinee: &ast::Spanned<ast::Expr>,
         arms: &[ast::MatchArm],
     ) -> Result<Register, String> {
-        if !arms.is_empty() {
+        if arms.is_empty() {
+            return Err("Empty match expression".to_string());
+        }
+        if !self.match_covers_all_variants(arms) {
             let last_arm = &arms[arms.len() - 1];
             match &last_arm.pattern.node {
                 ast::Pattern::Wildcard | ast::Pattern::Bind(_) => {}
                 _ => return Err("Non-exhaustive match pattern".to_string()),
             }
-        } else {
-            return Err("Empty match expression".to_string());
         }
 
         let scrutinee_reg = self.compile_expr(scrutinee)?;
@@ -396,5 +397,26 @@ impl Compiler {
         let idx = self.code.len();
         self.emit(OpCode::Jz(g_reg, 0));
         Ok(Some(idx))
+    }
+
+    fn match_covers_all_variants(&self, arms: &[ast::MatchArm]) -> bool {
+        let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut type_name: Option<String> = None;
+        for arm in arms {
+            if arm.guard.is_some() { continue; }
+            let ctor = match &arm.pattern.node {
+                ast::Pattern::Variant { ty, .. } => ty.last(),
+                ast::Pattern::Bind(name) if self.layouts.variants.contains_key(name) => Some(name),
+                _ => continue,
+            };
+            let Some(ctor) = ctor else { continue };
+            let Some(info) = self.layouts.variants.get(ctor) else { continue };
+            type_name.get_or_insert_with(|| info.type_name.clone());
+            covered.insert(ctor.clone());
+        }
+        let Some(tn) = type_name else { return false };
+        self.layouts.variants.iter()
+            .filter(|(_, v)| v.type_name == tn)
+            .all(|(c, _)| covered.contains(c))
     }
 }

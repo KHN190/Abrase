@@ -246,28 +246,37 @@ impl Compiler {
         }
     }
 
-    // Rewind next_reg but keep regs in long-lived structures.
     pub(in crate::compiler) fn reclaim_temp_regs_above(&mut self, mark: u16) {
+        // Build a set of registers that must NOT be dropped: live variables,
+        // loop result regs, handler table regs, env captures, module table.
+        let mut protected = std::collections::HashSet::<u16>::new();
         let mut protect = mark;
         for reg in self.var_to_reg.values() {
+            protected.insert(reg.0 as u16);
             protect = protect.max(reg.0 as u16 + 1);
         }
         for reg in &self.handler_table_stack {
+            protected.insert(reg.0 as u16);
             protect = protect.max(reg.0 as u16 + 1);
         }
         for ctx in &self.loop_stack {
+            protected.insert(ctx.result_reg.0 as u16);
             protect = protect.max(ctx.result_reg.0 as u16 + 1);
         }
         for envs in &self.arm_env_stack {
             for reg in envs.values() {
+                protected.insert(reg.0 as u16);
                 protect = protect.max(reg.0 as u16 + 1);
             }
         }
         if let Some(r) = self.module_table_reg {
+            protected.insert(r.0 as u16);
             protect = protect.max(r.0 as u16 + 1);
         }
         let high = self.snapshot_register_high_water();
-        for r in protect..high {
+        // Scan below the highest live-variable register.
+        for r in mark..high {
+            if protected.contains(&r) { continue; }
             if self.reg_holds_handle.get(r as usize).copied().unwrap_or(false) {
                 self.emit(OpCode::Drop(Register(r as u8)));
             }
@@ -284,7 +293,10 @@ impl Compiler {
             ast::Stmt::Let { pattern, value, ty, is_mut, .. } => {
                 let inferred_ty = ty.clone().or_else(|| self.infer_expr_type(value));
                 if let ast::Pattern::Bind(name) = &pattern.node {
+                    let is_closure_rhs = matches!(&value.node, ast::Expr::Closure { .. });
+                    self.closure_as_value_ok = is_closure_rhs;
                     let src_reg = self.compile_expr(value)?;
+                    self.closure_as_value_ok = false;
                     let bound_reg = if let ast::Expr::Identifier(src_name) = &value.node {
                         let dest = self.alloc_register()?;
                         let is_move = inferred_ty.as_ref().map(is_move_type).unwrap_or(false);
@@ -359,7 +371,9 @@ impl Compiler {
         let mark = self.snapshot_register_high_water();
         self.block_locals_stack.push(Vec::new());
         for stmt in &block.stmts {
+            let stmt_mark = self.snapshot_register_high_water();
             self.compile_stmt(stmt)?;
+            self.reclaim_temp_regs_above(stmt_mark);
         }
         let result = if let Some(ret) = &block.ret {
             self.compile_expr(ret)?
