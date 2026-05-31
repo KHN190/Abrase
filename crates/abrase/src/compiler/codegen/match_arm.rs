@@ -67,6 +67,12 @@ impl Compiler {
                         rty, fields, &arm.body, scrutinee_reg, result_reg)?;
                     true
                 }
+                ast::Pattern::Range { start, end, inclusive } => {
+                    self.compile_range_arm(
+                        start.as_ref(), end.as_ref(), *inclusive,
+                        &arm.body, scrutinee_reg, result_reg, &mut exit_jumps)?;
+                    false
+                }
                 _ => return Err("Unsupported pattern in match".to_string()),
             };
             let new_vars: Vec<String> = self.var_to_reg.keys()
@@ -87,6 +93,64 @@ impl Compiler {
         }
 
         Ok(result_reg)
+    }
+
+    fn compile_range_arm(
+        &mut self,
+        start: Option<&ast::Literal>,
+        end: Option<&ast::Literal>,
+        inclusive: bool,
+        body: &ast::Spanned<ast::Expr>,
+        scrutinee_reg: Register,
+        result_reg: Register,
+        exit_jumps: &mut Vec<usize>,
+    ) -> Result<(), String> {
+        let mut cond_reg = None;
+
+        if let Some(lo) = start {
+            let lo_reg = self.compile_literal(lo)?;
+            let ge = self.alloc_register()?;
+            self.emit(OpCode::Gte(ge, scrutinee_reg, lo_reg));
+            cond_reg = Some(ge);
+        }
+
+        if let Some(hi) = end {
+            let hi_reg = self.compile_literal(hi)?;
+            let cmp = self.alloc_register()?;
+            if inclusive {
+                self.emit(OpCode::Lte(cmp, scrutinee_reg, hi_reg));
+            } else {
+                self.emit(OpCode::Lt(cmp, scrutinee_reg, hi_reg));
+            }
+            cond_reg = Some(match cond_reg {
+                None => cmp,
+                Some(prev) => {
+                    let combined = self.alloc_register()?;
+                    self.emit(OpCode::And(combined, prev, cmp));
+                    combined
+                }
+            });
+        }
+
+        let jz_idx = match cond_reg {
+            Some(r) => {
+                let idx = self.code.len();
+                self.emit(OpCode::Jz(r, 0));
+                Some(idx)
+            }
+            None => None,
+        };
+
+        let body_reg = self.compile_expr(body)?;
+        self.emit(OpCode::Copy(result_reg, body_reg));
+        exit_jumps.push(self.code.len());
+        self.emit(OpCode::Jmp(0));
+
+        let next_addr = self.code.len();
+        if let Some(idx) = jz_idx {
+            self.patch_jz_at(idx, next_addr)?;
+        }
+        Ok(())
     }
 
     fn compile_literal_arm(
