@@ -1,0 +1,5 @@
+use lib::{double};
+
+fn helper(x: Int) -> Int { x + 1 }
+
+fn main() -> Int { helper(5) + double(5) }

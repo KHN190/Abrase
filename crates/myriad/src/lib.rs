@@ -1,7 +1,6 @@
 pub mod value;
 pub mod frame;
 pub mod memory;
-pub mod device;
 pub mod devices;
 pub mod interpreter;
 pub mod loader;
@@ -13,7 +12,7 @@ pub mod snapshot;
 
 pub use polka::{Value, HANDLE_NONE};
 pub use value::{alloc_string, read_string};
-pub use device::{Device, DeviceTable};
+pub use devices::{Device, DeviceTable};
 pub use memory::Heap;
 pub use region::RegionTable;
 pub use builtins::{NativeCtx, NativeFn, NativeRegistry};
@@ -54,10 +53,17 @@ pub struct VirtualMachine {
     pub(crate) region_table: RegionTable,
     pub(crate) natives: NativeRegistry,
     pub(crate) debug_sink: Option<DebugSink>,
+    pub(crate) trace_frames: bool,
     pub(crate) fn_names: Vec<String>,
     pub(crate) failing_pc: usize,
     pub(crate) last_result_is_handle: bool,
     pub(crate) int32_safe: bool,
+    pub(crate) module_table_raw: u64,
+    pub(crate) module_table_is_handle: bool,
+    pub(crate) steps: u64,
+    pub(crate) step_cap: Option<u64>,
+    pub(crate) static_names: Vec<String>,
+    pub(crate) trace_static_filter: Option<String>,
 }
 
 pub struct HandlerFrame {
@@ -71,6 +77,22 @@ pub struct HandlerFrame {
     pub pending_return_arm_fn: Option<usize>,
     pub pending_return_arm_env: u64,
     pub pending_return_arm_env_is_handle: bool,
+}
+
+impl HandlerFrame {
+    pub fn release_cells(
+        &self,
+        heap: &mut crate::memory::Heap,
+        regions: &mut crate::region::RegionTable,
+    ) -> Result<(), String> {
+        for (slot, generation) in &self.cells_allocated {
+            regions.forget(*slot, *generation);
+            if heap.is_live(*slot, *generation) {
+                heap.rc_dec(*slot, *generation)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 pub mod cont_slot {
@@ -115,15 +137,45 @@ impl VirtualMachine {
             region_table: RegionTable::new(),
             natives,
             debug_sink: None,
+            trace_frames: false,
             fn_names: Vec::new(),
             failing_pc: 0,
             last_result_is_handle: false,
             int32_safe: false,
+            module_table_raw: polka::HANDLE_NONE,
+            module_table_is_handle: false,
+            steps: 0,
+            step_cap: None,
+            static_names: Vec::new(),
+            trace_static_filter: std::env::var("TRACE_STATIC").ok()
+                .filter(|s| !s.is_empty()),
         }
     }
 
+    pub fn with_static_names(mut self, names: Vec<String>) -> Self {
+        self.static_names = names;
+        self
+    }
+
+    pub fn with_step_cap(mut self, cap: u64) -> Self {
+        self.step_cap = Some(cap);
+        self
+    }
+
+    // N of instructions executed. Monotonic; a profiler reads the per-frame delta.
+    pub fn steps(&self) -> u64 { self.steps }
+
+    pub fn halted(&self) -> bool { self.exit_code.is_some() }
+
+    pub fn exit_code(&self) -> Option<i64> { self.exit_code }
+
     pub fn with_debug(mut self, on: bool) -> Self {
         self.debug_sink = if on { Some(debug::stderr_sink()) } else { None };
+        self
+    }
+
+    pub fn with_trace_frames(mut self, on: bool) -> Self {
+        self.trace_frames = on;
         self
     }
 
@@ -141,6 +193,14 @@ impl VirtualMachine {
         if let Some(sink) = &mut self.debug_sink {
             sink(event, &self.fn_names);
         }
+    }
+
+    #[inline]
+    pub(crate) fn trace_frame_event(&self, kind: &str, detail: std::fmt::Arguments<'_>) {
+        if !self.trace_frames { return; }
+        let bfi = self.handlers.last().and_then(|h| h.body_frame_index);
+        eprintln!("[{}] {} | frames={} handlers={} bfi={:?}",
+            kind, detail, self.frames.len(), self.handlers.len(), bfi);
     }
 
     pub fn region_push(&mut self) {
@@ -162,14 +222,18 @@ impl VirtualMachine {
         }
     }
 
-    // User-visible live count. Excludes module-lifetime string-constant cells,
-    // since they are owned by the loader, not by user code.
+    // User-visible live count. Excludes module-lifetime cells owned by the
+    // loader/runtime (not by user code): string constants and the module table.
     pub fn heap_live_count(&self) -> usize {
         let total = self.heap.live_count();
         let const_live = self.string_const_handles.iter()
             .filter(|(s, g)| self.heap.is_live(*s, *g))
             .count();
-        total.saturating_sub(const_live)
+        let module_live = if self.module_table_is_handle && self.module_table_raw != polka::HANDLE_NONE {
+            let (s, g) = crate::memory::handle_parts(self.module_table_raw);
+            if self.heap.is_live(s, g) { 1 } else { 0 }
+        } else { 0 };
+        total.saturating_sub(const_live).saturating_sub(module_live)
     }
 
 

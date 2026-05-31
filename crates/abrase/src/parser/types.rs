@@ -6,9 +6,9 @@ impl<'a> Parser<'a> {
     pub fn parse_type(&mut self) -> Result<Type, String> {
         match self.current_token.clone() {
             Token::Ident(name) => {
-                if self.peek_token == Token::Dot {
+                if self.peek_token == Token::ColonColon {
                     let mut path = vec![name];
-                    while self.peek_token == Token::Dot {
+                    while self.peek_token == Token::ColonColon {
                         self.next_token();
                         self.next_token();
                         match self.current_token.clone() {
@@ -118,19 +118,19 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn parse_type_args(&mut self) -> Result<Vec<Type>, String> {
-        if self.peek_token == Token::Gt {
-            self.next_token();
+        if self.peek_is_generic_close() {
+            self.expect_peek_generic_close();
             return Ok(vec![]);
         }
         self.next_token();
         let mut args = vec![self.parse_type()?];
         while self.peek_token == Token::Comma {
             self.next_token();
-            if self.peek_token == Token::Gt { break; }
+            if self.peek_is_generic_close() { break; }
             self.next_token();
             args.push(self.parse_type()?);
         }
-        if !self.expect_peek(Token::Gt) {
+        if !self.expect_peek_generic_close() {
             return Err("Expected '>' in type args".into());
         }
         Ok(args)
@@ -147,8 +147,8 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn parse_effect_set(&mut self) -> Result<Vec<EffectItem>, String> {
-        if self.peek_token == Token::Gt {
-            self.next_token();
+        if self.peek_is_generic_close() {
+            self.expect_peek_generic_close();
             return Ok(vec![]);
         }
         self.next_token();
@@ -171,7 +171,7 @@ impl<'a> Parser<'a> {
                 self.next_token();
                 self.next_token();
                 let ty = self.parse_type()?;
-                if !self.expect_peek(Token::Gt) {
+                if !self.expect_peek_generic_close() {
                     return Err("Expected '>' after effect arg".into());
                 }
                 Some(Box::new(ty))
@@ -182,7 +182,7 @@ impl<'a> Parser<'a> {
                 self.next_token();
             } else { break; }
         }
-        if !self.expect_peek(Token::Gt) {
+        if !self.expect_peek_generic_close() {
             return Err("Expected '>' after effect set".into());
         }
         Ok(effects)

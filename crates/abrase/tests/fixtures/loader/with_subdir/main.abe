@@ -1,0 +1,3 @@
+use gfx::shapes::{area};
+
+fn main() -> Int { area(4, 5) }

@@ -159,18 +159,12 @@ fn test_error_extra_token_after_complete_decl() {
 }
 
 #[test]
-fn test_program_mod_then_fn() {
-    let decls = parse_program_no_errors("mod foo fn main() -> Int { 0 }");
-    assert_eq!(decls.len(), 2);
-    assert!(matches!(decls[0], Decl::Mod(ref s) if s == "foo"));
-    assert!(matches!(decls[1], Decl::Fn(_)));
-}
-
-#[test]
-fn test_program_mod_dotted_path() {
-    let decls = parse_program_no_errors("mod a.b.c fn main() -> Int { 0 }");
-    assert_eq!(decls.len(), 2);
-    assert!(matches!(decls[0], Decl::Mod(ref s) if s == "a.b.c"));
+fn test_program_mod_keyword_is_rejected() {
+    let src = "mod foo fn main() -> Int { 0 }";
+    let mut p = abrase::parser::Parser::new(abrase::lexer::Lexer::new(src)).with_source(src.into());
+    let _ = p.parse_program();
+    assert!(!p.errors.is_empty(),
+        "`mod` is removed — file-path-based modules only; expected parse error");
 }
 
 #[test]
@@ -234,16 +228,16 @@ fn test_program_const_block_value_then_fn() {
 
 #[test]
 fn test_program_import_then_fn() {
-    let decls = parse_program_no_errors("import std.io { Read, Write }; fn main() -> Int { 0 }");
+    let decls = parse_program_no_errors("use std::io::{Read, Write}; fn main() -> Int { 0 }");
     assert_eq!(decls.len(), 2);
-    assert!(matches!(decls[0], Decl::Import { .. }));
+    assert!(matches!(decls[0], Decl::Use { .. }));
 }
 
 #[test]
 fn test_program_import_dot_brace_syntax() {
-    let decls = parse_program_no_errors("import io.{File, Read}; fn main() -> Int { 0 }");
+    let decls = parse_program_no_errors("use io::{File, Read}; fn main() -> Int { 0 }");
     assert_eq!(decls.len(), 2);
-    if let Decl::Import { path, items } = &decls[0] {
+    if let Decl::Use { path, items } = &decls[0] {
         assert_eq!(path, &vec!["io".to_string()]);
         assert_eq!(items.len(), 2);
     } else { panic!("expected Import"); }

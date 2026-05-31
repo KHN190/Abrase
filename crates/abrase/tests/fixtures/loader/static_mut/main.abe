@@ -1,0 +1,3 @@
+use lib::{COUNTER, bump};
+
+fn main() -> Int { COUNTER = COUNTER + 10; bump(); COUNTER }

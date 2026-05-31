@@ -7,42 +7,44 @@ fn r(n: u8) -> Register { Register(n) }
 #[test]
 fn version_major_port_returns_2() {
     let mut dev = SystemDevice::new();
-    assert_eq!(dev.read(0x00).unwrap().as_int(), 2);
+    assert_eq!(dev.read(0x00).unwrap().0.as_int(), 2);
 }
 
 #[test]
 fn version_minor_port_returns_0() {
     let mut dev = SystemDevice::new();
-    assert_eq!(dev.read(0x04).unwrap().as_int(), 0);
+    assert_eq!(dev.read(0x04).unwrap().0.as_int(), 0);
 }
 
 #[test]
 fn version_patch_port_returns_1() {
     let mut dev = SystemDevice::new();
-    assert_eq!(dev.read(0x05).unwrap().as_int(), 1);
+    assert_eq!(dev.read(0x05).unwrap().0.as_int(), 1);
 }
 
 #[test]
 fn flags_port_reflects_field() {
     let mut dev = SystemDevice::new();
-    assert_eq!(dev.read(0x03).unwrap().as_int(), 0);
+    assert_eq!(dev.read(0x03).unwrap().0.as_int(), 0);
     dev.flags = 0xABCD;
-    assert_eq!(dev.read(0x03).unwrap().as_int(), 0xABCD);
+    assert_eq!(dev.read(0x03).unwrap().0.as_int(), 0xABCD);
 }
 
 #[test]
 fn unknown_read_port_returns_zero() {
     let mut dev = SystemDevice::new();
     for port in [0x06, 0x7F, 0xFF] {
-        assert_eq!(dev.read(port).unwrap().as_int(), 0, "port {:#x}", port);
+        assert_eq!(dev.read(port).unwrap().0.as_int(), 0, "port {:#x}", port);
     }
 }
 
 #[test]
 fn write_is_noop_at_device_level() {
     let mut dev = SystemDevice::new();
+    let mut heap = myriad::Heap::new();
     for port in [0x00, 0x01, 0x02, 0x03, 0xFF] {
-        assert!(dev.write(port, Value::from_int(42)).is_ok(), "write port {:#x}", port);
+        assert!(dev.write(port, Value::from_int(42), false, &mut heap).is_ok(),
+            "write port {:#x}", port);
     }
     assert_eq!(dev.flags, 0);
 }

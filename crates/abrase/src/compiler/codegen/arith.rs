@@ -34,6 +34,12 @@ impl Compiler {
                     inner_ty.as_ref(),
                     Some(ast::Type::Reference { inner, .. }) if is_move_type(inner)
                 );
+                let pointee_unboxed = match inner_ty.as_ref() {
+                    Some(ast::Type::Reference { inner, .. }) => super::data::type_is_unboxed(inner),
+                    Some(ast::Type::Generic { name, args }) if name == "Shared" =>
+                        args.first().map_or(false, super::data::type_is_unboxed),
+                    _ => false,
+                };
                 let src = self.compile_expr(right)?;
                 let dest = self.alloc_register()?;
                 if inner_is_cell {
@@ -41,6 +47,7 @@ impl Compiler {
                 } else {
                     self.emit(OpCode::Ld(dest, src, 0));
                 }
+                if pointee_unboxed { self.set_reg_handle(dest, false); }
                 Ok(dest)
             }
             ast::UnaryOp::Neg => {
@@ -94,6 +101,14 @@ impl Compiler {
             ast::BinaryOp::Assign => {
                 match &left.node {
                     ast::Expr::Identifier(name) => {
+                        if let Some(offset) = self.resolve_static_offset(name) {
+                            let rr = self.compile_expr(right)?;
+                            let table = self.load_module_table()?;
+                            let tmp = self.alloc_register()?;
+                            self.emit(OpCode::Copy(tmp, rr));
+                            self.emit(OpCode::St(tmp, table, offset));
+                            return Ok(rr);
+                        }
                         let rr = self.compile_expr(right)?;
                         let ty = self.var_types.get(name).cloned();
                         let is_heap = ty.as_ref().map(is_move_type).unwrap_or(false);
@@ -181,6 +196,26 @@ impl Compiler {
                     _ => Err("Assignment target must be a variable".to_string())
                 }
             }
+            ast::BinaryOp::And | ast::BinaryOp::Or => {
+                let lr = self.compile_expr(left)?;
+                let dest = self.alloc_register()?;
+                self.emit(OpCode::Copy(dest, lr));
+                let branch_pc = self.code.len();
+                if matches!(op, ast::BinaryOp::And) {
+                    self.emit(OpCode::Jz(dest, 0));
+                } else {
+                    self.emit(OpCode::Jnz(dest, 0));
+                }
+                let rr = self.compile_expr(right)?;
+                self.emit(OpCode::Copy(dest, rr));
+                let end_pc = self.code.len();
+                if matches!(op, ast::BinaryOp::And) {
+                    self.patch_jz_at(branch_pc, end_pc)?;
+                } else {
+                    self.patch_jnz_at(branch_pc, end_pc)?;
+                }
+                Ok(dest)
+            }
             _ => {
                 // Fuse `x ± i8-literal` into a single AddImm/SubImm.
                 if matches!(op, ast::BinaryOp::Add | ast::BinaryOp::Sub) {
@@ -239,6 +274,11 @@ impl Compiler {
                     ast::BinaryOp::Gt  => OpCode::Gt(dr, lr, rr),
                     ast::BinaryOp::Lte => OpCode::Lte(dr, lr, rr),
                     ast::BinaryOp::Gte => OpCode::Gte(dr, lr, rr),
+                    ast::BinaryOp::BitAnd => OpCode::And(dr, lr, rr),
+                    ast::BinaryOp::BitOr  => OpCode::Or(dr, lr, rr),
+                    ast::BinaryOp::BitXor => OpCode::Xor(dr, lr, rr),
+                    ast::BinaryOp::Shl    => OpCode::Shl(dr, lr, rr),
+                    ast::BinaryOp::Shr    => OpCode::Shr(dr, lr, rr),
                     _ => return Err(format!("Unsupported binary op: {:?}", op)),
                 };
                 self.emit(instr);

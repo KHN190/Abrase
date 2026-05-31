@@ -1,0 +1,3 @@
+use visuals::{circle, line};
+
+fn main() -> Int { circle(3) + line(1, 2) }

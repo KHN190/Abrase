@@ -13,7 +13,7 @@ impl<'a> Parser<'a> {
                 Ok(decl) => {
                     decls.push(decl);
                     if self.current_token != Token::Eof &&
-                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Import | Token::Effect | Token::Mod | Token::Pub) {
+                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Static | Token::Use | Token::Effect | Token::Pub) {
                         self.report_error(top_level_token_error(&self.current_token), self.current_span);
                         self.synchronize();
                     }
@@ -53,7 +53,8 @@ impl<'a> Parser<'a> {
             Token::Trait => self.parse_trait_decl(is_pub),
             Token::Impl => self.parse_impl_decl(),
             Token::Const => self.parse_const_decl(is_pub),
-            Token::Import => self.parse_import_decl(),
+            Token::Static => self.parse_static_decl(is_pub),
+            Token::Use => self.parse_use_decl(),
             Token::Effect => {
                 self.next_token();
                 if self.current_token == Token::Ident("alias".into()) {
@@ -62,26 +63,6 @@ impl<'a> Parser<'a> {
                 } else {
                     self.parse_effect_decl(is_pub)
                 }
-            }
-            Token::Mod => {
-                self.next_token();
-                let mut path = Vec::new();
-                if let Token::Ident(p) = &self.current_token {
-                    path.push(p.clone());
-                } else {
-                    return Err("Expected module name".into());
-                }
-                while self.peek_token == Token::Dot {
-                    self.next_token();
-                    self.next_token();
-                    if let Token::Ident(p) = &self.current_token {
-                        path.push(p.clone());
-                    } else {
-                        return Err("Expected ident in module path".into());
-                    }
-                }
-                self.next_token();
-                Ok(Decl::Mod(path.join(".")))
             }
             _ => Err(top_level_token_error(&self.current_token)),
         }
@@ -465,6 +446,39 @@ impl<'a> Parser<'a> {
         Ok(Decl::Const { is_pub, is_fn, name, generics, params, ty, value })
     }
 
+    fn parse_static_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
+        self.next_token();
+        let is_mut = self.current_token == Token::Mut;
+        if is_mut {
+            self.next_token();
+        }
+        let name = if let Token::Ident(n) = &self.current_token {
+            n.clone()
+        } else {
+            return Err("Expected static name".into());
+        };
+        if !self.expect_peek(Token::Colon) {
+            return Err("Expected ':' in static".into());
+        }
+        self.next_token();
+        let ty = self.parse_type()?;
+        if !self.expect_peek(Token::Assign) {
+            return Err("Expected '=' in static".into());
+        }
+        self.next_token();
+        let value = self.parse_expr(Precedence::Lowest);
+        let was_block = is_block_terminated(&value.node);
+        if !was_block {
+            if self.peek_token == Token::Semicolon {
+                self.next_token();
+            }
+            self.next_token();
+        } else if self.current_token == Token::Semicolon {
+            self.next_token();
+        }
+        Ok(Decl::Static { is_pub, is_mut, name, ty, value })
+    }
+
     fn parse_type_alias_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
         let name = if let Token::Ident(n) = &self.current_token { n.clone() } else { return Err("Expected type alias name".into()); };
         let generics = if self.peek_token == Token::Lt {
@@ -531,8 +545,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, String> {
-        if self.peek_token == Token::Gt {
-            self.next_token();
+        if self.peek_is_generic_close() {
+            self.expect_peek_generic_close();
             return Ok(vec![]);
         }
         self.next_token();
@@ -548,7 +562,7 @@ impl<'a> Parser<'a> {
                 self.next_token();
             } else { break; }
         }
-        if !self.expect_peek(Token::Gt) {
+        if !self.expect_peek_generic_close() {
             return Err("Expected '>' in generic params".into());
         }
         Ok(params)
@@ -576,7 +590,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_import_decl(&mut self) -> Result<Decl, String> {
+    fn parse_use_decl(&mut self) -> Result<Decl, String> {
         self.next_token();
         let mut path = Vec::new();
         if let Token::Ident(p) = &self.current_token {
@@ -584,7 +598,7 @@ impl<'a> Parser<'a> {
         } else {
             return Err("Expected module path".into());
         }
-        while self.peek_token == Token::Dot {
+        while self.peek_token == Token::ColonColon {
             self.next_token();
             if self.peek_token == Token::LBrace {
                 break;
@@ -593,19 +607,17 @@ impl<'a> Parser<'a> {
             if let Token::Ident(p) = &self.current_token {
                 path.push(p.clone());
             } else {
-                return Err("Expected ident in import path".into());
+                return Err("Expected ident in use path".into());
             }
         }
 
         let mut items = Vec::new();
-        let has_list = (self.current_token == Token::Dot && self.peek_token == Token::LBrace)
-            || self.peek_token == Token::LBrace;
+        let has_list = self.current_token == Token::ColonColon && self.peek_token == Token::LBrace;
+        if self.peek_token == Token::LBrace && !has_list {
+            return Err("Expected '::' before '{' in use list".into());
+        }
         if has_list {
-            if self.current_token == Token::Dot {
-                self.next_token();
-            } else {
-                self.next_token();
-            }
+            self.next_token();
             self.next_token();
             while self.current_token != Token::RBrace && self.current_token != Token::Eof {
                 if let Token::Ident(n) = &self.current_token {
@@ -632,7 +644,7 @@ impl<'a> Parser<'a> {
         }
         self.next_token();
 
-        Ok(Decl::Import { path, items })
+        Ok(Decl::Use { path, items })
     }
 
     pub fn parse_fn_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
@@ -763,18 +775,28 @@ impl<'a> Parser<'a> {
                 }
                 Token::Ident(n) => {
                     let name = n.clone();
-                    if !self.expect_peek(Token::Colon) {
-                        return Err("Expected ':'".into());
-                    }
-                    self.next_token();
-                    let ty = self.parse_type()?;
-                    match (&name[..], &ty) {
-                        ("self", Type::Reference { is_mut, .. }) => Param::SelfRef { is_mut: *is_mut },
-                        ("self", _) => Param::SelfVal,
-                        _ => Param::Named {
-                            pattern: Spanned { node: Pattern::Bind(name), span },
-                            ty,
-                        },
+                    if self.peek_token == Token::LBrace {
+                        let pattern = self.parse_pattern()?;
+                        if !self.expect_peek(Token::Colon) {
+                            return Err("Expected ':' after destructure pattern".into());
+                        }
+                        self.next_token();
+                        let ty = self.parse_type()?;
+                        Param::Named { pattern, ty }
+                    } else {
+                        if !self.expect_peek(Token::Colon) {
+                            return Err("Expected ':'".into());
+                        }
+                        self.next_token();
+                        let ty = self.parse_type()?;
+                        match (&name[..], &ty) {
+                            ("self", Type::Reference { is_mut, .. }) => Param::SelfRef { is_mut: *is_mut },
+                            ("self", _) => Param::SelfVal,
+                            _ => Param::Named {
+                                pattern: Spanned { node: Pattern::Bind(name), span },
+                                ty,
+                            },
+                        }
                     }
                 }
                 _ => return Err(format!("Unexpected param token: {:?}", self.current_token)),

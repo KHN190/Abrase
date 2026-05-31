@@ -1,4 +1,15 @@
 use polka::{HANDLE_NONE, HANDLE_SLOT_MAX};
+use std::collections::HashMap;
+
+#[inline(always)]
+pub fn handle_parts(raw: u64) -> (u32, u32) {
+    (((raw >> 24) & 0x00FF_FFFF) as u32, (raw & 0x00FF_FFFF) as u32)
+}
+
+#[inline(always)]
+pub fn make_handle(slot: u32, generation: u32) -> u64 {
+    ((slot as u64) << 24) | (generation as u64 & 0x00FF_FFFF)
+}
 
 pub const HEAP_BYTES_PER_SLOT: usize = 8 + 1; // data u64 + amortized mask bit
 
@@ -14,6 +25,8 @@ pub struct Heap {
     generation: Vec<u32>,
     free_list: Vec<u32>,
     bytes_used: usize,
+    trace_slot: Option<u32>,
+    buffer_pool: HashMap<usize, Vec<Cell>>,
 }
 
 #[inline]
@@ -43,6 +56,8 @@ impl Heap {
             generation: Vec::new(),
             free_list: Vec::new(),
             bytes_used: 0,
+            trace_slot: std::env::var("TRACE_SLOT").ok().and_then(|v| v.parse::<u32>().ok()),
+            buffer_pool: HashMap::new(),
         }
     }
 
@@ -57,8 +72,24 @@ impl Heap {
         Cell { data, mask: mask.into_boxed_slice() }
     }
 
+    fn take_cell(&mut self, size: usize, init_mask: &[u64]) -> Cell {
+        if let Some(mut cell) = self.buffer_pool.get_mut(&size).and_then(|v| v.pop()) {
+            for d in cell.data.iter_mut() { *d = HANDLE_NONE; }
+            for w in cell.mask.iter_mut() { *w = 0; }
+            let copy_n = init_mask.len().min(cell.mask.len());
+            cell.mask[..copy_n].copy_from_slice(&init_mask[..copy_n]);
+            cell
+        } else {
+            Self::make_cell(size, init_mask)
+        }
+    }
+
+    fn recycle(&mut self, cell: Cell) {
+        self.buffer_pool.entry(cell.data.len()).or_default().push(cell);
+    }
+
     fn alloc_inner(&mut self, size: usize, init_mask: &[u64]) -> Result<(u32, u32), String> {
-        let cell = Self::make_cell(size, init_mask);
+        let cell = self.take_cell(size, init_mask);
         self.bytes_used = self.bytes_used.saturating_add(
             size * 8 + mask_words_for(size) * 8
         );
@@ -81,7 +112,7 @@ impl Heap {
             let h = (self.cells.len() - 1) as u32;
             (h, 0)
         };
-        if std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(h)).unwrap_or(false) {
+        if self.trace_slot == Some(h) {
             eprintln!("[ALLOC] slot {} gen {} size {}", h, g, size);
         }
         Ok((h, g))
@@ -177,8 +208,21 @@ impl Heap {
             && self.generation[idx] == generation
     }
 
+    pub fn rc_inc_handle(&mut self, raw: u64) -> Result<(), String> {
+        if raw == HANDLE_NONE { return Ok(()); }
+        let (s, g) = handle_parts(raw);
+        self.rc_inc(s, g)
+    }
+
+    pub fn rc_dec_handle(&mut self, raw: u64) -> Result<(), String> {
+        if raw == HANDLE_NONE { return Ok(()); }
+        let (s, g) = handle_parts(raw);
+        self.rc_dec(s, g)?;
+        Ok(())
+    }
+
     pub fn rc_inc(&mut self, slot: u32, generation: u32) -> Result<(), String> {
-        let trace = std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(slot)).unwrap_or(false);
+        let trace = self.trace_slot == Some(slot);
         let idx = self.check(slot, generation, "rc_inc")?;
         self.rc[idx] = self.rc[idx]
             .checked_add(1)
@@ -191,7 +235,7 @@ impl Heap {
 
     // At rc=0: recursively rc_dec child handles per cell mask, then reclaim.
     pub fn rc_dec(&mut self, slot: u32, generation: u32) -> Result<bool, String> {
-        let trace = std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(slot)).unwrap_or(false);
+        let trace = self.trace_slot == Some(slot);
         if trace {
             let live_gen = self.generation.get(slot as usize).copied().unwrap_or(0);
             let is_live = self.cells.get(slot as usize).map(|c| c.is_some()).unwrap_or(false);
@@ -225,12 +269,13 @@ impl Heap {
                 }
             }
         }
+        self.recycle(cell);
         Ok(true)
     }
 
     // Idempotent against rc=0 reclaim. Used by region_pop.
     pub fn force_free(&mut self, slot: u32, generation: u32) -> Result<(), String> {
-        let trace = std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(slot)).unwrap_or(false);
+        let trace = self.trace_slot == Some(slot);
         let idx = slot as usize;
         if idx >= self.cells.len() { return Ok(()); }
         if self.cells[idx].is_none() {
@@ -261,6 +306,7 @@ impl Heap {
                 }
             }
         }
+        self.recycle(cell);
         Ok(())
     }
 
@@ -274,5 +320,6 @@ impl Heap {
         self.generation.clear();
         self.free_list.clear();
         self.bytes_used = 0;
+        self.buffer_pool.clear();
     }
 }

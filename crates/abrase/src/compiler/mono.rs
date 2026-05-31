@@ -3,15 +3,12 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::error::{Error, ErrorCode};
 
-pub fn monomorphize(decls: Vec<Decl>) -> Result<Vec<Decl>, Vec<Error>> {
-    Mono::new(decls, HashMap::new()).run()
-}
-
-pub fn monomorphize_with_methods(
+pub fn monomorphize_with_methods_and_builtins(
     decls: Vec<Decl>,
     method_dispatch: HashMap<(String, String), String>,
+    builtin_returns: HashMap<String, Type>,
 ) -> Result<Vec<Decl>, Vec<Error>> {
-    Mono::new(decls, method_dispatch).run()
+    Mono::new(decls, method_dispatch, builtin_returns).run()
 }
 
 struct Mono {
@@ -20,8 +17,9 @@ struct Mono {
     /// `(receiver_type_name, method_name) -> mangled fn name`. Empty for
     /// plain `monomorphize` callers; populated when impl-lift has run.
     method_dispatch: HashMap<(String, String), String>,
-    out_passthrough: Vec<Decl>,
-    out_concrete: Vec<FnDecl>,
+    /// mangled fn name -> return type, for builtins that aren't in `fn_sigs`.
+    builtin_returns: HashMap<String, Type>,
+    out: Vec<Decl>,
     out_specials: Vec<FnDecl>,
     pending: Vec<(String, Vec<Type>)>,
     done: HashSet<String>,
@@ -29,11 +27,14 @@ struct Mono {
 }
 
 impl Mono {
-    fn new(decls: Vec<Decl>, method_dispatch: HashMap<(String, String), String>) -> Self {
+    fn new(
+        decls: Vec<Decl>,
+        method_dispatch: HashMap<(String, String), String>,
+        builtin_returns: HashMap<String, Type>,
+    ) -> Self {
         let mut generic_fns = HashMap::new();
         let mut fn_sigs = HashMap::new();
-        let mut out_passthrough = Vec::new();
-        let mut out_concrete = Vec::new();
+        let mut out = Vec::with_capacity(decls.len());
         for decl in decls {
             match decl {
                 Decl::Fn(fd) if !fd.generics.is_empty() => {
@@ -41,17 +42,17 @@ impl Mono {
                 }
                 Decl::Fn(fd) => {
                     fn_sigs.insert(fd.name.clone(), fn_sig(&fd));
-                    out_concrete.push(fd);
+                    out.push(Decl::Fn(fd));
                 }
-                other => out_passthrough.push(other),
+                other => out.push(other),
             }
         }
         Self {
             generic_fns,
             fn_sigs,
             method_dispatch,
-            out_passthrough,
-            out_concrete,
+            builtin_returns,
+            out,
             out_specials: Vec::new(),
             pending: Vec::new(),
             done: HashSet::new(),
@@ -60,14 +61,16 @@ impl Mono {
     }
 
     fn run(mut self) -> Result<Vec<Decl>, Vec<Error>> {
-        // Walk every concrete fn
-        let concrete: Vec<FnDecl> = std::mem::take(&mut self.out_concrete);
-        let mut rewritten_concrete = Vec::with_capacity(concrete.len());
-        for mut fd in concrete {
-            self.rewrite_fn_body(&mut fd, &HashMap::new());
-            rewritten_concrete.push(fd);
+        let len = self.out.len();
+        for i in 0..len {
+            if matches!(self.out[i], Decl::Fn(_)) {
+                let taken = std::mem::replace(&mut self.out[i], Decl::ModExit);
+                if let Decl::Fn(mut fd) = taken {
+                    self.rewrite_fn_body(&mut fd, &HashMap::new());
+                    self.out[i] = Decl::Fn(fd);
+                }
+            }
         }
-        self.out_concrete = rewritten_concrete;
 
         // Drain the worklist. Each pop emits a single specialization.
         while let Some((fn_name, type_args)) = self.pending.pop() {
@@ -114,15 +117,13 @@ impl Mono {
             self.out_specials.push(new_fd);
         }
 
-        // Assemble output: always include passthrough and concrete functions.
-        let mut out = self.out_passthrough;
-        for fd in self.out_concrete { out.push(Decl::Fn(fd)); }
+        let mut out = self.out;
 
         if !self.errors.is_empty() {
             return Ok(out);
         }
 
-        // Only add specializations if no errors occurred.
+        // Specializations append at the end (entry-module scope).
         for fd in self.out_specials { out.push(Decl::Fn(fd)); }
         Ok(out)
     }
@@ -184,11 +185,12 @@ impl Mono {
         subst: &HashMap<String, Type>,
     ) -> Option<Type> {
 
-        self.try_rewrite_method_call(expr, env);
+        self.try_rewrite_method_call(expr, env, subst);
 
         let call_span = expr.span;
         match &mut expr.node {
             Expr::Literal(lit) => Some(lit_type(lit)),
+            Expr::Paren(inner) => self.rewrite_expr(&mut **inner, env, subst),
             Expr::Identifier(name) => env.get(name).cloned()
                 .or_else(|| self.fn_sigs.get(name).map(|(p, r, e)| Type::Function {
                     params: p.clone(),
@@ -210,6 +212,18 @@ impl Mono {
                 let mut arg_types: Vec<Option<Type>> = Vec::with_capacity(args.len());
                 for a in args.iter_mut() {
                     arg_types.push(self.rewrite_expr(a, env, subst));
+                }
+                if matches!(callee.node, Expr::FieldAccess { .. }) {
+                    self.rewrite_expr(&mut **callee, env, subst);
+                    self.try_rewrite_method_call(expr, env, subst);
+                    if let Expr::Call { callee: cb, .. } = &expr.node {
+                        if let Expr::Identifier(name) = &cb.node {
+                            if let Some((_, ret, _)) = self.fn_sigs.get(name) {
+                                return Some(ret.clone());
+                            }
+                        }
+                    }
+                    return None;
                 }
                 let callee_name = if let Expr::Identifier(n) = &callee.node {
                     Some(n.clone())
@@ -395,12 +409,16 @@ impl Mono {
         &mut self,
         expr: &mut Spanned<Expr>,
         env: &HashMap<String, Type>,
+        subst: &HashMap<String, Type>,
     ) {
         let mangled_opt: Option<String> = if let Expr::Call { callee, .. } = &expr.node {
             if let Expr::FieldAccess { base, field } = &callee.node {
-                let base_ty = peek_type(base, env, &self.fn_sigs);
-                base_ty.as_ref()
-                    .and_then(|t| receiver_name_of(t))
+                let base_ty = peek_type_with_builtins(base, env, &self.fn_sigs, &self.builtin_returns);
+                let recv = base_ty.as_ref().and_then(|t| receiver_name_of(t));
+                let recv_sub = recv.as_ref().and_then(|n| {
+                    subst.get(n).and_then(|t| receiver_name_of(t))
+                });
+                recv_sub.or(recv)
                     .and_then(|n| self.method_dispatch.get(&(n, field.clone())).cloned())
             } else { None }
         } else { None };
@@ -544,8 +562,29 @@ fn peek_type(
                 _ => Some(inner),
             }
         }
+        Expr::Call { callee, .. } => {
+            if let Expr::Identifier(name) = &callee.node {
+                fn_sigs.get(name).map(|(_, r, _)| r.clone())
+            } else { None }
+        }
+        Expr::Paren(inner) => peek_type(inner, env, fn_sigs),
+        Expr::Block(b) => b.ret.as_deref().and_then(|e| peek_type(e, env, fn_sigs)),
         _ => None,
     }
+}
+
+fn peek_type_with_builtins(
+    expr: &Spanned<Expr>,
+    env: &HashMap<String, Type>,
+    fn_sigs: &HashMap<String, (Vec<Type>, Type, Vec<EffectItem>)>,
+    builtin_returns: &HashMap<String, Type>,
+) -> Option<Type> {
+    if let Expr::Call { callee, .. } = &expr.node {
+        if let Expr::Identifier(name) = &callee.node {
+            if let Some(t) = builtin_returns.get(name) { return Some(t.clone()); }
+        }
+    }
+    peek_type(expr, env, fn_sigs)
 }
 
 fn receiver_name_of(ty: &Type) -> Option<String> {

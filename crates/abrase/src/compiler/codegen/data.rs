@@ -24,7 +24,28 @@ impl Compiler {
     }
 }
 
+pub(in crate::compiler) fn type_is_unboxed(ty: &ast::Type) -> bool {
+    match ty {
+        ast::Type::Named(n) => matches!(n.as_str(), "Int" | "Float" | "Bool" | "Char"),
+        ast::Type::Tuple(items) => items.is_empty(),
+        _ => false,
+    }
+}
+
 impl Compiler {
+    pub(in crate::compiler) fn load_module_table(&mut self) -> Result<Register, String> {
+        if let Some(r) = self.module_table_reg { return Ok(r); }
+        let port_reg = self.alloc_register()?;
+        let port_val = ((crate::bytecode::MODULE_ID as i64) << 8)
+            | (crate::bytecode::MODULE_PORT_TABLE as i64);
+        let idx = self.add_constant(Value::from_int(port_val))?;
+        self.emit(OpCode::PushConst(port_reg, idx));
+        let table = self.alloc_register()?;
+        self.emit(OpCode::Dei(table, port_reg));
+        self.module_table_reg = Some(table);
+        Ok(table)
+    }
+
     pub(in crate::compiler) fn compile_const_value(
         &mut self,
         cv: &super::inference::ConstValue,
@@ -37,8 +58,10 @@ impl Compiler {
                 self.emit(OpCode::Alloc(dest, count));
                 for (i, e) in elems.iter().enumerate() {
                     let off = super::scaffold::to_u16(i, "Array const offset")?;
+                    let mark = self.snapshot_register_high_water();
                     let v = self.compile_const_value(e)?;
                     self.emit(OpCode::St(v, dest, off));
+                    self.restore_register_high_water(mark);
                 }
                 Ok(dest)
             }
@@ -166,6 +189,21 @@ impl Compiler {
         if let Some(cv) = self.const_values.get(name).cloned() {
             return self.compile_const_value(&cv);
         }
+        if let Some(offset) = self.resolve_static_offset(name) {
+            let unboxed = self.resolve_static_type(name).map(type_is_unboxed).unwrap_or(false);
+            let table = self.load_module_table()?;
+            let dest = self.alloc_register()?;
+            self.emit(OpCode::Ld(dest, table, offset));
+            if unboxed { self.set_reg_handle(dest, false); }
+            return Ok(dest);
+        }
+        if let Some(fid) = self.resolve_fn_callee(name) {
+            let dest = self.alloc_register()?;
+            let idx = self.add_constant(Value::from_int(fid as i64))?;
+            self.emit(OpCode::PushConst(dest, idx));
+            self.set_reg_handle(dest, false);
+            return Ok(dest);
+        }
         if let Some(info) = self.layouts.variants.get(name).cloned() {
             let dest = self.alloc_register()?;
             self.emit(OpCode::Alloc(dest, 1));
@@ -253,11 +291,24 @@ impl Compiler {
                 }
             }
         }
+        let base_ty = self.infer_expr_type(base);
         let base_reg = self.compile_expr(base)?;
-        let type_name = self.infer_expr_type(base).and_then(|t| match t {
-            ast::Type::Named(n) => Some(n),
-            _ => None,
-        }).ok_or_else(|| format!("Cannot determine record type for field access '.{}'", field))?;
+        if let Some(ast::Type::Tuple(_)) = base_ty {
+            let idx: u16 = field.parse()
+                .map_err(|_| format!("Tuple field must be a non-negative integer, got '{}'", field))?;
+            let dest = self.alloc_register()?;
+            self.emit(OpCode::Ld(dest, base_reg, idx));
+            return Ok(dest);
+        }
+        fn unwrap_named(t: ast::Type) -> Option<String> {
+            match t {
+                ast::Type::Named(n) => Some(n),
+                ast::Type::Reference { inner, .. } => unwrap_named(*inner),
+                _ => None,
+            }
+        }
+        let type_name = base_ty.and_then(unwrap_named)
+            .ok_or_else(|| format!("Cannot determine record type for field access '.{}'", field))?;
         let layout = self.layouts.records.get(&type_name)
             .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
         let idx = layout.offset_of(field)
@@ -276,8 +327,10 @@ impl Compiler {
         self.emit(OpCode::Alloc(dest, count));
         for (i, item) in items.iter().enumerate() {
             let offset = to_u16(i, "Array element offset")?;
+            let mark = self.snapshot_register_high_water();
             let v = self.compile_expr(item)?;
             self.emit(OpCode::St(v, dest, offset));
+            self.restore_register_high_water(mark);
         }
         Ok(dest)
     }
@@ -303,8 +356,10 @@ impl Compiler {
         self.emit(OpCode::Alloc(dest, count));
         for (i, item) in items.iter().enumerate() {
             let offset = to_u16(i, "Tuple element offset")?;
+            let mark = self.snapshot_register_high_water();
             let v = self.compile_expr(item)?;
             self.emit(OpCode::St(v, dest, offset));
+            self.restore_register_high_water(mark);
         }
         Ok(dest)
     }
@@ -322,11 +377,13 @@ impl Compiler {
         let n_u16 = to_u16(n, "Array-repeat length")?;
         self.emit(OpCode::Alloc(dest, n_u16));
         let src = self.compile_expr(elem)?;
+        let mark = self.snapshot_register_high_water();
         for i in 0..n {
             let offset = to_u16(i, "Array-repeat offset")?;
             let copy = self.alloc_register()?;
             self.emit(OpCode::Copy(copy, src));
             self.emit(OpCode::St(copy, dest, offset));
+            self.restore_register_high_water(mark);
         }
         Ok(dest)
     }

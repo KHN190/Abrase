@@ -234,6 +234,40 @@ fn test_rc_inc_keeps_cell_alive_until_balanced() {
 }
 
 #[test]
+fn test_fresh_alloc_starts_at_generation_zero() {
+    use myriad::memory::Heap;
+    let mut heap = Heap::new();
+    let (slot, g_) = heap.alloc(2);
+    assert_eq!((slot, g_), (0, 0));
+    assert!(heap.is_live(slot, g_));
+    assert_eq!(heap.live_count(), 1);
+}
+
+#[test]
+fn test_freed_slot_is_reused_with_bumped_generation() {
+    use myriad::memory::Heap;
+    let mut heap = Heap::new();
+    let (slot, g0) = heap.alloc(1);
+    assert!(heap.rc_dec(slot, g0).unwrap());
+    let (slot2, g1) = heap.alloc(1);
+    assert_eq!(slot2, slot, "freed slot must be reused");
+    assert_eq!(g1, g0 + 1, "reused slot must bump generation");
+    assert!(!heap.is_live(slot, g0), "stale handle must not be live");
+    assert!(heap.is_live(slot2, g1));
+}
+
+#[test]
+fn test_force_free_is_idempotent() {
+    use myriad::memory::Heap;
+    let mut heap = Heap::new();
+    let (slot, g_) = heap.alloc(1);
+    heap.force_free(slot, g_).unwrap();
+    assert!(!heap.is_live(slot, g_));
+    heap.force_free(slot, g_).unwrap();
+    assert_eq!(heap.live_count(), 0);
+}
+
+#[test]
 fn test_recursive_drop_reclaims_nested_handles() {
     use myriad::memory::Heap;
     let mut heap = Heap::new();

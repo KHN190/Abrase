@@ -20,8 +20,8 @@ impl Compiler {
         self.register_typed_native("print",    vec![s.clone()],            u.clone(), 1);
         self.register_typed_native("println",  vec![s.clone()],            u.clone(), 1);
         // Float-only math
-        self.register_typed_native("ceil",     vec![f.clone()],            i.clone(), 1);
-        self.register_typed_native("flr",      vec![f.clone()],            i.clone(), 1);
+        self.register_typed_native("ceil",     vec![f.clone()],            f.clone(), 1);
+        self.register_typed_native("flr",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("cos",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("sin",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("sqrt",     vec![f.clone()],            f.clone(), 1);
@@ -101,13 +101,18 @@ impl Compiler {
         };
         checker.insert_var("device_out".into(), device_out_ty, false, ast::Span { line: 0, col: 0 });
 
+        self.register_builtin_effects(checker);
+
         for decl in self.host_fns.values() {
             let fn_ty = TyType::Function {
                 params: decl.params.clone(),
-                effects: vec![],
+                effects: checker.convert_effect_items(&decl.effects),
                 ret: Box::new(decl.ret.clone()),
             };
             checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+            if !decl.effects.is_empty() {
+                checker.register_function_effects(decl.name.clone(), decl.effects.clone());
+            }
         }
         for (name, (params, ret)) in &self.builtin_types {
             let fn_ty = TyType::Function {
@@ -118,7 +123,6 @@ impl Compiler {
             checker.insert_var(name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
         }
         self.register_builtin_traits(checker);
-        self.register_builtin_effects(checker);
     }
 
     fn register_builtin_traits(&self, checker: &mut crate::typeck::Checker) {
@@ -193,6 +197,9 @@ impl Compiler {
         for name in &["rand", "srand"] {
             checker.register_function_effects(name.to_string(), nondet.clone());
         }
+        // Graphics: a built-in user effect for screen/draw natives, kept
+        // separate from <IO> so a cart can declare "draws but no file/net".
+        checker.register_effect("Graphics".into(), vec![]);
     }
 
     pub(super) fn seed_builtin_method_dispatch(

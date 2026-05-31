@@ -302,7 +302,7 @@ fn verify_check_program_marks_public_effect() {
 fn verify_check_program_registers_imports() {
     let mut checker = Checker::new();
 
-    let decl = abrase::ast::Decl::Import {
+    let decl = abrase::ast::Decl::Use {
         path: vec!["std".into()],
         items: vec![
             abrase::ast::ImportItem {
@@ -323,7 +323,7 @@ fn verify_check_program_registers_imports() {
 fn verify_check_program_registers_import_with_alias() {
     let mut checker = Checker::new();
 
-    let decl = abrase::ast::Decl::Import {
+    let decl = abrase::ast::Decl::Use {
         path: vec!["io".into()],
         items: vec![
             abrase::ast::ImportItem {
@@ -342,20 +342,6 @@ fn verify_check_program_registers_import_with_alias() {
 
 // Module Declaration Tests
 
-#[test]
-fn verify_check_program_pushes_module() {
-    let mut checker = Checker::new();
-
-    let decl = abrase::ast::Decl::Mod("mymodule".into());
-
-    checker.check_program(&[decl]);
-
-    // Module should be in scope - verify by checking if items in this module are accessible
-    checker.push_module("test".into());
-
-    // If the module was properly pushed and then we can navigate, it worked
-    checker.pop_module();
-}
 
 // Multi-Declaration Tests
 
@@ -1002,22 +988,6 @@ fn verify_check_fn_decl_allows_correct_return_type() {
 // Infrastructure & Context Management
 
 #[test]
-fn verify_function_registry() {
-    let mut checker = Checker::new();
-    checker.register_function(
-        "add".into(),
-        vec![Type::Int, Type::Int],
-        Type::Int,
-    );
-
-    let result = checker.get_function("add");
-    assert!(result.is_some());
-    let (params, ret) = result.unwrap();
-    assert_eq!(params, vec![Type::Int, Type::Int]);
-    assert_eq!(ret, Type::Int);
-}
-
-#[test]
 fn verify_type_registry() {
     let mut checker = Checker::new();
     checker.register_type(
@@ -1027,16 +997,6 @@ fn verify_type_registry() {
 
     let result = checker.get_type("Point");
     assert!(result.is_some());
-}
-
-#[test]
-fn verify_const_registry() {
-    let mut checker = Checker::new();
-    checker.register_const("PI".into(), Type::Float);
-
-    let result = checker.get_const("PI");
-    assert!(result.is_some());
-    assert_eq!(result.unwrap(), Type::Float);
 }
 
 // ── Gap tests ─────────────────────────────────────────────────────────────────

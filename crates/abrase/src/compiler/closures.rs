@@ -217,7 +217,7 @@ impl ClosureLowering {
                 self.walk_expr(e, env);
                 for arm in arms { self.walk_expr(&arm.body, env); }
             }
-            Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) => self.walk_expr(e, env),
+            Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) | Expr::Paren(e) => self.walk_expr(e, env),
             Expr::Resume(Some(e)) => self.walk_expr(e, env),
             Expr::Index { base, index } => {
                 self.walk_expr(base, env);
@@ -352,7 +352,7 @@ pub fn collect_free_vars(
             collect_free_vars(e, bound, seen, out);
             for arm in arms { collect_free_vars(&arm.body, bound, seen, out); }
         }
-        Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) => {
+        Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) | Expr::Paren(e) => {
             collect_free_vars(e, bound, seen, out);
         }
         Expr::Resume(Some(e)) => collect_free_vars(e, bound, seen, out),
@@ -436,7 +436,7 @@ pub fn collect_assigned_idents(
             collect_assigned_idents(e, candidates, out);
             for arm in arms { collect_assigned_idents(&arm.body, candidates, out); }
         }
-        Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) => {
+        Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) | Expr::Paren(e) => {
             collect_assigned_idents(e, candidates, out);
         }
         Expr::Resume(Some(e)) => collect_assigned_idents(e, candidates, out),
@@ -584,6 +584,7 @@ fn rewrite_node(
         Expr::Return(opt) => Expr::Return(opt.as_ref().map(|e| Box::new(rw(e, layout, params, self_name, lifted_fn_name, cells)))),
         Expr::Throw(e) => Expr::Throw(Box::new(rw(e, layout, params, self_name, lifted_fn_name, cells))),
         Expr::Question(e) => Expr::Question(Box::new(rw(e, layout, params, self_name, lifted_fn_name, cells))),
+        Expr::Paren(e) => Expr::Paren(Box::new(rw(e, layout, params, self_name, lifted_fn_name, cells))),
         Expr::Index { base, index } => Expr::Index {
             base: Box::new(rw(base, layout, params, self_name, lifted_fn_name, cells)),
             index: Box::new(rw(index, layout, params, self_name, lifted_fn_name, cells)),
@@ -672,6 +673,9 @@ fn infer_type_from_expr(expr: &Spanned<Expr>) -> Option<Type> {
         Expr::Literal(Literal::Bool(_)) => Some(Type::Named("Bool".into())),
         Expr::Literal(Literal::String(_)) => Some(Type::Named("String".into())),
         Expr::Literal(Literal::Unit) => Some(Type::Named("Unit".into())),
+        Expr::Record { ty, .. } => ty.last().map(|n| Type::Named(n.clone())),
+        Expr::Variant { ty, .. } => ty.last().map(|n| Type::Named(n.clone())),
+        Expr::Paren(inner) => infer_type_from_expr(inner),
         _ => None,
     }
 }

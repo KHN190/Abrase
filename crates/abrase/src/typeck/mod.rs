@@ -4,18 +4,12 @@ use std::collections::HashMap;
 use crate::ast::{self, Span};
 use crate::ty::{Ownership, Type};
 
-fn elem_name(ty: &ast::Type) -> String {
-    match ty {
-        ast::Type::Named(n) => n.clone(),
-        _ => "?".into(),
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct TypeError {
     pub message: String,
     pub span: Span,
     pub context: Vec<String>,
+    pub module: Vec<String>,
 }
 
 impl TypeError {
@@ -53,8 +47,6 @@ struct VarMeta {
     ty: Type,
     is_mut: bool,
     is_moved: bool,
-    #[allow(dead_code)]
-    defined_at: Span,
     moved_at: Option<Span>,
     immut_borrow_count: usize,
     mut_borrow_active: bool,
@@ -79,7 +71,6 @@ pub struct Checker {
     effect_stack: Vec<Vec<String>>,
 
     // Type Environment
-    fn_registry: HashMap<String, (Vec<Type>, Type)>,
     type_registry: HashMap<String, ast::TypeBody>,
     variant_registry: HashMap<String, Vec<String>>, // type_name -> [case_names]
     const_registry: HashMap<String, Type>,
@@ -137,6 +128,8 @@ pub struct Checker {
     current_module: Vec<String>,
     public_items: std::collections::HashSet<String>,
     private_items: std::collections::HashSet<String>,
+    module_scope_stack: Vec<Vec<String>>,
+    module_scopes: HashMap<Vec<String>, Scope>,
 
     // Qualified Name Resolution
     qualified_names: HashMap<String, Vec<Vec<String>>>,
@@ -148,6 +141,7 @@ pub struct Checker {
     // Const Effect Checking
     function_effects: HashMap<String, Vec<ast::EffectItem>>,
     const_vars: std::collections::HashSet<String>,
+    pub(crate) static_vars: std::collections::HashMap<String, bool>,
     op_effects: HashMap<String, Vec<ast::EffectItem>>,
 
     // Effect Operations (effect_name::op_name -> Type)
@@ -155,6 +149,9 @@ pub struct Checker {
 
     // Type Aliases
     type_alias_registry: HashMap<String, Type>,
+
+    // Authoritative per-expression types, keyed by (module, span, expr-kind). Populated by infer_expr.
+    pub expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), Type>,
 }
 
 
@@ -181,7 +178,6 @@ impl Checker {
             loop_body_region_depth: Vec::new(),
             active_effects: Vec::new(),
             effect_stack: vec![Vec::new()],
-            fn_registry: HashMap::new(),
             type_registry: HashMap::new(),
             variant_registry: HashMap::new(),
             const_registry: HashMap::new(),
@@ -210,6 +206,8 @@ impl Checker {
             current_module: vec!["root".into()],
             public_items: std::collections::HashSet::new(),
             private_items: std::collections::HashSet::new(),
+            module_scope_stack: Vec::new(),
+            module_scopes: HashMap::new(),
             qualified_names: HashMap::new(),
             variance_registry: {
                 let mut m = HashMap::new();
@@ -225,12 +223,14 @@ impl Checker {
             named_subtype_registry: HashMap::new(),
             function_effects: HashMap::new(),
             const_vars: std::collections::HashSet::new(),
+            static_vars: std::collections::HashMap::new(),
             op_effects: HashMap::new(),
             effect_ops_registry: HashMap::new(),
             type_alias_registry: HashMap::new(),
             imported_names: HashMap::new(),
             import_collisions: std::collections::HashSet::new(),
             module_registry: HashMap::new(),
+            expr_types: HashMap::new(),
         }
     }
     pub fn enter_scope(&mut self) {
@@ -268,14 +268,13 @@ impl Checker {
     pub fn pretty_print_errors(&self, source: &str) -> String {
         self.errors.iter().map(|e| e.pretty_print(source)).collect::<Vec<_>>().join("\n")
     }
-    pub fn insert_var(&mut self, name: String, ty: Type, is_mut: bool, defined_at: Span) {
+    pub fn insert_var(&mut self, name: String, ty: Type, is_mut: bool, _defined_at: Span) {
         let depth = self.region_stack.len();
         if let Some(scope) = self.scopes.last_mut() {
             scope.vars.insert(name, VarMeta {
                 ty,
                 is_mut,
                 is_moved: false,
-                defined_at,
                 moved_at: None,
                 immut_borrow_count: 0,
                 mut_borrow_active: false,
@@ -311,6 +310,7 @@ impl Checker {
             message,
             span,
             context: self.context_stack.clone(),
+            module: self.current_module.clone(),
         });
         Type::Unknown
     }

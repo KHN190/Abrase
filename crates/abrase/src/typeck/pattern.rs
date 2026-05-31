@@ -541,6 +541,18 @@ impl Checker {
         if let Some(ty) = self.get_const(name) {
             return ty;
         }
+        if let Some((module_path, original)) = self.get_imported_name(name) {
+            if let Some(ty) = self.lookup_module_item(&module_path, &original) {
+                if self.is_accessible(&original, &module_path) {
+                    return ty;
+                }
+                return self.report_error(
+                    format!("'{}' is private in module {}; cannot import",
+                        original, module_path.join(".")),
+                    usage_span,
+                );
+            }
+        }
         self.report_error(format!("Undefined variable: {}", name), usage_span)
     }
 
@@ -615,9 +627,11 @@ impl Checker {
                     args: args.iter().map(|arg| self.convert_type(arg)).collect(),
                 }
             },
-            ast::Type::Array { elem, size } => {
-                // Track array sizes
-                Type::Named(format!("[{}; {}]", elem_name(elem), size))
+            ast::Type::Array { elem, .. } => {
+                Type::Generic {
+                    name: "Array".into(),
+                    args: vec![self.convert_type(elem)],
+                }
             },
             ast::Type::Tuple(tys) => {
                 Type::Tuple(tys.iter().map(|t| self.convert_type(t)).collect())

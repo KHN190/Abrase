@@ -1,0 +1,3 @@
+use leaf::{one};
+
+pub fn right_one() -> Int { one() }

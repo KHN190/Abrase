@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::lexer::Token;
 use super::core::Parser;
+use super::helpers::is_block_terminated;
 use super::precedence::Precedence;
 
 impl<'a> Parser<'a> {
@@ -37,7 +38,9 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let expr = self.parse_expr(Precedence::Lowest);
-                if self.current_token != Token::RBrace
+                let was_block = is_block_terminated(&expr.node);
+                if !was_block
+                    && self.current_token != Token::RBrace
                     && self.current_token != Token::Eof
                     && self.peek_token == Token::Semicolon
                 {

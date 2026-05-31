@@ -63,18 +63,27 @@ fn test_decl_const() {
 }
 
 #[test]
-fn test_decl_import() {
-    let input = "import std.io { Read, Write };";
+fn test_decl_use() {
+    let input = "use std::io::{Read, Write};";
     let mut p = Parser::new(Lexer::new(input));
     let decl = p.parse_decl().unwrap();
-    if let Decl::Import { path, items } = decl {
+    if let Decl::Use { path, items } = decl {
         assert_eq!(path.len(), 2);
         assert_eq!(path[0], "std");
         assert_eq!(path[1], "io");
         assert_eq!(items.len(), 2);
     } else {
-        panic!("Expected Import declaration");
+        panic!("Expected Use declaration");
     }
+}
+
+#[test]
+fn test_decl_use_without_double_colon_before_brace_is_rejected() {
+    let input = "use std::io {Read, Write};";
+    let mut p = Parser::new(Lexer::new(input));
+    let err = p.parse_decl().expect_err("expected '::'-required parse error");
+    assert!(err.contains("Expected '::' before '{'"),
+        "expected '::'-required error, got: {:?}", err);
 }
 
 #[test]

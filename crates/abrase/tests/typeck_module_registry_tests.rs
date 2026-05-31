@@ -278,11 +278,11 @@ fn verify_check_program_registers_type_in_module_registry() {
 }
 
 #[test]
-fn verify_check_program_mod_registers_submodule_and_subsequent_decls() {
+fn verify_modenter_registers_subsequent_decls_under_imported_module() {
     use abrase::ast;
     let mut c = mk();
     let decls = vec![
-        ast::Decl::Mod("utils".into()),
+        ast::Decl::ModEnter(vec!["utils".into()]),
         ast::Decl::Fn(ast::FnDecl {
             name: "helper".into(),
             is_pub: true,
@@ -294,14 +294,11 @@ fn verify_check_program_mod_registers_submodule_and_subsequent_decls() {
             generics: vec![],
             where_clause: vec![],
         }),
+        ast::Decl::ModExit,
     ];
     c.check_program(&decls);
-    // "utils" should be in root
-    assert!(c.lookup_module_item(&path(&["root"]), "utils").is_some(),
-        "Decl::Mod should register sub-module name in parent");
-    // "helper" should be in root::utils (the module was pushed before fn was processed)
-    assert!(c.lookup_module_item(&path(&["root", "utils"]), "helper").is_some(),
-        "fn declared after Mod should land in that module");
+    assert!(c.lookup_module_item(&path(&["utils"]), "helper").is_some(),
+        "fn inside ModEnter([utils])..ModExit should register under [utils]");
 }
 
 // ── 3.2: visibility at every segment ─────────────────────────────────────────

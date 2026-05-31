@@ -1,5 +1,5 @@
 use crate::{Heap, Value};
-use crate::device::DeviceTable;
+use crate::devices::DeviceTable;
 use crate::devices::{console, CONSOLE_ID};
 use crate::value::{alloc_string, read_string};
 use std::collections::BTreeMap;
@@ -142,7 +142,7 @@ fn print_native() -> NativeFn {
             let ptr = d[1..].as_ptr() as *const u8;
             unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
         };
-        write_console(ctx.devices, &bytes, "print")?;
+        write_console(ctx.devices, ctx.heap, &bytes, "print")?;
         Ok(plain(Value::ZERO))
     })
 }
@@ -159,16 +159,16 @@ fn println_native() -> NativeFn {
             let ptr = d[1..].as_ptr() as *const u8;
             unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
         };
-        write_console(ctx.devices, &bytes, "println")?;
-        write_console(ctx.devices, b"\n", "println")?;
+        write_console(ctx.devices, ctx.heap, &bytes, "println")?;
+        write_console(ctx.devices, ctx.heap, b"\n", "println")?;
         Ok(plain(Value::ZERO))
     })
 }
 
-fn write_console(devices: &mut DeviceTable, bytes: &[u8], op: &str) -> Result<(), String> {
+fn write_console(devices: &mut DeviceTable, heap: &mut Heap, bytes: &[u8], op: &str) -> Result<(), String> {
     let dev = devices.get_mut(CONSOLE_ID)
         .ok_or_else(|| format!("{}: Console device 0x{:02x} not installed", op, CONSOLE_ID))?;
-    dev.write_bytes(console::PORT_STDOUT, bytes)
+    dev.write_bytes(console::PORT_STDOUT, bytes, heap)
 }
 
 fn halt_native() -> NativeFn {
@@ -310,11 +310,11 @@ fn unit_to_s_native() -> NativeFn {
 }
 
 fn ceil_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_int(args[0].as_float().ceil() as i64))))
+    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().ceil()))))
 }
 
 fn flr_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_int(args[0].as_float().floor() as i64))))
+    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().floor()))))
 }
 
 fn cos_native()  -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().cos())))) }

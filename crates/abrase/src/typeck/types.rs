@@ -7,18 +7,6 @@ impl Checker {
 
     // Type Environment Management
 
-    pub fn register_function(&mut self, name: String, params: Vec<Type>, ret: Type) {
-        self.fn_registry.insert(name, (params, ret));
-    }
-
-    pub fn get_function(&self, name: &str) -> Option<(Vec<Type>, Type)> {
-        self.fn_registry.get(name).cloned()
-    }
-
-    pub fn register_function_type(&mut self, name: String, sig: (Vec<Type>, Type)) {
-        self.fn_registry.insert(name, sig);
-    }
-
     pub fn register_type(&mut self, name: String, body: ast::TypeBody) {
         if let ast::TypeBody::Variant(cases) = &body {
             let case_names: Vec<String> = cases.iter().map(|c| match c {
@@ -41,10 +29,6 @@ impl Checker {
 
     pub fn get_variant_cases(&self, type_name: &str) -> Option<&Vec<String>> {
         self.variant_registry.get(type_name)
-    }
-
-    pub fn register_const(&mut self, name: String, ty: Type) {
-        self.const_registry.insert(name, ty);
     }
 
     pub fn get_const(&self, name: &str) -> Option<Type> {
@@ -413,7 +397,7 @@ impl Checker {
 
                 if let Some(expected_ast_ty) = ty {
                     let expected_ty = self.convert_type(expected_ast_ty);
-                    if expected_ty != val_ty && val_ty != Type::Unknown {
+                    if !shared_region_relaxed_eq(&expected_ty, &val_ty) && val_ty != Type::Unknown {
                         self.report_error(
                             format!("Type mismatch: expected {:?}, found {:?}", expected_ty, val_ty),
                             value.span
@@ -602,5 +586,15 @@ fn type_mentions(ty: &ast::Type, self_type: &str) -> bool {
         ast::Type::Function { params, ret, .. } => {
             params.iter().any(|p| type_mentions(p, self_type)) || type_mentions(ret, self_type)
         }
+    }
+}
+
+fn shared_region_relaxed_eq(expected: &Type, actual: &Type) -> bool {
+    if expected == actual { return true; }
+    match (expected, actual) {
+        (Type::Shared { inner: ei, region: None }, Type::Shared { inner: ai, region: _ }) => {
+            shared_region_relaxed_eq(ei, ai)
+        }
+        _ => false,
     }
 }

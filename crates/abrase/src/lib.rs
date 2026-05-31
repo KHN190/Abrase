@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod error;
 pub mod lexer;
+pub mod loader;
 pub mod parser;
 pub mod ty;
 pub mod typeck;

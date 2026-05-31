@@ -1,0 +1,3 @@
+use lib::{double};
+
+fn main() -> Int { double(5) }

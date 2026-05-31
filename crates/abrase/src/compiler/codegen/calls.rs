@@ -11,11 +11,13 @@ pub(in crate::compiler) enum CallEnv {
 
 pub(in crate::compiler) enum CallTarget<'a> {
     Function { func_id: u16, env: CallEnv },
+    FuncReg  { fn_id_reg: Register },
     Method   { func_id: u16, receiver: &'a ast::Spanned<ast::Expr> },
     EnvLoad  { env_reg: Register, idx: u16 },
     CellLoad { env_reg: Register, idx: u16 },
     CellStore { env_reg: Register, idx: u16, value: &'a ast::Spanned<ast::Expr> },
     SharedCtor,
+    CloneVal { receiver: &'a ast::Spanned<ast::Expr> },
     HostFn { fn_id: u16 },
     VariantCtor { tag: u32 },
     UnresolvedMethod { receiver: String, field: String },
@@ -49,6 +51,7 @@ impl Compiler {
             CallTarget::CellLoad { env_reg, idx } => self.emit_cell_load(env_reg, idx),
             CallTarget::CellStore { env_reg, idx, value } => self.emit_cell_store(env_reg, idx, value),
             CallTarget::SharedCtor => self.emit_shared_ctor(args),
+            CallTarget::CloneVal { receiver } => self.emit_clone(receiver),
             CallTarget::HostFn { fn_id } => self.emit_host_fn_call(fn_id, args),
             CallTarget::VariantCtor { tag } => self.emit_variant_ctor(tag, args),
             CallTarget::Function { func_id, env: CallEnv::None }
@@ -57,6 +60,7 @@ impl Compiler {
                 self.emit_tail_self_call(args)
             }
             CallTarget::Function { func_id, env } => self.emit_func_call(func_id, env, args),
+            CallTarget::FuncReg { fn_id_reg } => self.emit_func_call_reg(fn_id_reg, args),
             CallTarget::Method { func_id, receiver } => self.emit_method_call(func_id, receiver, args),
             CallTarget::DeviceIn => self.emit_device_in(args),
             CallTarget::DeviceOut => self.emit_device_out(args),
@@ -86,6 +90,11 @@ impl Compiler {
         if let Some(t) = self.resolve_env_load_closure_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_effect_op_call(callee, call_span)? { return Ok(t); }
         if let Some(t) = self.resolve_method_call(callee)? { return Ok(t); }
+        if let ast::Expr::FieldAccess { base, field } = &callee.node {
+            if field == "clone" && args.is_empty() {
+                return Ok(CallTarget::CloneVal { receiver: base });
+            }
+        }
         if let Some(t) = self.resolve_host_or_ctor(callee, args)? { return Ok(t); }
         if let ast::Expr::FieldAccess { base, field } = &callee.node {
             let Some(recv) = self.receiver_type_name(base) else {
@@ -99,7 +108,12 @@ impl Compiler {
         let ast::Expr::Identifier(name) = &callee.node else {
             return Err("Call target must be a function identifier".to_string());
         };
-        let func_id = self.func_map.get(name).copied()
+        if let Some(&reg) = self.var_to_reg.get(name) {
+            if matches!(self.var_types.get(name), Some(ast::Type::Function { .. })) {
+                return Ok(CallTarget::FuncReg { fn_id_reg: reg });
+            }
+        }
+        let func_id = self.resolve_fn_callee(name)
             .ok_or_else(|| format!("Undefined function: {}", name))?;
         let fid = super::scaffold::to_u16(func_id, &format!("Function id for '{}'", name))?;
         Ok(CallTarget::Function { func_id: fid, env: CallEnv::None })
@@ -299,7 +313,16 @@ impl Compiler {
         let src = self.compile_expr(&args[0])?;
         let dest = self.alloc_register()?;
         self.emit(OpCode::Alloc(dest, 1));
-        self.emit(OpCode::St(src, dest, 0));
+        let tmp = self.alloc_register()?;
+        self.emit(OpCode::Copy(tmp, src));
+        self.emit(OpCode::St(tmp, dest, 0));
+        Ok(dest)
+    }
+
+    fn emit_clone(&mut self, receiver: &ast::Spanned<ast::Expr>) -> Result<Register, String> {
+        let src = self.compile_expr(receiver)?;
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::Copy(dest, src));
         Ok(dest)
     }
 
@@ -386,6 +409,7 @@ impl Compiler {
         env: CallEnv,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
+        let mark = self.snapshot_register_high_water();
         let env_to_pass = match env {
             CallEnv::None => None,
             CallEnv::Reg(r) => Some(r),
@@ -404,8 +428,27 @@ impl Compiler {
             staged.push((r, self.arg_should_move(arg)));
         }
         self.stage_call_args(&staged)?;
+        self.reclaim_temp_regs_above(mark);
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id));
+        Ok(dest)
+    }
+
+    fn emit_func_call_reg(
+        &mut self,
+        fn_id_reg: Register,
+        args: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Register, String> {
+        let mark = self.snapshot_register_high_water();
+        let mut staged: Vec<(Register, bool)> = Vec::new();
+        for arg in args {
+            let r = self.compile_expr(arg)?;
+            staged.push((r, self.arg_should_move(arg)));
+        }
+        self.stage_call_args(&staged)?;
+        self.reclaim_temp_regs_above(mark);
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::CallReg(dest, fn_id_reg));
         Ok(dest)
     }
 
@@ -449,6 +492,7 @@ impl Compiler {
         receiver: &ast::Spanned<ast::Expr>,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
+        let mark = self.snapshot_register_high_water();
         let r = self.compile_expr(receiver)?;
         let mut staged = vec![(r, self.arg_should_move(receiver))];
         for arg in args {
@@ -456,6 +500,7 @@ impl Compiler {
             staged.push((r, self.arg_should_move(arg)));
         }
         self.stage_call_args(&staged)?;
+        self.reclaim_temp_regs_above(mark);
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id));
         Ok(dest)

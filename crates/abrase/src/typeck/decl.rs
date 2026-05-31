@@ -157,6 +157,34 @@ impl Checker {
                 }
             },
 
+            ast::Decl::Static { name, ty, is_pub, is_mut, .. } => {
+                let static_type = self.convert_type(ty);
+                if matches!(static_type, Type::Shared { .. }) {
+                    self.report_error(
+                        format!("`static {}` cannot hold `Shared<T>`; Shared must be constructed inside a region", name),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                }
+                if matches!(static_type, Type::Reference { .. }) {
+                    self.report_error(
+                        format!("`static {}` cannot hold `&T`; references are region-scoped", name),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                }
+                let module_path = self.current_module.clone();
+                if self.lookup_module_item(&module_path, name).is_some() {
+                    self.report_error(
+                        format!("`{}` is already declared in this module", name),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                }
+                self.register_module_item(&module_path, name.clone(), static_type.clone());
+                self.insert_static_var(name.clone(), static_type, *is_mut);
+                if *is_pub {
+                    self.mark_public(name.clone());
+                }
+            },
+
             ast::Decl::Effect { name, is_pub, ops } => {
                 // Register effect name and per-op Function types for call-site resolution.
                 let module_path = self.current_module.clone();
@@ -177,21 +205,31 @@ impl Checker {
                 }
             },
 
-            ast::Decl::Import { path, items } => {
+            ast::Decl::Use { path, items } => {
                 self.register_import_items(path.clone(), items.clone());
 
                 for item in items {
                     let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
                     self.check_import_collision(&import_name, path.clone());
+
+                    if self.lookup_module_item(path, &item.name).is_some()
+                        && !self.is_accessible(&item.name, path)
+                    {
+                        self.report_error(
+                            format!("Cannot import '{}' from {}: item is private",
+                                item.name, path.join(".")),
+                            ast::Span { line: 0, col: 0 },
+                        );
+                    }
                 }
             },
 
-            ast::Decl::Mod(name) => {
-                // Register sub-module as an item in the parent, then enter it
-                let parent_module = self.current_module.clone();
-                self.register_module_item(&parent_module, name.clone(), Type::Named(format!("module::{}", name)));
-                self.mark_public(name.clone()); // sub-modules are public so they can be traversed
-                self.push_module(name.clone());
+            ast::Decl::ModEnter(path) => {
+                self.enter_imported_module(path.clone());
+            },
+
+            ast::Decl::ModExit => {
+                self.exit_imported_module();
             },
 
             ast::Decl::Impl { methods, for_type, trait_name, .. } => {
@@ -232,8 +270,28 @@ impl Checker {
                 }
             },
 
+            ast::Decl::Static { name, value, ty, .. } => {
+                let static_type = self.convert_type(ty);
+                let inferred = self.infer_expr(value);
+                if !self.types_compatible(&static_type, &inferred) {
+                    self.report_error(
+                        format!("`static {}` expression type mismatch: expected {:?}, got {:?}",
+                            name, static_type, inferred),
+                        value.span,
+                    );
+                }
+            },
+
             ast::Decl::Impl { methods, for_type, trait_name, generics, where_clause, .. } => {
                 self.check_impl_decl(for_type, trait_name, generics, where_clause, methods);
+            },
+
+            ast::Decl::ModEnter(path) => {
+                self.enter_imported_module(path.clone());
+            },
+
+            ast::Decl::ModExit => {
+                self.exit_imported_module();
             },
 
             _ => {},
@@ -263,8 +321,13 @@ impl Checker {
             match param {
                 ast::Param::Named { pattern, ty } => {
                     let param_type = self.convert_type(ty);
-                    if let ast::Pattern::Bind(name) = &pattern.node {
-                        self.insert_var(name.clone(), param_type, false, ast::Span { line: 0, col: 0 });
+                    match &pattern.node {
+                        ast::Pattern::Bind(name) => {
+                            self.insert_var(name.clone(), param_type, false, ast::Span { line: 0, col: 0 });
+                        }
+                        _ => {
+                            self.check_pattern(pattern, &param_type, pattern.span);
+                        }
                     }
                 },
                 ast::Param::SelfVal | ast::Param::SelfRef { .. } => {
@@ -552,6 +615,15 @@ impl Checker {
 
     pub fn resolve_field_access(&mut self, base_ty: &Type, field_name: &str, span: Span) -> Type {
         match base_ty {
+            Type::Reference { inner, .. } => self.resolve_field_access(inner, field_name, span),
+            Type::Tuple(elems) => {
+                if let Ok(idx) = field_name.parse::<usize>() {
+                    if let Some(t) = elems.get(idx) { return t.clone(); }
+                }
+                self.report_error(
+                    format!("Tuple has no element '{}'", field_name), span);
+                Type::Unknown
+            }
             Type::Named(type_name) => {
                 if let Some(type_body) = self.type_registry.get(type_name).cloned() {
                     match type_body {

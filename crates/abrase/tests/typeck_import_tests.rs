@@ -569,33 +569,6 @@ fn verify_deeply_nested_mixed_visibility() {
     checker.pop_module();
 }
 
-// Function Type Resolution with Paths
-
-#[test]
-fn verify_function_resolution_through_path() {
-    let mut checker = Checker::new();
-
-    // Register std.io.read as a function
-    checker.push_module("std".into());
-    checker.push_module("io".into());
-
-    checker.register_function_type(
-        "read".into(),
-        (vec![Type::String], Type::String),
-    );
-    checker.mark_public("read".into());
-
-    checker.pop_module();
-    checker.pop_module();
-
-    // Try to access
-    checker.push_module("app".into());
-
-    let is_accessible = checker.is_qualified_accessible(&["std".into(), "io".into(), "read".into()]);
-    assert!(is_accessible);
-
-    checker.pop_module();
-}
 
 // Type Resolution with Paths
 

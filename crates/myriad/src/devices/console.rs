@@ -26,17 +26,21 @@ pub trait Console {
 }
 
 impl Device for Box<dyn Console> {
-    fn read(&mut self, port: u8) -> Result<Value, String> {
-        match port {
+    fn read(&mut self, port: u8) -> Result<(Value, bool), String> {
+        let v = match port {
             PORT_STDIN => match self.read_byte()? {
-                Some(b) => Ok(Value::from_int(b as i64)),
-                None => Ok(Value::from_int(-1)),
+                Some(b) => Value::from_int(b as i64),
+                None => Value::from_int(-1),
             },
-            _ => Ok(Value::from_int(0)),
-        }
+            _ => Value::from_int(0),
+        };
+        Ok((v, false))
     }
 
-    fn write(&mut self, port: u8, val: Value) -> Result<(), String> {
+    fn write(&mut self, port: u8, val: Value, is_handle: bool, heap: &mut crate::memory::Heap)
+        -> Result<(), String>
+    {
+        if is_handle { heap.rc_dec_handle(val.raw())?; return Ok(()); }
         let n = val.as_int();
         match port {
             PORT_STDOUT => self.write_stdout((n & 0xFF) as u8),
@@ -46,14 +50,13 @@ impl Device for Box<dyn Console> {
         }
     }
 
-    fn write_bytes(&mut self, port: u8, bytes: &[u8]) -> Result<(), String> {
+    fn write_bytes(&mut self, port: u8, bytes: &[u8], _heap: &mut crate::memory::Heap)
+        -> Result<(), String>
+    {
         match port {
             PORT_STDOUT => self.write_stdout_bulk(bytes),
             PORT_STDERR => self.write_stderr_bulk(bytes),
-            _ => {
-                for &b in bytes { self.write(port, Value::from_int(b as i64))?; }
-                Ok(())
-            }
+            _ => Ok(()),
         }
     }
 }

@@ -1,0 +1,3 @@
+static SECRET: Int = 99;
+
+pub fn read() -> Int { SECRET }

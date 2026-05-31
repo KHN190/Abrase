@@ -1,0 +1,3 @@
+use a::{ax};
+
+pub fn x() -> Int { ax() }

@@ -216,12 +216,18 @@ impl Checker {
         self.const_vars.insert(name.clone());
         self.const_registry.insert(name, ty);
     }
+
+    pub fn insert_static_var(&mut self, name: String, ty: Type, is_mut: bool) {
+        self.static_vars.insert(name.clone(), is_mut);
+        self.const_registry.insert(name, ty);
+    }
     fn has_pure_effects(effects: &[ast::EffectItem]) -> bool {
         effects.is_empty()
     }
 
     pub fn infer_expr_effects(&self, expr: &ast::Expr) -> Vec<ast::EffectItem> {
         match expr {
+            ast::Expr::Paren(inner) => self.infer_expr_effects(&inner.node),
             ast::Expr::Literal(_) => vec![],
             ast::Expr::Identifier(name) => {
                 // If referencing a const var, it's pure

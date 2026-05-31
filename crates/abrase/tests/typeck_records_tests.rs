@@ -244,9 +244,8 @@ fn verify_field_access_with_reference_type() {
         field: "x".into(),
     });
 
-    // Should still report error since reference types can't directly access fields (need deref)
     let ty = checker.infer_expr(&expr);
-    assert_eq!(ty, Type::Unknown);
+    assert_eq!(ty, Type::Int);
 }
 
 #[test]

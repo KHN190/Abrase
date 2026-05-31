@@ -17,6 +17,7 @@ impl Compiler {
         self.emit(OpCode::Jz(cond_reg, 0));
 
         let result_reg = self.alloc_register()?;
+        let arm_mark = self.snapshot_register_high_water();
 
         let cons_reg = self.compile_expr(consequence)?;
         if !is_leaf_for_peephole(&consequence.node)
@@ -24,6 +25,7 @@ impl Compiler {
         {
             self.emit(OpCode::Copy(result_reg, cons_reg));
         }
+        self.reclaim_temp_regs_above(arm_mark);
 
         let jmp_idx = self.code.len();
         self.emit(OpCode::Jmp(0));
@@ -42,6 +44,7 @@ impl Compiler {
         if !alt_leaf || !self.try_redirect_last_dest(alt_reg, result_reg) {
             self.emit(OpCode::Copy(result_reg, alt_reg));
         }
+        self.reclaim_temp_regs_above(arm_mark);
 
         let end_addr = self.code.len();
         self.patch_jmp_at(jmp_idx, end_addr)?;
@@ -59,6 +62,9 @@ impl Compiler {
         for stmt in &hoisted {
             self.compile_stmt(stmt)?;
         }
+        if self.block_uses_static(&filtered_body) {
+            self.load_module_table()?;
+        }
         // Per-iteration region: cond check sits before the push so each iter
         // gets a fresh region. break/continue emit their own pop before Jmp
         // (see compile_break / compile_continue) — that keeps push/pop balanced.
@@ -74,7 +80,9 @@ impl Compiler {
         let depth_at_entry = self.compiler_region_depth;
         let block_depth_at_entry = self.block_locals_stack.len();
         let handler_depth_at_entry = self.handler_table_stack.len();
-        self.emit_region_push()?;
+        let regioned = !self.block_alloc_free(&filtered_body);
+        let pre_push_high = self.snapshot_register_high_water();
+        if regioned { self.emit_region_push()?; }
 
         self.loop_stack.push(LoopCtx {
             result_reg,
@@ -86,10 +94,13 @@ impl Compiler {
             handler_depth_at_entry,
         });
 
+        let body_start = self.code.len();
         self.compile_block(&filtered_body)?;
+        if !regioned && self.body_records_alloc(body_start) {
+            return Err("internal: region elided over an allocating loop body".to_string());
+        }
 
-        // Normal iter end: pop the region, jump back to cond check.
-        self.emit_region_pop()?;
+        if regioned { self.emit_region_pop()?; }
         let back_idx = self.code.len();
         let back_off = self.rel_offset(loop_top, back_idx)?;
         self.emit(OpCode::Jmp(back_off));
@@ -104,13 +115,115 @@ impl Compiler {
         for pidx in ctx.break_patches {
             self.patch_jmp_at(pidx, exit_addr)?;
         }
+        if regioned {
+            let high = self.snapshot_register_high_water();
+            for r in pre_push_high..high {
+                if r as usize != result_reg.0 as usize
+                    && (r as usize) < self.reg_holds_handle.len()
+                {
+                    self.reg_holds_handle[r as usize] = false;
+                }
+            }
+        }
         Ok(result_reg)
+    }
+
+    fn block_uses_static(&self, b: &ast::Block) -> bool {
+        b.stmts.iter().any(|s| self.stmt_uses_static(s))
+            || b.ret.as_deref().map_or(false, |e| self.expr_uses_static(e))
+    }
+
+    fn stmt_uses_static(&self, s: &ast::Spanned<ast::Stmt>) -> bool {
+        match &s.node {
+            ast::Stmt::Let { value, .. } => self.expr_uses_static(value),
+            ast::Stmt::Expr(e) => self.expr_uses_static(e),
+            ast::Stmt::Empty => false,
+        }
+    }
+
+    fn expr_uses_static(&self, e: &ast::Spanned<ast::Expr>) -> bool {
+        use ast::Expr::*;
+        let u = |x: &ast::Spanned<ast::Expr>| self.expr_uses_static(x);
+        match &e.node {
+            Identifier(n) => self.resolve_static_offset(n).is_some(),
+            Binary { left, right, .. } => u(left) || u(right),
+            Unary { right, .. } | Question(right) | Throw(right) | Paren(right) => u(right),
+            Call { callee, args } => u(callee) || args.iter().any(u),
+            Index { base, index } => u(base) || u(index),
+            Block(b) => self.block_uses_static(b),
+            If { condition, consequence, alternative } =>
+                u(condition) || u(consequence)
+                || alternative.as_deref().map_or(false, u),
+            Match { scrutinee, arms } =>
+                u(scrutinee) || arms.iter().any(|a| u(&a.body)),
+            For { iter, body, .. } => u(iter) || self.block_uses_static(body),
+            While { condition, body } => u(condition) || self.block_uses_static(body),
+            Loop { body } | Region { body, .. } => self.block_uses_static(body),
+            Break(Some(e)) | Return(Some(e)) => u(e),
+            Tuple(xs) | Array(xs) | Variant { args: xs, .. } => xs.iter().any(u),
+            ArrayRepeat { elem, count } => u(elem) || u(count),
+            Record { fields, .. } =>
+                fields.iter().any(|f| f.value.as_ref().map_or(false, u)),
+            FieldAccess { base, .. } => u(base),
+            Range { start, end, .. } =>
+                start.as_deref().map_or(false, u) || end.as_deref().map_or(false, u),
+            Handle { expr, arms } => u(expr) || arms.iter().any(|a| u(&a.body)),
+            _ => false,
+        }
+    }
+
+    fn block_alloc_free(&self, b: &ast::Block) -> bool {
+        b.stmts.iter().all(|s| self.stmt_alloc_free(s))
+            && b.ret.as_deref().map_or(true, |e| self.expr_alloc_free(e))
+    }
+
+    fn stmt_alloc_free(&self, s: &ast::Spanned<ast::Stmt>) -> bool {
+        match &s.node {
+            ast::Stmt::Let { pattern, value, .. } =>
+                matches!(pattern.node, ast::Pattern::Bind(_) | ast::Pattern::Wildcard)
+                    && self.expr_alloc_free(value),
+            ast::Stmt::Expr(e) => self.expr_alloc_free(e),
+            ast::Stmt::Empty => true,
+        }
+    }
+
+    fn expr_alloc_free(&self, e: &ast::Spanned<ast::Expr>) -> bool {
+        use ast::Expr::*;
+        let f = |x: &ast::Spanned<ast::Expr>| self.expr_alloc_free(x);
+        match &e.node {
+            Literal(l) => !matches!(l, ast::Literal::String(_) | ast::Literal::StringInterp(_)),
+            Identifier(n) => !matches!(
+                self.const_values.get(n),
+                Some(crate::compiler::codegen::inference::ConstValue::Array(_))
+            ),
+            Binary { left, right, .. } => f(left) && f(right),
+            Unary { op, right } =>
+                matches!(op, ast::UnaryOp::Neg | ast::UnaryOp::Not | ast::UnaryOp::Deref)
+                    && f(right),
+            Index { base, index } => f(base) && f(index),
+            If { condition, consequence, alternative } =>
+                f(condition) && f(consequence) && alternative.as_deref().map_or(true, f),
+            Block(b) => self.block_alloc_free(b),
+            Paren(inner) => f(inner),
+            Break(opt) | Return(opt) => opt.as_deref().map_or(true, f),
+            Continue => true,
+            _ => false,
+        }
+    }
+
+    fn body_records_alloc(&self, body_start: usize) -> bool {
+        self.code[body_start..].iter().any(|op| matches!(op,
+            OpCode::Alloc(..) | OpCode::Call(..) | OpCode::CallReg(..)
+            | OpCode::Resume(..) | OpCode::Handle(..)))
     }
 
     pub(in crate::compiler) fn compile_loop(
         &mut self,
         body: &ast::Block,
     ) -> Result<Register, String> {
+        if self.block_uses_static(body) {
+            self.load_module_table()?;
+        }
         let result_reg = self.alloc_register()?;
         let unit_idx = self.add_constant(Value::UNIT)?;
         self.emit(OpCode::PushConst(result_reg, unit_idx));
@@ -121,7 +234,9 @@ impl Compiler {
         let depth_at_entry = self.compiler_region_depth;
         let block_depth_at_entry = self.block_locals_stack.len();
         let handler_depth_at_entry = self.handler_table_stack.len();
-        self.emit_region_push()?;
+        let regioned = !self.block_alloc_free(body);
+        let pre_push_high = self.snapshot_register_high_water();
+        if regioned { self.emit_region_push()?; }
 
         self.loop_stack.push(LoopCtx {
             result_reg,
@@ -133,10 +248,13 @@ impl Compiler {
             handler_depth_at_entry,
         });
 
+        let body_start = self.code.len();
         self.compile_block(body)?;
+        if !regioned && self.body_records_alloc(body_start) {
+            return Err("internal: region elided over an allocating loop body".to_string());
+        }
 
-        // Normal iter end: pop, then back-jump to top (which re-pushes).
-        self.emit_region_pop()?;
+        if regioned { self.emit_region_pop()?; }
         let back_idx = self.code.len();
         let back_off = self.rel_offset(loop_top, back_idx)?;
         self.emit(OpCode::Jmp(back_off));
@@ -148,6 +266,16 @@ impl Compiler {
         let exit_addr = self.code.len();
         for pidx in ctx.break_patches {
             self.patch_jmp_at(pidx, exit_addr)?;
+        }
+        if regioned {
+            let high = self.snapshot_register_high_water();
+            for r in pre_push_high..high {
+                if r as usize != result_reg.0 as usize
+                    && (r as usize) < self.reg_holds_handle.len()
+                {
+                    self.reg_holds_handle[r as usize] = false;
+                }
+            }
         }
         Ok(result_reg)
     }
@@ -264,6 +392,10 @@ impl Compiler {
                 (s, e, InclusiveKind::Dynamic(inc))
             }
         };
+
+        if self.block_uses_static(body) {
+            self.load_module_table()?;
+        }
 
         let counter = self.alloc_register()?;
         self.emit(OpCode::Copy(counter, start_reg));

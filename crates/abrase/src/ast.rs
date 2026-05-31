@@ -81,6 +81,7 @@ pub enum BinaryOp {
     Add, Sub, Mul, Div, Mod,
     Eq, Neq, Lt, Gt, Lte, Gte,
     And, Or,
+    BitAnd, BitOr, BitXor, Shl, Shr,
     Assign, AddAssign, SubAssign, MulAssign, DivAssign, ModAssign,
 }
 
@@ -174,6 +175,7 @@ pub enum Expr {
     Throw    (Box<Spanned<Expr>>),
 
     Question (Box<Spanned<Expr>>),
+    Paren    (Box<Spanned<Expr>>),
     Tuple    (Vec<Spanned<Expr>>),
     Array    (Vec<Spanned<Expr>>),
 
@@ -272,8 +274,9 @@ pub struct ImportItem {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Decl {
     Fn(FnDecl),
-    Mod(String),
-    Import { path: Vec<String>, items: Vec<ImportItem> },
+    ModEnter(Vec<String>),
+    ModExit,
+    Use { path: Vec<String>, items: Vec<ImportItem> },
     Type {
         attrs: Vec<Attribute>,
         is_pub: bool,
@@ -308,6 +311,13 @@ pub enum Decl {
         name: String,
         generics: Vec<GenericParam>,
         params: Vec<Param>,
+        ty: Type,
+        value: Spanned<Expr>,
+    },
+    Static {
+        is_pub: bool,
+        is_mut: bool,
+        name: String,
         ty: Type,
         value: Spanned<Expr>,
     },

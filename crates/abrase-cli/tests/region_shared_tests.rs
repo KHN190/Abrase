@@ -337,11 +337,6 @@ fn nested_regions_get_distinct_labels() {
     use abrase::compiler::Compiler;
     use abrase::ty::Type;
     use myriad::VirtualMachine;
-    // The simplest observable effect: a tail expression of type Shared @ inner
-    // from inside an inner region won't satisfy an outer scope that doesn't
-    // know that label. We rely on shared_returned_from_region_rejected above
-    // for the cross-scope path. Here just sanity-check that two siblings get
-    // distinct labels via the existing pipeline (no smuggling).
     let src = r#"
         fn main() -> Int {
             region a { let s1 = Shared(1); 0 };
@@ -361,6 +356,81 @@ fn nested_regions_get_distinct_labels() {
     let mut vm = VirtualMachine::new();
     let _ = vm.run_module(&module);
     let _ = Type::Int; // import sanity
+}
+
+#[test]
+fn shared_deref_reads_inner_value() {
+    use myriad::VirtualMachine;
+    let src = r#"
+        fn main() -> Int {
+            region {
+                let s = Shared(10);
+                *s + *s
+            }
+        }
+    "#;
+    let mut parser = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = parser.parse_program();
+    assert!(parser.errors.is_empty(), "parse errors: {}", parser.pretty_print_errors());
+    let mut compiler = Compiler::new().with_source(src.into());
+    let module = compiler.compile_module(&ast).unwrap_or_else(|_| {
+        panic!("compile failed: {}", compiler.pretty_print_errors())
+    });
+    let mut vm = VirtualMachine::new();
+    let v = vm.run_module(&module).expect("runtime error");
+    assert_eq!(v.as_int(), 20, "deref of Shared must read the inner value");
+    assert_eq!(vm.heap_live_count(), 0, "region exit must force-free Shared");
+}
+
+#[test]
+fn shared_clone_then_deref_both() {
+    use myriad::VirtualMachine;
+    // `.clone()` rc-incs the handle; original and clone both deref to the
+    // same inner value. Region exit force-frees both.
+    let src = r#"
+        fn main() -> Int {
+            region {
+                let s = Shared(10);
+                let c = s.clone();
+                *s + *c
+            }
+        }
+    "#;
+    let mut parser = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = parser.parse_program();
+    assert!(parser.errors.is_empty(), "parse errors: {}", parser.pretty_print_errors());
+    let mut compiler = Compiler::new().with_source(src.into());
+    let module = compiler.compile_module(&ast).unwrap_or_else(|_| {
+        panic!("compile failed: {}", compiler.pretty_print_errors())
+    });
+    let mut vm = VirtualMachine::new();
+    let v = vm.run_module(&module).expect("runtime error");
+    assert_eq!(v.as_int(), 20, "clone + deref of Shared must read inner value twice");
+    assert_eq!(vm.heap_live_count(), 0, "region exit must force-free Shared + clone");
+}
+
+#[test]
+fn string_clone_frees_cleanly() {
+    use myriad::VirtualMachine;
+    // `.clone()` on a move type (String) rc-incs; cleanup at last use frees both.
+    let src = r#"
+        fn main() -> Int {
+            let a = "hi";
+            let b = a.clone();
+            0
+        }
+    "#;
+    let mut parser = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = parser.parse_program();
+    assert!(parser.errors.is_empty(), "parse errors: {}", parser.pretty_print_errors());
+    let mut compiler = Compiler::new().with_source(src.into());
+    let module = compiler.compile_module(&ast).unwrap_or_else(|_| {
+        panic!("compile failed: {}", compiler.pretty_print_errors())
+    });
+    let mut vm = VirtualMachine::new();
+    let v = vm.run_module(&module).expect("runtime error");
+    assert_eq!(v.as_int(), 0);
+    assert_eq!(vm.heap_live_count(), 0, "string clone must not leak");
 }
 
 #[test]

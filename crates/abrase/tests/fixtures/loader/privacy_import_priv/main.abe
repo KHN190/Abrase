@@ -1,0 +1,3 @@
+use lib::{helper};
+
+fn main() -> Int { helper(5) }

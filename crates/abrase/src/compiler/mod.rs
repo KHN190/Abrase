@@ -37,6 +37,7 @@ pub struct HostFnDecl {
     pub name: String,
     pub params: Vec<TyType>,
     pub ret: TyType,
+    pub effects: Vec<ast::EffectItem>,
 }
 
 pub struct Compiler {
@@ -46,9 +47,7 @@ pub struct Compiler {
     pub(super) code: Vec<OpCode>,
     pub(super) next_reg: u16,
     pub(super) max_reg: u16,
-    // Compile-time tracking: which regs may currently hold a heap handle.
-    // Updated by `emit()` based on opcode kind. Used by reclaim to skip
-    // Drop emission for regs that provably do not hold a handle.
+    pub(super) module_table_reg: Option<Register>,
     pub(super) reg_holds_handle: Vec<bool>,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
@@ -61,6 +60,9 @@ pub struct Compiler {
     pub(super) pending_arg_patches: Vec<(usize, u8)>,
     pub(super) current_fn_fallible: bool,
     pub(super) current_fn_name: String,
+    pub(super) current_fn_module: Vec<String>,
+    pub(super) fn_origin: HashMap<usize, Vec<String>>,
+    pub(super) module_imports: HashMap<Vec<String>, HashMap<String, Vec<String>>>,
     pub(super) effect_ids: HashMap<String, u16>,
     pub(super) op_ids: HashMap<(String, String), u8>,
     pub(super) effect_op_counts: HashMap<String, u8>,
@@ -84,6 +86,7 @@ pub struct Compiler {
     pub(super) builtin_types: HashMap<String, (Vec<TyType>, TyType)>,
     pub(super) fn_signatures: HashMap<usize, (Vec<TyType>, TyType)>,
     pub(super) current_closure_layout: HashMap<String, usize>,
+    pub(super) current_closure_capture_types: HashMap<usize, ast::Type>,
     pub(super) current_span: ast::Span,
     pub(super) compiler_region_depth: usize,
     pub(super) fn_compiler_depth_baseline: usize,
@@ -98,6 +101,10 @@ pub struct Compiler {
     pub(super) int32_mode: bool,
     pub(super) no_built_in: bool,
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
+    pub(super) static_offsets: HashMap<String, u16>,
+    pub(super) static_types: HashMap<String, ast::Type>,
+    pub(super) static_mut_set: std::collections::HashSet<String>,
+    pub(super) typeck_expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), crate::ty::Type>,
 }
 
 impl Compiler {
@@ -109,6 +116,7 @@ impl Compiler {
             code: Vec::new(),
             next_reg: 0,
             max_reg: 0,
+            module_table_reg: None,
             reg_holds_handle: Vec::new(),
             var_to_reg: HashMap::new(),
             var_types: HashMap::new(),
@@ -125,6 +133,9 @@ impl Compiler {
             pending_arg_patches: Vec::new(),
             current_fn_fallible: false,
             current_fn_name: String::new(),
+            current_fn_module: Vec::new(),
+            fn_origin: HashMap::new(),
+            module_imports: HashMap::new(),
             effect_ids: HashMap::new(),
             op_ids: HashMap::new(),
             effect_op_counts: HashMap::new(),
@@ -148,6 +159,7 @@ impl Compiler {
             builtin_types: HashMap::new(),
             fn_signatures: HashMap::new(),
             current_closure_layout: HashMap::new(),
+            current_closure_capture_types: HashMap::new(),
             current_span: ast::Span::new(0, 0),
             compiler_region_depth: 0,
             fn_compiler_depth_baseline: 0,
@@ -162,6 +174,10 @@ impl Compiler {
             int32_mode: false,
             no_built_in: false,
             const_values: HashMap::new(),
+            static_offsets: HashMap::new(),
+            static_types: HashMap::new(),
+            static_mut_set: std::collections::HashSet::new(),
+            typeck_expr_types: HashMap::new(),
         }
     }
 
@@ -200,6 +216,17 @@ impl Compiler {
         self
     }
 
+    pub fn static_names_by_offset(&self) -> Vec<String> {
+        let n = self.static_offsets.len();
+        let mut out = vec![String::new(); n];
+        for (name, &offset) in &self.static_offsets {
+            if (offset as usize) < n {
+                out[offset as usize] = name.clone();
+            }
+        }
+        out
+    }
+
     pub fn fn_names(&self) -> Vec<String> {
         let n = self.functions.len();
         let mut out = vec![String::new(); n];
@@ -217,11 +244,59 @@ impl Compiler {
         }
     }
 
+    pub(super) fn fqn(module: &[String], name: &str) -> String {
+        if module.is_empty() { name.into() }
+        else { format!("{}__{}", module.join("_"), name) }
+    }
+
+    pub(in crate::compiler) fn resolve_static_offset(&self, name: &str) -> Option<u16> {
+        if !self.current_fn_module.is_empty() {
+            let local = Self::fqn(&self.current_fn_module, name);
+            if let Some(&o) = self.static_offsets.get(&local) { return Some(o); }
+        }
+        if let Some(imports) = self.module_imports.get(&self.current_fn_module) {
+            if let Some(mod_path) = imports.get(name) {
+                let imp = Self::fqn(mod_path, name);
+                if let Some(&o) = self.static_offsets.get(&imp) { return Some(o); }
+            }
+        }
+        self.static_offsets.get(name).copied()
+    }
+
+    pub(in crate::compiler) fn resolve_static_type(&self, name: &str) -> Option<&ast::Type> {
+        if !self.current_fn_module.is_empty() {
+            let local = Self::fqn(&self.current_fn_module, name);
+            if let Some(t) = self.static_types.get(&local) { return Some(t); }
+        }
+        if let Some(imports) = self.module_imports.get(&self.current_fn_module) {
+            if let Some(mod_path) = imports.get(name) {
+                let imp = Self::fqn(mod_path, name);
+                if let Some(t) = self.static_types.get(&imp) { return Some(t); }
+            }
+        }
+        self.static_types.get(name)
+    }
+
+    pub(in crate::compiler) fn resolve_fn_callee(&self, name: &str) -> Option<usize> {
+        if !self.current_fn_module.is_empty() {
+            let local = Self::fqn(&self.current_fn_module, name);
+            if let Some(&id) = self.func_map.get(&local) { return Some(id); }
+        }
+        if let Some(imports) = self.module_imports.get(&self.current_fn_module) {
+            if let Some(mod_path) = imports.get(name) {
+                let imp = Self::fqn(mod_path, name);
+                if let Some(&id) = self.func_map.get(&imp) { return Some(id); }
+            }
+        }
+        self.func_map.get(name).copied()
+    }
+
     pub fn register_host_fn(
         &mut self,
         name: &str,
         params: Vec<TyType>,
         ret: TyType,
+        effects: Vec<ast::EffectItem>,
     ) -> Result<u16, String> {
         if self.host_fns.contains_key(name) || self.func_map.contains_key(name) {
             return Err(format!("name '{}' already registered", name));
@@ -237,14 +312,9 @@ impl Compiler {
         }));
         self.fn_signatures.insert(id, (params.clone(), ret.clone()));
         self.host_fns.insert(name.into(), HostFnDecl {
-            name: name.into(), params, ret,
+            name: name.into(), params, ret, effects,
         });
         Ok(fn_id)
-    }
-
-    pub fn lookup_fn_id(&self, name: &str) -> Option<u16> {
-        let id = *self.func_map.get(name)?;
-        u16::try_from(id).ok()
     }
 
     pub fn pretty_print_errors(&self) -> String {
@@ -275,98 +345,73 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
-        if !self.no_built_in {
-            self.register_builtins();
-        }
-        let mut checker = crate::typeck::Checker::new();
-        if !self.no_built_in {
-            self.register_builtins_to_checker(&mut checker);
+        if !self.no_built_in { self.register_builtins(); }
+        self.run_typeck(ast)?;
+        let decls_with_impls = self.run_impl_lift(ast)?;
+        let owned = self.run_mono(decls_with_impls)?;
+        let decls_with_closures = self.run_closure_lift(&owned);
+        let handler_synthetic_fns = self.run_handler_lift(&decls_with_closures);
+        let ast: &[ast::Decl] = &decls_with_closures;
+
+        let mut fn_decls = self.seed_decls(ast);
+        for arm_fn in handler_synthetic_fns {
+            let idx = self.functions.len();
+            self.func_map.insert(arm_fn.name.clone(), idx);
+            self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
+            fn_decls.push((idx, arm_fn));
         }
 
-        checker.check_program(ast);
-        if !checker.errors.is_empty() {
-            self.errors.extend(checker.errors.iter().map(|te| Error::new(
-                ErrorCode::TypeError,
-                te.span,
-                te.message.clone(),
-            )));
-            return Err(self.errors.clone());
-        }
-
-        let mut impl_lowering = impls::ImplLowering::new();
-        Self::seed_builtin_method_dispatch(&mut impl_lowering.method_dispatch);
-        impl_lowering.lower(ast);
-        if !impl_lowering.errors.is_empty() {
-            for msg in impl_lowering.errors {
-                self.errors.push(Error::new(ErrorCode::TypeError, ast::Span::new(0, 0), msg));
-            }
-            return Err(self.errors.clone());
-        }
-        self.method_dispatch = impl_lowering.method_dispatch.clone();
-        let mut decls_with_impls: Vec<ast::Decl> = ast.to_vec();
-        for fd in impl_lowering.synthetic_fns {
-            decls_with_impls.push(ast::Decl::Fn(fd));
-        }
-
-        let owned = match mono::monomorphize_with_methods(decls_with_impls, self.method_dispatch.clone()) {
-            Ok(o) => o,
-            Err(es) => {
-                self.errors.extend(es);
+        let entry = match self.func_map.get("main").copied() {
+            Some(idx) => idx,
+            None => {
+                self.errors.push(Error::new(
+                    ErrorCode::CodegenError, ast::Span::new(0, 0), "No main function found",
+                ));
                 return Err(self.errors.clone());
             }
         };
-        let ast: &[ast::Decl] = &owned;
 
-        let mut closure_lowering = closures::ClosureLowering::new();
-        closure_lowering.lower(ast);
-        self.closure_by_span = closure_lowering.by_span;
-        let mut decls_with_closures: Vec<ast::Decl> = ast.to_vec();
-        for fd in closure_lowering.synthetic_fns {
-            decls_with_closures.push(ast::Decl::Fn(fd));
-        }
-        let ast: &[ast::Decl] = &decls_with_closures;
+        self.compile_all_fns(fn_decls)?;
+        let module_init_id = self.compile_static_init(ast)?;
+        self.emit_debug_dump();
 
-        let mut handler_lowering = handlers::HandleLowering::new();
-        if self.debug_sink.is_some() {
-            handler_lowering = handler_lowering.with_debug_sink(debug::stderr_sink());
-        }
-        handler_lowering.lower(ast);
-        for err in handler_lowering.errors {
-            self.errors.push(Error::new(ErrorCode::CodegenError, ast::Span::new(0, 0), err));
-        }
-        self.effect_op_to_arm = handler_lowering.effect_op_to_arm;
-        self.op_call_to_arm = handler_lowering.op_call_to_arm;
-        self.return_arm_by_handle = handler_lowering.return_arm_by_handle;
-        self.effect_arms_by_handle = handler_lowering.effect_arms_by_handle;
-        self.arm_captures = handler_lowering.arm_captures;
-        self.cell_vars = handler_lowering.cell_vars;
-        self.arm_resume_counts = handler_lowering.arm_resume_counts;
-        self.arm_resume_in_tail = handler_lowering.arm_resume_in_tail;
-        self.effect_ids = handler_lowering.effect_ids;
-        self.op_ids = handler_lowering.op_ids;
-        self.effect_op_counts = handler_lowering.effect_op_counts;
+        let mut flags = 0u16;
+        if self.int32_mode { flags |= crate::bytecode::CART_FLAG_INT32_SAFE; }
+        let exports = self.build_exports(ast, entry, module_init_id);
+        Ok(Module { functions: self.functions.clone(), entry, flags, exports })
+    }
 
+    fn seed_decls(&mut self, ast: &[ast::Decl]) -> Vec<(usize, ast::FnDecl)> {
         let mut fn_decls = Vec::new();
-
+        let mut module_stack: Vec<Vec<String>> = Vec::new();
         for decl in ast {
             match decl {
+                ast::Decl::ModEnter(p) => { module_stack.push(p.clone()); }
+                ast::Decl::ModExit => { module_stack.pop(); }
+                ast::Decl::Use { path, items } => {
+                    let owner = module_stack.last().cloned().unwrap_or_default();
+                    let bucket = self.module_imports.entry(owner).or_default();
+                    for item in items {
+                        let alias = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                        bucket.insert(alias, path.clone());
+                    }
+                }
                 ast::Decl::Fn(fn_decl) => {
+                    let mod_path = module_stack.last().cloned().unwrap_or_default();
+                    let mangled = Self::fqn(&mod_path, &fn_decl.name);
                     if matches!(fn_decl.name.as_str(), "device_in" | "device_out")
-                        || self.host_fns.contains_key(&fn_decl.name)
-                        || self.func_map.contains_key(&fn_decl.name)
+                        || self.host_fns.contains_key(&mangled)
+                        || self.func_map.contains_key(&mangled)
                     {
                         self.errors.push(Error::new(
-                            ErrorCode::TypeError,
-                            ast::Span::new(0, 0),
-                            format!(
-                                "cannot redefine fn `{}` — name is reserved or already declared",
-                                fn_decl.name
-                            ),
+                            ErrorCode::TypeError, ast::Span::new(0, 0),
+                            format!("cannot redefine fn `{}` — name is reserved or already declared", fn_decl.name),
                         ));
                         continue;
                     }
                     let idx = self.functions.len();
-                    self.func_map.insert(fn_decl.name.clone(), idx);
+                    self.func_map.insert(mangled, idx);
+                    self.fn_origin.insert(idx, mod_path);
                     self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
                     register_user_fn_signature(&mut self.fn_signatures, idx, fn_decl);
                     fn_decls.push((idx, fn_decl.clone()));
@@ -378,76 +423,116 @@ impl Compiler {
                     match self.try_const_fold(value) {
                         Some(cv) => { self.const_values.insert(name.clone(), cv); }
                         None => self.errors.push(Error::new(
-                            ErrorCode::CodegenError,
-                            value.span,
+                            ErrorCode::CodegenError, value.span,
                             format!("const `{}` value is not a compile-time constant", name),
                         )),
                     }
                 }
+                ast::Decl::Static { name, ty, is_mut, .. } => {
+                    let mod_path = module_stack.last().cloned().unwrap_or_default();
+                    let mangled = Self::fqn(&mod_path, name);
+                    let offset = self.static_offsets.len() as u16;
+                    self.static_offsets.insert(mangled.clone(), offset);
+                    self.static_types.insert(mangled.clone(), ty.clone());
+                    if *is_mut { self.static_mut_set.insert(mangled); }
+                }
                 _ => {}
             }
         }
+        fn_decls
+    }
 
-        for arm_fn in handler_lowering.synthetic_fns {
-            let idx = self.functions.len();
-            self.func_map.insert(arm_fn.name.clone(), idx);
-            self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
-            fn_decls.push((idx, arm_fn));
-        }
-
-        let entry = match self.func_map.get("main").copied() {
-            Some(idx) => idx,
-            None => {
-                self.errors.push(Error::new(
-                    ErrorCode::CodegenError,
-                    ast::Span::new(0, 0),
-                    "No main function found",
-                ));
-                return Err(self.errors.clone());
-            }
-        };
-
+    fn compile_all_fns(&mut self, fn_decls: Vec<(usize, ast::FnDecl)>) -> Result<(), Vec<Error>> {
         for (idx, fn_decl) in fn_decls {
             if self.debug_sink.is_some() {
                 self.emit_debug(&format!("[COMPILE] idx={}, name={}", idx, fn_decl.name));
             }
-            let chunk = self.compile_fn(&fn_decl)?;
+            let saved_module = std::mem::take(&mut self.current_fn_module);
+            self.current_fn_module = self.fn_origin.get(&idx).cloned().unwrap_or_default();
+            let chunk = match self.compile_fn(&fn_decl) {
+                Ok(c) => c,
+                Err(mut es) => {
+                    for e in &mut es {
+                        if e.module.is_empty() { e.module = self.current_fn_module.clone(); }
+                    }
+                    self.current_fn_module = saved_module;
+                    return Err(es);
+                }
+            };
+            self.current_fn_module = saved_module;
             self.functions[idx] = chunk;
         }
+        Ok(())
+    }
 
-        if let Some(sink) = &mut self.debug_sink {
-            sink("[FUNC_MAP]");
-            let mut entries: Vec<(&String, &usize)> = self.func_map.iter().collect();
-            entries.sort_by_key(|(_, idx)| **idx);
-            for (name, idx) in entries {
-                sink(&format!("  {} -> {}", name, idx));
-            }
-            sink("[BYTECODE]");
-            for (i, func) in self.functions.iter().enumerate() {
-                match func {
-                    Chunk::Bytecode(bc) => {
-                        sink(&format!("[{}] {} instrs:", i, bc.code.len()));
-                        for (j, op) in bc.code.iter().enumerate() {
-                            sink(&format!("    [{}] {:?}", j, op));
-                        }
-                    }
-                    Chunk::Native(n) => sink(&format!("[{}] Native {}", i, n.name)),
+    fn compile_static_init(&mut self, ast: &[ast::Decl]) -> Result<Option<u16>, Vec<Error>> {
+        if self.static_offsets.is_empty() { return Ok(None); }
+        let mut ordered: Vec<(String, u16)> = self.static_offsets.iter()
+            .map(|(n, o)| (n.clone(), *o)).collect();
+        ordered.sort_by_key(|(_, o)| *o);
+        let mut init_stack: Vec<Vec<String>> = Vec::new();
+        let static_values: Vec<(Vec<String>, ast::Spanned<ast::Expr>)> = ast.iter().filter_map(|d| {
+            match d {
+                ast::Decl::ModEnter(p) => { init_stack.push(p.clone()); None }
+                ast::Decl::ModExit => { init_stack.pop(); None }
+                ast::Decl::Static { name, value, .. } => {
+                    let mod_path = init_stack.last().cloned().unwrap_or_default();
+                    let key = Self::fqn(&mod_path, name);
+                    if self.static_offsets.contains_key(&key) {
+                        Some((mod_path, value.clone()))
+                    } else { None }
                 }
+                _ => None,
+            }
+        }).collect();
+        let table_size = ordered.len() as u16;
+        let init_id = self.functions.len();
+        self.func_map.insert("__module_init".into(), init_id);
+        self.functions.push(Chunk::Bytecode(BytecodeChunk::default()));
+        let chunk = self.compile_module_init(table_size, &ordered, &static_values)?;
+        self.functions[init_id] = chunk;
+        Ok(Some(init_id as u16))
+    }
+
+    fn emit_debug_dump(&mut self) {
+        let Some(sink) = &mut self.debug_sink else { return };
+        sink("[FUNC_MAP]");
+        let mut entries: Vec<(&String, &usize)> = self.func_map.iter().collect();
+        entries.sort_by_key(|(_, idx)| **idx);
+        for (name, idx) in entries {
+            sink(&format!("  {} -> {}", name, idx));
+        }
+        sink("[BYTECODE]");
+        for (i, func) in self.functions.iter().enumerate() {
+            match func {
+                Chunk::Bytecode(bc) => {
+                    sink(&format!("[{}] {} instrs:", i, bc.code.len()));
+                    for (j, op) in bc.code.iter().enumerate() {
+                        sink(&format!("    [{}] {:?}", j, op));
+                    }
+                }
+                Chunk::Native(n) => sink(&format!("[{}] Native {}", i, n.name)),
             }
         }
+    }
 
-        let mut flags = 0u16;
-        if self.int32_mode { flags |= crate::bytecode::CART_FLAG_INT32_SAFE; }
+    fn build_exports(&self, ast: &[ast::Decl], entry: usize, module_init_id: Option<u16>)
+        -> Vec<crate::bytecode::Export>
+    {
         let mut exports: Vec<crate::bytecode::Export> = Vec::new();
+        let mut export_stack: Vec<Vec<String>> = Vec::new();
         for decl in ast {
-            if let ast::Decl::Fn(fn_decl) = decl {
-                if fn_decl.is_pub {
+            match decl {
+                ast::Decl::ModEnter(p) => { export_stack.push(p.clone()); }
+                ast::Decl::ModExit => { export_stack.pop(); }
+                ast::Decl::Fn(fn_decl) if export_stack.is_empty() && fn_decl.is_pub => {
                     if let Some(&idx) = self.func_map.get(&fn_decl.name) {
                         if let Ok(id) = u16::try_from(idx) {
                             exports.push(crate::bytecode::Export { name: fn_decl.name.clone(), fn_id: id });
                         }
                     }
                 }
+                _ => {}
             }
         }
         if let Ok(id) = u16::try_from(entry) {
@@ -455,12 +540,81 @@ impl Compiler {
                 exports.push(crate::bytecode::Export { name: "main".into(), fn_id: id });
             }
         }
-        Ok(Module {
-            functions: self.functions.clone(),
-            entry,
-            flags,
-            exports,
-        })
+        if let Some(id) = module_init_id {
+            exports.push(crate::bytecode::Export { name: "__module_init".into(), fn_id: id });
+        }
+        exports
+    }
+
+    fn run_typeck(&mut self, ast: &[ast::Decl]) -> Result<(), Vec<Error>> {
+        let mut checker = crate::typeck::Checker::new();
+        if !self.no_built_in { self.register_builtins_to_checker(&mut checker); }
+        checker.check_program(ast);
+        self.typeck_expr_types = std::mem::take(&mut checker.expr_types);
+        if !checker.errors.is_empty() {
+            self.errors.extend(checker.errors.iter().map(|te| Error::new(
+                ErrorCode::TypeError, te.span, te.message.clone(),
+            ).with_module(te.module.clone())));
+            return Err(self.errors.clone());
+        }
+        Ok(())
+    }
+
+    fn run_impl_lift(&mut self, ast: &[ast::Decl]) -> Result<Vec<ast::Decl>, Vec<Error>> {
+        let mut impl_lowering = impls::ImplLowering::new();
+        Self::seed_builtin_method_dispatch(&mut impl_lowering.method_dispatch);
+        impl_lowering.lower(ast);
+        if !impl_lowering.errors.is_empty() {
+            for msg in impl_lowering.errors {
+                self.errors.push(Error::new(ErrorCode::TypeError, ast::Span::new(0, 0), msg));
+            }
+            return Err(self.errors.clone());
+        }
+        self.method_dispatch = impl_lowering.method_dispatch;
+        let mut decls = ast.to_vec();
+        for fd in impl_lowering.synthetic_fns { decls.push(ast::Decl::Fn(fd)); }
+        Ok(decls)
+    }
+
+    fn run_mono(&mut self, decls: Vec<ast::Decl>) -> Result<Vec<ast::Decl>, Vec<Error>> {
+        let builtin_returns: std::collections::HashMap<String, ast::Type> = self.builtin_types.iter()
+            .filter_map(|(name, (_, ret))| codegen::inference::ty_to_ast(ret).map(|t| (name.clone(), t)))
+            .collect();
+        mono::monomorphize_with_methods_and_builtins(
+            decls, self.method_dispatch.clone(), builtin_returns,
+        ).map_err(|es| { self.errors.extend(es); self.errors.clone() })
+    }
+
+    fn run_closure_lift(&mut self, ast: &[ast::Decl]) -> Vec<ast::Decl> {
+        let mut closure_lowering = closures::ClosureLowering::new();
+        closure_lowering.lower(ast);
+        self.closure_by_span = closure_lowering.by_span;
+        let mut decls = ast.to_vec();
+        for fd in closure_lowering.synthetic_fns { decls.push(ast::Decl::Fn(fd)); }
+        decls
+    }
+
+    fn run_handler_lift(&mut self, ast: &[ast::Decl]) -> Vec<ast::FnDecl> {
+        let mut h = handlers::HandleLowering::new();
+        if self.debug_sink.is_some() {
+            h = h.with_debug_sink(debug::stderr_sink());
+        }
+        h.lower(ast);
+        for err in h.errors {
+            self.errors.push(Error::new(ErrorCode::CodegenError, ast::Span::new(0, 0), err));
+        }
+        self.effect_op_to_arm = h.effect_op_to_arm;
+        self.op_call_to_arm = h.op_call_to_arm;
+        self.return_arm_by_handle = h.return_arm_by_handle;
+        self.effect_arms_by_handle = h.effect_arms_by_handle;
+        self.arm_captures = h.arm_captures;
+        self.cell_vars = h.cell_vars;
+        self.arm_resume_counts = h.arm_resume_counts;
+        self.arm_resume_in_tail = h.arm_resume_in_tail;
+        self.effect_ids = h.effect_ids;
+        self.op_ids = h.op_ids;
+        self.effect_op_counts = h.effect_op_counts;
+        h.synthetic_fns
     }
 
     fn compile_fn(&mut self, fn_decl: &ast::FnDecl) -> Result<Chunk, Vec<Error>> {
@@ -486,21 +640,28 @@ impl Compiler {
         let saved_fn_handler_baseline = self.fn_handler_baseline;
         let saved_remaining_uses = std::mem::take(&mut self.remaining_uses);
         let saved_closure_layout = std::mem::take(&mut self.current_closure_layout);
+        let saved_closure_capture_types = std::mem::take(&mut self.current_closure_capture_types);
         let saved_cell_bindings = std::mem::take(&mut self.cell_bindings);
         if let Some(info) = self.closure_by_span.values().find(|i| i.lifted_fn == fn_decl.name).cloned() {
             self.current_closure_layout = info.captures.iter().enumerate()
                 .map(|(i, c)| (c.name.clone(), i))
+                .collect();
+            self.current_closure_capture_types = info.captures.iter().enumerate()
+                .map(|(i, c)| (i, c.ty.clone()))
                 .collect();
         }
 
         self.remaining_uses = liveness::count_uses(&fn_decl.body);
         self.current_fn_fallible = effects::fn_is_fallible(fn_decl);
         self.current_fn_name = fn_decl.name.clone();
-        self.current_self_fn_id = self.func_map.get(&fn_decl.name)
+        let self_key = Self::fqn(&self.current_fn_module, &fn_decl.name);
+        self.current_self_fn_id = self.func_map.get(&self_key)
+            .or_else(|| self.func_map.get(&fn_decl.name))
             .and_then(|id| u16::try_from(*id).ok());
         self.tail_call_spans = collect_tail_self_calls(&fn_decl.body, &fn_decl.name);
         self.next_reg = 0;
         self.max_reg = 0;
+        self.module_table_reg = None;
         self.compiler_region_depth = 0;
         self.fn_compiler_depth_baseline = 0;
         self.fn_block_baseline = 0;
@@ -510,20 +671,31 @@ impl Compiler {
 
         for param in &fn_decl.params {
             if let ast::Param::Named { pattern, ty } = param {
-                if let ast::Pattern::Bind(name) = &pattern.node {
-                    match self.alloc_register() {
-                        Ok(reg) => {
-                            self.var_to_reg.insert(name.clone(), reg);
-                            self.var_types.insert(name.clone(), ty.clone());
-                            if let Some(top) = self.block_locals_stack.last_mut() {
-                                top.push(reg);
-                            }
-                        }
-                        Err(_) => {
+                let reg = match self.alloc_register() {
+                    Ok(r) => r,
+                    Err(_) => {
+                        self.errors.push(Error::new(
+                            ErrorCode::CodegenError,
+                            pattern.span,
+                            "Failed to allocate register for parameter",
+                        ));
+                        continue;
+                    }
+                };
+                if let Some(top) = self.block_locals_stack.last_mut() {
+                    top.push(reg);
+                }
+                match &pattern.node {
+                    ast::Pattern::Bind(name) => {
+                        self.var_to_reg.insert(name.clone(), reg);
+                        self.var_types.insert(name.clone(), ty.clone());
+                    }
+                    _ => {
+                        if let Err(msg) = self.compile_destructure(pattern, reg, Some(ty)) {
                             self.errors.push(Error::new(
                                 ErrorCode::CodegenError,
                                 pattern.span,
-                                format!("Failed to allocate register for parameter '{}'", name),
+                                msg,
                             ));
                         }
                     }
@@ -611,8 +783,108 @@ impl Compiler {
         self.fn_handler_baseline = saved_fn_handler_baseline;
         self.remaining_uses = saved_remaining_uses;
         self.current_closure_layout = saved_closure_layout;
+        self.current_closure_capture_types = saved_closure_capture_types;
         self.cell_bindings = saved_cell_bindings;
 
+        Ok(chunk)
+    }
+
+    fn compile_module_init(
+        &mut self,
+        table_size: u16,
+        _ordered: &[(String, u16)],
+        static_values: &[(Vec<String>, ast::Spanned<ast::Expr>)],
+    ) -> Result<Chunk, Vec<Error>> {
+        let saved_code = std::mem::take(&mut self.code);
+        let saved_constants = std::mem::take(&mut self.constants);
+        let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
+        let saved_string_constants = std::mem::take(&mut self.string_constants);
+        let saved_next_reg = self.next_reg;
+        let saved_max_reg = self.max_reg;
+        let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
+        let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
+        let saved_var_types = std::mem::take(&mut self.var_types);
+        let saved_fn_name = std::mem::take(&mut self.current_fn_name);
+        self.next_reg = 0;
+        self.max_reg = 0;
+        self.current_fn_name = "__module_init".into();
+
+        macro_rules! bail {
+            ($span:expr, $msg:expr) => {{
+                self.errors.push(Error::new(ErrorCode::CodegenError, $span, $msg));
+                return Err(self.errors.clone());
+            }};
+        }
+
+        let table = match self.alloc_register() {
+            Ok(r) => r,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        self.emit(OpCode::Alloc(table, table_size));
+        let saved_init_module = std::mem::take(&mut self.current_fn_module);
+        for (i, (mod_path, value)) in static_values.iter().enumerate() {
+            let off = i as u16;
+            let mark = self.snapshot_register_high_water();
+            self.current_fn_module = mod_path.clone();
+            let v = match self.compile_expr(value) {
+                Ok(r) => r,
+                Err(m) => bail!(value.span, m),
+            };
+            self.emit(OpCode::St(v, table, off));
+            self.restore_register_high_water(mark);
+        }
+        self.current_fn_module = saved_init_module;
+        // Publish: Deo(table -> MODULE_ID:MODULE_PORT_TABLE).
+        let port_reg = match self.alloc_register() {
+            Ok(r) => r,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        let port_val = ((crate::bytecode::MODULE_ID as i64) << 8)
+            | (crate::bytecode::MODULE_PORT_TABLE as i64);
+        let port_idx = match self.add_constant(Value::from_int(port_val)) {
+            Ok(i) => i,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        self.emit(OpCode::PushConst(port_reg, port_idx));
+        self.emit(OpCode::Deo(table, port_reg));
+        // Return Unit (a non-handle scalar; the result is discarded).
+        let unit = match self.alloc_register() {
+            Ok(r) => r,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        let unit_idx = match self.add_constant(Value::from_int(0)) {
+            Ok(i) => i,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        self.emit(OpCode::PushConst(unit, unit_idx));
+        self.emit(OpCode::Ret(unit));
+
+        if let Err(msg) = self.finalize_arg_patches() {
+            bail!(ast::Span::new(0, 0), msg);
+        }
+
+        let reg_count = self.max_reg as usize;
+        let taken_constants = std::mem::take(&mut self.constants);
+        let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);
+        let chunk = Chunk::Bytecode(BytecodeChunk {
+            code: std::mem::take(&mut self.code),
+            constants: taken_constants.iter().map(|v| v.raw()).collect(),
+            const_mask: pack_mask_bits(&taken_mask_bits),
+            string_constants: std::mem::take(&mut self.string_constants),
+            reg_count,
+            param_count: 0,
+        });
+
+        self.code = saved_code;
+        self.constants = saved_constants;
+        self.const_mask_bits = saved_const_mask_bits;
+        self.string_constants = saved_string_constants;
+        self.next_reg = saved_next_reg;
+        self.max_reg = saved_max_reg;
+        self.reg_holds_handle = saved_reg_holds_handle;
+        self.var_to_reg = saved_var_to_reg;
+        self.var_types = saved_var_types;
+        self.current_fn_name = saved_fn_name;
         Ok(chunk)
     }
 
@@ -647,6 +919,19 @@ fn ast_type_to_ty(t: &ast::Type) -> TyType {
             _ => TyType::Named(n.clone()),
         },
         ast::Type::Tuple(items) if items.is_empty() => TyType::Unit,
+        ast::Type::Tuple(items) => TyType::Tuple(items.iter().map(ast_type_to_ty).collect()),
+        ast::Type::Generic { name, args } => TyType::Generic {
+            name: name.clone(),
+            args: args.iter().map(ast_type_to_ty).collect(),
+        },
+        ast::Type::Array { elem, .. } => TyType::Generic {
+            name: "Array".into(),
+            args: vec![ast_type_to_ty(elem)],
+        },
+        ast::Type::Reference { is_mut, inner, .. } => TyType::Reference {
+            is_mut: *is_mut,
+            inner: Box::new(ast_type_to_ty(inner)),
+        },
         _ => TyType::Unknown,
     }
 }

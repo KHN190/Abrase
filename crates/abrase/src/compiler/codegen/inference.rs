@@ -6,6 +6,18 @@ use crate::compiler::Compiler;
 
 impl Compiler {
     pub(in crate::compiler) fn infer_expr_type(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Type> {
+        if expr.span != ast::Span::new(0, 0) {
+            let key = (self.current_fn_module.clone(), expr.span, std::mem::discriminant(&expr.node));
+            if let Some(ty) = self.typeck_expr_types.get(&key) {
+                if let Some(ast_ty) = ty_to_ast(ty) {
+                    return Some(ast_ty);
+                }
+            }
+        }
+        self.infer_expr_type_fallback(expr)
+    }
+
+    fn infer_expr_type_fallback(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Type> {
         match &expr.node {
             ast::Expr::Literal(lit) => Some(match lit {
                 ast::Literal::Int(_) => ast::Type::Named("Int".into()),
@@ -18,6 +30,8 @@ impl Compiler {
             }),
             ast::Expr::Identifier(name) => {
                 if let Some(ty) = self.var_types.get(name) { return Some(ty.clone()); }
+                if let Some(ty) = self.resolve_static_type(name) { return Some(ty.clone()); }
+                if let Some(cv) = self.const_values.get(name) { return const_value_type(cv); }
                 // Zero-ary variant ctor used as a bare identifier (e.g. `Nil`).
                 self.layouts.variants.get(name)
                     .map(|info| ast::Type::Named(info.type_name.clone()))
@@ -41,8 +55,19 @@ impl Compiler {
                 }
                 _ => self.infer_expr_type(right),
             },
-            ast::Expr::Call { callee, args: _ } => {
+            ast::Expr::Call { callee, args } => {
                 if let ast::Expr::Identifier(name) = &callee.node {
+                    if name == "__env_load" && args.len() == 2 {
+                        if let ast::Expr::Literal(ast::Literal::Int(idx)) = &args[1].node {
+                            if let Some(ty) = self.current_closure_capture_types.get(&(*idx as usize)) {
+                                return Some(ty.clone());
+                            }
+                        }
+                    }
+                    if name == "Shared" && args.len() == 1 {
+                        let elem = self.infer_expr_type(&args[0])?;
+                        return Some(ast::Type::Generic { name: "Shared".into(), args: vec![elem] });
+                    }
                     if let Some(info) = self.layouts.variants.get(name) {
                         return Some(ast::Type::Named(info.type_name.clone()));
                     }
@@ -52,7 +77,7 @@ impl Compiler {
                         if let Some(info) = self.closure_by_var.get(name) {
                             self.func_map.get(&info.lifted_fn).copied()?
                         } else {
-                            self.func_map.get(name).copied()?
+                            self.resolve_fn_callee(name)?
                         }
                     }
                     ast::Expr::FieldAccess { base, field } => {
@@ -65,8 +90,29 @@ impl Compiler {
                 let (_, ret) = self.fn_signatures.get(&fid)?;
                 ty_to_ast(ret)
             }
+            ast::Expr::Array(items) => {
+                let elem = self.infer_expr_type(items.first()?)?;
+                Some(ast::Type::Array { elem: Box::new(elem), size: items.len() })
+            }
+            ast::Expr::ArrayRepeat { elem, count } => {
+                let elem_ty = self.infer_expr_type(elem)?;
+                let size = self.try_const_fold(count)
+                    .and_then(|c| c.into_lit())
+                    .and_then(|l| match l { ast::Literal::Int(n) => usize::try_from(n).ok(), _ => None })
+                    .unwrap_or(0);
+                Some(ast::Type::Array { elem: Box::new(elem_ty), size })
+            }
+            ast::Expr::Index { base, .. } => match self.infer_expr_type(base)? {
+                ast::Type::Array { elem, .. } => Some(*elem),
+                ast::Type::Generic { name, args } if name == "Array" => args.into_iter().next(),
+                _ => None,
+            },
             ast::Expr::FieldAccess { base, field } => {
                 let base_ty = self.infer_expr_type(base)?;
+                if let ast::Type::Tuple(elems) = &base_ty {
+                    let idx: usize = field.parse().ok()?;
+                    return elems.get(idx).cloned();
+                }
                 let recv = receiver_name_of(&base_ty)?;
                 let layout = self.layouts.records.get(&recv)?;
                 let idx = layout.fields.iter().position(|n| n == field)?;
@@ -84,6 +130,7 @@ impl Compiler {
                     }
                     B::Eq | B::Neq | B::Lt | B::Gt | B::Lte | B::Gte
                     | B::And | B::Or => Some(ast::Type::Named("Bool".into())),
+                    B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr => Some(ast::Type::Named("Int".into())),
                     B::Assign => None,
                 }
             }
@@ -117,6 +164,7 @@ impl Compiler {
             ast::Expr::Block(b) => {
                 b.ret.as_deref().and_then(|r| self.infer_expr_type(r))
             }
+            ast::Expr::Paren(inner) => self.infer_expr_type(inner),
             _ => None,
         }
     }
@@ -220,7 +268,7 @@ impl ConstValue {
 
 // Primitive ty::Type -> ast::Type bridge. Only the cases that show up as fn
 // return types in current builtins; complex returns yield None.
-fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
+pub(in crate::compiler) fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
     use crate::ty::Type as T;
     Some(match ty {
         T::Int    => ast::Type::Named("Int".into()),
@@ -242,8 +290,31 @@ fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> {
             name: name.clone(),
             args: args.iter().map(ty_to_ast).collect::<Option<Vec<_>>>()?,
         },
+        T::Shared { inner, .. } => ast::Type::Generic {
+            name: "Shared".into(),
+            args: vec![ty_to_ast(inner)?],
+        },
+        T::Never => ast::Type::Named("Never".into()),
         _ => return None,
     })
+}
+
+fn const_value_type(cv: &ConstValue) -> Option<ast::Type> {
+    match cv {
+        ConstValue::Lit(lit) => Some(match lit {
+            ast::Literal::Int(_) => ast::Type::Named("Int".into()),
+            ast::Literal::Float(_) => ast::Type::Named("Float".into()),
+            ast::Literal::Bool(_) => ast::Type::Named("Bool".into()),
+            ast::Literal::Char(_) => ast::Type::Named("Char".into()),
+            ast::Literal::String(_) => ast::Type::Named("String".into()),
+            ast::Literal::Unit => ast::Type::Tuple(vec![]),
+            _ => return None,
+        }),
+        ConstValue::Array(elems) => {
+            let elem = const_value_type(elems.first()?)?;
+            Some(ast::Type::Array { elem: Box::new(elem), size: elems.len() })
+        }
+    }
 }
 
 fn receiver_name_of(ty: &ast::Type) -> Option<String> {

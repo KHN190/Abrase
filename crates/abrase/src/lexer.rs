@@ -4,8 +4,8 @@ pub use crate::ast::StringPart;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     // Keywords
-    Fn, Let, Const, If, Else, Match, For, While, Loop, Break, Continue,
-    Return, Type, Trait, Impl, Import, Mod, Pub, Region, Handle, Resume,
+    Fn, Let, Const, Static, If, Else, Match, For, While, Loop, Break, Continue,
+    Return, Type, Trait, Impl, Use, Pub, Region, Handle, Resume,
     Throw, True, False, Where, In, As, SelfKW, SelfUpper, Mut, Move, Thread,
     Effect, Underscore,
 
@@ -25,9 +25,9 @@ pub enum Token {
     Range, RangeInclusive, Arrow, FatArrow,
 
     // Punctuation
-    Comma, Colon, Semicolon, Dot, Question,
+    Comma, Colon, ColonColon, Semicolon, Dot, Question,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
-    Ampersand, Pipe, At,
+    Ampersand, Pipe, At, Caret, Shl, Shr,
 
     Eof,
     Illegal(String),
@@ -39,6 +39,7 @@ impl Token {
             Token::Fn => "fn".into(),
             Token::Let => "let".into(),
             Token::Const => "const".into(),
+            Token::Static => "static".into(),
             Token::If => "if".into(),
             Token::Else => "else".into(),
             Token::Match => "match".into(),
@@ -51,8 +52,7 @@ impl Token {
             Token::Type => "type".into(),
             Token::Trait => "trait".into(),
             Token::Impl => "impl".into(),
-            Token::Import => "import".into(),
-            Token::Mod => "mod".into(),
+            Token::Use => "use".into(),
             Token::Pub => "pub".into(),
             Token::Region => "region".into(),
             Token::Handle => "handle".into(),
@@ -102,6 +102,7 @@ impl Token {
             Token::FatArrow => "=>".into(),
             Token::Comma => ",".into(),
             Token::Colon => ":".into(),
+            Token::ColonColon => "::".into(),
             Token::Semicolon => ";".into(),
             Token::Dot => ".".into(),
             Token::Question => "?".into(),
@@ -114,6 +115,9 @@ impl Token {
             Token::Ampersand => "&".into(),
             Token::Pipe => "|".into(),
             Token::At => "@".into(),
+            Token::Caret => "^".into(),
+            Token::Shl => "<<".into(),
+            Token::Shr => ">>".into(),
             Token::Eof => "end of input".into(),
             Token::Illegal(s) => format!("illegal token `{}`", s),
         }
@@ -185,6 +189,7 @@ impl<'a> Lexer<'a> {
             "fn" => Token::Fn,
             "let" => Token::Let,
             "const" => Token::Const,
+            "static" => Token::Static,
             "if" => Token::If,
             "else" => Token::Else,
             "match" => Token::Match,
@@ -197,8 +202,7 @@ impl<'a> Lexer<'a> {
             "type" => Token::Type,
             "trait" => Token::Trait,
             "impl" => Token::Impl,
-            "import" => Token::Import,
-            "mod" => Token::Mod,
+            "use" => Token::Use,
             "pub" => Token::Pub,
             "region" => Token::Region,
             "handle" => Token::Handle,
@@ -263,10 +267,12 @@ impl<'a> Lexer<'a> {
             }
             Some('<') => {
                 if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::Lte }
+                else if self.peek_char == Some('<') { self.read_char(); self.read_char(); Token::Shl }
                 else { self.read_char(); Token::Lt }
             }
             Some('>') => {
                 if self.peek_char == Some('=') { self.read_char(); self.read_char(); Token::Gte }
+                else if self.peek_char == Some('>') { self.read_char(); self.read_char(); Token::Shr }
                 else { self.read_char(); Token::Gt }
             }
             Some('&') => {
@@ -285,7 +291,10 @@ impl<'a> Lexer<'a> {
                 } else { self.read_char(); Token::Dot }
             }
             Some(';') => { self.read_char(); Token::Semicolon }
-            Some(':') => { self.read_char(); Token::Colon }
+            Some(':') => {
+                if self.peek_char == Some(':') { self.read_char(); self.read_char(); Token::ColonColon }
+                else { self.read_char(); Token::Colon }
+            }
             Some(',') => { self.read_char(); Token::Comma }
             Some('?') => { self.read_char(); Token::Question }
             Some('(') => { self.read_char(); Token::LParen }
@@ -295,6 +304,7 @@ impl<'a> Lexer<'a> {
             Some('[') => { self.read_char(); Token::LBracket }
             Some(']') => { self.read_char(); Token::RBracket }
             Some('@') => { self.read_char(); Token::At }
+            Some('^') => { self.read_char(); Token::Caret }
             Some('"') => return self.read_string(start_span),
             Some('\'') => return self.read_char_literal(start_span),
             Some(c) if c.is_alphabetic() || c == '_' => {

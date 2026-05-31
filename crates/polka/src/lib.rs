@@ -5,9 +5,8 @@ pub mod cartridge;
 
 pub use value::{Value, HANDLE_NONE, HANDLE_SLOT_MAX};
 
-// 64 fits frame handle-mask in one u64.
-pub const FRAME_REGS: usize = 64;
-pub const FRAME_MASK_WORDS: usize = FRAME_REGS / 64;
+pub const FRAME_REGS: usize = 128;
+pub const FRAME_MASK_WORDS: usize = (FRAME_REGS + 63) / 64;
 
 pub const DISPATCH_ID: u8 = 0xE0;
 pub const DISPATCH_PORT_LOOKUP: u8 = 0x00;
@@ -21,6 +20,9 @@ pub const REGION_ID: u8 = 0xE1;
 pub const REGION_PORT_PUSH: u8 = 0x00;
 pub const REGION_PORT_POP: u8 = 0x01;
 pub const REGION_PORT_FORGET: u8 = 0x02;
+
+pub const MODULE_ID: u8 = 0xE2;
+pub const MODULE_PORT_TABLE: u8 = 0x00;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Register(pub u8);

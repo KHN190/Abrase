@@ -1,0 +1,3 @@
+use lib::{N};
+
+fn main() -> Int { N + 1 }
