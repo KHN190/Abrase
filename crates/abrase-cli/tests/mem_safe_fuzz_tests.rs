@@ -335,6 +335,15 @@ impl Gen {
                     ints.push(name);
                 }
                 // ── static mut Array<R> (alias regression) ───────────────
+                _ if self.has_static_rec_arr && self.rng.pick(3) == 0 => {
+                    // Pack write: SRA[i] = R { a: .., b: .. }
+                    // Regression for region-escape bug: record literal in function
+                    // region stored into static array must be region_forget'd.
+                    let a = self.rng.pick(50) as i64;
+                    let b = self.rng.pick(50) as i64;
+                    let i = self.rng.pick(4);
+                    self.push(&format!("  SRA[{i}] = R {{ a: {a}, b: {b} }};\n"));
+                }
                 _ if self.has_static_rec_arr && !ints.is_empty() && self.rng.pick(2) == 0 => {
                     let v = self.rng.pick(50) as i64;
                     let i = self.rng.pick(4);
