@@ -1,5 +1,5 @@
 use crate::{Heap, Value};
-use crate::device::DeviceTable;
+use crate::devices::DeviceTable;
 use crate::devices::{console, CONSOLE_ID};
 use crate::value::{alloc_string, read_string};
 use std::collections::BTreeMap;

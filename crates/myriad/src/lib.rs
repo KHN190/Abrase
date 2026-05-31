@@ -1,7 +1,6 @@
 pub mod value;
 pub mod frame;
 pub mod memory;
-pub mod device;
 pub mod devices;
 pub mod interpreter;
 pub mod loader;
@@ -13,7 +12,7 @@ pub mod snapshot;
 
 pub use polka::{Value, HANDLE_NONE};
 pub use value::{alloc_string, read_string};
-pub use device::{Device, DeviceTable};
+pub use devices::{Device, DeviceTable};
 pub use memory::Heap;
 pub use region::RegionTable;
 pub use builtins::{NativeCtx, NativeFn, NativeRegistry};
