@@ -179,3 +179,52 @@ fn parser_fuzz_random_tokens() {
         gen_tokens(seed, count)
     });
 }
+
+// ── closure-position parse fuzz ───────────────────────────────────────────────
+// Closures are valid grammar in many tail/value positions. This fuzz generates
+// well-formed programs that place a closure literal in a given position and
+// asserts the PARSER accepts them (errors == 0) — a stricter property than the
+// no-panic byte/token fuzz above.
+//
+// IGNORED: `move`/`|...|` as a block/region tail *after* a preceding statement
+// currently fails to parse ("Expected '}' in block"). Un-ignore once the parser
+// accepts a closure as the trailing expression of a multi-statement block.
+fn gen_closure_position(seed: u64) -> String {
+    let mut r = Rng::new(seed ^ 0xC105);
+    let mv = if r.pick(2) == 0 { "move " } else { "" };
+    let ann = if r.pick(2) == 0 { ": Int" } else { "" };
+    let body = match r.pick(3) {
+        0 => "x + base",
+        1 => "x * 2",
+        _ => "x",
+    };
+    let clo = format!("{mv}|x{ann}| {body}");
+    // Place the closure in one of several valid tail positions, always with a
+    // preceding `let` statement (the position the parser currently chokes on).
+    match r.pick(4) {
+        0 => format!("fn main() -> Int {{ let base = 1; let f = {clo}; f(2) }}"),
+        1 => format!("fn main() -> Int {{ let base = 1; {{ let _t = 0; {clo} }}; 0 }}"),
+        2 => format!("fn mk(base: Int) -> (Int) -> Int {{ let _t = base; {clo} }}\nfn main() -> Int {{ 0 }}"),
+        _ => format!("fn main() -> Int {{ let g = region {{ let base = 1; {clo} }}; 0 }}"),
+    }
+}
+
+#[test]
+#[ignore = "parser: closure as multi-statement block/region tail not yet accepted"]
+fn parser_fuzz_closure_tail_positions() {
+    let mut bad: Vec<(u64, usize, String)> = Vec::new();
+    for seed in 0..500u64 {
+        let src = gen_closure_position(seed);
+        if let Outcome::Ok(r) = parse_one(src.clone()) {
+            if r.errors != 0 { bad.push((seed, r.errors, src)); }
+        } else {
+            bad.push((seed, 0, src));
+        }
+    }
+    if !bad.is_empty() {
+        for (seed, errs, src) in bad.iter().take(8) {
+            eprintln!("--- seed={} errors={} ---\n{}", seed, errs, src);
+        }
+        panic!("parser_fuzz_closure_tail_positions: {} program(s) failed to parse", bad.len());
+    }
+}

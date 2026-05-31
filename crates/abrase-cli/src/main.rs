@@ -14,41 +14,44 @@ const USAGE: &str = "\
 Abrase compiler & Myriad Runtime
 
 usage:
-    abrase run    [--debug] <file.abe>    parse, compile, execute main()
-    abrase check  <file.abe>               parse and type-check; no execution
-    abrase parse  <file.abe>               dump AST and parser errors
-    abrase disasm <file.abe>               parse, compile, dump bytecode
-    abrase export <file.abe> <out.pk>      compile and write a .pk cartridge
-    abrase load   <file.pk>                load a .pk cartridge and execute
+    abrase run    <file.abe>  [flags]   compile and execute main()
+    abrase check  <file.abe>            type-check only; no execution
+    abrase disasm <file.abe>  [flags]   compile and dump bytecode
+    abrase export <file.abe> <out.pk>   compile and write a .pk cartridge
+    abrase load   <file.pk>  [flags]    load and execute a .pk cartridge
 
-flags:
-    --debug    dump compile-time lowering/codegen prints and runtime
-               instruction trace + handler events to stderr
-    --int32    compile in 32-bit mode: reject Int literals outside i32 range
-               and Float literals not representable as f32; sets cart header
-               INT32_SAFE flag bit so 32-bit runtimes can opt into narrow
-               storage. Bytecode encoding itself is unchanged.
-    --no-built-in
-               skip registering mandatory native imports (print, math,
-               conversions, string ops, halt/abort). Any reference to them
-               in source becomes an undefined-function error. Produces carts
-               whose function table contains only user bytecode chunks, so a
-               minimal runtime needs zero native implementations.
+debug flags (run / load):
+    --trace      one line per opcode executed  →  [fn#id:pc] op  (stderr)
+    --handlers   handler push / resume / pop events              (stderr)
+    --leak       dump every live heap cell after exit            (stderr)
+    --debug      alias for --trace --handlers
+
+compile flags (run / disasm / export):
+    --int32      reject literals outside i32/f32 range; sets INT32_SAFE header
+    --no-builtin skip native imports (print, math, conversions, string ops)
+
+env:
+    ABRASE_CODEGEN_DEBUG=1   emit compile-time codegen logs (compiler dev use)
 ";
 
 fn main() -> ExitCode {
     let raw: Vec<String> = env::args().collect();
-    let mut debug = false;
-    let mut trace_frames = false;
+    let mut trace = false;
+    let mut handlers = false;
     let mut int32 = false;
     let mut no_built_in = false;
+    let mut leak = false;
+    let codegen_debug = std::env::var("ABRASE_CODEGEN_DEBUG").map(|v| v == "1").unwrap_or(false);
     let mut args: Vec<String> = Vec::with_capacity(raw.len());
     for a in raw {
         match a.as_str() {
-            "--debug" => debug = true,
-            "--trace-frames" => trace_frames = true,
-            "--int32" => int32 = true,
-            "--no-built-in" => no_built_in = true,
+            "--trace"        => trace = true,
+            "--handlers"     => handlers = true,
+            "--debug"        => { trace = true; handlers = true; }
+            "--trace-frames" => handlers = true, // backwards compat
+            "--int32"        => int32 = true,
+            "--no-built-in" | "--no-builtin" => no_built_in = true,
+            "--leak"         => leak = true,
             _ => args.push(a),
         }
     }
@@ -60,7 +63,7 @@ fn main() -> ExitCode {
     let path = &args[2];
 
     if cmd == "load" {
-        return cmd_load(path, debug);
+        return cmd_load(path, trace, handlers, leak);
     }
     if cmd == "export" {
         if args.len() < 4 {
@@ -76,7 +79,7 @@ fn main() -> ExitCode {
     };
 
     match cmd {
-        "run" => cmd_run(&program, debug, trace_frames, int32, no_built_in),
+        "run" => cmd_run(&program, trace, handlers, codegen_debug, int32, no_built_in, leak),
         "check" => cmd_check(&program, int32, no_built_in),
         "parse" => cmd_parse(&program),
         "disasm" => cmd_disasm(&program, int32, no_built_in),
@@ -87,19 +90,13 @@ fn main() -> ExitCode {
     }
 }
 
-fn cmd_run(program: &loader::LoadedProgram, debug: bool, trace_frames: bool, int32: bool, no_built_in: bool) -> ExitCode {
-    if debug {
-        eprintln!("# debug fmt:");
-        eprintln!("#   compile-time: [lower] [COMPILE] [CALL] [emit_handle_install] [FUNC_MAP] [BYTECODE]");
-        eprintln!("#   runtime trace: [<fn_name>#<fn_id>:<pc>] <op>");
-        eprintln!("#   handler events: [handle] push ... / [resume] -> ...");
-    }
+fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen_debug: bool, int32: bool, no_built_in: bool, leak: bool) -> ExitCode {
     let ast = &program.decls;
     let source = &program.entry_source;
 
     let mut compiler = Compiler::new()
         .with_source(source.clone())
-        .with_debug(debug)
+        .with_debug(codegen_debug)
         .with_int32_mode(int32)
         .with_no_built_in(no_built_in);
     let module = match compiler.compile_module(ast) {
@@ -113,8 +110,8 @@ fn cmd_run(program: &loader::LoadedProgram, debug: bool, trace_frames: bool, int
     let static_names = compiler.static_names_by_offset();
 
     let mut vm = VirtualMachine::new()
-        .with_debug(debug)
-        .with_trace_frames(trace_frames)
+        .with_debug(trace)
+        .with_trace_frames(handlers)
         .with_fn_names(fn_names)
         .with_static_names(static_names);
 
@@ -123,9 +120,10 @@ fn cmd_run(program: &loader::LoadedProgram, debug: bool, trace_frames: bool, int
     match vm.run_module(&module) {
         Ok(v) => {
             if !main_returns_unit { print_result(&vm, v); }
-            if debug {
-                eprintln!("[heap] live_count after exit: {}", vm.heap_live_count());
+            if trace {
+                eprintln!("[heap] live={}", vm.heap_live_count());
             }
+            if leak { vm.dump_live_slots(); }
             ExitCode::SUCCESS
         }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
@@ -334,7 +332,7 @@ fn cmd_export(src_path: &str, out_path: &str, int32: bool, no_built_in: bool) ->
     ExitCode::SUCCESS
 }
 
-fn cmd_load(pk_path: &str, debug: bool) -> ExitCode {
+fn cmd_load(pk_path: &str, trace: bool, handlers: bool, leak: bool) -> ExitCode {
     let bytes = match fs::read(pk_path) {
         Ok(b) => b,
         Err(e) => { eprintln!("ect: cannot read {}: {}", pk_path, e); return ExitCode::from(66); }
@@ -349,10 +347,16 @@ fn cmd_load(pk_path: &str, debug: bool) -> ExitCode {
             return ExitCode::from(65);
         }
     };
-    let mut vm = VirtualMachine::new().with_debug(debug);
+    let mut vm = VirtualMachine::new()
+        .with_debug(trace)
+        .with_trace_frames(handlers);
     Host::default().install_into(&mut vm);
     match vm.run_module(&module) {
-        Ok(v) => { print_result(&vm, v); ExitCode::SUCCESS }
+        Ok(v) => {
+            print_result(&vm, v);
+            if leak { vm.dump_live_slots(); }
+            ExitCode::SUCCESS
+        }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
     }
 }

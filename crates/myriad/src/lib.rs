@@ -237,6 +237,27 @@ impl VirtualMachine {
     }
 
 
+    // Debug: print every live heap cell
+    pub fn dump_live_slots(&self) {
+        let owned: std::collections::HashSet<(u32, u32)> = {
+            let mut s: std::collections::HashSet<(u32, u32)> =
+                self.string_const_handles.iter().copied().collect();
+            if self.module_table_is_handle && self.module_table_raw != polka::HANDLE_NONE {
+                s.insert(crate::memory::handle_parts(self.module_table_raw));
+            }
+            s
+        };
+        let cells = self.heap.live_cells();
+        eprintln!("[heap] {} live cell(s), {} user:", cells.len(), self.heap_live_count());
+        for (slot, gen_, rc, data, handles) in &cells {
+            let tag = if owned.contains(&(*slot, *gen_)) { "rt  " } else { "USER" };
+            let slots: Vec<String> = data.iter().zip(handles.iter()).map(|(v, h)| {
+                if *h { format!("h:{:#x}", v) } else { format!("{}", *v as i64) }
+            }).collect();
+            eprintln!("  [{}] slot={} gen={} rc={} [{}]", tag, slot, gen_, rc, slots.join(", "));
+        }
+    }
+
     pub fn heap_ref(&self) -> &Heap { &self.heap }
     pub fn heap_mut(&mut self) -> &mut Heap { &mut self.heap }
 
