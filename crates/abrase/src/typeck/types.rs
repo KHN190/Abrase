@@ -409,7 +409,7 @@ impl Checker {
                 if let ast::Pattern::Bind(n) = &pattern.node {
                     self.insert_var(n.clone(), val_ty.clone(), *is_mut, pattern.span);
                 } else {
-                    self.check_pattern(pattern, &val_ty, pattern.span);
+                    self.check_pattern_mut(pattern, &val_ty, *is_mut);
                 }
                 self.context_stack.pop();
             }

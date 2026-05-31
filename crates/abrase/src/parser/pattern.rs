@@ -32,14 +32,22 @@ impl<'a> Parser<'a> {
             Token::Int(v) => {
                 let start = Literal::Int(*v);
                 if self.peek_token == Token::Range {
-                    self.next_token();
-                    self.next_token();
-                    let end = if let Token::Int(n) = self.current_token { Some(Literal::Int(n)) } else { None };
+                    self.next_token(); // consume `..`
+                    let end = if let Token::Int(n) = self.peek_token {
+                        self.next_token();
+                        Some(Literal::Int(n))
+                    } else {
+                        None
+                    };
                     Pattern::Range { start: Some(start), end, inclusive: false }
                 } else if self.peek_token == Token::RangeInclusive {
-                    self.next_token();
-                    self.next_token();
-                    let end = if let Token::Int(n) = self.current_token { Some(Literal::Int(n)) } else { None };
+                    self.next_token(); // consume `..=`
+                    let end = if let Token::Int(n) = self.peek_token {
+                        self.next_token();
+                        Some(Literal::Int(n))
+                    } else {
+                        None
+                    };
                     Pattern::Range { start: Some(start), end, inclusive: true }
                 } else {
                     Pattern::Literal(start)

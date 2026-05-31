@@ -818,3 +818,118 @@ fn range_pattern_open_end_matches_correctly() {
     let v = run_src(RANGE_PATTERN_OPEN_END).unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(99));
 }
+
+// --- static array-repeat of record type: each slot must be independent ---
+
+const RECORD_ARRAY_REPEAT_INDEPENDENT: &str = r#"
+type Pt = { x: Int, y: Int }
+static mut GRID: Array<Pt> = [Pt { x: 0, y: 0 }; 4]
+
+fn main() -> Int {
+  GRID[0].x = 10;
+  GRID[1].x = 20;
+  GRID[2].x = 30;
+  GRID[0].x + GRID[1].x + GRID[2].x + GRID[3].x
+}
+"#;
+
+#[test]
+fn record_array_repeat_slots_are_independent() {
+    // If all slots alias the same record, every write to [i].x would affect all —
+    // GRID[3].x would read 30 instead of 0.
+    let v = run_src(RECORD_ARRAY_REPEAT_INDEPENDENT).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(60));
+}
+
+// --- float fields in repeated record stay Float (not Int) ---
+
+const RECORD_ARRAY_FLOAT_ARITH: &str = r#"
+type Bullet = { on: Int, x: Float, y: Float, vx: Float, vy: Float }
+static mut EB: Array<Bullet> = [Bullet { on: 0, x: 0.0, y: 0.0, vx: 0.0, vy: 0.0 }; 4]
+
+fn main() -> Int {
+  EB[0].on = 1;
+  EB[0].x  = 3.0;
+  EB[0].vx = 1.5;
+  EB[0].x  = EB[0].x + EB[0].vx;
+  EB[0].x.to_i()
+}
+"#;
+
+#[test]
+fn record_array_float_field_arithmetic_uses_fadd() {
+    // Regression: field type must be inferred as Float so FAdd is emitted.
+    // If Add (int) is emitted instead, the bit pattern of 3.0+1.5 is garbage.
+    let v = run_src(RECORD_ARRAY_FLOAT_ARITH).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(4));
+}
+
+// --- static mut record array across call_export frames: slots independent ---
+
+const RECORD_STATIC_EXPORT_FRAMES: &str = r#"
+type Ent = { hp: Int, active: Int }
+static mut ENT: Array<Ent> = [Ent { hp: 10, active: 0 }; 3]
+
+pub fn damage(i: Int, d: Int) -> Unit { ENT[i].hp = ENT[i].hp - d }
+pub fn read_hp(i: Int) -> Int { ENT[i].hp }
+
+fn main() -> Int { 0 }
+"#;
+
+#[test]
+fn static_record_array_call_export_slots_independent() {
+    let src = RECORD_STATIC_EXPORT_FRAMES;
+    let mut p = abrase::parser::Parser::new(abrase::lexer::Lexer::new(src))
+        .with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut compiler = abrase::compiler::Compiler::new().with_source(src.into());
+    let module = compiler.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
+    let mut vm = myriad::VirtualMachine::new();
+    vm.run_module(&module).unwrap_or_else(|e| panic!("{}", e));
+    vm.call_export(&module, "damage", &[Value::from_int(1), Value::from_int(3)])
+        .unwrap_or_else(|e| panic!("{}", e));
+    let hp0 = vm.call_export(&module, "read_hp", &[Value::from_int(0)])
+        .unwrap_or_else(|e| panic!("{}", e));
+    let hp1 = vm.call_export(&module, "read_hp", &[Value::from_int(1)])
+        .unwrap_or_else(|e| panic!("{}", e));
+    let hp2 = vm.call_export(&module, "read_hp", &[Value::from_int(2)])
+        .unwrap_or_else(|e| panic!("{}", e));
+    // Only slot 1 was damaged; slots 0 and 2 must be untouched.
+    assert_eq!(hp0, Value::from_int(10), "slot 0 must be unaffected");
+    assert_eq!(hp1, Value::from_int(7),  "slot 1 damaged by 3");
+    assert_eq!(hp2, Value::from_int(10), "slot 2 must be unaffected");
+}
+
+const MUT_RECORD_DESTRUCTURE: &str = r#"
+type Pt = { x: Int, y: Int }
+fn main() -> Int {
+  let p = Pt { x: 3, y: 7 };
+  let mut Pt { x, y } = p;
+  x = x * 2;
+  y = y + 1;
+  x + y
+}
+"#;
+
+#[test]
+fn mut_record_destructure_binds_are_mutable() {
+    let v = run_src(MUT_RECORD_DESTRUCTURE).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(14)); // 3*2 + 7+1 = 14
+}
+
+const MUT_TUPLE_DESTRUCTURE: &str = r#"
+fn main() -> Int {
+  let mut (a, b) = (10, 20);
+  a = a + 5;
+  b = b - 3;
+  a + b
+}
+"#;
+
+#[test]
+fn mut_tuple_destructure_binds_are_mutable() {
+    let v = run_src(MUT_TUPLE_DESTRUCTURE).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(32)); // 15 + 17
+}
