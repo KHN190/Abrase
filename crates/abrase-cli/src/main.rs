@@ -6,7 +6,9 @@ use std::path::Path;
 
 use abrase::compiler::Compiler;
 use abrase::error::{Error, ErrorCode};
+use abrase::lexer::Lexer;
 use abrase::loader;
+use abrase::parser::Parser;
 use abrase::typeck::Checker;
 use myriad::{Host, Value, VirtualMachine, read_string};
 
@@ -14,11 +16,13 @@ const USAGE: &str = "\
 Abrase compiler & Myriad Runtime
 
 usage:
-    abrase run    <file.abe>  [flags]   compile and execute main()
-    abrase check  <file.abe>            type-check only; no execution
-    abrase disasm <file.abe>  [flags]   compile and dump bytecode
-    abrase export <file.abe> <out.pk>   compile and write a .pk cartridge
-    abrase load   <file.pk>  [flags]    load and execute a .pk cartridge
+    abrase run     <file.abe>  [flags]   compile and execute main()
+    abrase check   <file.abe>            type-check only; no execution
+    abrase disasm  <file.abe>  [flags]   compile and dump bytecode
+    abrase explain <file.abe>            AST → typeck → bytecode chain
+    abrase explain --expr '<snippet>'    same for inline code (auto-wrapped)
+    abrase export  <file.abe> <out.pk>   compile and write a .pk cartridge
+    abrase load    <file.pk>  [flags]    load and execute a .pk cartridge
 
 debug flags (run / load):
     --trace      one line per opcode executed  →  [fn#id:pc] op  (stderr)
@@ -41,25 +45,49 @@ fn main() -> ExitCode {
     let mut int32 = false;
     let mut no_built_in = false;
     let mut leak = false;
+    let mut inline_expr: Option<String> = None;
     let codegen_debug = std::env::var("ABRASE_CODEGEN_DEBUG").map(|v| v == "1").unwrap_or(false);
     let mut args: Vec<String> = Vec::with_capacity(raw.len());
-    for a in raw {
+    let mut raw_iter = raw.into_iter();
+    while let Some(a) = raw_iter.next() {
         match a.as_str() {
             "--trace"        => trace = true,
             "--handlers"     => handlers = true,
             "--debug"        => { trace = true; handlers = true; }
-            "--trace-frames" => handlers = true, // backwards compat
+            "--trace-frames" => handlers = true,
             "--int32"        => int32 = true,
             "--no-built-in" | "--no-builtin" => no_built_in = true,
             "--leak"         => leak = true,
+            "--expr"         => { inline_expr = raw_iter.next(); }
             _ => args.push(a),
         }
     }
-    if args.len() < 3 {
+
+    if args.len() < 2 {
         eprint!("{}", USAGE);
         return ExitCode::from(64);
     }
     let cmd = args[1].as_str();
+
+    if cmd == "explain" {
+        if let Some(snippet) = inline_expr {
+            return cmd_explain_inline(&snippet);
+        }
+        if args.len() < 3 {
+            eprint!("{}", USAGE);
+            return ExitCode::from(64);
+        }
+        let program = match loader::load_program(Path::new(&args[2])) {
+            Ok(p) => p,
+            Err(e) => { eprintln!("{}", e); return ExitCode::from(66); }
+        };
+        return cmd_explain_program(&program);
+    }
+
+    if args.len() < 3 {
+        eprint!("{}", USAGE);
+        return ExitCode::from(64);
+    }
     let path = &args[2];
 
     if cmd == "load" {
@@ -198,14 +226,58 @@ fn cmd_parse(program: &loader::LoadedProgram) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -> ExitCode {
-    let ast = &program.decls;
-    let source = &program.entry_source;
+fn cmd_explain_program(program: &loader::LoadedProgram) -> ExitCode {
+    explain_chain(&program.decls, &program.entry_source, program)
+}
+
+fn cmd_explain_inline(snippet: &str) -> ExitCode {
+    let src = if looks_like_decls(snippet) {
+        snippet.to_string()
+    } else {
+        format!("fn main() -> Int {{\n{}\n}}\n", snippet)
+    };
+    let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() {
+        eprintln!("parse errors:\n{}", p.pretty_print_errors());
+        return ExitCode::from(1);
+    }
+    explain_chain_raw(&ast, &src)
+}
+
+fn looks_like_decls(s: &str) -> bool {
+    let trimmed = s.trim_start();
+    trimmed.starts_with("fn ") || trimmed.starts_with("type ") || trimmed.starts_with("static ")
+        || trimmed.starts_with("pub ") || trimmed.starts_with("effect ")
+        || trimmed.starts_with("use ")
+}
+
+fn explain_chain(
+    ast: &[abrase::ast::Decl],
+    source: &str,
+    program: &loader::LoadedProgram,
+) -> ExitCode {
+    println!("=== parsed AST ===");
+    for d in ast {
+        println!("{:#?}", d);
+    }
+
+    println!("\n=== typeck ===");
+    let mut checker = Checker::new();
+    checker.check_program(ast);
+    if checker.errors.is_empty() {
+        println!("ok  ({} expr types recorded)", checker.expr_types.len());
+    } else {
+        let errs: Vec<Error> = checker.errors.iter()
+            .map(|te| Error::new(ErrorCode::TypeError, te.span, te.message.clone())
+                .with_module(te.module.clone()))
+            .collect();
+        print!("{}", program.render_errors(&errs));
+    }
+
+    println!("\n=== bytecode ===");
     let origins = fn_origins(program);
-    let mut compiler = Compiler::new()
-        .with_source(source.clone())
-        .with_int32_mode(int32)
-        .with_no_built_in(no_built_in);
+    let mut compiler = Compiler::new().with_source(source.to_string());
     let module = match compiler.compile_module(ast) {
         Ok(m) => m,
         Err(errs) => {
@@ -213,8 +285,47 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
             return ExitCode::from(1);
         }
     };
-    let names = compiler.fn_names();
-    let static_by_offset = compiler.static_names_by_offset();
+    print_bytecode(&module, &compiler.fn_names(), &compiler.static_names_by_offset(), &origins);
+    ExitCode::SUCCESS
+}
+
+fn explain_chain_raw(ast: &[abrase::ast::Decl], source: &str) -> ExitCode {
+    println!("=== parsed AST ===");
+    for d in ast {
+        println!("{:#?}", d);
+    }
+
+    println!("\n=== typeck ===");
+    let mut checker = Checker::new();
+    checker.check_program(ast);
+    if checker.errors.is_empty() {
+        println!("ok  ({} expr types recorded)", checker.expr_types.len());
+    } else {
+        for e in &checker.errors {
+            eprintln!("  type error: {}", e.message);
+        }
+    }
+
+    println!("\n=== bytecode ===");
+    let mut compiler = Compiler::new().with_source(source.to_string()).with_no_built_in(true);
+    let module = match compiler.compile_module(ast) {
+        Ok(m) => m,
+        Err(_) => {
+            eprintln!("{}", compiler.pretty_print_errors());
+            return ExitCode::from(1);
+        }
+    };
+    let empty_origins = std::collections::HashMap::new();
+    print_bytecode(&module, &compiler.fn_names(), &compiler.static_names_by_offset(), &empty_origins);
+    ExitCode::SUCCESS
+}
+
+fn print_bytecode(
+    module: &abrase::bytecode::Module,
+    names: &[String],
+    static_by_offset: &[String],
+    origins: &std::collections::HashMap<String, String>,
+) {
     for (i, chunk) in module.functions.iter().enumerate() {
         let entry_marker = if i == module.entry { " <entry>" } else { "" };
         let name = names.get(i).cloned().unwrap_or_default();
@@ -228,15 +339,15 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
                     println!("  const[{}] = {:?}", j, c);
                 }
                 for (pc, op) in bc.code.iter().enumerate() {
-                    let annotation = if is_module_init {
-                        static_init_annotation(op, &static_by_offset)
+                    let ann = if is_module_init {
+                        static_init_annotation(op, static_by_offset)
                     } else {
-                        String::new()
+                        call_annotation(op, names)
                     };
-                    if annotation.is_empty() {
+                    if ann.is_empty() {
                         println!("  {:>4}: {:?}", pc, op);
                     } else {
-                        println!("  {:>4}: {:<50}  ; {}", pc, format!("{:?}", op), annotation);
+                        println!("  {:>4}: {:<50}  ; {}", pc, format!("{:?}", op), ann);
                     }
                 }
             }
@@ -254,7 +365,40 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
             }
         }
     }
+}
+
+fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -> ExitCode {
+    let ast = &program.decls;
+    let source = &program.entry_source;
+    let origins = fn_origins(program);
+    let mut compiler = Compiler::new()
+        .with_source(source.clone())
+        .with_int32_mode(int32)
+        .with_no_built_in(no_built_in);
+    let module = match compiler.compile_module(ast) {
+        Ok(m) => m,
+        Err(errs) => {
+            eprint!("{}", program.render_errors(&errs));
+            return ExitCode::from(1);
+        }
+    };
+    print_bytecode(&module, &compiler.fn_names(), &compiler.static_names_by_offset(), &origins);
     ExitCode::SUCCESS
+}
+
+fn call_annotation(op: &abrase::bytecode::OpCode, names: &[String]) -> String {
+    use abrase::bytecode::OpCode;
+    match op {
+        OpCode::Call(_, fid) => {
+            let n = names.get(*fid as usize).cloned().unwrap_or_default();
+            let via = if n.starts_with("__closure_") { " (closure body / arm)" }
+                      else if n.starts_with("__fnval_") { " (fn-value adapter)" }
+                      else { "" };
+            format!("-> {}{}", n, via)
+        }
+        OpCode::CallReg(..) => "-> dynamic via reg (closure / fn-value)".into(),
+        _ => String::new(),
+    }
 }
 
 fn static_init_annotation(op: &abrase::bytecode::OpCode, static_by_offset: &[String]) -> String {
