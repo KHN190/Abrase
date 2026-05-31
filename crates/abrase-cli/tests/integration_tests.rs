@@ -967,3 +967,37 @@ fn mixed_mut_and_immut_fields_in_destructure() {
     let v = run_src(MIXED_MUT_FIELD).unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(25)); // 11 + 2 + 12
 }
+
+// --- static array of records assigned via pack literal, then read back ---
+
+const STATIC_RECORD_ARRAY_PACK_WRITEREAD: &str = r#"
+type Bullet = { on: Int, vx: Float, vy: Float }
+static mut EB: Array<Bullet> = [Bullet { on: 0, vx: 0.0, vy: 0.0 }; 4]
+
+fn spawn(i: Int, vx: Float, vy: Float) -> Unit {
+  EB[i] = Bullet { on: 1, vx: vx, vy: vy }
+}
+
+fn step(i: Int) -> Unit {
+  let b = EB[i];
+  if b.on == 1 {
+    EB[i] = Bullet { on: b.on, vx: b.vx + 0.5, vy: b.vy + 0.5 }
+  }
+}
+
+fn main() -> Int {
+  spawn(0, 1.0, 2.0);
+  step(0);
+  let r = EB[0];
+  r.on * 1000 + r.vx.to_i() * 10 + r.vy.to_i()
+}
+"#;
+
+#[test]
+fn static_record_array_pack_write_survives_region_pop() {
+    // Regression: record literal EB[i] = Bullet{..} stored into a static array
+    // inside a function region was force_freed on region pop (use-after-free).
+    let v = run_src(STATIC_RECORD_ARRAY_PACK_WRITEREAD).unwrap_or_else(|e| panic!("\n{}", e));
+    // on=1*1000 + vx(1.5→1)*10 + vy(2.5→2) = 1012
+    assert_eq!(v, Value::from_int(1012));
+}
