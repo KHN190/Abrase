@@ -314,6 +314,25 @@ impl Heap {
         self.cells.iter().filter(|c| c.is_some()).count()
     }
 
+    // Debug: every live cell as (slot, generation, rc, data, is_handle-per-slot).
+    // Used by the leak-localization dump; not on any hot path.
+    pub fn live_cells(&self) -> Vec<(u32, u32, u32, Vec<u64>, Vec<bool>)> {
+        self.cells.iter().enumerate().filter_map(|(i, c)| {
+            c.as_ref().map(|cell| {
+                let handles: Vec<bool> = (0..cell.data.len())
+                    .map(|j| mask_bit(&cell.mask, j))
+                    .collect();
+                (
+                    i as u32,
+                    self.generation.get(i).copied().unwrap_or(0),
+                    self.rc.get(i).copied().unwrap_or(0),
+                    cell.data.to_vec(),
+                    handles,
+                )
+            })
+        }).collect()
+    }
+
     pub fn clear(&mut self) {
         self.cells.clear();
         self.rc.clear();

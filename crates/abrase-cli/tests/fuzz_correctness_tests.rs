@@ -718,6 +718,78 @@ fn main() -> Int {{
     (src, expected)
 }
 
+fn gen_closure_static(rng: &mut Rng) -> (String, i64) {
+    let init = rng.range(1, 20);
+    let add  = rng.range(1, 10);
+    let arg  = rng.range(1, 10);
+    let expected = (init + add) + arg;
+    let src = format!(r#"
+static mut TOTAL: Int = {init}
+fn main() -> Int {{
+  TOTAL = TOTAL + {add};
+  let reader = |x| TOTAL + x;
+  reader({arg})
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_record_nested(rng: &mut Rng) -> (String, i64) {
+    let x = rng.range(1, 15);
+    let y = rng.range(1, 15);
+    let z = rng.range(1, 15);
+    let expected = x + y + z;
+    let src = format!(r#"
+type Inner = {{ x: Int, y: Int }}
+type Outer = {{ a: Inner, z: Int }}
+fn sum_outer(o: Outer) -> Int {{ o.a.x + o.a.y + o.z }}
+fn main() -> Int {{
+  let i = Inner {{ x: {x}, y: {y} }};
+  let o = Outer {{ a: i, z: {z} }};
+  sum_outer(o)
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_record_recursion(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(2, 8);
+    let expected = n * (n + 1) / 2;
+    let src = format!(r#"
+type Acc = {{ sum: Int, count: Int }}
+fn fold(n: Int, acc: Acc) -> Acc {{
+  if n <= 0 {{ acc }} else {{
+    fold(n - 1, Acc {{ sum: acc.sum + n, count: acc.count + 1 }})
+  }}
+}}
+fn main() -> Int {{
+  let r = fold({n}, Acc {{ sum: 0, count: 0 }});
+  r.sum
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_nested_record_static(rng: &mut Rng) -> (String, i64) {
+    let vals: Vec<(i64, i64)> = (0..3).map(|_| (rng.range(1, 10), rng.range(1, 10))).collect();
+    let expected: i64 = vals.iter().map(|(a, b)| a + b).sum();
+    let inits: String = vals.iter()
+        .map(|(a, b)| format!("Outer {{ inner: Inner {{ v: {a} }}, w: {b} }}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let src = format!(r#"
+type Inner = {{ v: Int }}
+type Outer = {{ inner: Inner, w: Int }}
+static mut ARR: Array<Outer> = [{inits}]
+fn main() -> Int {{
+  ARR[0].inner.v + ARR[0].w +
+  ARR[1].inner.v + ARR[1].w +
+  ARR[2].inner.v + ARR[2].w
+}}
+"#);
+    (src, expected)
+}
+
 fn gen_region_escape(rng: &mut Rng) -> (String, i64) {
     let a = rng.range(1, 20);
     let b = rng.range(1, 20);
@@ -770,6 +842,29 @@ pub fn get_total() -> Int {{ TOTAL }}
 fn main() -> Int {{ 0 }}
 "#);
     (src, vec![Value::from_int(n)], expected)
+}
+
+fn gen_closure_multimodule(rng: &mut Rng) -> (String, String, i64) {
+    let base = rng.range(1, 10);
+    let n    = rng.range(2, 8);
+    let expected = (0..n).map(|i| base + i).sum::<i64>();
+    let lib = format!(r#"
+pub fn sum_with(n: Int, f: (Int) -> Int) -> Int {{
+  let mut acc = 0;
+  let mut i = 0;
+  while i < n {{ acc = acc + f(i); i = i + 1 }};
+  acc
+}}
+fn main() -> Int {{ 0 }}
+"#);
+    let main = format!(r#"
+use lib::{{sum_with}}
+fn main() -> Int {{
+  let base = {base};
+  sum_with({n}, |i: Int| base + i)
+}}
+"#);
+    (lib, main, expected)
 }
 
 fn gen_multi_module_effect(rng: &mut Rng) -> (String, String, i64) {
@@ -862,6 +957,10 @@ const SINGLE_GENS: &[(&str, Gen)] = &[
     ("move_closure",             gen_move_closure),
     ("closure_record_capture",   gen_closure_record_capture),
     ("closure_array_capture",    gen_closure_array_capture),
+    ("closure_static",           gen_closure_static),
+    ("record_nested",            gen_record_nested),
+    ("record_recursion",         gen_record_recursion),
+    ("nested_record_static",     gen_nested_record_static),
     ("exception",           gen_exception),
     ("effect_static",       gen_effect_static),
     ("char_ops",            gen_char_ops),
@@ -876,7 +975,7 @@ const MM_GENS: &[(&str, MMGen)] = &[
     ("multi_module_static",  gen_multi_module),
     ("multi_module_record",  gen_multi_module_record),
     ("multi_module_variant", gen_multi_module_variant),
-    ("multi_module_effect",  gen_multi_module_effect),
+    ("multi_module_effect",   gen_multi_module_effect),
 ];
 
 const MF_GENS: &[(&str, MFGen)] = &[
@@ -1069,5 +1168,126 @@ fn fuzz_static_variant_array_multiframe() {
     if !failures.is_empty() {
         for (seed, msg) in &failures { eprintln!("--- seed={} ---\n{}", seed, msg); }
         panic!("fuzz_static_variant_array_multiframe: {} failure(s)", failures.len());
+    }
+}
+
+#[test]
+#[ignore = "codegen: first-class closure across module boundary not yet implemented"]
+fn closure_passed_to_multimodule_fn() {
+    let mut failures: Vec<(u64, String)> = Vec::new();
+    for seed in 0..150u64 {
+        let mut rng = Rng::new(seed * 53 + "closure_multimodule".len() as u64);
+        let (lib, main, expected) = gen_closure_multimodule(&mut rng);
+        if let Err(e) = run_files_expect(&lib, &main, expected) {
+            let combined = format!("--- lib ---\n{}--- main ---\n{}", lib, main);
+            failures.push((seed, format!("{}\n{}", e, combined)));
+        }
+    }
+    if !failures.is_empty() {
+        for (seed, msg) in &failures { eprintln!("--- seed={} ---\n{}", seed, msg); }
+        panic!("closure_passed_to_multimodule_fn: {} failure(s)", failures.len());
+    }
+}
+
+// ── first-class closure fuzz ──────────────────────────────────────────────────
+// Closures crossing a function boundary: passed as an argument, returned, stored,
+// or captured-then-called. Each generator has a known result; the runner checks
+// BOTH the value and heap_live_count() == 0 (no leak of the [fn_id, env] cell).
+//
+// IGNORED: first-class closures are not yet implemented — a closure value carries
+// only its env cell, the fn_id lives at compile time, so it cannot cross a call
+// boundary. Un-ignore once closures are represented as a self-contained value.
+// See todo.md "first-class closure" / memory project-closure-limitation.
+fn run_src_noleak(src: &str, expected: i64) -> Result<(), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err(format!("parse:\n{}", p.pretty_print_errors())); }
+    let mut c = Compiler::new().with_source(src.to_string());
+    let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
+    let mut vm = VirtualMachine::new().with_step_cap(5_000_000);
+    let v = vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
+    let got = v.as_int();
+    if got != expected { return Err(format!("expected {}, got {}", expected, got)); }
+    let live = vm.heap_live_count();
+    if live != 0 { return Err(format!("leak: heap_live_count = {} (want 0)", live)); }
+    Ok(())
+}
+
+fn gen_fc_pass_arg(rng: &mut Rng) -> (String, i64) {
+    let off = rng.range(1, 20);
+    let v = rng.range(1, 30);
+    (format!(r#"
+fn apply(f: (Int) -> Int, x: Int) -> Int {{ f(x) }}
+fn main() -> Int {{
+  let off = {off};
+  apply(move |x: Int| x + off, {v})
+}}
+"#), v + off)
+}
+
+fn gen_fc_return(rng: &mut Rng) -> (String, i64) {
+    let b = rng.range(1, 20);
+    let v = rng.range(1, 30);
+    (format!(r#"
+fn mk(b: Int) -> (Int) -> Int {{ move |x: Int| x + b }}
+fn main() -> Int {{
+  let g = mk({b});
+  g({v}) + g({v})
+}}
+"#), 2 * (v + b))
+}
+
+fn gen_fc_store_record(rng: &mut Rng) -> (String, i64) {
+    let k = rng.range(1, 10);
+    let v = rng.range(1, 30);
+    (format!(r#"
+type Box = {{ f: (Int) -> Int }}
+fn main() -> Int {{
+  let k = {k};
+  let b = Box {{ f: move |x: Int| x * k }};
+  b.f({v})
+}}
+"#), v * k)
+}
+
+fn gen_fc_capture_closure(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 10);
+    let v = rng.range(1, 20);
+    // Outer closure captures inner closure `g` and calls it (the env_load path).
+    (format!(r#"
+fn main() -> Int {{
+  let a = {a};
+  let g = move |x: Int| x + a;
+  let h = move |y: Int| g(y) + g(y);
+  h({v})
+}}
+"#), 2 * (v + a))
+}
+
+const FC_GENS: &[(&str, Gen)] = &[
+    ("fc_pass_arg",        gen_fc_pass_arg),
+    ("fc_return",          gen_fc_return),
+    ("fc_store_record",    gen_fc_store_record),
+    ("fc_capture_closure", gen_fc_capture_closure),
+];
+
+#[test]
+#[ignore = "codegen: first-class closures (pass/return/store/capture) not yet implemented"]
+fn fuzz_first_class_closures() {
+    let mut failures: Vec<(u64, &str, String, String)> = Vec::new();
+    for seed in 0..200u64 {
+        for (name, f) in FC_GENS {
+            let mut rng = Rng::new(seed * 89 + name.len() as u64);
+            let (src, expected) = f(&mut rng);
+            if let Err(e) = run_src_noleak(&src, expected) {
+                failures.push((seed, name, e, src));
+            }
+        }
+    }
+    if !failures.is_empty() {
+        for (seed, name, err, src) in failures.iter().take(8) {
+            eprintln!("--- seed={} gen={} ---\n{}\nError: {}", seed, name, src, err);
+        }
+        panic!("fuzz_first_class_closures: {} failure(s)", failures.len());
     }
 }
