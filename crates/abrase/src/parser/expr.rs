@@ -7,6 +7,7 @@ use super::helpers::is_block_terminated;
 impl<'a> Parser<'a> {
     pub fn parse_expr(&mut self, precedence: Precedence) -> Spanned<Expr> {
         let span = self.current_span;
+        self.trace_cursor("parse_expr enter");
         let _guard = match self.enter_depth() {
             Some(g) => g,
             None => return Spanned { node: Expr::Error, span },
@@ -18,6 +19,7 @@ impl<'a> Parser<'a> {
                 Spanned { node: Expr::Error, span }
             }
         };
+        self.trace_cursor("parse_expr post-prefix");
         if is_block_terminated(&left.node)
             && !matches!(self.current_token,
                 Token::Dot | Token::LParen | Token::LBracket | Token::Question)
@@ -263,7 +265,7 @@ impl<'a> Parser<'a> {
         self.no_record_literal = true;
         let scrutinee = Box::new(self.parse_expr(Precedence::Lowest));
         self.no_record_literal = prev;
-        if !self.expect_peek(Token::LBrace) {
+        if self.current_token != Token::LBrace && !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' after match expr".into());
         }
         let mut arms = Vec::new();
@@ -275,7 +277,7 @@ impl<'a> Parser<'a> {
                 self.next_token();
                 Some(self.parse_expr(Precedence::Lowest))
             } else { None };
-            if !self.expect_peek(Token::FatArrow) {
+            if self.current_token != Token::FatArrow && !self.expect_peek(Token::FatArrow) {
                 return Err("Expected '=>' in match arm".into());
             }
             self.next_token();
@@ -312,7 +314,7 @@ impl<'a> Parser<'a> {
         self.no_record_literal = true;
         let iter = Box::new(self.parse_expr(Precedence::Lowest));
         self.no_record_literal = prev;
-        if !self.expect_peek(Token::LBrace) {
+        if self.current_token != Token::LBrace && !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' in for loop".into());
         }
         let body = self.parse_block()?;
@@ -452,7 +454,8 @@ impl<'a> Parser<'a> {
             None
         } else {
             let e = self.parse_expr(Precedence::Lowest);
-            if !self.expect_peek(Token::RParen) {
+            let at_close = is_block_terminated(&e.node) && self.current_token == Token::RParen;
+            if !at_close && !self.expect_peek(Token::RParen) {
                 return Err("Expected ')' in resume".into());
             }
             Some(Box::new(e))
@@ -606,7 +609,8 @@ impl<'a> Parser<'a> {
                 self.next_token();
                 let index = self.parse_expr(Precedence::Lowest);
                 let span = self.current_span;
-                if !self.expect_peek(Token::RBracket) {
+                let at_close = is_block_terminated(&index.node) && self.current_token == Token::RBracket;
+                if !at_close && !self.expect_peek(Token::RBracket) {
                     self.report_error("Expected ']' in index expression".into(), self.current_span);
                 }
                 return Spanned { node: Expr::Index { base: Box::new(left), index: Box::new(index) }, span };

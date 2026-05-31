@@ -3,15 +3,9 @@ use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
 use crate::bytecode::Value;
 
-pub(in crate::compiler) enum CallEnv {
-    None,
-    Reg(Register),
-    EnvLoadOffset(usize),
-}
-
 pub(in crate::compiler) enum CallTarget<'a> {
-    Function { func_id: u16, env: CallEnv },
-    FuncReg  { fn_id_reg: Register },
+    Function { func_id: u16 },
+    FnValue  { callee: &'a ast::Spanned<ast::Expr> },
     Method   { func_id: u16, receiver: &'a ast::Spanned<ast::Expr> },
     EnvLoad  { env_reg: Register, idx: u16 },
     CellLoad { env_reg: Register, idx: u16 },
@@ -54,13 +48,13 @@ impl Compiler {
             CallTarget::CloneVal { receiver } => self.emit_clone(receiver),
             CallTarget::HostFn { fn_id } => self.emit_host_fn_call(fn_id, args),
             CallTarget::VariantCtor { tag } => self.emit_variant_ctor(tag, args),
-            CallTarget::Function { func_id, env: CallEnv::None }
+            CallTarget::Function { func_id }
                 if Some(func_id) == self.current_self_fn_id
                 && self.tail_call_spans.contains(&call_span) => {
                 self.emit_tail_self_call(args)
             }
-            CallTarget::Function { func_id, env } => self.emit_func_call(func_id, env, args),
-            CallTarget::FuncReg { fn_id_reg } => self.emit_func_call_reg(fn_id_reg, args),
+            CallTarget::Function { func_id } => self.emit_func_call(func_id, args),
+            CallTarget::FnValue { callee } => self.emit_fn_value_call(callee, args),
             CallTarget::Method { func_id, receiver } => self.emit_method_call(func_id, receiver, args),
             CallTarget::DeviceIn => self.emit_device_in(args),
             CallTarget::DeviceOut => self.emit_device_out(args),
@@ -108,15 +102,14 @@ impl Compiler {
         let ast::Expr::Identifier(name) = &callee.node else {
             return Err("Call target must be a function identifier".to_string());
         };
-        if let Some(&reg) = self.var_to_reg.get(name) {
-            if matches!(self.var_types.get(name), Some(ast::Type::Function { .. })) {
-                return Ok(CallTarget::FuncReg { fn_id_reg: reg });
-            }
+        if self.var_to_reg.contains_key(name)
+            && matches!(self.var_types.get(name), Some(ast::Type::Function { .. })) {
+            return Ok(CallTarget::FnValue { callee });
         }
         let func_id = self.resolve_fn_callee(name)
             .ok_or_else(|| format!("Undefined function: {}", name))?;
         let fid = super::scaffold::to_u16(func_id, &format!("Function id for '{}'", name))?;
-        Ok(CallTarget::Function { func_id: fid, env: CallEnv::None })
+        Ok(CallTarget::Function { func_id: fid })
     }
 
     fn resolve_env_load<'a>(
@@ -142,13 +135,9 @@ impl Compiler {
         callee: &'a ast::Spanned<ast::Expr>,
     ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
-        let Some(info) = self.closure_by_var.get(name) else { return Ok(None) };
-        let func_id = *self.func_map.get(&info.lifted_fn)
-            .ok_or_else(|| format!("internal: lifted closure fn '{}' not in fn table", info.lifted_fn))?;
-        let env_reg = *self.var_to_reg.get(name)
-            .ok_or_else(|| format!("internal: closure binding '{}' has no register", name))?;
-        let fid = super::scaffold::to_u16(func_id, &format!("Closure fn_id for '{}'", name))?;
-        Ok(Some(CallTarget::Function { func_id: fid, env: CallEnv::Reg(env_reg) }))
+        if !self.closure_by_var.contains_key(name) { return Ok(None); }
+        // The binding holds a [fn_id, env] cell — call it as a function value.
+        Ok(Some(CallTarget::FnValue { callee }))
     }
 
     fn resolve_env_load_closure_call<'a>(
@@ -164,11 +153,10 @@ impl Compiler {
         let captured_name = self.current_closure_layout.iter()
             .find_map(|(n, &i)| if i == offset { Some(n.clone()) } else { None });
         let Some(captured_name) = captured_name else { return Ok(None); };
-        let Some(info) = self.closure_by_var.get(&captured_name) else { return Ok(None) };
-        let func_id = *self.func_map.get(&info.lifted_fn)
-            .ok_or_else(|| format!("internal: lifted closure fn '{}' not in fn table", info.lifted_fn))?;
-        let fid = super::scaffold::to_u16(func_id, &format!("Closure fn_id for '{}'", captured_name))?;
-        Ok(Some(CallTarget::Function { func_id: fid, env: CallEnv::EnvLoadOffset(offset) }))
+        if !self.closure_by_var.contains_key(&captured_name) { return Ok(None); }
+        // `__env_load(__env, off)` evaluates to a captured [fn_id, env] cell;
+        // call it as a function value.
+        Ok(Some(CallTarget::FnValue { callee }))
     }
 
     fn resolve_effect_op_call<'a>(
@@ -327,7 +315,7 @@ impl Compiler {
     }
 
     fn emit_host_fn_call(&mut self, fn_id: u16, args: &[ast::Spanned<ast::Expr>]) -> Result<Register, String> {
-        self.emit_func_call(fn_id, CallEnv::None, args)
+        self.emit_func_call(fn_id, args)
     }
 
     // device_in(port, data) → Deo(data, port). Returns Unit register.
@@ -406,37 +394,6 @@ impl Compiler {
     fn emit_func_call(
         &mut self,
         func_id: u16,
-        env: CallEnv,
-        args: &[ast::Spanned<ast::Expr>],
-    ) -> Result<Register, String> {
-        let mark = self.snapshot_register_high_water();
-        let env_to_pass = match env {
-            CallEnv::None => None,
-            CallEnv::Reg(r) => Some((r, false)),
-            CallEnv::EnvLoadOffset(off) => {
-                let outer_env = *self.var_to_reg.get("__env")
-                    .ok_or_else(|| "internal: env-load call site outside closure body".to_string())?;
-                let tmp = self.alloc_register()?;
-                let off16 = super::scaffold::to_u16(off, "outer env offset")?;
-                self.emit(OpCode::Ld(tmp, outer_env, off16));
-                Some((tmp, true))
-            }
-        };
-        let mut staged: Vec<(Register, bool)> = env_to_pass.into_iter().collect();
-        for arg in args {
-            let r = self.compile_expr(arg)?;
-            staged.push((r, self.arg_should_move(arg)));
-        }
-        self.stage_call_args(&staged)?;
-        self.reclaim_temp_regs_above(mark);
-        let dest = self.alloc_register()?;
-        self.emit(OpCode::Call(dest, func_id));
-        Ok(dest)
-    }
-
-    fn emit_func_call_reg(
-        &mut self,
-        fn_id_reg: Register,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
         let mark = self.snapshot_register_high_water();
@@ -448,7 +405,36 @@ impl Compiler {
         self.stage_call_args(&staged)?;
         self.reclaim_temp_regs_above(mark);
         let dest = self.alloc_register()?;
-        self.emit(OpCode::CallReg(dest, fn_id_reg));
+        self.emit(OpCode::Call(dest, func_id));
+        Ok(dest)
+    }
+
+    // Call through a function value: compile `callee` to a [fn_id, env] cell,
+    // then Ld fn_id (slot0) + Ld env (slot1), pass env as the implicit arg0
+    // (copied — the cell may be called again), stage the real args, CallReg.
+    fn emit_fn_value_call(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        args: &[ast::Spanned<ast::Expr>],
+    ) -> Result<Register, String> {
+        let cell = self.compile_expr(callee)?;
+        // fn_id reg is allocated BEFORE the mark so it survives reclaim and is
+        // still valid for the trailing CallReg.
+        let fid_reg = self.alloc_register()?;
+        self.emit(OpCode::Ld(fid_reg, cell, 0));
+        self.set_reg_handle(fid_reg, false);
+        let mark = self.snapshot_register_high_water();
+        let env_reg = self.alloc_register()?;
+        self.emit(OpCode::Ld(env_reg, cell, 1));
+        let mut staged: Vec<(Register, bool)> = vec![(env_reg, false)];
+        for arg in args {
+            let r = self.compile_expr(arg)?;
+            staged.push((r, self.arg_should_move(arg)));
+        }
+        self.stage_call_args(&staged)?;
+        self.reclaim_temp_regs_above(mark);
+        let dest = self.alloc_register()?;
+        self.emit(OpCode::CallReg(dest, fid_reg));
         Ok(dest)
     }
 

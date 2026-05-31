@@ -254,7 +254,18 @@ impl VirtualMachine {
             let slots: Vec<String> = data.iter().zip(handles.iter()).map(|(v, h)| {
                 if *h { format!("h:{:#x}", v) } else { format!("{}", *v as i64) }
             }).collect();
-            eprintln!("  [{}] slot={} gen={} rc={} [{}]", tag, slot, gen_, rc, slots.join(", "));
+            let note = self.closure_cell_label(data, handles);
+            eprintln!("  [{}] slot={} gen={} rc={} [{}]{}", tag, slot, gen_, rc, slots.join(", "), note);
+        }
+    }
+
+    fn closure_cell_label(&self, data: &[u64], handles: &[bool]) -> String {
+        if data.len() != 2 || handles.first() != Some(&false) { return String::new(); }
+        let fid = data[0] as usize;
+        match self.fn_names.get(fid) {
+            Some(n) if n.starts_with("__closure_") || n.starts_with("__fnval_") =>
+                format!("  ; closure({})", n),
+            _ => String::new(),
         }
     }
 
