@@ -110,11 +110,13 @@ fn cmd_run(program: &loader::LoadedProgram, debug: bool, trace_frames: bool, int
         }
     };
     let fn_names = compiler.fn_names();
+    let static_names = compiler.static_names_by_offset();
 
     let mut vm = VirtualMachine::new()
         .with_debug(debug)
         .with_trace_frames(trace_frames)
-        .with_fn_names(fn_names);
+        .with_fn_names(fn_names)
+        .with_static_names(static_names);
 
     Host::default().install_into(&mut vm);
     let main_returns_unit = main_returns_unit(ast);
@@ -214,10 +216,12 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
         }
     };
     let names = compiler.fn_names();
+    let static_by_offset = compiler.static_names_by_offset();
     for (i, chunk) in module.functions.iter().enumerate() {
         let entry_marker = if i == module.entry { " <entry>" } else { "" };
         let name = names.get(i).cloned().unwrap_or_default();
         let origin = origins.get(&name).map(|s| format!(" <from: {}>", s)).unwrap_or_default();
+        let is_module_init = name == "__module_init";
         match chunk {
             abrase::bytecode::Chunk::Bytecode(bc) => {
                 println!("fn #{} {}{}{} (regs={}, consts={})",
@@ -226,7 +230,16 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
                     println!("  const[{}] = {:?}", j, c);
                 }
                 for (pc, op) in bc.code.iter().enumerate() {
-                    println!("  {:>4}: {:?}", pc, op);
+                    let annotation = if is_module_init {
+                        static_init_annotation(op, &static_by_offset)
+                    } else {
+                        String::new()
+                    };
+                    if annotation.is_empty() {
+                        println!("  {:>4}: {:?}", pc, op);
+                    } else {
+                        println!("  {:>4}: {:<50}  ; {}", pc, format!("{:?}", op), annotation);
+                    }
                 }
             }
             abrase::bytecode::Chunk::Native(n) => {
@@ -235,7 +248,40 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
             }
         }
     }
+    if !static_by_offset.is_empty() {
+        println!("\nstatic table (offset -> name):");
+        for (offset, name) in static_by_offset.iter().enumerate() {
+            if !name.is_empty() {
+                println!("  [{}] {}", offset, name);
+            }
+        }
+    }
     ExitCode::SUCCESS
+}
+
+fn static_init_annotation(op: &abrase::bytecode::OpCode, static_by_offset: &[String]) -> String {
+    use abrase::bytecode::OpCode;
+    match op {
+        OpCode::St(_, _, off) => {
+            let idx = *off as usize;
+            if let Some(name) = static_by_offset.get(idx) {
+                if !name.is_empty() {
+                    return format!("static[{}] = {}", idx, name);
+                }
+            }
+            String::new()
+        }
+        OpCode::Ld(_, _, off) => {
+            let idx = *off as usize;
+            if let Some(name) = static_by_offset.get(idx) {
+                if !name.is_empty() {
+                    return format!("static[{}] => {}", idx, name);
+                }
+            }
+            String::new()
+        }
+        _ => String::new(),
+    }
 }
 
 fn fn_origins(program: &loader::LoadedProgram) -> std::collections::HashMap<String, String> {

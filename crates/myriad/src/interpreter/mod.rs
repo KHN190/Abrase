@@ -363,6 +363,7 @@ impl VirtualMachine {
         let (slot, gen_) = self.read_handle(b)?;
         let (raw, is_handle) = self.heap.ld(slot, gen_, off as usize)?;
         if is_handle { self.rc_inc_handle(raw)?; }
+        self.trace_static_access("Ld", slot, off, raw, is_handle);
         self.write(d, raw, is_handle)
     }
 
@@ -370,9 +371,26 @@ impl VirtualMachine {
     fn exec_st(&mut self, src: Register, b: Register, off: i64) -> Result<(), String> {
         let (slot, gen_) = self.read_handle(b)?;
         let (raw, is_handle) = self.take(src)?;
+        self.trace_static_access("St", slot, off, raw, is_handle);
         let (old_raw, old_is_handle) = self.heap.st(slot, gen_, off as usize, raw, is_handle)?;
         if old_is_handle { self.rc_dec_handle(old_raw)?; }
         Ok(())
+    }
+
+    fn trace_static_access(&self, op: &str, slot: u32, off: i64, raw: u64, is_handle: bool) {
+        let traced = std::env::var("TRACE_STATIC").ok();
+        let traced = match traced.as_deref() { Some(s) if !s.is_empty() => s, _ => return };
+        let idx = off as usize;
+        let name = self.static_names.get(idx).map(|s| s.as_str()).unwrap_or("");
+        if name.is_empty() { return; }
+        if traced == "*" || name.contains(traced) {
+            let val = if is_handle {
+                format!("handle({:#x})", raw)
+            } else {
+                format!("int({}) / float({:.6})", raw as i64, f64::from_bits(raw))
+            };
+            eprintln!("[TRACE_STATIC] {} slot={} off={} name={} val={}", op, slot, off, name, val);
+        }
     }
 
     #[inline(always)]

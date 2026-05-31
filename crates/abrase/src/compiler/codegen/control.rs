@@ -393,6 +393,10 @@ impl Compiler {
             }
         };
 
+        if self.block_uses_static(body) {
+            self.load_module_table()?;
+        }
+
         let counter = self.alloc_register()?;
         self.emit(OpCode::Copy(counter, start_reg));
 

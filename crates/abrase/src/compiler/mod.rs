@@ -216,6 +216,17 @@ impl Compiler {
         self
     }
 
+    pub fn static_names_by_offset(&self) -> Vec<String> {
+        let n = self.static_offsets.len();
+        let mut out = vec![String::new(); n];
+        for (name, &offset) in &self.static_offsets {
+            if (offset as usize) < n {
+                out[offset as usize] = name.clone();
+            }
+        }
+        out
+    }
+
     pub fn fn_names(&self) -> Vec<String> {
         let n = self.functions.len();
         let mut out = vec![String::new(); n];

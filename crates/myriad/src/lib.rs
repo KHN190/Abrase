@@ -62,6 +62,7 @@ pub struct VirtualMachine {
     pub(crate) module_table_is_handle: bool,
     pub(crate) steps: u64,
     pub(crate) step_cap: Option<u64>,
+    pub(crate) static_names: Vec<String>,
 }
 
 pub struct HandlerFrame {
@@ -144,7 +145,13 @@ impl VirtualMachine {
             module_table_is_handle: false,
             steps: 0,
             step_cap: None,
+            static_names: Vec::new(),
         }
+    }
+
+    pub fn with_static_names(mut self, names: Vec<String>) -> Self {
+        self.static_names = names;
+        self
     }
 
     pub fn with_step_cap(mut self, cap: u64) -> Self {
