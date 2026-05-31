@@ -151,7 +151,7 @@ impl Gen {
         for _ in 0..stmts {
             if self.fuel == 0 { break; }
             self.fuel -= 1;
-            let choices = if region_depth > 0 { 36 } else { 30 };
+            let choices = if region_depth > 0 { 38 } else { 32 };
             match self.rng.pick(choices) {
                 // ── scalars ──────────────────────────────────────────────────
                 0 => {
@@ -342,8 +342,30 @@ impl Gen {
                     ));
                     ints.push(name);
                 }
-                // ── char round-trip ───────────────────────────────────────
+                // ── move closure capturing Int ────────────────────────────
                 26 if !ints.is_empty() => {
+                    let name = self.fresh();
+                    let cap = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let add = self.rng.pick(10) as i64;
+                    let arg = self.rng.pick(10) as i64;
+                    self.push(&format!(
+                        "  let {name}: Int = (move |x| x + {cap} + {add})({arg});\n"
+                    ));
+                    ints.push(name);
+                }
+                // ── closure capturing record (heap type RC balance) ───────
+                27 if self.has_record && !ints.is_empty() => {
+                    let name = self.fresh();
+                    let a = self.rng.pick(50) as i64;
+                    let b = self.rng.pick(50) as i64;
+                    let arg = self.rng.pick(5) as i64;
+                    self.push(&format!(
+                        "  let {name}: Int = (move |s| (R {{ a: {a}, b: {b} }}).a * s)({arg});\n"
+                    ));
+                    ints.push(name);
+                }
+                // ── char round-trip ───────────────────────────────────────
+                28 if !ints.is_empty() => {
                     let name = self.fresh();
                     let n = (self.rng.pick(26) + 65) as i64; // 'A'..'Z'
                     self.push(&format!("  let {name}: Int = {n}.to_c().to_i();\n"));
