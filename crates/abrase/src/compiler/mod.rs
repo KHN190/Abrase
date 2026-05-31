@@ -104,7 +104,7 @@ pub struct Compiler {
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
     pub(super) static_mut_set: std::collections::HashSet<String>,
-    pub(super) typeck_expr_types: HashMap<(ast::Span, std::mem::Discriminant<ast::Expr>), crate::ty::Type>,
+    pub(super) typeck_expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), crate::ty::Type>,
 }
 
 impl Compiler {

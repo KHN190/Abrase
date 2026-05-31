@@ -150,8 +150,8 @@ pub struct Checker {
     // Type Aliases
     type_alias_registry: HashMap<String, Type>,
 
-    // Authoritative per-expression types, keyed by (span, expr-kind). Populated by infer_expr.
-    pub expr_types: HashMap<(ast::Span, std::mem::Discriminant<ast::Expr>), Type>,
+    // Authoritative per-expression types, keyed by (module, span, expr-kind). Populated by infer_expr.
+    pub expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), Type>,
 }
 
 

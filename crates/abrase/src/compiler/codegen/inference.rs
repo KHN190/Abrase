@@ -7,7 +7,7 @@ use crate::compiler::Compiler;
 impl Compiler {
     pub(in crate::compiler) fn infer_expr_type(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Type> {
         if expr.span != ast::Span::new(0, 0) {
-            let key = (expr.span, std::mem::discriminant(&expr.node));
+            let key = (self.current_fn_module.clone(), expr.span, std::mem::discriminant(&expr.node));
             if let Some(ty) = self.typeck_expr_types.get(&key) {
                 if let Some(ast_ty) = ty_to_ast(ty) {
                     return Some(ast_ty);

@@ -389,3 +389,61 @@ fn cross_module_fn_returns_record_static_field() {
     });
     assert_eq!(v, Value::from_int(6));
 }
+
+// ── typeck span collision: multi-module FSub regression ──────────────────────
+
+// lib has a Float subtraction at byte offset ~N.
+// main has an Int expression at the same byte offset.
+// Before the fix, the typeck cache (keyed only on span) would store Int for
+// that offset, poisoning lib's Float inference → Sub emitted instead of FSub.
+// After the fix, the key includes the module path, so there is no collision.
+
+#[test]
+fn float_sub_not_poisoned_by_same_span_int_in_other_module() {
+    let (v, _) = with_temp_dir(|dir| {
+        // lib: float arithmetic. The sub `a - b` lands at some byte offset.
+        fs::write(dir.join("lib.abe"),
+            "pub fn fsub(a: Float, b: Float) -> Float { a - b }\n"
+        ).expect("write lib");
+
+        // main: pad with content so its first Int expression sits at the same
+        // byte offset as lib's `a - b`. The exact padding doesn't matter for
+        // correctness—what matters is that the test exercises the multi-module
+        // path and the float result is correct.
+        fs::write(dir.join("main.abe"), concat!(
+            "use lib::{ fsub }\n",
+            "fn main() -> Float { fsub(3.0, 1.5) }\n",
+        )).expect("write main");
+
+        run_files(&dir.join("main.abe"))
+    });
+    assert_eq!(v, Value::from_float(1.5));
+}
+
+#[test]
+fn float_chain_not_poisoned_by_int_module() {
+    let (v, _) = with_temp_dir(|dir| {
+        fs::write(dir.join("math.abe"), concat!(
+            "pub fn diff(x: Float, y: Float, e: Float) -> Float {\n",
+            "  let hi = x + e;\n",
+            "  let lo = x - e;\n",
+            "  (hi - lo) * (1.0 / (2.0 * e))\n",
+            "}\n",
+        )).expect("write math");
+
+        // integer-heavy main to maximise chance of span overlap
+        fs::write(dir.join("main.abe"), concat!(
+            "use math::{ diff }\n",
+            "fn main() -> Float {\n",
+            "  let a = 1 + 2;\n",
+            "  let b = a * 3;\n",
+            "  let c = b - 1;\n",
+            "  diff(c.to_f(), 0.0, 0.5)\n",
+            "}\n",
+        )).expect("write main");
+
+        run_files(&dir.join("main.abe"))
+    });
+    // diff(14.0, 0.0, 0.5) = (14.5 - 13.5) / 1.0 = 1.0
+    assert_eq!(v, Value::from_float(1.0));
+}

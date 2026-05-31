@@ -24,6 +24,7 @@ pub struct Heap {
     generation: Vec<u32>,
     free_list: Vec<u32>,
     bytes_used: usize,
+    trace_slot: Option<u32>,
 }
 
 #[inline]
@@ -53,6 +54,7 @@ impl Heap {
             generation: Vec::new(),
             free_list: Vec::new(),
             bytes_used: 0,
+            trace_slot: std::env::var("TRACE_SLOT").ok().and_then(|v| v.parse::<u32>().ok()),
         }
     }
 
@@ -91,7 +93,7 @@ impl Heap {
             let h = (self.cells.len() - 1) as u32;
             (h, 0)
         };
-        if std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(h)).unwrap_or(false) {
+        if self.trace_slot == Some(h) {
             eprintln!("[ALLOC] slot {} gen {} size {}", h, g, size);
         }
         Ok((h, g))
@@ -201,7 +203,7 @@ impl Heap {
     }
 
     pub fn rc_inc(&mut self, slot: u32, generation: u32) -> Result<(), String> {
-        let trace = std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(slot)).unwrap_or(false);
+        let trace = self.trace_slot == Some(slot);
         let idx = self.check(slot, generation, "rc_inc")?;
         self.rc[idx] = self.rc[idx]
             .checked_add(1)
@@ -214,7 +216,7 @@ impl Heap {
 
     // At rc=0: recursively rc_dec child handles per cell mask, then reclaim.
     pub fn rc_dec(&mut self, slot: u32, generation: u32) -> Result<bool, String> {
-        let trace = std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(slot)).unwrap_or(false);
+        let trace = self.trace_slot == Some(slot);
         if trace {
             let live_gen = self.generation.get(slot as usize).copied().unwrap_or(0);
             let is_live = self.cells.get(slot as usize).map(|c| c.is_some()).unwrap_or(false);
@@ -253,7 +255,7 @@ impl Heap {
 
     // Idempotent against rc=0 reclaim. Used by region_pop.
     pub fn force_free(&mut self, slot: u32, generation: u32) -> Result<(), String> {
-        let trace = std::env::var("TRACE_SLOT").map(|v| v.parse::<u32>().ok() == Some(slot)).unwrap_or(false);
+        let trace = self.trace_slot == Some(slot);
         let idx = slot as usize;
         if idx >= self.cells.len() { return Ok(()); }
         if self.cells[idx].is_none() {
