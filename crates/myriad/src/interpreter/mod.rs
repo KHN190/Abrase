@@ -4,7 +4,6 @@ use super::debug::DebugEvent;
 use polka::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS, HANDLE_NONE};
 use crate::frame::Frame;
 use crate::memory::mask_bit;
-use crate::value::alloc_string;
 
 pub mod frame;
 pub mod effect;

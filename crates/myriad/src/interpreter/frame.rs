@@ -1,11 +1,8 @@
 use polka::{BytecodeChunk, Chunk, Register, Module, FRAME_REGS, HANDLE_NONE};
 use crate::frame::Frame;
-use crate::memory::mask_bit;
 use crate::builtins::NativeCtx;
-use crate::debug::DebugEvent;
 use super::super::{VirtualMachine, Value};
 use super::{MAX_REGISTERS, MAX_RECURSION_DEPTH, STAGE_SLACK};
-use super::register::{bool_u64, decode_dispatch_key, validate_module_register_budget};
 
 
 impl VirtualMachine {

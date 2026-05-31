@@ -1,9 +1,7 @@
-use polka::{BytecodeChunk, Register, Module, HANDLE_NONE};
-use crate::frame::Frame;
+use polka::{Register, Module, HANDLE_NONE};
 use crate::memory::mask_bit;
 use crate::debug::DebugEvent;
 use super::super::{VirtualMachine, Value};
-use super::{MAX_REGISTERS, MAX_RECURSION_DEPTH};
 use super::register::{split_port, decode_dispatch_key};
 
 

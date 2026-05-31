@@ -1,9 +1,8 @@
 use polka::{BytecodeChunk, Chunk, Register, Module, FRAME_REGS, HANDLE_NONE};
 use crate::memory::mask_bit;
 use crate::value::alloc_string;
-use crate::debug::DebugEvent;
-use super::super::{VirtualMachine, Value};
-use super::{MAX_REGISTERS, MAX_RECURSION_DEPTH, STAGE_SLACK, MAX_RAM};
+use super::super::VirtualMachine;
+use super::MAX_RAM;
 
 
 impl VirtualMachine {
