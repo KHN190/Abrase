@@ -447,3 +447,55 @@ fn float_chain_not_poisoned_by_int_module() {
     // diff(14.0, 0.0, 0.5) = (14.5 - 13.5) / 1.0 = 1.0
     assert_eq!(v, Value::from_float(1.0));
 }
+
+const IF_ELSE_STATIC_ELSE_BRANCH: &str = r#"
+static A: Int = 10
+static B: Int = 20
+fn pick(flag: Bool) -> Int { if flag { A } else { B } }
+fn main() -> Int { pick(false) }
+"#;
+
+#[test]
+fn if_else_branch_reads_static_without_stale_register() {
+    let v = run_src(IF_ELSE_STATIC_ELSE_BRANCH).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(20));
+}
+
+#[test]
+fn if_both_branches_read_static_correctly() {
+    let src = r#"
+static A: Int = 10
+static B: Int = 20
+fn pick(flag: Bool) -> Int { if flag { A } else { B } }
+fn main() -> Int { pick(true) + pick(false) }
+"#;
+    let v = run_src(src).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(30));
+}
+
+const MATCH_STATIC_ARMS: &str = r#"
+static A: Int = 10
+static B: Int = 20
+static C: Int = 30
+fn pick(s: Int) -> Int { match s { 0 => A, 1 => B, _ => C } }
+fn main() -> Int { pick(0) + pick(1) + pick(2) }
+"#;
+
+#[test]
+fn match_all_arms_read_static_correctly() {
+    let v = run_src(MATCH_STATIC_ARMS).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(60));
+}
+
+#[test]
+fn match_non_first_arm_reads_static_without_stale_register() {
+    let src = r#"
+static A: Int = 10
+static B: Int = 20
+static C: Int = 30
+fn pick(s: Int) -> Int { match s { 0 => A, 1 => B, _ => C } }
+fn main() -> Int { pick(2) }
+"#;
+    let v = run_src(src).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(30));
+}

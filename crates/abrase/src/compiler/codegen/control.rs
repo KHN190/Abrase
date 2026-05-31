@@ -18,6 +18,7 @@ impl Compiler {
 
         let result_reg = self.alloc_register()?;
         let arm_mark = self.snapshot_register_high_water();
+        let pre_if_table_reg = self.module_table_reg;
 
         let cons_reg = self.compile_expr(consequence)?;
         if !is_leaf_for_peephole(&consequence.node)
@@ -26,6 +27,7 @@ impl Compiler {
             self.emit(OpCode::Copy(result_reg, cons_reg));
         }
         self.reclaim_temp_regs_above(arm_mark);
+        self.module_table_reg = pre_if_table_reg;
 
         let jmp_idx = self.code.len();
         self.emit(OpCode::Jmp(0));
