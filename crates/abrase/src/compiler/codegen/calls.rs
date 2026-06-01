@@ -82,6 +82,7 @@ impl Compiler {
         if let Some(t) = self.resolve_cell_builtin(callee, args)? { return Ok(t); }
         if let Some(t) = self.resolve_closure_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_env_load_closure_call(callee)? { return Ok(t); }
+        if let Some(t) = self.resolve_field_fn_value_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_effect_op_call(callee, call_span)? { return Ok(t); }
         if let Some(t) = self.resolve_method_call(callee)? { return Ok(t); }
         if let ast::Expr::FieldAccess { base, field } = &callee.node {
@@ -100,7 +101,9 @@ impl Compiler {
             return Ok(CallTarget::UnresolvedMethod { receiver: recv, field: field.clone() });
         }
         let ast::Expr::Identifier(name) = &callee.node else {
-            return Err("Call target must be a function identifier".to_string());
+            // Non-identifier callee (e.g. a closure literal, paren, block) —
+            // compile it as a function-value expression.
+            return Ok(CallTarget::FnValue { callee });
         };
         if self.var_to_reg.contains_key(name)
             && matches!(self.var_types.get(name), Some(ast::Type::Function { .. })) {
@@ -137,6 +140,20 @@ impl Compiler {
         let ast::Expr::Identifier(name) = &callee.node else { return Ok(None) };
         if !self.closure_by_var.contains_key(name) { return Ok(None); }
         // The binding holds a [fn_id, env] cell — call it as a function value.
+        Ok(Some(CallTarget::FnValue { callee }))
+    }
+
+    fn resolve_field_fn_value_call<'a>(
+        &self,
+        callee: &'a ast::Spanned<ast::Expr>,
+    ) -> Result<Option<CallTarget<'a>>, String> {
+        let ast::Expr::FieldAccess { base, field } = &callee.node else { return Ok(None) };
+        let Some(ast::Type::Named(rec)) = self.infer_expr_type(base) else { return Ok(None) };
+        let Some(layout) = self.layouts.records.get(&rec) else { return Ok(None) };
+        let Some(pos) = layout.fields.iter().position(|n| n == field) else { return Ok(None) };
+        if !matches!(layout.field_types.get(pos), Some(ast::Type::Function { .. })) {
+            return Ok(None);
+        }
         Ok(Some(CallTarget::FnValue { callee }))
     }
 
@@ -417,15 +434,18 @@ impl Compiler {
         callee: &ast::Spanned<ast::Expr>,
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
+        let cell_is_binding = matches!(&callee.node,
+            ast::Expr::Identifier(n) if self.var_to_reg.contains_key(n));
         let cell = self.compile_expr(callee)?;
-        // fn_id reg is allocated BEFORE the mark so it survives reclaim and is
-        // still valid for the trailing CallReg.
         let fid_reg = self.alloc_register()?;
         self.emit(OpCode::Ld(fid_reg, cell, 0));
         self.set_reg_handle(fid_reg, false);
         let mark = self.snapshot_register_high_water();
         let env_reg = self.alloc_register()?;
         self.emit(OpCode::Ld(env_reg, cell, 1));
+        if !cell_is_binding {
+            self.emit(OpCode::Drop(cell));
+        }
         let mut staged: Vec<(Register, bool)> = vec![(env_reg, false)];
         for arg in args {
             let r = self.compile_expr(arg)?;
@@ -507,6 +527,10 @@ impl Compiler {
         match &owned_ty {
             Some(ty) if super::is_move_type(ty) => true,
             Some(ty) if super::is_share_type(ty) => self.consume_use(name),
+            // A bare top-level fn used as a value is a fresh [fn_id, env] cell
+            // (compile_identifier builds one) — move it, don't alias.
+            None if !self.var_to_reg.contains_key(name)
+                && self.fn_value_adapters.contains_key(name) => true,
             _ => false,
         }
     }

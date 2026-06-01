@@ -12,20 +12,17 @@ pub struct CaptureInfo {
 pub struct ClosureInfo {
     pub lifted_fn: String,
     pub captures: Vec<CaptureInfo>,
-    // If true, the closure was declared with `move |...|` — captures are
-    // moved out of the surrounding scope. Otherwise captures are by-copy.
     pub is_move: bool,
-    // Set when the closure is `let name = |...| ...` 
     pub self_name: Option<String>,
 }
 
 pub struct ClosureLowering {
     pub by_span: HashMap<Span, ClosureInfo>,
     pub synthetic_fns: Vec<FnDecl>,
+    pub fn_value_adapters: HashMap<String, String>,
     next_id: usize,
-    // Global names (top-level fns, types, effects, constructors) that don't count as captures.
     globals: HashSet<String>,
-    // Pending self-name from `let name = closure ...` for closure lowering.
+    user_fns: HashMap<String, FnDecl>,
     pending_self_name: Option<String>,
 }
 
@@ -34,8 +31,10 @@ impl ClosureLowering {
         Self {
             by_span: HashMap::new(),
             synthetic_fns: Vec::new(),
+            fn_value_adapters: HashMap::new(),
             next_id: 0,
             globals: HashSet::new(),
+            user_fns: HashMap::new(),
             pending_self_name: None,
         }
     }
@@ -45,7 +44,10 @@ impl ClosureLowering {
         // them as non-captures.
         for decl in ast {
             match decl {
-                Decl::Fn(fn_decl) => { self.globals.insert(fn_decl.name.clone()); }
+                Decl::Fn(fn_decl) => {
+                    self.globals.insert(fn_decl.name.clone());
+                    self.user_fns.insert(fn_decl.name.clone(), fn_decl.clone());
+                }
                 Decl::Type { name, body, .. } => {
                     self.globals.insert(name.clone());
                     if let TypeBody::Variant(cases) = body {
@@ -76,6 +78,47 @@ impl ClosureLowering {
             let mut env = ParamEnv::from_fn(fn_decl);
             self.walk_block(&fn_decl.body, &mut env);
         }
+
+        // Synthesize adapters for top-level fns referenced as values.
+        let mut refs: HashSet<String> = HashSet::new();
+        for fn_decl in &fn_decls {
+            collect_fn_value_refs_block(&fn_decl.body, &self.user_fns, &mut refs);
+        }
+        for syn in self.synthetic_fns.clone() {
+            collect_fn_value_refs_block(&syn.body, &self.user_fns, &mut refs);
+        }
+        let mut names: Vec<String> = refs.into_iter().collect();
+        names.sort();
+        for name in names {
+            self.synth_fn_value_adapter(&name);
+        }
+    }
+
+    fn synth_fn_value_adapter(&mut self, name: &str) {
+        let Some(decl) = self.user_fns.get(name).cloned() else { return };
+        let mut params: Vec<Param> = vec![Param::Named {
+            pattern: Spanned { node: Pattern::Bind("__env".into()), span: Span::new(0, 0) },
+            ty: Type::Named("Int".into()),
+        }];
+        let mut call_args: Vec<Spanned<Expr>> = Vec::new();
+        for p in &decl.params {
+            let Param::Named { pattern, ty } = p else { return };
+            let Pattern::Bind(pn) = &pattern.node else { return };
+            params.push(Param::Named { pattern: pattern.clone(), ty: ty.clone() });
+            call_args.push(Spanned { node: Expr::Identifier(pn.clone()), span: Span::new(0, 0) });
+        }
+        let adapter = format!("__fnval_{}", name);
+        let body_call = Expr::Call {
+            callee: Box::new(Spanned { node: Expr::Identifier(name.to_string()), span: Span::new(0, 0) }),
+            args: call_args,
+        };
+        self.synthetic_fns.push(FnDecl {
+            attrs: vec![], is_pub: false, name: adapter.clone(), generics: vec![],
+            params, effects: vec![], return_type: decl.return_type.clone(),
+            where_clause: vec![],
+            body: Block { stmts: vec![], ret: Some(Box::new(Spanned { node: body_call, span: Span::new(0, 0) })) },
+        });
+        self.fn_value_adapters.insert(name.to_string(), adapter);
     }
 
     fn walk_block(&mut self, block: &Block, env: &mut ParamEnv) {
@@ -231,6 +274,14 @@ impl ClosureLowering {
                 self.walk_expr(elem, env);
                 self.walk_expr(count, env);
             }
+            Expr::Record { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value { self.walk_expr(v, env); }
+                }
+            }
+            Expr::Variant { args, .. } => {
+                for a in args { self.walk_expr(a, env); }
+            }
             _ => {}
         }
     }
@@ -368,6 +419,14 @@ pub fn collect_free_vars(
             collect_free_vars(elem, bound, seen, out);
             collect_free_vars(count, bound, seen, out);
         }
+        Expr::Record { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { collect_free_vars(v, bound, seen, out); }
+            }
+        }
+        Expr::Variant { args, .. } => {
+            for a in args { collect_free_vars(a, bound, seen, out); }
+        }
         // Nested closures contribute their OWN free vars (those that aren't bound
         // by THEIR params or our `bound`).
         Expr::Closure { params, body, .. } => {
@@ -379,6 +438,90 @@ pub fn collect_free_vars(
         }
         _ => {}
     }
+}
+
+// Collect names of top-level fns used as a VALUE (anywhere except as the direct
+// callee of a call). Those need a [fn_id, env] adapter to be callable uniformly.
+pub fn collect_fn_value_refs(
+    expr: &Spanned<Expr>,
+    fns: &HashMap<String, FnDecl>,
+    out: &mut HashSet<String>,
+) {
+    match &expr.node {
+        Expr::Identifier(n) => { if fns.contains_key(n) { out.insert(n.clone()); } }
+        Expr::Call { callee, args } => {
+            // Skip a bare-identifier callee (direct call, not a value use).
+            if !matches!(&callee.node, Expr::Identifier(_)) {
+                collect_fn_value_refs(callee, fns, out);
+            }
+            for a in args { collect_fn_value_refs(a, fns, out); }
+        }
+        Expr::Binary { left, right, .. } => {
+            collect_fn_value_refs(left, fns, out);
+            collect_fn_value_refs(right, fns, out);
+        }
+        Expr::Unary { right, .. } => collect_fn_value_refs(right, fns, out),
+        Expr::If { condition, consequence, alternative } => {
+            collect_fn_value_refs(condition, fns, out);
+            collect_fn_value_refs(consequence, fns, out);
+            if let Some(a) = alternative { collect_fn_value_refs(a, fns, out); }
+        }
+        Expr::Match { scrutinee, arms } => {
+            collect_fn_value_refs(scrutinee, fns, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard { collect_fn_value_refs(g, fns, out); }
+                collect_fn_value_refs(&arm.body, fns, out);
+            }
+        }
+        Expr::Block(b) => collect_fn_value_refs_block(b, fns, out),
+        Expr::While { condition, body } => {
+            collect_fn_value_refs(condition, fns, out);
+            collect_fn_value_refs_block(body, fns, out);
+        }
+        Expr::For { iter, body, .. } => {
+            collect_fn_value_refs(iter, fns, out);
+            collect_fn_value_refs_block(body, fns, out);
+        }
+        Expr::Loop { body } | Expr::Region { body, .. } => collect_fn_value_refs_block(body, fns, out),
+        Expr::Handle { expr: e, arms } => {
+            collect_fn_value_refs(e, fns, out);
+            for arm in arms { collect_fn_value_refs(&arm.body, fns, out); }
+        }
+        Expr::Return(Some(e)) | Expr::Throw(e) | Expr::Question(e) | Expr::Paren(e)
+            => collect_fn_value_refs(e, fns, out),
+        Expr::Resume(Some(e)) | Expr::Break(Some(e)) => collect_fn_value_refs(e, fns, out),
+        Expr::Index { base, index } => {
+            collect_fn_value_refs(base, fns, out);
+            collect_fn_value_refs(index, fns, out);
+        }
+        Expr::FieldAccess { base, .. } => collect_fn_value_refs(base, fns, out),
+        Expr::Tuple(es) | Expr::Array(es) => { for e in es { collect_fn_value_refs(e, fns, out); } }
+        Expr::ArrayRepeat { elem, count } => {
+            collect_fn_value_refs(elem, fns, out);
+            collect_fn_value_refs(count, fns, out);
+        }
+        Expr::Record { fields, .. } => {
+            for f in fields { if let Some(v) = &f.value { collect_fn_value_refs(v, fns, out); } }
+        }
+        Expr::Variant { args, .. } => { for a in args { collect_fn_value_refs(a, fns, out); } }
+        Expr::Closure { body, .. } => collect_fn_value_refs(body, fns, out),
+        _ => {}
+    }
+}
+
+fn collect_fn_value_refs_block(
+    block: &Block,
+    fns: &HashMap<String, FnDecl>,
+    out: &mut HashSet<String>,
+) {
+    for stmt in &block.stmts {
+        match &stmt.node {
+            Stmt::Let { value, .. } => collect_fn_value_refs(value, fns, out),
+            Stmt::Expr(e) => collect_fn_value_refs(e, fns, out),
+            Stmt::Empty => {}
+        }
+    }
+    if let Some(r) = &block.ret { collect_fn_value_refs(r, fns, out); }
 }
 
 pub fn collect_assigned_idents(

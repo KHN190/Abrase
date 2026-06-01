@@ -26,7 +26,10 @@ impl<'a> Parser<'a> {
         {
             return left;
         }
-        while self.peek_token != Token::Semicolon && precedence < self.peek_token.precedence() {
+        while self.current_token != Token::Semicolon
+            && self.peek_token != Token::Semicolon
+            && precedence < self.peek_token.precedence()
+        {
             self.next_token();
             left = self.parse_infix(left);
         }
@@ -269,6 +272,7 @@ impl<'a> Parser<'a> {
             return Err("Expected '{' after match expr".into());
         }
         let mut arms = Vec::new();
+        let mut overshot = false;
         self.next_token();
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
             let pattern = self.parse_pattern()?;
@@ -288,6 +292,12 @@ impl<'a> Parser<'a> {
             if body_is_block_terminated {
                 if self.current_token == Token::Comma || self.current_token == Token::Semicolon {
                     self.next_token();
+                } else if self.current_token != Token::RBrace
+                    && !Self::is_arm_pattern_start(&self.current_token)
+                {
+                    // parse_block already consumed past `}`.
+                    overshot = true;
+                    break;
                 }
             } else if self.peek_token == Token::Comma || self.peek_token == Token::Semicolon {
                 self.next_token();
@@ -296,10 +306,12 @@ impl<'a> Parser<'a> {
                 self.next_token();
             }
         }
-        if self.current_token != Token::RBrace {
-            return Err("Expected '}' in match expr".into());
+        if !overshot {
+            if self.current_token != Token::RBrace {
+                return Err("Expected '}' in match expr".into());
+            }
+            self.next_token();
         }
-        self.next_token();
         Ok(Expr::Match { scrutinee, arms })
     }
 
@@ -400,11 +412,42 @@ impl<'a> Parser<'a> {
         let first = self.parse_expr(Precedence::Lowest);
         let first_block_terminated = is_block_terminated(&first.node);
         if first_block_terminated {
+            //   "current is operator"  — right sub-expr was block-terminated
+            //   "current is terminal"  — normal; peek may be next operator
+            let mut left = first;
+            let mut consumed_infix = false;
+            loop {
+                let delim = matches!(self.current_token,
+                    Token::RParen | Token::Comma | Token::Semicolon | Token::Eof);
+                if delim { break; }
+                let cur_is_op = Precedence::Lowest < self.current_token.precedence();
+                let peek_is_op = !cur_is_op
+                    && !matches!(self.peek_token,
+                        Token::RParen | Token::Comma | Token::Semicolon | Token::Eof)
+                    && Precedence::Lowest < self.peek_token.precedence();
+                if cur_is_op {
+                    left = self.parse_infix(left);
+                    consumed_infix = true;
+                } else if peek_is_op {
+                    self.next_token();
+                    left = self.parse_infix(left);
+                    consumed_infix = true;
+                } else {
+                    break;
+                }
+            }
+            // Advance unless already at a non-inner delimiter.
+            if consumed_infix
+                && !matches!(self.current_token, Token::Comma | Token::Semicolon | Token::Eof)
+                && (self.current_token != Token::RParen || self.peek_token == Token::RParen)
+            {
+                self.next_token();
+            }
             if self.current_token == Token::RParen {
-                return Spanned { node: Expr::Paren(Box::new(first)), span };
+                return Spanned { node: Expr::Paren(Box::new(left)), span };
             }
             if self.current_token == Token::Comma {
-                let mut elems = vec![first];
+                let mut elems = vec![left];
                 while self.current_token == Token::Comma {
                     self.next_token();
                     if self.current_token == Token::RParen { break; }
@@ -683,6 +726,8 @@ impl<'a> Parser<'a> {
             args.push(arg);
             if self.current_token == Token::Comma {
                 self.next_token();
+            } else if is_block && self.current_token == Token::RParen {
+                break is_block;
             } else if self.peek_token == Token::Comma {
                 self.next_token();
                 self.next_token();
@@ -784,5 +829,13 @@ impl<'a> Parser<'a> {
             Ok(block) => Expr::Block(block),
             Err(_) => Expr::Error,
         }
+    }
+
+    fn is_arm_pattern_start(tok: &Token) -> bool {
+        matches!(tok,
+            Token::Underscore | Token::Ident(_) | Token::Return
+            | Token::Int(_) | Token::Float(_) | Token::True | Token::False
+            | Token::Char(_) | Token::String(_) | Token::LParen
+        )
     }
 }

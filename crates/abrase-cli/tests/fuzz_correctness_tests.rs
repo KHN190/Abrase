@@ -411,7 +411,7 @@ fn gen_variant_guard_match(rng: &mut Rng) -> (String, i64) {
     let vals: Vec<i64> = (0..4).map(|_| rng.range(0, 20)).collect();
     let thresh = rng.range(5, 15);
     // Some(n): n > thresh → n, else → 0; None → -1
-    let classify = |v: i64| v;  // all are Some(v), result = v if > thresh else 0
+    let _classify = |v: i64| v;  // all are Some(v), result = v if > thresh else 0
     let expected: i64 = vals.iter().map(|&v| {
         if v > thresh { v } else { 0 }
     }).sum();
@@ -969,7 +969,45 @@ const SINGLE_GENS: &[(&str, Gen)] = &[
     ("array_ops",           gen_array_ops),
     ("bitwise",             gen_bitwise),
     ("region_escape",       gen_region_escape),
+    ("hof_apply_loop",      gen_hof_apply_loop),
+    ("closure_returned",    gen_closure_returned),
 ];
+
+fn gen_hof_apply_loop(rng: &mut Rng) -> (String, i64) {
+    let m = rng.range(1, 6);
+    let b = rng.range(0, 10);
+    let n = rng.range(2, 8);
+    let expected: i64 = (0..n).map(|i| i * m + b).sum();
+    let src = format!(r#"
+fn apply_n(f: (Int) -> Int, n: Int) -> Int {{
+  let mut acc = 0;
+  let mut i = 0;
+  while i < n {{ acc = acc + f(i); i = i + 1 }};
+  acc
+}}
+fn main() -> Int {{
+  let m = {m};
+  let b = {b};
+  apply_n(move |x: Int| x * m + b, {n})
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_closure_returned(rng: &mut Rng) -> (String, i64) {
+    let b = rng.range(1, 20);
+    let p = rng.range(1, 10);
+    let q = rng.range(1, 10);
+    let expected = (p + b) + (q + b);
+    let src = format!(r#"
+fn adder(b: Int) -> (Int) -> Int {{ move |x: Int| x + b }}
+fn main() -> Int {{
+  let g = adder({b});
+  g({p}) + g({q})
+}}
+"#);
+    (src, expected)
+}
 
 const MM_GENS: &[(&str, MMGen)] = &[
     ("multi_module_static",  gen_multi_module),
@@ -1272,7 +1310,6 @@ const FC_GENS: &[(&str, Gen)] = &[
 ];
 
 #[test]
-#[ignore = "codegen: first-class closures (pass/return/store/capture) not yet implemented"]
 fn fuzz_first_class_closures() {
     let mut failures: Vec<(u64, &str, String, String)> = Vec::new();
     for seed in 0..200u64 {
@@ -1289,5 +1326,78 @@ fn fuzz_first_class_closures() {
             eprintln!("--- seed={} gen={} ---\n{}\nError: {}", seed, name, src, err);
         }
         panic!("fuzz_first_class_closures: {} failure(s)", failures.len());
+    }
+}
+
+// ── metamorphic equivalence fuzz ──────────────────────────────────────────────
+// Generate a well-typed Int expression E, then a semantics-preserving variant E'
+// (wrap in region / identity-closure / let-bind / +0 / match-bind / parens).
+// run(E) must equal run(E'), and both must leave heap_live_count == 0. No value
+// oracle needed — the property is that equivalent forms agree. This is what
+// covers the combinatorial closure×region×match×... interaction space.
+fn run_int_noleak(src: &str) -> Result<i64, String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err("parse".into()); }
+    let mut c = Compiler::new().with_source(src.to_string());
+    let module = c.compile_module(&ast).map_err(|_| "compile".to_string())?;
+    let mut vm = VirtualMachine::new().with_step_cap(5_000_000);
+    let v = vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
+    let live = vm.heap_live_count();
+    if live != 0 { return Err(format!("leak {}", live)); }
+    Ok(v.as_int())
+}
+
+fn g_int_expr(rng: &mut Rng, depth: u32) -> String {
+    if depth == 0 { return format!("{}", rng.range(0, 20)); }
+    match rng.pick(5) {
+        0 => format!("{}", rng.range(0, 20)),
+        1 => format!("({} {} {})", g_int_expr(rng, depth - 1),
+                ["+", "-", "*"][rng.pick(3) as usize], g_int_expr(rng, depth - 1)),
+        2 => format!("(if {} > {} {{ {} }} else {{ {} }})",
+                g_int_expr(rng, depth - 1), g_int_expr(rng, depth - 1),
+                g_int_expr(rng, depth - 1), g_int_expr(rng, depth - 1)),
+        3 => format!("(match {} {{ 0..5 => {}, _ => {} }})",
+                g_int_expr(rng, depth - 1), g_int_expr(rng, depth - 1), g_int_expr(rng, depth - 1)),
+        _ => format!("({})", g_int_expr(rng, depth - 1)),
+    }
+}
+
+// Each transform preserves the Int value of `e`.
+fn meta_transform(rng: &mut Rng, e: &str) -> String {
+    match rng.pick(6) {
+        0 => format!("({})", e),
+        1 => format!("(region {{ {} }})", e),
+        2 => format!("((move |__z: Int| __z)({}))", e),
+        3 => format!("({{ let __t: Int = {}; __t }})", e),
+        4 => format!("({} + 0)", e),
+        _ => format!("(match ({}) {{ __k => __k }})", e),
+    }
+}
+
+#[test]
+fn fuzz_metamorphic_equiv() {
+    let mut failures: Vec<(u64, String, String, String)> = Vec::new();
+    for seed in 0..1_000u64 {
+        let mut rng = Rng::new(seed * 131 + 7);
+        let base = g_int_expr(&mut rng, 3);
+        let mut variant = base.clone();
+        for _ in 0..3 { variant = meta_transform(&mut rng, &variant); }
+        let p0 = format!("fn main() -> Int {{ {} }}", base);
+        let p1 = format!("fn main() -> Int {{ {} }}", variant);
+        match (run_int_noleak(&p0), run_int_noleak(&p1)) {
+            (Ok(a), Ok(b)) if a == b => {}
+            (Ok(a), Ok(b)) => failures.push((seed,
+                format!("value diverged: {} vs {}", a, b), p0, p1)),
+            (r0, r1) if format!("{:?}", r0) == format!("{:?}", r1) => {}
+            (r0, r1) => failures.push((seed,
+                format!("outcome diverged: {:?} vs {:?}", r0, r1), p0, p1)),
+        }
+    }
+    if !failures.is_empty() {
+        for (seed, why, p0, p1) in failures.iter().take(6) {
+            eprintln!("--- seed={} {} ---\nbase:    {}\nvariant: {}", seed, why, p0, p1);
+        }
+        panic!("fuzz_metamorphic_equiv: {} divergence(s)", failures.len());
     }
 }

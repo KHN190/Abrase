@@ -406,6 +406,22 @@ impl Gen {
                     self.push(&format!("  let {name}: Int = {a} {op} {b};\n"));
                     ints.push(name);
                 }
+                // ── closure value: bind, capture an Int, call ────────────────
+                _ if !ints.is_empty() && self.rng.pick(3) == 0 => {
+                    let cap = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let arg = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let f = self.fresh();
+                    let name = self.fresh();
+                    // call once or twice (exercises the env-copy / no-leak path)
+                    if self.rng.pick(2) == 0 {
+                        self.push(&format!(
+                            "  let {f} = move |x: Int| x + {cap};\n  let {name}: Int = {f}({arg}) + {f}({arg});\n"));
+                    } else {
+                        self.push(&format!(
+                            "  let {f} = move |x: Int| x + {cap};\n  let {name}: Int = {f}({arg});\n"));
+                    }
+                    ints.push(name);
+                }
                 // ── records ──────────────────────────────────────────────
                 _ if self.has_record && self.rng.pick(3) == 0 => {
                     let name = self.fresh();
@@ -598,102 +614,3 @@ fn fuzz_no_leak_no_panic() {
     );
 }
 
-// ── multi-module fuzz ────────────────────────────────────────────────────────
-// Generates a two-file program: lib.abe exports statics + record helpers,
-// main.abe imports and exercises them across call_export frames.
-
-use std::fs;
-use std::sync::atomic::{AtomicU64, Ordering};
-static MM_CTR: AtomicU64 = AtomicU64::new(0);
-
-fn try_run_files(entry: &std::path::Path, step_cap: u64, expected_live: usize) -> Outcome {
-    let loaded = match abrase::loader::load_program(entry) {
-        Ok(l) => l,
-        Err(_) => return Outcome::ParseFail,
-    };
-    let mut compiler = Compiler::new().with_source(loaded.entry_source.clone());
-    let module = match compiler.compile_module(&loaded.decls) {
-        Ok(m) => m,
-        Err(_) => return Outcome::CompileFail,
-    };
-    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
-    let v = match vm.run_module(&module) {
-        Ok(v) => v,
-        Err(e) => {
-            if e.starts_with("step cap exceeded") { return Outcome::Hang; }
-            return Outcome::RunErr(e);
-        }
-    };
-    // Exercise exports a few times to catch cross-frame static aliasing.
-    for export in &["tick", "read"] {
-        if module.exports.iter().any(|e| e.name == *export) {
-            match vm.call_export(&module, export, &[]) {
-                Err(e) => return Outcome::RunErr(e),
-                Ok(_) => {}
-            }
-        }
-    }
-    let live = vm.heap_live_count();
-    if live != expected_live { return Outcome::Leak(live); }
-    let ret = v.as_int();
-    if ret != 0 { return Outcome::WrongRet(ret); }
-    Outcome::Ok
-}
-
-struct MMGen { rng: Rng, seed: u64 }
-
-impl MMGen {
-    fn new(seed: u64) -> Self { Self { rng: Rng::new(seed), seed } }
-
-    fn generate(&mut self) -> (String, String, usize) {
-        let n = MM_CTR.fetch_add(1, Ordering::Relaxed);
-        let _ = n;
-
-        let has_rec  = self.rng.pick(2) == 0;
-        let has_sarr = has_rec && self.rng.pick(2) == 0;
-        let expected_live: usize = if has_sarr { 5 } else { 0 }; // 1 Array + 4 Ent records
-        let n_int    = (self.rng.pick(3) + 1) as usize;
-
-        let mut lib = String::new();
-        if has_rec {
-            lib.push_str("type Ent = { hp: Int, active: Int }\n");
-        }
-        for i in 0..n_int {
-            lib.push_str(&format!("pub static mut X{}: Int = {}\n", i, i as i64 * 10));
-        }
-        if has_sarr {
-            lib.push_str("pub static mut EA: Array<Ent> = [Ent { hp: 5, active: 0 }; 4]\n");
-        }
-        // tick: mutate statics
-        lib.push_str("pub fn tick() -> Unit {\n");
-        for i in 0..n_int {
-            lib.push_str(&format!("  X{i} = X{i} + 1;\n"));
-        }
-        if has_sarr {
-            lib.push_str("  EA[0].hp = EA[0].hp - 1;\n");
-            lib.push_str("  EA[1].active = 1;\n");
-        }
-        lib.push_str("}\n");
-        // read: return sum of statics (verifiable)
-        lib.push_str("pub fn read() -> Int {\n  ");
-        let sum: String = (0..n_int).map(|i| format!("X{}", i)).collect::<Vec<_>>().join(" + ");
-        lib.push_str(&sum);
-        lib.push_str("\n}\n");
-        lib.push_str("fn main() -> Int { 0 }\n");
-
-        // main imports and calls
-        let imports: String = (0..n_int).map(|i| format!("X{}", i)).collect::<Vec<_>>().join(", ");
-        let mut main = format!("use lib::{{{}}}\nuse lib::{{tick, read}}\n", imports);
-        if has_sarr {
-            main.push_str("use lib::{EA}\n");
-        }
-        main.push_str("fn main() -> Int {\n");
-        main.push_str("  tick();\n  tick();\n");
-        if has_sarr {
-            main.push_str("  let _hp = EA[0].hp;\n");
-        }
-        main.push_str("  0\n}\n");
-
-        (lib, main, expected_live)
-    }
-}
