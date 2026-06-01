@@ -131,6 +131,18 @@ impl VirtualMachine {
         self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_FUNC, self.current_func as u64, false)?;
         self.heap.st(cell_slot, cell_gen, crate::cont_slot::ALIVE, 1, false)?;
 
+        // Op args are MOVED into the operation: take them out of the caller
+        // window before snapshotting so the suspended frame doesn't retain them
+        let args_base_abs = self.base_reg + args_base.to_usize();
+        let mut moved_args: Vec<(u64, bool)> = Vec::with_capacity(nargs);
+        for i in 0..nargs {
+            let src_abs = args_base_abs + i;
+            let raw = self.read_abs_raw(src_abs);
+            let is_handle = self.reg_mask_bit(src_abs);
+            moved_args.push((raw, is_handle));
+            if is_handle { self.write_abs(src_abs, HANDLE_NONE, false); }
+        }
+
         let snapshot = self.snapshot_registers(self.base_reg, caller_reg_count)?;
         self.write_snapshot_into_cell(cell_slot, cell_gen, snapshot)?;
 
@@ -159,12 +171,7 @@ impl VirtualMachine {
         self.write_abs(new_base, env_raw, env_is_handle);
         self.write_abs(new_base + 1, 0, false);
 
-        let args_base_abs = self.base_reg + args_base.to_usize();
-        for i in 0..nargs {
-            let src_abs = args_base_abs + i;
-            let raw = self.read_abs_raw(src_abs);
-            let is_handle = self.reg_mask_bit(src_abs);
-            if is_handle { self.rc_inc_handle(raw)?; }
+        for (i, (raw, is_handle)) in moved_args.into_iter().enumerate() {
             self.write_abs(new_base + 2 + i, raw, is_handle);
         }
 
