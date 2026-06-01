@@ -3,21 +3,11 @@ use crate::ty::Type;
 use super::super::*;
 
 impl Checker {
-    // Escape-barrier check: returns the (root, span) of a binding whose
-    // borrow would dangle past `barrier_depth`. `break` uses the innermost
-    // loop's depth; `return`/`throw` use the outermost loop's depth (they
-    // unwind every enclosing loop on the way out of the function).
-    //
-    // The Ref cell itself is region_forgotten on break/return (see codegen),
-    // so cells survive the pop. What matters is whether the bits stored in
-    // the cell would dangle: a snapshot of a primitive is safe forever; a
-    // snapshot of a heap handle is stale once the pointee's cell is force-
-    // freed by the region pop. So we only reject when the borrowed root is
-    // heap-typed AND inside the region barrier.
     pub(super) fn check_escape_past(
         &self,
         val: &ast::Spanned<ast::Expr>,
         barrier_depth: usize,
+        require_heap: bool,
     ) -> Option<(String, ast::Span)> {
         let root = match &val.node {
             ast::Expr::Unary { op: ast::UnaryOp::Ref, right }
@@ -34,7 +24,7 @@ impl Checker {
         for scope in self.scopes.iter().rev() {
             if let Some(meta) = scope.vars.get(&root) {
                 if meta.bound_at_region_depth >= barrier_depth
-                    && is_heap_typed(&meta.ty)
+                    && (!require_heap || is_heap_typed(&meta.ty))
                 {
                     return Some((root, val.span));
                 }
@@ -49,17 +39,24 @@ impl Checker {
         val: &ast::Spanned<ast::Expr>,
     ) -> Option<(String, ast::Span)> {
         let loop_depth = *self.loop_body_region_depth.last()?;
-        self.check_escape_past(val, loop_depth)
+        self.check_escape_past(val, loop_depth, true)
     }
 
-    // Return/throw unwind every enclosing loop; the barrier is the outermost
-    // loop body region currently in scope.
     pub(super) fn check_return_escape(
         &self,
         val: &ast::Spanned<ast::Expr>,
     ) -> Option<(String, ast::Span)> {
         let outer_loop_depth = *self.loop_body_region_depth.first()?;
-        self.check_escape_past(val, outer_loop_depth)
+        self.check_escape_past(val, outer_loop_depth, true)
+    }
+
+    pub(super) fn check_region_result_escape(
+        &self,
+        body: &ast::Block,
+    ) -> Option<(String, ast::Span)> {
+        let tail = body.ret.as_deref()?;
+        let barrier = self.region_stack.len();
+        self.check_escape_past(tail, barrier, false)
     }
 
     pub(super) fn root_ident(expr: &ast::Spanned<ast::Expr>) -> Option<String> {
@@ -72,29 +69,15 @@ impl Checker {
     }
 }
 
-// True when a value of `ty` carries a heap reference internally — i.e.,
-// when a Ref-snapshot of it would contain a handle that goes stale after
-// region_pop force-frees the underlying cell. Primitives (Int/Float/Bool/
-// Char/Unit/Never) hold their bits inline, so &them is safe to escape.
 fn is_heap_typed(ty: &Type) -> bool {
     match ty {
         Type::Int | Type::Float | Type::Bool | Type::Char
         | Type::Unit | Type::Never => false,
-        // Reference itself is an 8-byte handle, but the cell it points to
-        // may live in the same region as the borrow — conservatively heap.
         _ => true,
     }
 }
 
 impl Checker {
-    // ↑ helper above; reopen impl for the divergence-analysis methods below.
-
-    // Returns true when evaluating `expr` definitely encounters a `resume`,
-    // `return`, or `throw` on every control-flow path. Operand-evaluating
-    // forms (Binary, Unary, Call, …) propagate divergence from any operand:
-    // once an operand resumes/returns, surrounding operators never run, so
-    // patterns like `v + resume(())` qualify. Branching forms (If, Match)
-    // need every arm to diverge.
     pub(super) fn arm_resumes_or_diverges(expr: &ast::Spanned<ast::Expr>) -> bool {
         match &expr.node {
             ast::Expr::Resume(_)

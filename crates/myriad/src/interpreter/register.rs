@@ -158,6 +158,32 @@ impl VirtualMachine {
         (((raw >> 24) & 0x00FF_FFFF) as u32, (raw & 0x00FF_FFFF) as u32)
     }
 
+    pub(crate) fn check_handle_tags(&self, where_: &str) -> Result<(), String> {
+        for abs in 0..self.registers.len() {
+            if !self.reg_mask_bit(abs) { continue; }
+            let raw = self.read_abs_raw(abs);
+            if raw == HANDLE_NONE { continue; }
+            let (s, g) = Self::decode_handle(raw);
+            if !self.heap.is_live(s, g) {
+                return Err(format!(
+                    "handle-tag check [{}]: register {} tagged handle but points to dead/stale slot {} gen {}",
+                    where_, abs, s, g));
+            }
+        }
+        for (slot, gen_, _rc, data, handles) in self.heap.live_cells() {
+            for (i, h) in handles.iter().enumerate() {
+                if !*h || data[i] == HANDLE_NONE { continue; }
+                let (s, g) = Self::decode_handle(data[i]);
+                if !self.heap.is_live(s, g) {
+                    return Err(format!(
+                        "handle-tag check [{}]: cell slot {} gen {} offset {} tagged handle but points to dead slot {} gen {}",
+                        where_, slot, gen_, i, s, g));
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[inline(always)]
     pub(crate) fn rc_inc_handle(&mut self, raw: u64) -> Result<(), String> {
         if raw == HANDLE_NONE { return Ok(()); }

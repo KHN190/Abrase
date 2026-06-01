@@ -225,6 +225,12 @@ impl VirtualMachine {
                     self.failing_pc = opcode_pc;
                     return Err(e);
                 }
+                if self.heap_check {
+                    if let Err(e) = self.check_handle_tags(&format!("after {:?}", opcode)) {
+                        self.failing_pc = opcode_pc;
+                        return Err(e);
+                    }
+                }
                 if self.halted || self.current_func != entry_func {
                     continue 'outer;
                 }
