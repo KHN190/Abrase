@@ -1230,11 +1230,6 @@ fn closure_passed_to_multimodule_fn() {
 // Closures crossing a function boundary: passed as an argument, returned, stored,
 // or captured-then-called. Each generator has a known result; the runner checks
 // BOTH the value and heap_live_count() == 0 (no leak of the [fn_id, env] cell).
-//
-// IGNORED: first-class closures are not yet implemented — a closure value carries
-// only its env cell, the fn_id lives at compile time, so it cannot cross a call
-// boundary. Un-ignore once closures are represented as a self-contained value.
-// See todo.md "first-class closure" / memory project-closure-limitation.
 fn run_src_noleak(src: &str, expected: i64) -> Result<(), String> {
     let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let ast = p.parse_program();
@@ -1342,7 +1337,6 @@ fn main() -> Int {
 }
 
 #[test]
-#[ignore = "leak: match arm binding a handle variant payload skips its drop on the taken-arm Jmp (not region-forget; reproduces without region)"]
 fn match_variant_handle_payload_leaks() {
     let src = r#"
 type P = { v: Int }

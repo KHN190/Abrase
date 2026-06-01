@@ -221,6 +221,7 @@ impl VirtualMachine {
                         return Err(format!("step cap exceeded ({} ops)", cap));
                     }
                 }
+                self.heap.trace_pc = opcode_pc;
                 if let Err(e) = self.exec(module, bc, opcode) {
                     self.failing_pc = opcode_pc;
                     return Err(e);

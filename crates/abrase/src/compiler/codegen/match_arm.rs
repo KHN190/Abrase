@@ -4,6 +4,15 @@ use crate::compiler::Compiler;
 use crate::bytecode::Value;
 
 impl Compiler {
+    fn drop_arm_bindings(&mut self, regs: &[Register]) {
+        for &r in regs {
+            if self.reg_holds_handle.get(r.0 as usize).copied().unwrap_or(false) {
+                self.emit(OpCode::Drop(r));
+                self.set_reg_handle(r, false);
+            }
+        }
+    }
+
     pub(in crate::compiler) fn compile_match(
         &mut self,
         scrutinee: &ast::Spanned<ast::Expr>,
@@ -292,12 +301,14 @@ impl Compiler {
         let jz_idx = self.code.len();
         self.emit(OpCode::Jz(eq_reg, 0));
 
+        let mut bound_regs = Vec::new();
         for (i, arg_pat) in args.iter().enumerate() {
             if let ast::Pattern::Bind(n) = &arg_pat.node {
                 let r = self.alloc_register()?;
                 let offset = super::scaffold::to_u16(i + 1, "Variant pattern arg offset")?;
                 self.emit(OpCode::Ld(r, scrutinee_reg, offset));
                 self.var_to_reg.insert(n.clone(), r);
+                bound_regs.push(r);
                 if let Some(ft) = info.field_types.get(i) {
                     self.var_types.insert(n.clone(), ft.clone());
                 }
@@ -307,6 +318,7 @@ impl Compiler {
         let guard_jz = self.compile_guard_check(guard)?;
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
+        self.drop_arm_bindings(&bound_regs);
         exit_jumps.push(self.code.len());
         self.emit(OpCode::Jmp(0));
 
@@ -330,6 +342,7 @@ impl Compiler {
             .ok_or_else(|| "Record pattern missing type name".to_string())?;
         let field_order = self.layouts.records.get(&type_name).cloned()
             .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
+        let mut bound_regs = Vec::new();
         for fp in fields {
             if let Some(idx) = field_order.fields.iter().position(|n| n == &fp.name) {
                 let bind_name = match &fp.pattern {
@@ -341,12 +354,14 @@ impl Compiler {
                     let offset = super::scaffold::to_u16(idx, "Record pattern field offset")?;
                     self.emit(OpCode::Ld(r, scrutinee_reg, offset));
                     self.var_to_reg.insert(n, r);
+                    bound_regs.push(r);
                 }
             }
         }
         let guard_jz = self.compile_guard_check(guard)?;
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
+        self.drop_arm_bindings(&bound_regs);
         exit_jumps.push(self.code.len());
         self.emit(OpCode::Jmp(0));
         let next_addr = self.code.len();

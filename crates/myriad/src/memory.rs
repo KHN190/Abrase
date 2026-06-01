@@ -27,6 +27,7 @@ pub struct Heap {
     bytes_used: usize,
     trace_slot: Option<u32>,
     trace_all: bool,
+    pub trace_pc: usize,
     buffer_pool: HashMap<usize, Vec<Cell>>,
 }
 
@@ -59,6 +60,7 @@ impl Heap {
             bytes_used: 0,
             trace_slot: std::env::var("TRACE_SLOT").ok().and_then(|v| v.parse::<u32>().ok()),
             trace_all: std::env::var("TRACE_SLOT").map(|v| v == "*").unwrap_or(false),
+            trace_pc: 0,
             buffer_pool: HashMap::new(),
         }
     }
@@ -233,7 +235,7 @@ impl Heap {
             .checked_add(1)
             .ok_or_else(|| format!("rc_inc: refcount overflow on slot {}", slot))?;
         if trace {
-            eprintln!("[RC_INC] slot {} gen {} -> rc {}", slot, generation, self.rc[idx]);
+            eprintln!("[RC_INC] pc {} slot {} gen {} -> rc {}", self.trace_pc, slot, generation, self.rc[idx]);
         }
         Ok(())
     }
@@ -244,7 +246,7 @@ impl Heap {
         if trace {
             let live_gen = self.generation.get(slot as usize).copied().unwrap_or(0);
             let is_live = self.cells.get(slot as usize).map(|c| c.is_some()).unwrap_or(false);
-            eprintln!("[RC_DEC] slot {} gen {} (live_gen {} live={})", slot, generation, live_gen, is_live);
+            eprintln!("[RC_DEC] pc {} slot {} gen {} (live_gen {} live={})", self.trace_pc, slot, generation, live_gen, is_live);
         }
         let idx = self.check(slot, generation, "rc_dec")?;
         if self.rc[idx] == 0 {
