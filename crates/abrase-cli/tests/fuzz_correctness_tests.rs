@@ -1458,3 +1458,96 @@ fn fuzz_metamorphic_equiv() {
         panic!("fuzz_metamorphic_equiv: {} divergence(s)", failures.len());
     }
 }
+
+fn run_raw(src: &str, int32: bool) -> Result<u64, String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err(format!("parse:\n{}", p.pretty_print_errors())); }
+    let mut c = Compiler::new().with_source(src.to_string()).with_int32_mode(int32);
+    let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
+    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
+    let v = vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
+    Ok(v.raw())
+}
+
+const F_OPS: &[(&str, fn(f64, f64) -> f64)] = &[
+    ("+", |a, b| a + b), ("-", |a, b| a - b), ("*", |a, b| a * b), ("/", |a, b| a / b),
+];
+
+const F_OPERANDS: &[(&str, f64)] = &[
+    ("0.0", 0.0), ("1.0", 1.0), ("2.0", 2.0), ("3.0", 3.0),
+    ("0.5", 0.5), ("0.25", 0.25), ("8.0", 8.0), ("16.0", 16.0),
+];
+
+fn float_bits_ok(got: u64, exp: f64, int32: bool) -> bool {
+    if int32 {
+        let g = f32::from_bits(got as u32);
+        let e = exp as f32;
+        (g.is_nan() && e.is_nan()) || g.to_bits() == e.to_bits()
+    } else {
+        let g = f64::from_bits(got);
+        (g.is_nan() && exp.is_nan()) || g.to_bits() == exp.to_bits()
+    }
+}
+
+#[test]
+fn fuzz_float_ieee() {
+    let mut fails: Vec<String> = Vec::new();
+    for int32 in [false, true] {
+        for seed in 0..400u64 {
+            let mut rng = Rng::new(seed * 131 + int32 as u64);
+            let (la, va) = F_OPERANDS[rng.pick(F_OPERANDS.len() as u64) as usize];
+            let (lb, vb) = F_OPERANDS[rng.pick(F_OPERANDS.len() as u64) as usize];
+            let (op, f) = F_OPS[rng.pick(F_OPS.len() as u64) as usize];
+            let src = format!("fn main() -> Float {{ let a = {la}; let b = {lb}; a {op} b }}");
+            let exp = f(va, vb);
+            match run_raw(&src, int32) {
+                Ok(raw) if float_bits_ok(raw, exp, int32) => {}
+                Ok(raw) => fails.push(format!("int32={} {} -> {:#x}, want {}", int32, src, raw, exp)),
+                Err(e) => fails.push(format!("int32={} {} : {}", int32, src, e)),
+            }
+        }
+    }
+    assert!(fails.is_empty(), "float IEEE divergence:\n{}", fails.join("\n"));
+}
+
+const I_OPS: &[(&str, fn(i64, i64) -> i64)] = &[
+    ("+", i64::wrapping_add), ("-", i64::wrapping_sub), ("*", i64::wrapping_mul),
+];
+
+const I_OPERANDS: &[i64] = &[
+    0, 1, -1, 2, 3, 9223372036854775807, 4294967296, -4294967296, 1000000000000, -7,
+];
+
+#[test]
+fn fuzz_int_wraparound() {
+    let mut fails: Vec<String> = Vec::new();
+    for seed in 0..600u64 {
+        let mut rng = Rng::new(seed * 137 + 1);
+        let a = I_OPERANDS[rng.pick(I_OPERANDS.len() as u64) as usize];
+        let b = I_OPERANDS[rng.pick(I_OPERANDS.len() as u64) as usize];
+        let (op, f) = I_OPS[rng.pick(I_OPS.len() as u64) as usize];
+        let src = format!("fn main() -> Int {{ let a = {a}; let b = {b}; a {op} b }}");
+        let exp = f(a, b);
+        match run_raw(&src, false) {
+            Ok(raw) if raw as i64 == exp => {}
+            Ok(raw) => fails.push(format!("{} -> {}, want {}", src, raw as i64, exp)),
+            Err(e) => fails.push(format!("{} : {}", src, e)),
+        }
+    }
+    assert!(fails.is_empty(), "int wraparound divergence:\n{}", fails.join("\n"));
+}
+
+#[test]
+fn fuzz_int_div_mod_zero_traps() {
+    for op in ["/", "%"] {
+        let src = format!("fn main() -> Int {{ let a = 5; let b = 0; a {op} b }}");
+        assert!(run_raw(&src, false).is_err(), "{} must trap", src);
+    }
+    for (a, b) in [(17i64, 5i64), (-17, 5), (17, -5), (100, 7)] {
+        let d = format!("fn main() -> Int {{ let a = {a}; let b = {b}; a / b }}");
+        let m = format!("fn main() -> Int {{ let a = {a}; let b = {b}; a % b }}");
+        assert_eq!(run_raw(&d, false).map(|r| r as i64), Ok(a / b), "{}", d);
+        assert_eq!(run_raw(&m, false).map(|r| r as i64), Ok(a % b), "{}", m);
+    }
+}
