@@ -31,6 +31,7 @@ debug flags (run / load):
     --debug      alias for --trace --handlers
 
 compile flags (run / disasm / export):
+    --root <dir> set module root (import paths resolve from here; default: entry file's dir)
     --int32      reject literals outside i32/f32 range; sets INT32_SAFE header
     --no-builtin skip native imports (print, math, conversions, string ops)
 
@@ -46,6 +47,7 @@ fn main() -> ExitCode {
     let mut no_built_in = false;
     let mut leak = false;
     let mut inline_expr: Option<String> = None;
+    let mut root_override: Option<std::path::PathBuf> = None;
     let codegen_debug = std::env::var("ABRASE_CODEGEN_DEBUG").map(|v| v == "1").unwrap_or(false);
     let mut args: Vec<String> = Vec::with_capacity(raw.len());
     let mut raw_iter = raw.into_iter();
@@ -59,6 +61,7 @@ fn main() -> ExitCode {
             "--no-built-in" | "--no-builtin" => no_built_in = true,
             "--leak"         => leak = true,
             "--expr"         => { inline_expr = raw_iter.next(); }
+            "--root"         => { root_override = raw_iter.next().map(std::path::PathBuf::from); }
             _ => args.push(a),
         }
     }
@@ -101,7 +104,7 @@ fn main() -> ExitCode {
         return cmd_export(path, &args[3], int32, no_built_in);
     }
 
-    let program = match loader::load_program(Path::new(path)) {
+    let program = match loader::load_program_with_root(Path::new(path), root_override.as_deref()) {
         Ok(p) => p,
         Err(e) => { eprintln!("{}", e); return ExitCode::from(66); }
     };
