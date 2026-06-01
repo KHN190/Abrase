@@ -547,6 +547,15 @@ impl Bucket {
 enum Outcome { Ok, ParseFail, CompileFail, RunErr(String), Leak(usize), WrongRet(i64), Hang }
 
 fn try_run(src: &str, step_cap: u64, expected_live: usize) -> Outcome {
+    try_run_checked(src, step_cap, expected_live, false)
+}
+
+// heap_check=true turns on the per-op tag sweep: after every instruction every
+// handle-tagged register and cell slot must point to a live cell. A UAF / stale
+// handle surfaces as a RunErr at the op that created the dangling tag, not as a
+// downstream crash. This is the net that lets us refactor codegen/VM (perf) and
+// still catch any rc/region/tag regression on a valid program.
+fn try_run_checked(src: &str, step_cap: u64, expected_live: usize, heap_check: bool) -> Outcome {
     let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let ast = p.parse_program();
     if !p.errors.is_empty() { return Outcome::ParseFail; }
@@ -555,7 +564,7 @@ fn try_run(src: &str, step_cap: u64, expected_live: usize) -> Outcome {
         Ok(m) => m,
         Err(_) => return Outcome::CompileFail,
     };
-    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
+    let mut vm = VirtualMachine::new().with_step_cap(step_cap).with_heap_check(heap_check);
     let v = match vm.run_module(&module) {
         Ok(v) => v,
         Err(e) => {
@@ -633,5 +642,30 @@ fn fuzz_no_leak_no_panic() {
         "fuzz found bugs: hung={} leaked={} wrong_val={} run_err={} (see stderr report)",
         st.hung, st.leaked, st.wrong_val, st.run_err
     );
+}
+
+// UAF / stale-handle net. Same generated programs, run with the per-op tag sweep
+// on. A dangling handle tag (use-after-free precursor) is reported by the VM at
+// the creating op and surfaces here as a RunErr. Fewer iterations because the
+// sweep is O(regs+cells) per instruction.
+const UAF_ITER: u64 = 1_000;
+
+#[test]
+fn fuzz_no_uaf_stale_handle_under_heap_check() {
+    let mut bad: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..UAF_ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let expected_live = g.expected_static_live();
+        if let Outcome::RunErr(e) = try_run_checked(&src, STEP_CAP, expected_live, true) {
+            if bad.len() < EXAMPLES_PER_BUCKET { bad.push((seed, e, src)); }
+        }
+    }
+    if !bad.is_empty() {
+        for (seed, e, src) in &bad {
+            eprintln!("--- UAF/stale seed={} {} ---\n{}\n", seed, e, src);
+        }
+        panic!("heap-check fuzz found {} dangling-tag program(s)", bad.len());
+    }
 }
 

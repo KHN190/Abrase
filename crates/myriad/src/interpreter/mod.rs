@@ -215,13 +215,13 @@ impl VirtualMachine {
                 }
                 self.pc = opcode_pc + 1;
                 self.steps = self.steps.wrapping_add(1);
-                if let Some(cap) = self.step_cap {
-                    if self.steps > cap {
-                        self.failing_pc = opcode_pc;
-                        return Err(format!("step cap exceeded ({} ops)", cap));
-                    }
+                if self.steps > self.step_cap {
+                    self.failing_pc = opcode_pc;
+                    return Err(format!("step cap exceeded ({} ops)", self.step_cap));
                 }
-                self.heap.trace_pc = opcode_pc;
+                if self.heap_check {
+                    self.heap.trace_pc = opcode_pc;
+                }
                 if let Err(e) = self.exec(module, bc, opcode) {
                     self.failing_pc = opcode_pc;
                     return Err(e);

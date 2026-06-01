@@ -61,7 +61,7 @@ pub struct VirtualMachine {
     pub(crate) module_table_raw: u64,
     pub(crate) module_table_is_handle: bool,
     pub(crate) steps: u64,
-    pub(crate) step_cap: Option<u64>,
+    pub(crate) step_cap: u64,
     pub(crate) static_names: Vec<String>,
     pub(crate) trace_static_filter: Option<String>,
     // ABRASE_HEAP_CHECK=1: after every op, assert each handle-tagged register and
@@ -149,7 +149,7 @@ impl VirtualMachine {
             module_table_raw: polka::HANDLE_NONE,
             module_table_is_handle: false,
             steps: 0,
-            step_cap: None,
+            step_cap: u64::MAX,
             static_names: Vec::new(),
             trace_static_filter: std::env::var("TRACE_STATIC").ok()
                 .filter(|s| !s.is_empty()),
@@ -163,7 +163,12 @@ impl VirtualMachine {
     }
 
     pub fn with_step_cap(mut self, cap: u64) -> Self {
-        self.step_cap = Some(cap);
+        self.step_cap = cap;
+        self
+    }
+
+    pub fn with_heap_check(mut self, on: bool) -> Self {
+        self.heap_check = on;
         self
     }
 
