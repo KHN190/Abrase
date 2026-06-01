@@ -98,6 +98,24 @@ fn gen_record_double_move(r: &mut Rng) -> String {
     )
 }
 
+fn gen_field_double_move(r: &mut Rng) -> String {
+    let v = r.range(1, 9);
+    format!(
+        "type W = {{ s: String }}\n\
+         fn take(w: W) -> Int {{ {v} }}\n\
+         fn main() -> Int {{ let b = W {{ s: \"hi\" }}; take(b) + take(b) }}"
+    )
+}
+
+fn gen_ref_escape_nested_region_effect(r: &mut Rng) -> String {
+    let v = r.range(1, 99);
+    format!(
+        "effect E {{ op send(r: &Int) -> Int }}\n\
+         fn body() -> <E> Int {{ region {{ region {{ let a = {v}; E.send(&a) }} }} }}\n\
+         fn main() -> Int {{ handle body() {{ return v => v, E.send q => resume(*q) }} }}"
+    )
+}
+
 fn gen_missing_effect_arm_in_handler(r: &mut Rng) -> String {
     let v = r.range(0, 9);
     format!(
@@ -122,6 +140,8 @@ const ILLEGAL_GENS: &[(&str, fn(&mut Rng) -> String)] = &[
     ("ref_payload_effect",       gen_ref_payload_effect),
     ("record_double_move",       gen_record_double_move),
     ("missing_effect_arm",       gen_missing_effect_arm_in_handler),
+    ("field_double_move",        gen_field_double_move),
+    ("ref_escape_nested_effect", gen_ref_escape_nested_region_effect),
     ("bad_syntax",               gen_bad_syntax),
 ];
 

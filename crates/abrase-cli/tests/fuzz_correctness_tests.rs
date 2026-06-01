@@ -1724,3 +1724,15 @@ fn fuzz_region_escape_oracle_runs_clean() {
         panic!("fuzz_region_escape_oracle_runs_clean: {} failure(s)", fails.len());
     }
 }
+
+#[test]
+fn nested_same_effect_handler_inner_wins_runs_clean() {
+    let src = r#"
+effect E { op tick() -> Int }
+fn body() -> <E> Int { E.tick() }
+fn main() -> Int {
+  handle body() { return v => v, E.tick => resume(1) }
+}
+"#;
+    run_src_noleak(src, 1).expect("inner handler must catch E.tick and resume(1)");
+}
