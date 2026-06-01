@@ -1551,3 +1551,70 @@ fn fuzz_int_div_mod_zero_traps() {
         assert_eq!(run_raw(&m, false).map(|r| r as i64), Ok(a % b), "{}", m);
     }
 }
+
+#[test]
+fn effect_arg_handle_region_uaf() {
+    let src = r#"
+type P = { v: Int }
+effect E { op send(p: P) -> Int }
+fn body() -> <E> Int {
+  region { let p = P { v: 42 }; E.send(p) }
+}
+fn main() -> Int {
+  handle body() { return v => v, E.send q => resume(q.v) }
+}
+"#;
+    run_src_noleak(src, 42).expect("effect handle arg across region must be rc-safe");
+}
+
+#[test]
+fn effect_arg_handle_leaks() {
+    let src = r#"
+type P = { v: Int }
+effect E { op send(p: P) -> Int }
+fn body() -> <E> Int { let p = P { v: 42 }; E.send(p) }
+fn main() -> Int {
+  handle body() { return v => v, E.send q => resume(q.v) }
+}
+"#;
+    run_src_noleak(src, 42).expect("effect handle arg must be rc-balanced");
+}
+
+fn gen_effect_handle_payload(rng: &mut Rng) -> (String, i64) {
+    let v = rng.range(1, 99);
+    let regioned = rng.pick(2) == 0;
+    let (arm, expected) = match rng.pick(3) {
+        0 => ("E.grab q => resume(q.v)".to_string(), v),
+        1 => ("E.grab q => resume(q.v + 1)".to_string(), v + 1),
+        _ => ("E.grab q => { let _w = q; resume(0) }".to_string(), 0),
+    };
+    let body_inner = format!("let p = P {{ v: {v} }}; E.grab(p)");
+    let body = if regioned { format!("region {{ {body_inner} }}") } else { body_inner };
+    let src = format!(r#"
+type P = {{ v: Int }}
+effect E {{ op grab(p: P) -> Int }}
+fn body() -> <E> Int {{ {body} }}
+fn main() -> Int {{
+  handle body() {{ return r => r, {arm} }}
+}}
+"#);
+    (src, expected)
+}
+
+#[test]
+fn fuzz_effect_handle_payload() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..300u64 {
+        let mut rng = Rng::new(seed * 149 + 7);
+        let (src, expected) = gen_effect_handle_payload(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_effect_handle_payload: {} failure(s)", fails.len());
+    }
+}
