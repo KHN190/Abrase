@@ -342,7 +342,9 @@ fn print_bytecode(
                     let ann = if is_module_init {
                         static_init_annotation(op, static_by_offset)
                     } else {
-                        call_annotation(op, names)
+                        let mut a = call_annotation(op, names);
+                        if a.is_empty() { a = device_annotation(bc, pc); }
+                        a
                     };
                     if ann.is_empty() {
                         println!("  {:>4}: {:?}", pc, op);
@@ -384,6 +386,41 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
     };
     print_bytecode(&module, &compiler.fn_names(), &compiler.static_names_by_offset(), &origins);
     ExitCode::SUCCESS
+}
+
+// Annotate Deo/Dei against the device + port encoded in the port register's
+// most recent PushConst. port_val = (device_id << 8) | port.
+fn device_annotation(bc: &abrase::bytecode::BytecodeChunk, pc: usize) -> String {
+    use abrase::bytecode::OpCode;
+    let port_reg = match &bc.code[pc] {
+        OpCode::Deo(_, p) | OpCode::Dei(p, _) => *p,
+        _ => return String::new(),
+    };
+    let mut val: Option<i64> = None;
+    for prev in bc.code[..pc].iter().rev() {
+        if let OpCode::PushConst(d, idx) = prev {
+            if *d == port_reg {
+                val = bc.constants.get(*idx as usize).map(|c| *c as i64);
+                break;
+            }
+        }
+    }
+    let Some(v) = val else { return String::new(); };
+    let (id, port) = (((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8);
+    use abrase::bytecode::*;
+    let label = match (id, port) {
+        (REGION_ID, REGION_PORT_PUSH)   => "region push",
+        (REGION_ID, REGION_PORT_POP)    => "region pop",
+        (REGION_ID, REGION_PORT_FORGET) => "region forget",
+        (DISPATCH_ID, DISPATCH_PORT_LOOKUP)      => "effect: handler lookup",
+        (DISPATCH_ID, DISPATCH_PORT_POP_HANDLER) => "effect: pop handler",
+        (DISPATCH_ID, DISPATCH_PORT_ENV)         => "effect: env",
+        (DISPATCH_ID, DISPATCH_PORT_RETURN_FN)   => "effect: return-arm fn",
+        (DISPATCH_ID, DISPATCH_PORT_RETURN_ENV)  => "effect: return-arm env",
+        (MODULE_ID, MODULE_PORT_TABLE)           => "module table",
+        _ => return String::new(),
+    };
+    label.to_string()
 }
 
 fn call_annotation(op: &abrase::bytecode::OpCode, names: &[String]) -> String {
