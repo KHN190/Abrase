@@ -408,6 +408,13 @@ impl Checker {
                 // Register binding directly to preserve let-stmt's is_mut flag in VarMeta.
                 if let ast::Pattern::Bind(n) = &pattern.node {
                     self.insert_var(n.clone(), val_ty.clone(), *is_mut, pattern.span);
+                    if let ast::Expr::Unary {
+                        op: ast::UnaryOp::Ref | ast::UnaryOp::RefMut, right,
+                    } = &value.node {
+                        if let ast::Expr::Identifier(base) = &right.node {
+                            self.set_var_borrows(n, base.clone());
+                        }
+                    }
                 } else {
                     self.check_pattern_mut(pattern, &val_ty, *is_mut);
                 }

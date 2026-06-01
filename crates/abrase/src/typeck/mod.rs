@@ -1,5 +1,3 @@
-// src/typeck.rs
-
 use std::collections::HashMap;
 use crate::ast::{self, Span};
 use crate::ty::{Ownership, Type};
@@ -50,8 +48,9 @@ struct VarMeta {
     moved_at: Option<Span>,
     immut_borrow_count: usize,
     mut_borrow_active: bool,
-    // Depth of region_stack at the time this var was bound (0 = no enclosing region).
     bound_at_region_depth: usize,
+    borrows: Option<String>,
+    borrow_invalidated: bool,
 }
 
 #[derive(Clone)]
@@ -279,7 +278,29 @@ impl Checker {
                 immut_borrow_count: 0,
                 mut_borrow_active: false,
                 bound_at_region_depth: depth,
+                borrows: None,
+                borrow_invalidated: false,
             });
+        }
+    }
+
+    // Record that `name` is a `&base` borrow, so moving `base` invalidates it.
+    pub fn set_var_borrows(&mut self, name: &str, base: String) {
+        if let Some(scope) = self.scopes.last_mut() {
+            if let Some(meta) = scope.vars.get_mut(name) {
+                meta.borrows = Some(base);
+            }
+        }
+    }
+
+    // Mark every live `&base` borrow as invalid (called when `base` is moved).
+    pub fn invalidate_borrows_of(&mut self, base: &str) {
+        for scope in self.scopes.iter_mut() {
+            for meta in scope.vars.values_mut() {
+                if meta.borrows.as_deref() == Some(base) {
+                    meta.borrow_invalidated = true;
+                }
+            }
         }
     }
 

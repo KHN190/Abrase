@@ -1618,3 +1618,109 @@ fn fuzz_effect_handle_payload() {
         panic!("fuzz_effect_handle_payload: {} failure(s)", fails.len());
     }
 }
+
+// oracle: must_forget=2 (closure var + captured handle both need region_forget)
+#[test]
+fn move_closure_escaping_region_runs_clean() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  let f = region { let p = P { v: 7 }; move |x: Int| x + p.v };
+  f(3)
+}
+"#;
+    run_src_noleak(src, 10).expect("move closure escaping region must run clean");
+}
+
+// call the escaped closure twice: env-copy must not double-free the capture
+#[test]
+fn move_closure_escaping_region_called_twice_runs_clean() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  let f = region { let p = P { v: 4 }; move |x: Int| x + p.v };
+  f(1) + f(2)
+}
+"#;
+    run_src_noleak(src, 11).expect("escaped closure called twice must run clean");
+}
+
+// inner handle escapes to outer region; outer region_pop force_frees it
+#[test]
+fn handle_escaping_inner_region_to_outer_runs_clean() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  region {
+    let p = region { P { v: 5 } };
+    p.v
+  }
+}
+"#;
+    run_src_noleak(src, 5).expect("handle escaping inner to outer region must run clean");
+}
+
+// closure escaping inner region, used in outer region
+#[test]
+fn closure_escaping_inner_region_to_outer_runs_clean() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  region {
+    let f = region { let p = P { v: 6 }; move |x: Int| x + p.v };
+    f(2)
+  }
+}
+"#;
+    run_src_noleak(src, 8).expect("closure escaping inner to outer region must run clean");
+}
+
+fn gen_region_escape_oracle(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 20);
+    let b = rng.range(1, 20);
+    let off = rng.range(0, 10);
+    match rng.next() % 4 {
+        0 => (format!(r#"
+type Pt = {{ x: Int, y: Int }}
+fn main() -> Int {{
+  let p = region {{ Pt {{ x: {a}, y: {b} }} }};
+  p.x + p.y + {off}
+}}"#), a + b + off),
+        1 => (format!(r#"
+fn main() -> Int {{
+  let f = region {{ move |x: Int| x + {b} }};
+  f({a})
+}}"#), a + b),
+        2 => (format!(r#"
+type Inner = {{ v: Int }}
+type Outer = {{ inner: Inner }}
+fn main() -> Int {{
+  let o = region {{ Outer {{ inner: Inner {{ v: {a} }} }} }};
+  o.inner.v + {off}
+}}"#), a + off),
+        _ => (format!(r#"
+type Pt = {{ x: Int, y: Int }}
+fn main() -> Int {{
+  let p = region {{ let q = region {{ Pt {{ x: {a}, y: {b} }} }}; q }};
+  p.x + p.y
+}}"#), a + b),
+    }
+}
+
+#[test]
+fn fuzz_region_escape_oracle_runs_clean() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 137 + 3);
+        let (src, expected) = gen_region_escape_oracle(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_region_escape_oracle_runs_clean: {} failure(s)", fails.len());
+    }
+}
