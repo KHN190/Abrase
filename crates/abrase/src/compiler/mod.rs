@@ -754,6 +754,8 @@ impl Compiler {
             return Err(self.errors.clone());
         }
 
+        self.peephole_copy_drop();
+
         let reg_count = self.max_reg as usize;
         let taken_constants = std::mem::take(&mut self.constants);
         let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);

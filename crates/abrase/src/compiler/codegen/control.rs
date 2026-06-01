@@ -21,8 +21,9 @@ impl Compiler {
         let pre_if_table_reg = self.module_table_reg;
 
         let cons_reg = self.compile_expr(consequence)?;
-        if !is_leaf_for_peephole(&consequence.node)
-            || !self.try_redirect_last_dest(cons_reg, result_reg)
+        let cons_leaf = is_leaf_for_peephole(&consequence.node);
+        if !(cons_leaf && self.try_redirect_last_dest(cons_reg, result_reg))
+            && !self.try_redirect_alloc_block(cons_reg, result_reg)
         {
             self.emit(OpCode::Copy(result_reg, cons_reg));
         }
@@ -35,17 +36,23 @@ impl Compiler {
         let else_addr = self.code.len();
         self.patch_jz_at(jz_idx, else_addr)?;
 
-        let (alt_reg, alt_leaf) = if let Some(alt) = alternative {
-            (self.compile_expr(alt)?, is_leaf_for_peephole(&alt.node))
+        let alt_reg = if let Some(alt) = alternative {
+            let r = self.compile_expr(alt)?;
+            let alt_leaf = is_leaf_for_peephole(&alt.node);
+            if !(alt_leaf && self.try_redirect_last_dest(r, result_reg))
+                && !self.try_redirect_alloc_block(r, result_reg)
+            {
+                self.emit(OpCode::Copy(result_reg, r));
+            }
+            r
         } else {
             let r = self.alloc_register()?;
             let idx = self.add_constant(Value::UNIT)?;
             self.emit(OpCode::PushConst(r, idx));
-            (r, true)
+            self.try_redirect_last_dest(r, result_reg);
+            r
         };
-        if !alt_leaf || !self.try_redirect_last_dest(alt_reg, result_reg) {
-            self.emit(OpCode::Copy(result_reg, alt_reg));
-        }
+        let _ = alt_reg;
         self.reclaim_temp_regs_above(arm_mark);
 
         let end_addr = self.code.len();
@@ -526,12 +533,6 @@ impl Compiler {
     }
 }
 
-enum InclusiveKind {
-    Static(bool),
-    Dynamic(Register),
-}
-
-// Phi-joining forms (Match, If, Block, Handle, While) 
 fn is_leaf_for_peephole(expr: &ast::Expr) -> bool {
     matches!(
         expr,
@@ -547,4 +548,9 @@ fn is_leaf_for_peephole(expr: &ast::Expr) -> bool {
         | ast::Expr::Array(_)
         | ast::Expr::Closure { .. }
     )
+}
+
+enum InclusiveKind {
+    Static(bool),
+    Dynamic(Register),
 }

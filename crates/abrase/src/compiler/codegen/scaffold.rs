@@ -6,6 +6,33 @@ use crate::compiler::Compiler;
 use crate::compiler::effects;
 use crate::bytecode::Value;
 
+fn op_reads_reg(op: &OpCode, r: Register) -> bool {
+    use OpCode::*;
+    match op {
+        Add(_, a, b) | Sub(_, a, b) | Mul(_, a, b) | Div(_, a, b) | Mod(_, a, b)
+        | Eq(_, a, b) | Neq(_, a, b) | Lt(_, a, b) | Gt(_, a, b) | Lte(_, a, b) | Gte(_, a, b)
+        | And(_, a, b) | Or(_, a, b) | Xor(_, a, b) | Shl(_, a, b) | Shr(_, a, b)
+        | FAdd(_, a, b) | FSub(_, a, b) | FMul(_, a, b) | FDiv(_, a, b)
+        | FLt(_, a, b) | FEq(_, a, b) => *a == r || *b == r,
+        Neg(_, a) | FNeg(_, a) => *a == r,
+        Copy(_, s) | Move(_, s) => *s == r,
+        Drop(s) => *s == r,
+        Jz(c, _) | Jnz(c, _) => *c == r,
+        Ret(s) => *s == r,
+        AddImm(_, s, _) | SubImm(_, s, _) => *s == r,
+        Ld(_, b, _) => *b == r,
+        St(v, b, _) => *v == r || *b == r,
+        LdIdx(_, b, i) => *b == r || *i == r,
+        StIdx(v, b, i) => *v == r || *b == r || *i == r,
+        Deo(s, p) | Dei(s, p) => *s == r || *p == r,
+        CallReg(_, f) => *f == r,
+        Resume(_, v) => *v == r,
+        Raise(_, k, a) => *k == r || *a == r,
+        Handle(t, _) => *t == r,
+        _ => false,
+    }
+}
+
 pub(in crate::compiler) fn to_u16(n: usize, what: &str) -> Result<u16, String> {
     u16::try_from(n).map_err(|_| format!("{} exceeds u16 range (got {}, max {})", what, n, u16::MAX))
 }
@@ -110,6 +137,67 @@ impl Compiler {
             true
         } else {
             false
+        }
+    }
+
+    pub(in crate::compiler) fn try_redirect_alloc_block(&mut self, old: Register, new: Register) -> bool {
+        if old == new { return true; }
+        let len = self.code.len();
+        let mut alloc_pos = None;
+        for i in (0..len).rev() {
+            match &self.code[i] {
+                OpCode::Alloc(d, _) if *d == old => { alloc_pos = Some(i); break; }
+                OpCode::St(v, b, _) => {
+                    if *v == old { return false; }
+                    if *b != old { if op_reads_reg(&self.code[i], old) { return false; } }
+                }
+                op => { if op_reads_reg(op, old) { return false; } }
+            }
+        }
+        let alloc_pos = match alloc_pos { Some(p) => p, None => return false };
+        for i in alloc_pos..len {
+            match &mut self.code[i] {
+                OpCode::Alloc(d, _) if *d == old => { *d = new; }
+                OpCode::St(_, b, _) if *b == old => { *b = new; }
+                _ => {}
+            }
+        }
+        let old_i = old.0 as usize;
+        if old_i < self.reg_holds_handle.len() { self.reg_holds_handle[old_i] = false; }
+        let new_i = new.0 as usize;
+        if new_i >= self.reg_holds_handle.len() { self.reg_holds_handle.resize(new_i + 1, false); }
+        self.reg_holds_handle[new_i] = true;
+        true
+    }
+
+    pub(in crate::compiler) fn peephole_copy_drop(&mut self) {
+        let mut i = 0;
+        while i < self.code.len() {
+            if let OpCode::Copy(dest, src) = self.code[i] {
+                let src_is_handle = (src.0 as usize) < self.reg_holds_handle.len()
+                    && self.reg_holds_handle[src.0 as usize];
+                if src_is_handle {
+                    let limit = (self.code.len() - i - 1).min(8);
+                    let mut drop_pos = None;
+                    let mut blocked = false;
+                    for j in 1..=limit {
+                        match &self.code[i + j] {
+                            OpCode::Drop(r) if *r == src => { drop_pos = Some(i + j); break; }
+                            op if op_reads_reg(op, src) => { blocked = true; break; }
+                            _ => {}
+                        }
+                    }
+                    if let Some(dp) = drop_pos {
+                        if !blocked {
+                            self.code[i] = OpCode::Move(dest, src);
+                            self.code.remove(dp);
+                            i += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+            i += 1;
         }
     }
 

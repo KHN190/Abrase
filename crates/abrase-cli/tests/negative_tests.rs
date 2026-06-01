@@ -357,3 +357,45 @@ fn main_with_declared_effect_rejected() {
     assert!(err.contains("pure") || err.contains("must be pure"),
         "expected `main` must-be-pure rejection, got: {}", err);
 }
+
+#[test]
+fn generic_call_wrong_arg_count_rejected() {
+    let src = r#"
+        fn id<T>(x: T) -> T { x }
+        fn main() -> Int { id(1, 2) }
+    "#;
+    let err = must_reject(src);
+    assert!(err.contains("argument") || err.contains("arg"),
+        "expected generic arg-count rejection, got: {}", err);
+}
+
+#[test]
+fn generic_type_param_conflict_rejected() {
+    let src = r#"
+        fn pair<T>(a: T, b: T) -> T { a }
+        fn main() -> Int { pair(1, true) }
+    "#;
+    let err = must_reject(src);
+    assert!(!err.is_empty(), "conflicting type-parameter binding must error");
+}
+
+#[test]
+fn non_exhaustive_variant_match_rejected() {
+    let src = r#"
+        type Opt = Some(Int) | None
+        fn main() -> Int {
+            let v = Some(1);
+            match v { Some(a) => a }
+        }
+    "#;
+    let err = must_reject(src);
+    assert!(!err.is_empty(), "non-exhaustive match must be rejected");
+}
+
+#[test]
+fn method_arg_type_mismatch_rejected() {
+    // max(self, other) needs both Ord of the same type; Int.max(Bool) can't.
+    let src = "fn main() -> Int { let _ = (3).max(true); 0 }";
+    let err = must_reject(src);
+    assert!(!err.is_empty(), "method arg type mismatch must be rejected");
+}
