@@ -187,12 +187,9 @@ impl Compiler {
                             _ => {}
                         }
                     }
-                    if let Some(dp) = drop_pos {
+                    if let Some(_dp) = drop_pos {
                         if !blocked {
                             self.code[i] = OpCode::Move(dest, src);
-                            self.code.remove(dp);
-                            i += 1;
-                            continue;
                         }
                     }
                 }

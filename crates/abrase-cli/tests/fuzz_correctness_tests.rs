@@ -1736,3 +1736,34 @@ fn main() -> Int {
 "#;
     run_src_noleak(src, 1).expect("inner handler must catch E.tick and resume(1)");
 }
+
+fn gen_if_call_arms(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 50);
+    let b = rng.range(51, 100);
+    let cond = rng.next() % 2 == 0;
+    let expected = if cond { b } else { a };
+    (format!(
+        "fn fa() -> Int {{ {a} }}\n\
+         fn fb() -> Int {{ {b} }}\n\
+         fn main() -> Int {{ let g = if {} {{ fb() }} else {{ fa() }}; g }}",
+        if cond { "true" } else { "false" }
+    ), expected)
+}
+
+#[test]
+fn fuzz_if_call_arms_correct() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 131 + 17);
+        let (src, expected) = gen_if_call_arms(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_if_call_arms_correct: {} failure(s)", fails.len());
+    }
+}
