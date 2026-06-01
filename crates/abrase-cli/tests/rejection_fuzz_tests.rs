@@ -79,6 +79,34 @@ fn gen_bad_syntax(r: &mut Rng) -> String {
     }
 }
 
+fn gen_local_alias(r: &mut Rng) -> String {
+    let v = r.range(1, 99);
+    format!("fn main() -> Int {{ let mut a = {v}; let r1 = &a; let r2 = &mut a; let _ = r1; let _ = r2; 0 }}")
+}
+
+fn gen_ref_payload_effect(r: &mut Rng) -> String {
+    let v = r.range(1, 99);
+    format!("effect E {{ op send(r: &Int) -> Int }}\nfn body() -> <E> Int {{ region {{ let a = {v}; E.send(&a) }} }}\nfn main() -> Int {{ handle body() {{ return v => v, E.send q => resume(*q) }} }}")
+}
+
+fn gen_record_double_move(r: &mut Rng) -> String {
+    let v = r.range(1, 99);
+    format!(
+        "type P = {{ v: Int }}\n\
+         fn consume(p: P) -> Int {{ p.v }}\n\
+         fn main() -> Int {{ let p = P {{ v: {v} }}; consume(p) + consume(p) }}"
+    )
+}
+
+fn gen_missing_effect_arm_in_handler(r: &mut Rng) -> String {
+    let v = r.range(0, 9);
+    format!(
+        "effect E {{ op tick() -> Int }}\n\
+         fn body() -> <E> Int {{ E.tick() }}\n\
+         fn main() -> Int {{ handle body() {{ return _ => {v} }} }}"
+    )
+}
+
 const ILLEGAL_GENS: &[(&str, fn(&mut Rng) -> String)] = &[
     ("shared_escape",            gen_shared_escape),
     ("closure_captures_shared",  gen_closure_captures_shared),
@@ -90,8 +118,35 @@ const ILLEGAL_GENS: &[(&str, fn(&mut Rng) -> String)] = &[
     ("type_mismatch",            gen_type_mismatch),
     ("arg_count",                gen_arg_count),
     ("ref_escape",               gen_ref_escape),
+    ("local_alias",              gen_local_alias),
+    ("ref_payload_effect",       gen_ref_payload_effect),
+    ("record_double_move",       gen_record_double_move),
+    ("missing_effect_arm",       gen_missing_effect_arm_in_handler),
     ("bad_syntax",               gen_bad_syntax),
 ];
+
+// Moving a value invalidates an outstanding named `&` borrow of it: using the
+// borrow afterwards is rejected. Only named bindings (`let r = &x`) are tracked,
+// so a discarded `&x` temporary never blocks a later move.
+#[test]
+fn rejection_borrow_after_base_moved() {
+    let src = r#"
+fn consume(s: String) -> Int { 1 }
+fn rlen(s: &String) -> Int { 2 }
+fn main() -> Int { let x = "m"; let r = &x; let _ = consume(x); rlen(r) }
+"#;
+    assert!(is_rejected(src), "borrow-after-move must be rejected");
+}
+
+#[test]
+fn rejection_ref_payload_escapes_via_effect() {
+    let src = r#"
+effect E { op send(r: &Int) -> Int }
+fn body() -> <E> Int { region { let a = 5; E.send(&a) } }
+fn main() -> Int { handle body() { return v => v, E.send q => resume(*q) } }
+"#;
+    assert!(is_rejected(src), "&T escaping region via effect payload must be rejected");
+}
 
 #[test]
 fn rejection_fuzz_illegal_programs_rejected() {

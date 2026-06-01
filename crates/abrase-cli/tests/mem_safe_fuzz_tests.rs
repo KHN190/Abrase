@@ -151,7 +151,7 @@ impl Gen {
         for _ in 0..stmts {
             if self.fuel == 0 { break; }
             self.fuel -= 1;
-            let choices = if region_depth > 0 { 38 } else { 32 };
+            let choices = if region_depth > 0 { 38 } else { 34 };
             match self.rng.pick(choices) {
                 // ── scalars ──────────────────────────────────────────────────
                 0 => {
@@ -394,6 +394,27 @@ impl Gen {
                     let i = self.rng.pick(4);
                     self.push(&format!(
                         "  let {name}: Int = match VTA[{i}] {{ One(n) => n, _ => 0 }};\n"
+                    ));
+                    ints.push(name);
+                }
+                // ── region returning record (region_forget path) ─────────
+                30 if region_depth == 0 && self.has_record => {
+                    let name = self.fresh();
+                    let a = self.rng.pick(50) as i64;
+                    let b = self.rng.pick(50) as i64;
+                    self.push(&format!(
+                        "  let {name}: R = region {{ R {{ a: {a}, b: {b} }} }};\n"
+                    ));
+                    records.push(name);
+                }
+                // ── region returning move closure (region_forget + env-copy) ─
+                31 if region_depth == 0 && !ints.is_empty() => {
+                    let cap = ints[self.rng.pick(ints.len() as u64) as usize].clone();
+                    let arg = self.rng.pick(10) as i64;
+                    let f = self.fresh();
+                    let name = self.fresh();
+                    self.push(&format!(
+                        "  let {f} = region {{ move |x: Int| x + {cap} }};\n  let {name}: Int = {f}({arg});\n"
                     ));
                     ints.push(name);
                 }

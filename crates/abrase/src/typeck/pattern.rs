@@ -523,6 +523,8 @@ impl Checker {
     }
 
     pub fn get_var(&mut self, name: &str, is_ref: bool, usage_span: Span) -> Type {
+        let mut found_ty: Option<Type> = None;
+        let mut moved_now = false;
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(name) {
                 if meta.is_moved {
@@ -530,13 +532,25 @@ impl Checker {
                     let msg = format!("Use of moved value '{}'. It was moved at line {}.", name, move_line);
                     return self.report_error(msg, usage_span);
                 }
-                if !matches!(&meta.ty, Type::Function { .. }) &&
-                   meta.ty.ownership() == Ownership::Move && !is_ref {
+                if meta.borrow_invalidated {
+                    let msg = format!("Use of borrow '{}' after its borrowed value was moved", name);
+                    return self.report_error(msg, usage_span);
+                }
+                let ty = meta.ty.clone();
+                if !matches!(&ty, Type::Function { .. }) &&
+                   ty.ownership() == Ownership::Move && !is_ref {
                     meta.is_moved = true;
                     meta.moved_at = Some(usage_span);
+                    moved_now = true;
                 }
-                return meta.ty.clone();
+                found_ty = Some(ty);
+                break;
             }
+        }
+        if let Some(ty) = found_ty {
+            // Moving `name` invalidates any live `&name` borrow.
+            if moved_now { self.invalidate_borrows_of(name); }
+            return ty;
         }
         if let Some(ty) = self.lookup_variant_constructor(name) {
             return ty;

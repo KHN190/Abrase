@@ -61,6 +61,14 @@ impl Checker {
                                         arg.span,
                                     );
                                 }
+                                // A `&T` arg borrowing a region-local escapes when
+                                // control transfers to the (outer) handler. wiki 05.
+                                if let Some((root, esc_span)) = self.check_escape_past(arg, 1, false) {
+                                    self.report_error(
+                                        format!("borrow '{}' cannot escape via effect op '{}' (a `&T` carried into an operation outlives its region once control reaches the handler)", root, op_key),
+                                        esc_span,
+                                    );
+                                }
                             }
                             self.check_borrow_barrier(&op_key, span);
                             self.add_required_effect(crate::ty::Effect::UserEffect(eff_name.clone()));
