@@ -79,6 +79,7 @@ pub struct Compiler {
     pub method_dispatch: HashMap<(String, String), String>,
     pub(super) closure_by_span: HashMap<ast::Span, closures::ClosureInfo>,
     pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
+    pub(super) fn_value_adapters: HashMap<String, String>,
     pub(super) closure_as_value_ok: bool,
     pub(super) loop_stack: Vec<LoopCtx>,
     pub(super) concat_fn_id: Option<usize>,
@@ -153,6 +154,7 @@ impl Compiler {
             method_dispatch: HashMap::new(),
             closure_by_span: HashMap::new(),
             closure_by_var: HashMap::new(),
+            fn_value_adapters: HashMap::new(),
             closure_as_value_ok: false,
             loop_stack: Vec::new(),
             concat_fn_id: None,
@@ -591,6 +593,7 @@ impl Compiler {
         let mut closure_lowering = closures::ClosureLowering::new();
         closure_lowering.lower(ast);
         self.closure_by_span = closure_lowering.by_span;
+        self.fn_value_adapters = closure_lowering.fn_value_adapters;
         let mut decls = ast.to_vec();
         for fd in closure_lowering.synthetic_fns { decls.push(ast::Decl::Fn(fd)); }
         decls

@@ -197,12 +197,21 @@ impl Compiler {
             if unboxed { self.set_reg_handle(dest, false); }
             return Ok(dest);
         }
-        if let Some(fid) = self.resolve_fn_callee(name) {
-            let dest = self.alloc_register()?;
+        if self.resolve_fn_callee(name).is_some() {
+            // A top-level fn used as a value becomes a [fn_id, env=NONE] cell via
+            // its __fnval_ adapter, so it shares the closure calling convention.
+            let adapter = self.fn_value_adapters.get(name).cloned()
+                .ok_or_else(|| format!("internal: fn '{}' used as value has no adapter", name))?;
+            let fid = *self.func_map.get(&adapter)
+                .ok_or_else(|| format!("internal: fn-value adapter '{}' not in fn table", adapter))?;
+            let cell = self.alloc_register()?;
+            self.emit(OpCode::Alloc(cell, 2));
+            let fid_reg = self.alloc_register()?;
             let idx = self.add_constant(Value::from_int(fid as i64))?;
-            self.emit(OpCode::PushConst(dest, idx));
-            self.set_reg_handle(dest, false);
-            return Ok(dest);
+            self.emit(OpCode::PushConst(fid_reg, idx));
+            self.set_reg_handle(fid_reg, false);
+            self.emit(OpCode::St(fid_reg, cell, 0));
+            return Ok(cell);
         }
         if let Some(info) = self.layouts.variants.get(name).cloned() {
             let dest = self.alloc_register()?;
@@ -315,6 +324,12 @@ impl Compiler {
             .ok_or_else(|| format!("No field '{}' in {}", field, type_name))?;
         let dest = self.alloc_register()?;
         self.emit(OpCode::Ld(dest, base_reg, idx));
+        // Drop the base cell if it was a temporary (not a direct variable binding).
+        // Named variables are kept alive by their scope; only anonymous sub-expressions
+        // allocate a cell that nobody else owns after the field is extracted.
+        if !matches!(base.node, ast::Expr::Identifier(_)) {
+            self.emit(OpCode::Drop(base_reg));
+        }
         Ok(dest)
     }
 

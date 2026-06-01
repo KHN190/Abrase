@@ -295,6 +295,13 @@ pub(in crate::compiler) fn ty_to_ast(ty: &crate::ty::Type) -> Option<ast::Type> 
             args: vec![ty_to_ast(inner)?],
         },
         T::Never => ast::Type::Named("Never".into()),
+        // Function values are first-class; effects aren't needed for codegen's
+        // use (call resolution only checks the Function discriminant).
+        T::Function { params, ret, .. } => ast::Type::Function {
+            params: params.iter().map(ty_to_ast).collect::<Option<Vec<_>>>()?,
+            effects: vec![],
+            ret: Box::new(ty_to_ast(ret)?),
+        },
         _ => return None,
     })
 }

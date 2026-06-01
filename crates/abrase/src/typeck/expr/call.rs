@@ -188,17 +188,44 @@ impl Checker {
                                 return sub_self(&sig_ret);
                             }
                             Ok(None) => {
-                                let is_record_with_field = matches!(
-                                    self.type_registry.get(&rname),
-                                    Some(ast::TypeBody::Record(fs)) if fs.iter().any(|f| &f.name == field)
-                                );
-                                if !is_record_with_field {
-                                    self.report_error(
-                                        format!("No method '{}' for type '{}'", field, rname),
-                                        span,
-                                    );
-                                    self.context_stack.pop();
-                                    return Type::Unknown;
+                                let field_ty = match self.type_registry.get(&rname) {
+                                    Some(ast::TypeBody::Record(fs)) =>
+                                        fs.iter().find(|f| &f.name == field).map(|f| f.ty.clone()),
+                                    _ => None,
+                                };
+                                match field_ty {
+                                    None => {
+                                        self.report_error(
+                                            format!("No method '{}' for type '{}'", field, rname),
+                                            span,
+                                        );
+                                        self.context_stack.pop();
+                                        return Type::Unknown;
+                                    }
+                                    Some(ft) => {
+                                        // Record field holding a function value: `b.f(args)`
+                                        // calls the field. Check args against its fn type.
+                                        if let ast::Type::Function { params, ret, .. } = ft {
+                                            let ps: Vec<Type> = params.iter().map(|p| self.convert_type(p)).collect();
+                                            if args.len() != ps.len() {
+                                                self.report_error(
+                                                    format!("Field '{}.{}' expects {} argument(s), got {}",
+                                                        rname, field, ps.len(), args.len()),
+                                                    span);
+                                            }
+                                            for (i, arg) in args.iter().enumerate() {
+                                                let at = self.infer_expr(arg);
+                                                if i < ps.len() && at != ps[i]
+                                                    && at != Type::Unknown && ps[i] != Type::Unknown {
+                                                    self.report_error(
+                                                        format!("Argument {} type mismatch: expected {:?}, got {:?}",
+                                                            i, ps[i], at), arg.span);
+                                                }
+                                            }
+                                            self.context_stack.pop();
+                                            return self.convert_type(&ret);
+                                        }
+                                    }
                                 }
                             }
                             Err(traits) => {
@@ -242,7 +269,13 @@ impl Checker {
                         // (either Type::Generic, or Type::Named(n) where n is a generic param of the callee).
                         let is_param_generic = matches!(param_ty, Type::Generic { .. })
                             || matches!(param_ty, Type::Named(n) if callee_generic_vars.contains(n));
-                        if !is_param_generic && arg_ty != param_ty && *arg_ty != Type::Unknown && *param_ty != Type::Unknown {
+                        if fn_type_has_unknown(arg_ty) && fn_type_is_concrete(param_ty) {
+                            self.report_error(
+                                format!("Argument {}: cannot infer closure type from context; \
+                                         annotate the closure, e.g. `|x: Int| -> Int ...`", i),
+                                args[i].span,
+                            );
+                        } else if !is_param_generic && arg_ty != param_ty && *arg_ty != Type::Unknown && *param_ty != Type::Unknown {
                             self.report_error(
                                 format!("Argument {} type mismatch: expected {:?}, got {:?}", i, param_ty, arg_ty),
                                 args[i].span
@@ -386,4 +419,14 @@ impl Checker {
                 self.context_stack.pop();
                 result
     }
+}
+
+fn fn_type_has_unknown(ty: &Type) -> bool {
+    matches!(ty, Type::Function { params, ret, .. }
+        if params.iter().any(|p| *p == Type::Unknown) || **ret == Type::Unknown)
+}
+
+fn fn_type_is_concrete(ty: &Type) -> bool {
+    matches!(ty, Type::Function { params, ret, .. }
+        if params.iter().all(|p| *p != Type::Unknown) && **ret != Type::Unknown)
 }
