@@ -230,6 +230,23 @@ impl<'a> Extract<'a> {
                 self.facts.flows_outside.insert(v, r);
             }
             Expr::Paren(inner) => self.escape_tail(&inner.node, span, r),
+            Expr::Record { fields, .. } => {
+                for f in fields {
+                    if let Some(val) = &f.value {
+                        self.escape_tail(&val.node, val.span, r);
+                    }
+                }
+            }
+            Expr::Variant { args, .. } | Expr::Tuple(args) | Expr::Array(args) => {
+                for a in args {
+                    self.escape_tail(&a.node, a.span, r);
+                }
+            }
+            Expr::Call { args, .. } => {
+                for a in args {
+                    self.escape_tail(&a.node, a.span, r);
+                }
+            }
             _ => self.walk_expr(e),
         }
     }
@@ -340,6 +357,42 @@ fn oracle_escaping_closure_carries_moved_region_handle() {
     );
     assert!(errs.is_empty(), "{errs:?}");
     assert_eq!(mf, 2, "closure + captured handle both need forget");
+}
+
+#[test]
+fn oracle_nested_handle_in_escaping_record_requires_forget() {
+    let (errs, mf) = analyze_src(
+        "fn main() -> Q { region { let inner = P { v: 9 }; Q { p: inner } } }",
+    );
+    assert!(errs.is_empty(), "{errs:?}");
+    assert_eq!(mf, 1, "nested handle reachable through escaping record must be forgotten");
+}
+
+#[test]
+fn oracle_nested_handle_in_escaping_variant_requires_forget() {
+    let (errs, mf) = analyze_src(
+        "fn main() -> O { region { let p = P { v: 8 }; Some(p) } }",
+    );
+    assert!(errs.is_empty(), "{errs:?}");
+    assert_eq!(mf, 1);
+}
+
+#[test]
+fn oracle_nested_handle_in_escaping_tuple_requires_forget() {
+    let (errs, mf) = analyze_src(
+        "fn main() -> T { region { let p = P { v: 6 }; (p, 0) } }",
+    );
+    assert!(errs.is_empty(), "{errs:?}");
+    assert_eq!(mf, 1);
+}
+
+#[test]
+fn oracle_closure_in_escaping_record_carries_region_capture() {
+    let (errs, mf) = analyze_src(
+        "fn main() -> Box { region { let p = P { v: 1 }; Box { f: move |x| x + p } } }",
+    );
+    assert!(errs.is_empty(), "{errs:?}");
+    assert_eq!(mf, 2, "closure nested in escaping record still drags its move capture out");
 }
 
 #[test]

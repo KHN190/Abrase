@@ -1210,7 +1210,6 @@ fn fuzz_static_variant_array_multiframe() {
 }
 
 #[test]
-#[ignore = "codegen: first-class closure across module boundary not yet implemented"]
 fn closure_passed_to_multimodule_fn() {
     let mut failures: Vec<(u64, String)> = Vec::new();
     for seed in 0..150u64 {
@@ -1329,12 +1328,76 @@ fn fuzz_first_class_closures() {
     }
 }
 
-// ── metamorphic equivalence fuzz ──────────────────────────────────────────────
-// Generate a well-typed Int expression E, then a semantics-preserving variant E'
-// (wrap in region / identity-closure / let-bind / +0 / match-bind / parens).
-// run(E) must equal run(E'), and both must leave heap_live_count == 0. No value
-// oracle needed — the property is that equivalent forms agree. This is what
-// covers the combinatorial closure×region×match×... interaction space.
+#[test]
+fn nested_record_in_escaping_record_forgotten() {
+    let src = r#"
+type P = { v: Int }
+type Q = { p: P }
+fn main() -> Int {
+  let q = region { let inner = P { v: 9 }; Q { p: inner } };
+  q.p.v
+}
+"#;
+    run_src_noleak(src, 9).expect("nested record should run leak-free");
+}
+
+#[test]
+#[ignore = "leak: match arm binding a handle variant payload skips its drop on the taken-arm Jmp (not region-forget; reproduces without region)"]
+fn match_variant_handle_payload_leaks() {
+    let src = r#"
+type P = { v: Int }
+type O = None | Some(P)
+fn main() -> Int {
+  let p = P { v: 8 };
+  let o = Some(p);
+  match o { Some(q) => q.v, None => 0 }
+}
+"#;
+    run_src_noleak(src, 8).expect("match variant payload should run leak-free");
+}
+
+#[test]
+fn nested_record_in_escaping_tuple_forgotten() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  let t = region { let p = P { v: 6 }; (p, 0) };
+  t.0.v
+}
+"#;
+    run_src_noleak(src, 6).expect("nested record in tuple should run leak-free");
+}
+
+#[test]
+fn doubly_nested_record_in_escaping_record_forgotten() {
+    let src = r#"
+type P = { v: Int }
+type Q = { p: P }
+type R = { q: Q }
+fn main() -> Int {
+  let r = region { let p = P { v: 4 }; R { q: Q { p: p } } };
+  r.q.p.v
+}
+"#;
+    run_src_noleak(src, 4).expect("doubly-nested record should run leak-free");
+}
+
+#[test]
+fn closure_in_escaping_record_forgets_region_capture() {
+    let src = r#"
+type P = { v: Int }
+type Box = { f: (Int) -> Int }
+fn main() -> Int {
+  let b = region {
+    let p = P { v: 7 };
+    Box { f: move |x: Int| x + p.v }
+  };
+  (b.f)(3)
+}
+"#;
+    run_src_noleak(src, 10).expect("closure-in-record should run leak-free");
+}
+
 fn run_int_noleak(src: &str) -> Result<i64, String> {
     let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let ast = p.parse_program();

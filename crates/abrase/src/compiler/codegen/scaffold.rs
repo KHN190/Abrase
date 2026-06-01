@@ -233,73 +233,21 @@ impl Compiler {
         Ok(())
     }
 
-    // Walk type structure emitting region_forget for carried value + reachable handles.
+    // Forget the carried value so region_pop won't force-free it.
     pub(in crate::compiler) fn emit_region_forget_typed(
         &mut self,
         reg: Register,
         ty: &ast::Type,
     ) -> Result<(), String> {
-        self.emit_region_forget_typed_inner(reg, ty, 0)
-    }
-
-    fn emit_region_forget_typed_inner(
-        &mut self,
-        reg: Register,
-        ty: &ast::Type,
-        depth: usize,
-    ) -> Result<(), String> {
-        const MAX_DEPTH: usize = 32;
-        if depth > MAX_DEPTH {
-            return Err(format!(
-                "region_forget type recursion exceeded {} levels — \
-                 carried value is too deeply nested to escape; \
-                 bind to a let inside the region instead",
-                MAX_DEPTH
-            ));
-        }
-        match ty {
+        let is_scalar = matches!(
+            ty,
             ast::Type::Named(n) if matches!(
                 n.as_str(),
                 "Int" | "Float" | "Bool" | "Char" | "Unit" | "Never"
-            ) => Ok(()),
-
-            ast::Type::Reference { .. }
-            | ast::Type::Function { .. } => {
-                self.emit_region_forget(reg)
-            }
-
-            ast::Type::Tuple(items) => {
-                self.emit_region_forget(reg)?;
-                for (i, t) in items.iter().enumerate() {
-                    let inner = self.alloc_register()?;
-                    let offset = u16::try_from(i)
-                        .map_err(|_| "tuple index exceeds u16".to_string())?;
-                    self.emit(OpCode::Ld(inner, reg, offset));
-                    self.emit_region_forget_typed_inner(inner, t, depth + 1)?;
-                }
-                Ok(())
-            }
-
-            ast::Type::Named(n) => {
-                self.emit_region_forget(reg)?;
-                if let Some(layout) = self.layouts.records.get(n).cloned() {
-                    for (i, fty) in layout.field_types.iter().enumerate() {
-                        let inner = self.alloc_register()?;
-                        let offset = u16::try_from(i)
-                            .map_err(|_| "record field index exceeds u16".to_string())?;
-                        self.emit(OpCode::Ld(inner, reg, offset));
-                        self.emit_region_forget_typed_inner(inner, fty, depth + 1)?;
-                    }
-                }
-                Ok(())
-            }
-
-            ast::Type::Generic { .. } => {
-                self.emit_region_forget(reg)
-            }
-
-            _ => self.emit_region_forget(reg),
-        }
+            )
+        );
+        if is_scalar { return Ok(()); }
+        self.emit_region_forget(reg)
     }
 
     pub(in crate::compiler) fn emit_drops_for_exit(
