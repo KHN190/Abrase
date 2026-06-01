@@ -26,9 +26,9 @@ impl Compiler {
         self.register_typed_native("sin",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("sqrt",     vec![f.clone()],            f.clone(), 1);
         // Method-body native chunks for built-in traits
-        self.register_typed_native("max",         vec![i.clone(), i.clone()], i.clone(), 2);
-        self.register_typed_native("min",         vec![i.clone(), i.clone()], i.clone(), 2);
-        self.register_typed_native("abs",         vec![i.clone()],            i.clone(), 1);
+        self.register_typed_native("__int_max",   vec![i.clone(), i.clone()], i.clone(), 2);
+        self.register_typed_native("__int_min",   vec![i.clone(), i.clone()], i.clone(), 2);
+        self.register_typed_native("__int_abs",   vec![i.clone()],            i.clone(), 1);
         self.register_typed_native("__float_max", vec![f.clone(), f.clone()], f.clone(), 2);
         self.register_typed_native("__float_min", vec![f.clone(), f.clone()], f.clone(), 2);
         self.register_typed_native("__float_abs", vec![f.clone()],            f.clone(), 1);
@@ -148,7 +148,7 @@ impl Compiler {
         checker.register_trait_method_sig("ToS", "to_s", vec![self_ty.clone()], s.clone());
 
         for &(ty, mx, mn, ab) in &[
-            ("Int",   "max",         "min",         "abs"),
+            ("Int",   "__int_max",   "__int_min",   "__int_abs"),
             ("Float", "__float_max", "__float_min", "__float_abs"),
         ] {
             checker.register_impl_method("Ord", ty, "max", mx.into());
@@ -206,9 +206,9 @@ impl Compiler {
         dispatch: &mut std::collections::HashMap<(String, String), String>,
     ) {
         let entries: &[(&str, &str, &str)] = &[
-            ("Int",    "max",  "max"),
-            ("Int",    "min",  "min"),
-            ("Int",    "abs",  "abs"),
+            ("Int",    "max",  "__int_max"),
+            ("Int",    "min",  "__int_min"),
+            ("Int",    "abs",  "__int_abs"),
             ("Float",  "max",  "__float_max"),
             ("Float",  "min",  "__float_min"),
             ("Float",  "abs",  "__float_abs"),

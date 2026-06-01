@@ -55,14 +55,14 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("print",       print_native());
     reg.register("println",     println_native());
 
-    reg.register("abs",         abs_native());
+    reg.register("__int_abs",   abs_native());
     reg.register("ceil",        ceil_native());
     reg.register("flr",         flr_native());
     reg.register("cos",         cos_native());
     reg.register("sin",         sin_native());
     reg.register("sqrt",        sqrt_native());
-    reg.register("max",         max_native());
-    reg.register("min",         min_native());
+    reg.register("__int_max",   max_native());
+    reg.register("__int_min",   min_native());
 
     reg.register("halt",        halt_native());
     reg.register("abort",       abort_native());
