@@ -64,6 +64,10 @@ pub struct VirtualMachine {
     pub(crate) step_cap: Option<u64>,
     pub(crate) static_names: Vec<String>,
     pub(crate) trace_static_filter: Option<String>,
+    // ABRASE_HEAP_CHECK=1: after every op, assert each handle-tagged register and
+    // cell slot points to a live cell (or HANDLE_NONE). Catches dangling tags
+    // (UAF precursor) directly instead of waiting for a downstream crash.
+    pub(crate) heap_check: bool,
 }
 
 pub struct HandlerFrame {
@@ -149,6 +153,7 @@ impl VirtualMachine {
             static_names: Vec::new(),
             trace_static_filter: std::env::var("TRACE_STATIC").ok()
                 .filter(|s| !s.is_empty()),
+            heap_check: std::env::var("ABRASE_HEAP_CHECK").is_ok(),
         }
     }
 

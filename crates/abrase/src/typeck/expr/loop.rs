@@ -106,7 +106,16 @@ impl Checker {
             .unwrap_or_else(|| format!("region_{}", self.region_stack.len()));
         self.push_region(region_name.clone());
         self.effect_stack.push(self.active_effects.clone());
-        let body_ty = self.infer_block(body);
+        self.enter_scope();
+        for stmt in &body.stmts { self.check_stmt(stmt); }
+        let body_ty = if let Some(ret_expr) = &body.ret { self.infer_expr(ret_expr) } else { Type::Unit };
+        if let Some((name, esc_span)) = self.check_region_result_escape(body) {
+            self.report_error(
+                format!("borrow '{}' cannot escape its region (`&T` cannot outlive the region that owns its referent)", name),
+                esc_span,
+            );
+        }
+        self.exit_scope();
         self.effect_stack.pop();
         self.check_borrow_barrier("region exit", span);
         self.pop_region();
