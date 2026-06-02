@@ -97,6 +97,7 @@ pub struct Compiler {
     pub(super) handler_table_stack: Vec<Register>,
     pub(super) fn_handler_baseline: usize,
     pub errors: Vec<Error>,
+    pub warnings: Vec<crate::lint::Lint>,
     pub source: String,
     pub(super) debug_sink: Option<debug::CompileDebugSink>,
     pub(super) remaining_uses: HashMap<String, usize>,
@@ -172,6 +173,7 @@ impl Compiler {
             handler_table_stack: Vec::new(),
             fn_handler_baseline: 0,
             errors: Vec::new(),
+            warnings: Vec::new(),
             source: String::new(),
             debug_sink: None,
             remaining_uses: HashMap::new(),
@@ -555,6 +557,7 @@ impl Compiler {
         if !self.no_built_in { self.register_builtins_to_checker(&mut checker); }
         checker.check_program(ast);
         self.typeck_expr_types = std::mem::take(&mut checker.expr_types);
+        self.warnings = std::mem::take(&mut checker.warnings);
         if !checker.errors.is_empty() {
             self.errors.extend(checker.errors.iter().map(|te| Error::new(
                 ErrorCode::TypeError, te.span, te.message.clone(),
