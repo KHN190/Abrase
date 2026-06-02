@@ -2,7 +2,7 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use myriad::{Value, VirtualMachine};
+use myriad::{Host, Value, VirtualMachine};
 use polka::Module;
 
 fn compile(src: &str) -> Module {
@@ -173,5 +173,59 @@ fn bench_e2e(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_vm, bench_compile, bench_e2e);
+// @cart frame pump: 1 000 frames of run_to_yield + resume.
+// Compare against arith_loop (same arithmetic, no frame boundary) to isolate
+// the cost of each yield/resume round-trip.
+const CART_FRAME_PUMP: &str = r#"
+@cart fn main() -> <frame> Unit {
+  let mut acc = 0;
+  let mut i = 0;
+  while i < 1000 {
+    acc = acc + i * 2;
+    i = i + 1;
+    frame.present()
+  };
+  halt(acc)
+}
+"#;
+
+fn bench_cart(c: &mut Criterion) {
+    let module = compile(CART_FRAME_PUMP);
+    c.bench_function("cart_1000_frames", |b| {
+        b.iter(|| {
+            let mut vm = VirtualMachine::new();
+            Host::default().install_into(&mut vm);
+            vm.run_to_yield(&module).unwrap();
+            while vm.resume(&module, Value::from_int(0)).unwrap() {}
+        });
+    });
+}
+
+// Closure capture + HOF: move closure passed to a higher-order function,
+// called 50 000 times. Baseline for closure dispatch overhead.
+const CLOSURE_HOF: &str = r#"
+fn apply_n(f: (Int) -> Int, n: Int) -> Int {
+  let mut acc = 0;
+  let mut i = 0;
+  while i < n { acc = acc + f(i); i = i + 1 };
+  acc
+}
+fn main() -> Int {
+  let base = 7;
+  apply_n(move |x: Int| x * 2 + base, 50000)
+}
+"#;
+
+fn bench_closures(c: &mut Criterion) {
+    let module = compile(CLOSURE_HOF);
+    let steps = steps_of(&module);
+    let mut group = c.benchmark_group("vm_run");
+    group.throughput(Throughput::Elements(steps));
+    group.bench_function("closure_hof", |b| {
+        b.iter(|| run(&module));
+    });
+    group.finish();
+}
+
+criterion_group!(benches, bench_vm, bench_compile, bench_e2e, bench_cart, bench_closures);
 criterion_main!(benches);
