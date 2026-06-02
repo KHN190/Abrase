@@ -895,8 +895,10 @@ fn cart_only_on_main_enforced() {
 fn frame_counter_example_accumulates_correctly() {
     // frame_counter.abe: 5 frames, each adds 3; exits via halt(total).
     // After 5 frames total = 15, exit_code = 15.
-    let src = fs::read_to_string("examples/frame_counter.abe")
-        .expect("examples/frame_counter.abe not found");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/frame_counter.abe");
+    let src = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
     let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
     let ast = p.parse_program();
     assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
@@ -911,17 +913,18 @@ fn frame_counter_example_accumulates_correctly() {
     vm.run_to_yield(&module).expect("first yield");
     let live0 = vm.heap_live_count();
 
-    // Frames 2-4: each resume yields again.
-    for frame in 2..=4 {
+    // Resumes 2-5: each resume finishes the current iteration (println + i++) then
+    // enters the next iteration and yields again at frame.present().
+    for frame in 2..=5 {
         let still_running = vm.resume(&module, Value::from_int(0))
             .unwrap_or_else(|e| panic!("frame {}: {}", frame, e));
         assert!(still_running, "frame {} should still be running", frame);
     }
 
-    // Frame 5: adds final 3, while exits, halt(15) called → main terminates.
+    // Resume 6: completes iteration i=4 (println + i=5), while 5<5 fails, halt(15).
     let still_running = vm.resume(&module, Value::from_int(0))
-        .expect("frame 5 resume");
-    assert!(!still_running, "main should have terminated after frame 5");
+        .expect("final resume");
+    assert!(!still_running, "main should have terminated after final resume");
 
     assert_eq!(vm.exit_code(), Some(15),
         "total = 5 * 3 = 15; got exit_code = {:?}", vm.exit_code());

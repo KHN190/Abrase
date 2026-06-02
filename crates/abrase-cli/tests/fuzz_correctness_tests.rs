@@ -1525,24 +1525,6 @@ fn run_cart_frames(src: &str, n_frames: usize) -> Result<(i64, usize), String> {
     Ok((0, vm.heap_live_count()))
 }
 
-fn gen_cart_counter(rng: &mut Rng) -> (String, i64, usize) {
-    let n = rng.range(2, 10) as usize;
-    let step = rng.range(1, 5);
-    let expected = step * n as i64;
-    // main accumulates `count` across frames; pub fn read_count returns it via call_export
-    let src = format!(r#"
-@cart fn main() -> <frame> Unit {{
-  let mut count = 0;
-  loop {{
-    count = count + {step};
-    frame.present()
-  }}
-}}
-
-pub fn read_count(n: Int) -> Int {{ n }}
-"#);
-    (src, expected, n)
-}
 
 #[test]
 fn fuzz_cart_frame_heap_flat() {
