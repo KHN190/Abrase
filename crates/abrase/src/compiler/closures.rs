@@ -551,7 +551,14 @@ pub fn collect_assigned_idents(
             collect_assigned_idents(left, candidates, out);
             collect_assigned_idents(right, candidates, out);
         }
-        Expr::Unary { right, .. } => collect_assigned_idents(right, candidates, out),
+        Expr::Unary { op, right } => {
+            if matches!(op, crate::ast::UnaryOp::RefMut) {
+                if let Expr::Identifier(n) = &right.node {
+                    if candidates.contains(n) { out.insert(n.clone()); }
+                }
+            }
+            collect_assigned_idents(right, candidates, out);
+        }
         Expr::Call { callee, args } => {
             collect_assigned_idents(callee, candidates, out);
             for a in args { collect_assigned_idents(a, candidates, out); }

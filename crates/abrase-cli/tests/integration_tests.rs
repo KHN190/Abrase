@@ -178,6 +178,26 @@ fn test_static_update_frames_no_leak() {
 }
 
 #[test]
+fn abandoned_continuation_reclaims_owned_value_held_across_raise() {
+    let source = r#"
+type Box = { v: Int }
+effect E { op tick() -> Int }
+fn body() -> <E> Int {
+  let s = Box { v: 7 }
+  let x = E.tick()
+  s.v + x
+}
+fn main() -> Int {
+  handle body() { return v => v, E.tick _ => return(0) }
+}
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(0));
+    assert_eq!(vm.heap_live_count(), 0,
+        "abandoned continuation leaked the owned record held across raise");
+}
+
+#[test]
 fn vm_counts_executed_steps() {
     let (_v, vm) = run_file_full("tests/scripts/arithmetic.abe")
         .unwrap_or_else(|e| panic!("\n{}", e));
@@ -848,6 +868,25 @@ fn compile_src(src: &str) -> polka::Module {
     assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
     let mut c = Compiler::new().with_source(src.into());
     c.compile_module(&ast).unwrap_or_else(|_| panic!("{}", c.pretty_print_errors()))
+}
+
+#[test]
+fn mut_ref_param_written_through_effect_in_loop_compiles() {
+    // A &mut parameter may be written inside a loop whose body performs an effect
+    // op. The borrow is live across the op but does not escape, so it is allowed.
+    let src = r#"
+effect R { op ri() -> Int }
+type W = { a: Array<Int>, n: Int }
+fn step(w: &mut W) -> <R> Unit {
+  let mut i = 0;
+  while i < 4 { w.a[i] = R.ri(); w.n = w.n + R.ri(); i = i + 1 }
+}
+fn main() -> Int {
+  let mut wd = W { a: [0, 0, 0, 0], n: 0 };
+  handle step(&mut wd) { return _ => wd.n, R.ri => resume(1) }
+}
+"#;
+    compile_src(src);
 }
 
 #[test]

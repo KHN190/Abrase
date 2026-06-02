@@ -699,6 +699,13 @@ impl Compiler {
             self.current_closure_capture_types = info.captures.iter().enumerate()
                 .map(|(i, c)| (i, c.ty.clone()))
                 .collect();
+        } else if let Some(captures) = self.arm_captures.get(&fn_decl.name).cloned() {
+            self.current_closure_layout = captures.iter().enumerate()
+                .map(|(i, c)| (c.name.clone(), i))
+                .collect();
+            self.current_closure_capture_types = captures.iter().enumerate()
+                .map(|(i, c)| (i, c.ty.clone()))
+                .collect();
         }
 
         self.remaining_uses = liveness::count_uses(&fn_decl.body);

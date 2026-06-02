@@ -70,7 +70,6 @@ impl Checker {
                                     );
                                 }
                             }
-                            self.check_borrow_barrier(&op_key, span);
                             self.add_required_effect(crate::ty::Effect::UserEffect(eff_name.clone()));
                             self.context_stack.pop();
                             return ret;
@@ -289,16 +288,6 @@ impl Checker {
                                 args[i].span
                             );
                         }
-                    }
-
-                    // Borrow barrier: effect calls are suspension points, reject live outer-region borrows.
-                    if !effects.is_empty() {
-                        let op_name = match &callee.node {
-                            ast::Expr::Identifier(n) => n.clone(),
-                            ast::Expr::FieldAccess { field, .. } => field.clone(),
-                            _ => "<call>".into(),
-                        };
-                        self.check_borrow_barrier(&op_name, span);
                     }
 
                     for effect in &effects {

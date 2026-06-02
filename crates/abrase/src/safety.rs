@@ -28,6 +28,9 @@ pub struct Facts {
     pub closure_var: HashMap<Closure, Var>,
     pub consumed: Vec<(Var, Span)>,
     pub span: HashMap<Var, Span>,
+    pub borrow_live_across_effect: Vec<(Var, Span)>,
+    pub multishot_resume: bool,
+    pub borrows_base: HashMap<Var, Var>,
 }
 
 impl Facts {
@@ -88,6 +91,28 @@ impl Facts {
                 }),
                 _ if self.is_handle.contains(&v) => { must_forget.insert((v, r)); }
                 _ => {}
+            }
+        }
+
+        if self.multishot_resume {
+            for &(v, sp) in &self.borrow_live_across_effect {
+                if matches!(self.binding.get(&v), Some(Kind::RefMut)) {
+                    errors.push(SafetyError {
+                        code: "alias-mut-across-resume",
+                        msg: format!("`&mut` held across an effect op cannot survive multi-shot resume"),
+                        span: sp,
+                    });
+                }
+            }
+        }
+
+        for (&b, &base) in &self.borrows_base {
+            if self.consumed.iter().any(|&(v, _)| v == base) {
+                errors.push(SafetyError {
+                    code: "borrow-base-moved",
+                    msg: format!("base moved while a borrow of it is live"),
+                    span: self.span_of(b),
+                });
             }
         }
 
@@ -175,6 +200,49 @@ mod tests {
         f.consumed.push((0, Span::new(2, 1)));
         let (errs, _) = f.analyze();
         assert!(errs.iter().any(|e| e.code == "double-move"));
+    }
+
+    #[test]
+    fn mut_borrow_live_across_effect_is_fine_single_shot() {
+        let mut f = facts();
+        f.binding.insert(0, Kind::RefMut);
+        f.borrow_live_across_effect.push((0, Span::new(1, 1)));
+        f.multishot_resume = false;
+        let (errs, _) = f.analyze();
+        assert!(errs.is_empty(), "single-shot resume must not flag a live `&mut`: {:?}",
+            errs.iter().map(|e| e.code).collect::<Vec<_>>());
+    }
+
+    #[test]
+    #[ignore = "multi-shot: resume-twice not implemented; predicate reserved for it"]
+    fn mut_borrow_live_across_multishot_resume_is_error() {
+        let mut f = facts();
+        f.binding.insert(0, Kind::RefMut);
+        f.borrow_live_across_effect.push((0, Span::new(1, 1)));
+        f.multishot_resume = true;
+        let (errs, _) = f.analyze();
+        assert!(errs.iter().any(|e| e.code == "alias-mut-across-resume"));
+    }
+
+    #[test]
+    fn borrow_used_after_base_moved_is_error() {
+        let mut f = facts();
+        f.binding.insert(0, Kind::Move);
+        f.binding.insert(1, Kind::Ref);
+        f.borrows_base.insert(1, 0);
+        f.consumed.push((0, Span::new(1, 1)));
+        let (errs, _) = f.analyze();
+        assert!(errs.iter().any(|e| e.code == "borrow-base-moved"));
+    }
+
+    #[test]
+    fn borrow_whose_base_is_not_moved_is_fine() {
+        let mut f = facts();
+        f.binding.insert(0, Kind::Move);
+        f.binding.insert(1, Kind::Ref);
+        f.borrows_base.insert(1, 0);
+        let (errs, _) = f.analyze();
+        assert!(!errs.iter().any(|e| e.code == "borrow-base-moved"));
     }
 
     #[test]

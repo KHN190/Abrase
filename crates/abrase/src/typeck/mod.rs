@@ -314,28 +314,6 @@ impl Checker {
         }
     }
 
-    pub fn check_borrow_barrier(&mut self, op_name: &str, span: Span) {
-        let cur_depth = self.region_stack.len();
-        let mut leaks: Vec<String> = Vec::new();
-        for scope in &self.scopes {
-            for (name, meta) in &scope.vars {
-                if meta.is_moved { continue; }
-                let is_ref = matches!(meta.ty, Type::Reference { .. });
-                if is_ref && meta.bound_at_region_depth < cur_depth {
-                    leaks.push(name.clone());
-                }
-            }
-        }
-        for name in leaks {
-            self.report_error(
-                format!("Borrow '{}' is live across effect operation '{}'; \
-                         move it into the current region or drop it before the call",
-                    name, op_name),
-                span,
-            );
-        }
-    }
-
     pub fn report_error(&mut self, message: String, span: Span) -> Type {
         self.errors.push(TypeError {
             message,

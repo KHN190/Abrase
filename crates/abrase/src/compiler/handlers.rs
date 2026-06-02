@@ -3,6 +3,14 @@ use crate::ast::*;
 use crate::compiler::closures::{collect_assigned_idents, collect_free_vars, rewrite_captures_with_cells, CaptureInfo};
 use std::collections::{HashMap, HashSet};
 
+fn infer_bind_ty(value: &Expr) -> Option<Type> {
+    match value {
+        Expr::Record { ty, .. } => ty.last().map(|n| Type::Named(n.clone())),
+        Expr::Paren(e) => infer_bind_ty(&e.node),
+        _ => None,
+    }
+}
+
 pub struct HandleLowering {
     pub effect_op_to_arm: HashMap<(String, String), String>,
     pub op_call_to_arm: HashMap<Span, String>,
@@ -111,7 +119,9 @@ impl HandleLowering {
             Stmt::Let { pattern, value, ty, .. } => {
                 self.walk_expr(value, op_sigs, scope);
                 if let Pattern::Bind(name) = &pattern.node {
-                    let bind_ty = ty.clone().unwrap_or(Type::Named("Unknown".into()));
+                    let bind_ty = ty.clone()
+                        .or_else(|| infer_bind_ty(&value.node))
+                        .unwrap_or(Type::Named("Unknown".into()));
                     scope.bind(name.clone(), bind_ty);
                 }
             }
