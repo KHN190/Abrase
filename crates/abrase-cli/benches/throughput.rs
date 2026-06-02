@@ -55,9 +55,9 @@ fn main() -> Int {
 "#;
 
 const STATIC_ACCESS: &str = r#"
-static mut A: Int = 1
-static mut B: Int = 2
-static mut C: Int = 3
+static A: Int = 1
+static B: Int = 2
+static C: Int = 3
 fn main() -> Int {
   let mut acc = 0;
   let mut i = 0;

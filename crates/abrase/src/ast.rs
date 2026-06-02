@@ -316,7 +316,6 @@ pub enum Decl {
     },
     Static {
         is_pub: bool,
-        is_mut: bool,
         name: String,
         ty: Type,
         value: Spanned<Expr>,

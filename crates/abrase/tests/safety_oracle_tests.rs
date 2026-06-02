@@ -4,12 +4,10 @@ use abrase::parser::Parser;
 use abrase::safety::{CapMode, Facts, Kind};
 use std::collections::{HashMap, HashSet};
 
-const STATIC_REGION: u32 = u32::MAX;
 const EFFECT_REGION: u32 = u32::MAX - 1;
 
 struct Program {
     fns: Vec<Block>,
-    static_mut: HashSet<String>,
     effect_ops: HashSet<String>,
 }
 
@@ -17,27 +15,22 @@ fn parse_program(src: &str) -> Program {
     let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let decls = p.parse_program();
     let mut fns = Vec::new();
-    let mut static_mut = HashSet::new();
     let mut effect_ops = HashSet::new();
     for d in decls {
         match d {
             Decl::Fn(f) => fns.push(f.body),
             Decl::Impl { methods, .. } => fns.extend(methods.into_iter().map(|m| m.body)),
-            Decl::Static { is_mut: true, name, .. } => {
-                static_mut.insert(name);
-            }
             Decl::Effect { ops, .. } => {
                 for op in ops { effect_ops.insert(op.name); }
             }
             _ => {}
         }
     }
-    Program { fns, static_mut, effect_ops }
+    Program { fns, effect_ops }
 }
 
 struct Extract<'a> {
     facts: Facts,
-    static_mut: &'a HashSet<String>,
     effect_ops: &'a HashSet<String>,
     scopes: Vec<HashMap<String, u32>>,
     region_stack: Vec<u32>,
@@ -47,10 +40,9 @@ struct Extract<'a> {
 }
 
 impl<'a> Extract<'a> {
-    fn new(static_mut: &'a HashSet<String>, effect_ops: &'a HashSet<String>) -> Self {
+    fn new(effect_ops: &'a HashSet<String>) -> Self {
         Extract {
             facts: Facts::new(),
-            static_mut,
             effect_ops,
             scopes: vec![HashMap::new()],
             region_stack: Vec::new(),
@@ -190,10 +182,7 @@ impl<'a> Extract<'a> {
                     },
                     _ => None,
                 };
-                if let Some(n) = target {
-                    if self.static_mut.contains(&n) {
-                        self.escape_tail(&right.node, right.span, STATIC_REGION);
-                    }
+                if let Some(_n) = target {
                 } else {
                     self.walk_expr(&left.node);
                 }
@@ -338,7 +327,7 @@ fn analyze_src(src: &str) -> (Vec<String>, usize) {
     let mut codes = Vec::new();
     let mut forgets = 0;
     for body in &prog.fns {
-        let mut ex = Extract::new(&prog.static_mut, &prog.effect_ops);
+        let mut ex = Extract::new(&prog.effect_ops);
         ex.walk_block(body);
         let (errs, must_forget) = ex.facts.analyze();
         codes.extend(errs.into_iter().map(|e| e.code.to_string()));
@@ -421,23 +410,6 @@ fn oracle_region_handle_as_effect_arg_requires_forget() {
     );
     assert!(errs.is_empty(), "{errs:?}");
     assert_eq!(mf, 1, "handle crossing the effect boundary as an op arg needs a transfer/forget obligation");
-}
-
-#[test]
-fn oracle_region_handle_stored_in_static_mut_requires_forget() {
-    let (errs, mf) = analyze_src(
-        "static mut g: P = P { v: 0 }\nfn main() { region { let p = P { v: 1 }; g = p } }",
-    );
-    assert!(errs.is_empty(), "{errs:?}");
-    assert_eq!(mf, 1, "handle stored into static escapes region");
-}
-
-#[test]
-fn oracle_region_ref_stored_in_static_mut_flagged() {
-    let (errs, _) = analyze_src(
-        "static mut g: Int = 0\nfn main() { region { let a = 5; g = &a } }",
-    );
-    assert!(errs.iter().any(|c| c == "escape-ref"), "{errs:?}");
 }
 
 #[test]

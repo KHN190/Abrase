@@ -161,20 +161,8 @@ impl Checker {
                 }
             },
 
-            ast::Decl::Static { name, ty, is_pub, is_mut, .. } => {
+            ast::Decl::Static { name, ty, is_pub, .. } => {
                 let static_type = self.convert_type(ty);
-                if matches!(static_type, Type::Shared { .. }) {
-                    self.report_error(
-                        format!("`static {}` cannot hold `Shared<T>`; Shared must be constructed inside a region", name),
-                        ast::Span { line: 0, col: 0 },
-                    );
-                }
-                if matches!(static_type, Type::Reference { .. }) {
-                    self.report_error(
-                        format!("`static {}` cannot hold `&T`; references are region-scoped", name),
-                        ast::Span { line: 0, col: 0 },
-                    );
-                }
                 let module_path = self.current_module.clone();
                 if self.lookup_module_item(&module_path, name).is_some() {
                     self.report_error(
@@ -183,7 +171,7 @@ impl Checker {
                     );
                 }
                 self.register_module_item(&module_path, name.clone(), static_type.clone());
-                self.insert_static_var(name.clone(), static_type, *is_mut);
+                self.insert_static_var(name.clone(), static_type);
                 if *is_pub {
                     self.mark_public(name.clone());
                 }

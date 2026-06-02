@@ -97,23 +97,9 @@ fn for_loop_static_module_table_hoisted() {
     assert_eq!(dei, 1, "module-table load must be hoisted before the for loop: {ops:?}");
 }
 
-const FOR_WRITES_STATIC: &str = r#"
-static mut A: Int = 0
-fn main() -> Int {
-  for _ in 0..3 { A = A + 1 };
-  A
-}
-"#;
-
-#[test]
-fn for_loop_writes_static_mut_correctly() {
-    let v = run_src(FOR_WRITES_STATIC).unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(3));
-}
-
 const FOR_MULTI_STATIC: &str = r#"
-static mut A: Int = 1
-static mut B: Int = 2
+static A: Int = 1
+static B: Int = 2
 fn main() -> Int {
   let mut acc = 0;
   for _ in 0..4 { acc = acc + A + B };
@@ -236,21 +222,6 @@ fn for_loop_record_static_no_extra_leak() {
     assert_eq!(v, Value::from_int(21));
     // 1 live = ORIGIN record cell (static; intentional).
     assert_eq!(live, 1, "only the static ORIGIN cell must remain live: {live}");
-}
-
-const RECORD_STATIC_MUT_FOR: &str = r#"
-type Counter = { n: Int }
-static mut C: Counter = Counter { n: 0 }
-fn main() -> Int {
-  for _ in 0..5 { C.n = C.n + 1 };
-  C.n
-}
-"#;
-
-#[test]
-fn for_loop_mutates_record_static_field() {
-    let v = run_src(RECORD_STATIC_MUT_FOR).unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(5));
 }
 
 const RECORD_ARRAY_STATIC_FOR: &str = r#"
@@ -500,108 +471,3 @@ fn main() -> Int { pick(2) }
     assert_eq!(v, Value::from_int(30));
 }
 
-// ── record × static mut ──────────────────────────────────────────────────────
-// Verify that each array slot is an independent heap object (alias regression).
-
-const RECORD_STATIC_MUT_SLOTS: &str = r#"
-type Ent = { hp: Int, active: Int }
-static mut ENT: Array<Ent> = [Ent { hp: 10, active: 0 }; 4]
-fn main() -> Int {
-  ENT[0].hp = 1;
-  ENT[1].hp = 2;
-  ENT[2].hp = 3;
-  ENT[0].hp + ENT[1].hp + ENT[2].hp + ENT[3].hp
-}
-"#;
-
-#[test]
-fn record_static_mut_array_slots_are_independent() {
-    let v = run_src(RECORD_STATIC_MUT_SLOTS).unwrap_or_else(|e| panic!("\n{}", e));
-    // 1 + 2 + 3 + 10 = 16; if all alias slot 3 is also 3, sum would be 12
-    assert_eq!(v, Value::from_int(16));
-}
-
-// ── record × multi-module (call_export frames) ───────────────────────────────
-
-const RECORD_MULTI_EXPORT: &str = r#"
-type Bullet = { on: Int, x: Float, vy: Float }
-static mut EB: Array<Bullet> = [Bullet { on: 0, x: 0.0, vy: 0.0 }; 4]
-
-pub fn spawn(i: Int, xi: Float, vyi: Float) -> Unit {
-  EB[i].on = 1;
-  EB[i].x  = xi;
-  EB[i].vy = vyi
-}
-
-pub fn step(i: Int) -> Unit { EB[i].x = EB[i].x + EB[i].vy }
-pub fn read_x(i: Int) -> Int { EB[i].x.to_i() }
-pub fn read_on(i: Int) -> Int { EB[i].on }
-
-fn main() -> Int { 0 }
-"#;
-
-#[test]
-fn record_array_call_export_frames_isolate_slots() {
-    let src = RECORD_MULTI_EXPORT;
-    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
-    let ast = p.parse_program();
-    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
-    let mut compiler = Compiler::new().with_source(src.into());
-    let module = compiler.compile_module(&ast)
-        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
-    let mut vm = VirtualMachine::new();
-    vm.run_module(&module).unwrap_or_else(|e| panic!("{}", e));
-
-    vm.call_export(&module, "spawn", &[Value::from_int(0), Value::from_float(5.0), Value::from_float(2.0)])
-        .unwrap_or_else(|e| panic!("{}", e));
-    vm.call_export(&module, "spawn", &[Value::from_int(2), Value::from_float(10.0), Value::from_float(3.0)])
-        .unwrap_or_else(|e| panic!("{}", e));
-    vm.call_export(&module, "step", &[Value::from_int(0)])
-        .unwrap_or_else(|e| panic!("{}", e));
-    vm.call_export(&module, "step", &[Value::from_int(2)])
-        .unwrap_or_else(|e| panic!("{}", e));
-
-    let x0 = vm.call_export(&module, "read_x", &[Value::from_int(0)]).unwrap_or_else(|e| panic!("{}", e));
-    let x1 = vm.call_export(&module, "read_x", &[Value::from_int(1)]).unwrap_or_else(|e| panic!("{}", e));
-    let x2 = vm.call_export(&module, "read_x", &[Value::from_int(2)]).unwrap_or_else(|e| panic!("{}", e));
-    let on1 = vm.call_export(&module, "read_on", &[Value::from_int(1)]).unwrap_or_else(|e| panic!("{}", e));
-
-    assert_eq!(x0,  Value::from_int(7),  "slot 0: 5.0 + 2.0 = 7");
-    assert_eq!(x1,  Value::from_int(0),  "slot 1 never spawned");
-    assert_eq!(x2,  Value::from_int(13), "slot 2: 10.0 + 3.0 = 13");
-    assert_eq!(on1, Value::from_int(0),  "slot 1 active flag must stay 0");
-}
-
-// ── static mut × multi-module (float array across exports) ───────────────────
-
-const FLOAT_STATIC_MULTI_EXPORT: &str = r#"
-static mut POS: Array<Float> = [0.0; 4]
-static mut VEL: Array<Float> = [1.0; 4]
-
-pub fn step() -> Unit {
-  let mut i = 0;
-  while i < 4 { POS[i] = POS[i] + VEL[i]; i = i + 1 }
-}
-
-pub fn read_pos(i: Int) -> Int { POS[i].to_i() }
-
-fn main() -> Int { 0 }
-"#;
-
-#[test]
-fn float_static_arrays_persist_across_call_export_frames() {
-    let src = FLOAT_STATIC_MULTI_EXPORT;
-    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
-    let ast = p.parse_program();
-    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
-    let mut compiler = Compiler::new().with_source(src.into());
-    let module = compiler.compile_module(&ast)
-        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
-    let mut vm = VirtualMachine::new();
-    vm.run_module(&module).unwrap_or_else(|e| panic!("{}", e));
-    for _ in 0..3 { vm.call_export(&module, "step", &[]).unwrap_or_else(|e| panic!("{}", e)); }
-    let p0 = vm.call_export(&module, "read_pos", &[Value::from_int(0)]).unwrap_or_else(|e| panic!("{}", e));
-    let p3 = vm.call_export(&module, "read_pos", &[Value::from_int(3)]).unwrap_or_else(|e| panic!("{}", e));
-    assert_eq!(p0, Value::from_int(3));
-    assert_eq!(p3, Value::from_int(3));
-}

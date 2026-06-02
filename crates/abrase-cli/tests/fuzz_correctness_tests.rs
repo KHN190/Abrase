@@ -1,9 +1,9 @@
 // Correctness fuzz: generate programs with known expected outputs, verify results.
-// Each generator produces (source, expected_i64). Covers: int, float, static mut,
+// Each generator produces (source, expected_i64). Covers: int, float,
 // multi-module, record pack/unpack, mut destructure, effect, match, loop, recursion.
 
 use abrase::{compiler::Compiler, lexer::Lexer, loader::load_program, parser::Parser};
-use myriad::{Value, VirtualMachine};
+use myriad::{VirtualMachine};
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -154,22 +154,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-fn gen_static_mut(rng: &mut Rng) -> (String, i64) {
-    let start = rng.range(0, 5);
-    let end = start + rng.range(2, 15);
-    let expected: i64 = (start..end).sum();
-    let src = format!(r#"
-static mut ACC: Int = 0
-fn add(n: Int) -> Unit {{ ACC = ACC + n }}
-fn main() -> Int {{
-  let mut i = {start};
-  while i < {end} {{ add(i); i = i + 1 }};
-  ACC
-}}
-"#);
-    (src, expected)
-}
-
 fn gen_record_pack(rng: &mut Rng) -> (String, i64) {
     let ax = rng.range(-8, 8);
     let ay = rng.range(-8, 8);
@@ -282,38 +266,6 @@ fn main() -> Int {{ sum_to({n}) }}
     (src, expected)
 }
 
-fn gen_static_match_loop(rng: &mut Rng) -> (String, i64) {
-    let n = rng.range(5, 20);
-    let b1 = 5i64; let b2 = 10i64; let b3 = 15i64;
-    let mut buckets = [0i64; 4];
-    for i in 0..n {
-        let b = if i < b1 { 0 } else if i < b2 { 1 } else if i < b3 { 2 } else { 3 };
-        buckets[b] += 1;
-    }
-    let expected = buckets[0] * 1000 + buckets[1] * 100 + buckets[2] * 10 + buckets[3];
-    let src = format!(r#"
-static mut BUCKET: Array<Int> = [0; 4]
-fn classify(n: Int) -> Int {{
-  match n {{
-    _ if n < {b1} => 0,
-    _ if n < {b2} => 1,
-    _ if n < {b3} => 2,
-    _ => 3,
-  }}
-}}
-fn main() -> Int {{
-  let mut i = 0;
-  while i < {n} {{
-    let b = classify(i);
-    BUCKET[b] = BUCKET[b] + 1;
-    i = i + 1
-  }};
-  BUCKET[0] * 1000 + BUCKET[1] * 100 + BUCKET[2] * 10 + BUCKET[3]
-}}
-"#);
-    (src, expected)
-}
-
 fn gen_record_array_float(rng: &mut Rng) -> (String, i64) {
     let n = rng.range(2, 6) as usize;
     let xs: Vec<i64> = (0..n).map(|_| rng.range(1, 10)).collect();
@@ -339,27 +291,6 @@ fn main() -> Int {{
 }}
 "#);
     (src, expected)
-}
-
-fn gen_multi_module(rng: &mut Rng) -> (String, String, i64) {
-    let base = rng.range(1, 20);
-    let vals: Vec<i64> = (0..4).map(|_| rng.range(0, 10)).collect();
-    // accumulate(n) adds n + base to COUNTER each call
-    let expected: i64 = vals.iter().map(|v| v + base).sum();
-    let lib = format!(r#"
-pub static BASE: Int = {base}
-pub static mut COUNTER: Int = 0
-pub fn accumulate(n: Int) -> Unit {{ COUNTER = COUNTER + n + BASE }}
-pub fn result() -> Int {{ COUNTER }}
-fn main() -> Int {{ 0 }}
-"#);
-    let calls: String = vals.iter()
-        .map(|v| format!("  accumulate({v});\n"))
-        .collect();
-    let main = format!(
-        "use lib::{{BASE, COUNTER, accumulate, result}}\nfn main() -> Int {{\n{calls}  result()\n}}\n"
-    );
-    (lib, main, expected)
 }
 
 fn gen_multi_module_record(rng: &mut Rng) -> (String, String, i64) {
@@ -428,34 +359,6 @@ fn main() -> Int {{
   extract(Some({v0})) + extract(Some({v1})) + extract(Some({v2})) + extract(Some({v3}))
 }}
 "#, thresh=thresh, v0=vals[0], v1=vals[1], v2=vals[2], v3=vals[3]);
-    (src, expected)
-}
-
-fn gen_variant_static_array(rng: &mut Rng) -> (String, i64) {
-    let vals: Vec<i64> = (0..4).map(|_| rng.range(1, 20)).collect();
-    let expected: i64 = vals.iter().sum();
-    let writes: String = vals.iter().enumerate()
-        .map(|(i, v)| format!("  TAGS[{i}] = Some({v});\n"))
-        .collect();
-    let src = format!(r#"
-type Tag = None | Some(Int)
-static mut TAGS: Array<Tag> = [None; 4]
-fn read_sum() -> Int {{
-  let mut acc = 0;
-  let mut i = 0;
-  while i < 4 {{
-    match TAGS[i] {{
-      Some(n) => {{ acc = acc + n }},
-      None    => (),
-    }};
-    i = i + 1
-  }};
-  acc
-}}
-fn main() -> Int {{
-{writes}  read_sum()
-}}
-"#);
     (src, expected)
 }
 
@@ -544,26 +447,6 @@ fn safe_div(x: Int, y: Int) -> Int {{
 }}
 fn main() -> Int {{
   safe_div({good}, 2) + safe_div({bad}, 0)
-}}
-"#);
-    (src, expected)
-}
-
-fn gen_effect_static(rng: &mut Rng) -> (String, i64) {
-    let n = rng.range(2, 12);
-    let expected = n * (n - 1) / 2; // sum 0..n-1
-    let src = format!(r#"
-static mut TOTAL: Int = 0
-effect Acc {{ op add(x: Int) -> Unit }}
-fn fire(n: Int) -> <Acc> Unit {{
-  let mut i = 0;
-  while i < n {{ Acc.add(i); i = i + 1 }}
-}}
-fn main() -> Int {{
-  handle fire({n}) {{
-    return _   => TOTAL,
-    Acc.add x  => {{ TOTAL = TOTAL + x; resume(()) }}
-  }}
 }}
 "#);
     (src, expected)
@@ -718,22 +601,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-fn gen_closure_static(rng: &mut Rng) -> (String, i64) {
-    let init = rng.range(1, 20);
-    let add  = rng.range(1, 10);
-    let arg  = rng.range(1, 10);
-    let expected = (init + add) + arg;
-    let src = format!(r#"
-static mut TOTAL: Int = {init}
-fn main() -> Int {{
-  TOTAL = TOTAL + {add};
-  let reader = |x| TOTAL + x;
-  reader({arg})
-}}
-"#);
-    (src, expected)
-}
-
 fn gen_record_nested(rng: &mut Rng) -> (String, i64) {
     let x = rng.range(1, 15);
     let y = rng.range(1, 15);
@@ -770,26 +637,6 @@ fn main() -> Int {{
     (src, expected)
 }
 
-fn gen_nested_record_static(rng: &mut Rng) -> (String, i64) {
-    let vals: Vec<(i64, i64)> = (0..3).map(|_| (rng.range(1, 10), rng.range(1, 10))).collect();
-    let expected: i64 = vals.iter().map(|(a, b)| a + b).sum();
-    let inits: String = vals.iter()
-        .map(|(a, b)| format!("Outer {{ inner: Inner {{ v: {a} }}, w: {b} }}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let src = format!(r#"
-type Inner = {{ v: Int }}
-type Outer = {{ inner: Inner, w: Int }}
-static mut ARR: Array<Outer> = [{inits}]
-fn main() -> Int {{
-  ARR[0].inner.v + ARR[0].w +
-  ARR[1].inner.v + ARR[1].w +
-  ARR[2].inner.v + ARR[2].w
-}}
-"#);
-    (src, expected)
-}
-
 fn gen_region_escape(rng: &mut Rng) -> (String, i64) {
     let a = rng.range(1, 20);
     let b = rng.range(1, 20);
@@ -803,45 +650,6 @@ fn main() -> Int {{
 }}
 "#);
     (src, expected)
-}
-
-fn gen_multi_frame_float(rng: &mut Rng) -> (String, Vec<Value>, i64) {
-    let vals: Vec<f64> = (0..4).map(|_| rng.range(1, 10) as f64).collect();
-    let inc = rng.range(1, 5) as f64;
-    let slot = rng.range(0, 4) as usize;
-    let expected = (vals[slot] + inc) as i64;
-    let items = vals.iter().map(|v| format!("{}.0", v)).collect::<Vec<_>>().join(", ");
-    let src = format!(r#"
-static mut FA: Array<Float> = [{items}]
-
-pub fn add_to(slot: Int, delta: Float) -> Unit {{
-  FA[slot] = FA[slot] + delta
-}}
-
-pub fn read_result() -> Int {{
-  FA[{slot}].to_i()
-}}
-
-fn main() -> Int {{ 0 }}
-"#);
-    (src, vec![Value::from_int(slot as i64), Value::from_float(inc)], expected)
-}
-
-fn gen_multi_frame_for_loop(rng: &mut Rng) -> (String, Vec<Value>, i64) {
-    let n = rng.range(2, 10);
-    let expected: i64 = (0..n).sum(); // each call adds one pass of 0..n to TOTAL
-    let src = format!(r#"
-static mut TOTAL: Int = 0
-
-pub fn accumulate(n: Int) -> Unit {{
-  for i in 0..n {{ TOTAL = TOTAL + i }}
-}}
-
-pub fn get_total() -> Int {{ TOTAL }}
-
-fn main() -> Int {{ 0 }}
-"#);
-    (src, vec![Value::from_int(n)], expected)
 }
 
 fn gen_closure_multimodule(rng: &mut Rng) -> (String, String, i64) {
@@ -891,65 +699,23 @@ fn main() -> Int {{
     (lib, main, expected)
 }
 
-fn gen_static_variant_array_multiframe(rng: &mut Rng) -> (String, Vec<Value>, i64) {
-    let v    = rng.range(1, 50);
-    let slot = rng.range(0, 4);
-    let expected = v;
-    let src = format!(r#"
-type Tag = None | Some(Int)
-static mut TAGS: Array<Tag> = [None; 4]
-
-pub fn spawn(slot: Int, val: Int) -> Unit {{
-  TAGS[slot] = Some(val)
-}}
-
-pub fn read() -> Int {{
-  match TAGS[{slot}] {{
-    Some(n) => n,
-    None    => -1,
-  }}
-}}
-
-fn main() -> Int {{ 0 }}
-"#);
-    (src, vec![Value::from_int(slot), Value::from_int(v)], expected)
-}
-
 type Gen = fn(&mut Rng) -> (String, i64);
 type MMGen = fn(&mut Rng) -> (String, String, i64);
-type MFGen = fn(&mut Rng) -> (String, Vec<Value>, i64);
-
-fn run_multi_frame(src: &str, export: &str, args: &[Value], read_export: &str) -> Result<i64, String> {
-    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
-    let ast = p.parse_program();
-    if !p.errors.is_empty() { return Err(format!("parse: {}", p.pretty_print_errors())); }
-    let mut c = Compiler::new().with_source(src.to_string());
-    let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
-    let mut vm = VirtualMachine::new().with_step_cap(5_000_000);
-    vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
-    vm.call_export(&module, export, args).map_err(|e| format!("call {}: {}", export, e))?;
-    let v = vm.call_export(&module, read_export, &[]).map_err(|e| format!("read: {}", e))?;
-    Ok(v.as_int())
-}
-
 const SINGLE_GENS: &[(&str, Gen)] = &[
     ("int_arith",           gen_int_arith),
     ("float_arith",         gen_float_arith),
     ("int_match",           gen_int_match),
     ("range_match",         gen_range_match),
     ("loop",                gen_loop),
-    ("static_mut",          gen_static_mut),
     ("record_pack",         gen_record_pack),
     ("record_mut_unpack",   gen_record_mut_unpack),
     ("effect_counter",      gen_effect_counter),
     ("effect_accumulate",   gen_effect_accumulate),
     ("recursion_fib",       gen_recursion_fib),
     ("recursion_sum",       gen_recursion_sum),
-    ("static_match_loop",   gen_static_match_loop),
     ("record_array_float",  gen_record_array_float),
     ("variant_match",       gen_variant_match),
     ("variant_guard_match", gen_variant_guard_match),
-    ("variant_static_array",gen_variant_static_array),
     ("for_loop",            gen_for_loop),
     ("for_break",           gen_for_break),
     ("loop_break_value",    gen_loop_break_value),
@@ -957,12 +723,9 @@ const SINGLE_GENS: &[(&str, Gen)] = &[
     ("move_closure",             gen_move_closure),
     ("closure_record_capture",   gen_closure_record_capture),
     ("closure_array_capture",    gen_closure_array_capture),
-    ("closure_static",           gen_closure_static),
     ("record_nested",            gen_record_nested),
     ("record_recursion",         gen_record_recursion),
-    ("nested_record_static",     gen_nested_record_static),
     ("exception",           gen_exception),
-    ("effect_static",       gen_effect_static),
     ("char_ops",            gen_char_ops),
     ("tuple_destructure",   gen_tuple_destructure),
     ("recursion_static",    gen_recursion_static),
@@ -1010,15 +773,9 @@ fn main() -> Int {{
 }
 
 const MM_GENS: &[(&str, MMGen)] = &[
-    ("multi_module_static",  gen_multi_module),
     ("multi_module_record",  gen_multi_module_record),
     ("multi_module_variant", gen_multi_module_variant),
     ("multi_module_effect",   gen_multi_module_effect),
-];
-
-const MF_GENS: &[(&str, MFGen)] = &[
-    ("multi_frame_float",    gen_multi_frame_float),
-    ("multi_frame_for_loop", gen_multi_frame_for_loop),
 ];
 
 const ITERS: u64 = 300;
@@ -1033,25 +790,6 @@ fn fuzz_correctness() {
             let (src, expected) = f(&mut rng);
             if let Err(e) = run_src_expect(&src, expected) {
                 failures.push((seed, name, e, src));
-            }
-        }
-        for (name, f) in MF_GENS {
-            let mut rng = Rng::new(seed * 61 + name.len() as u64);
-            let (src, args, expected) = f(&mut rng);
-            // float: add_to(slot, delta) then read_slot(slot)
-            // for_loop: accumulate(n) then get_total()
-            let (write_fn, read_fn): (&str, &str) = if name.contains("float") {
-                ("add_to", "read_result")
-            } else {
-                ("accumulate", "get_total")
-            };
-            let write_args: Vec<Value> = args.clone();
-            let result = run_multi_frame(&src, write_fn, &write_args, read_fn);
-            match result {
-                Ok(got) if got == expected => {}
-                Ok(got) => failures.push((seed, name,
-                    format!("expected {}, got {}", expected, got), src)),
-                Err(e) => failures.push((seed, name, e, src)),
             }
         }
     }
@@ -1084,128 +822,6 @@ fn fuzz_correctness_multi_module() {
             eprintln!("--- seed={} gen={} ---\n{}", seed, name, msg);
         }
         panic!("fuzz_correctness_multi_module: {} failure(s)", failures.len());
-    }
-}
-
-fn run_multiframe_expect(src: &str, spawn_args: &[Value], expected: i64) -> Result<(), String> {
-    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
-    let ast = p.parse_program();
-    if !p.errors.is_empty() { return Err(format!("parse:\n{}", p.pretty_print_errors())); }
-    let mut c = Compiler::new().with_source(src.to_string());
-    let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
-    let mut vm = VirtualMachine::new();
-    vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
-    vm.call_export(&module, "spawn", spawn_args)
-        .map_err(|e| format!("spawn: {}", e))?;
-    let v = vm.call_export(&module, "read", &[])
-        .map_err(|e| format!("read: {}", e))?;
-    let got = v.as_int();
-    if got != expected { return Err(format!("expected {}, got {}", expected, got)); }
-    Ok(())
-}
-
-fn gen_static_record_pack_multiframe(rng: &mut Rng) -> (String, Vec<Value>, i64) {
-    let a = rng.range(1, 50);
-    let b = rng.range(1, 50);
-    let slot = rng.range(0, 4);
-    let expected = a + b;
-    let src = format!(r#"
-type R = {{ a: Int, b: Int }}
-static mut ARR: Array<R> = [R {{ a: 0, b: 0 }}; 4]
-
-pub fn spawn(slot: Int, a: Int, b: Int) -> Unit {{
-  ARR[slot] = R {{ a: a, b: b }}
-}}
-
-pub fn read() -> Int {{
-  ARR[{slot}].a + ARR[{slot}].b
-}}
-
-fn main() -> Int {{ 0 }}
-"#);
-    (src, vec![Value::from_int(slot), Value::from_int(a), Value::from_int(b)], expected)
-}
-
-fn gen_static_record_pack_churn(rng: &mut Rng) -> (String, Vec<Value>, i64) {
-    // Multiple slots written then read; each value must survive region pop.
-    let vals: Vec<(i64, i64)> = (0..4).map(|_| (rng.range(1, 20), rng.range(1, 20))).collect();
-    let expected: i64 = vals.iter().map(|(a, b)| a + b).sum();
-    let spawns: String = vals.iter().enumerate()
-        .map(|(i, (a, b))| format!("  ARR[{i}] = R {{ a: {a}, b: {b} }};\n"))
-        .collect();
-    let src = format!(r#"
-type R = {{ a: Int, b: Int }}
-static mut ARR: Array<R> = [R {{ a: 0, b: 0 }}; 4]
-
-pub fn spawn_all() -> Unit {{
-{spawns}}}
-
-pub fn sum_all() -> Int {{
-  ARR[0].a + ARR[0].b + ARR[1].a + ARR[1].b +
-  ARR[2].a + ARR[2].b + ARR[3].a + ARR[3].b
-}}
-
-fn main() -> Int {{ 0 }}
-"#);
-    (src, vec![], expected)
-}
-
-#[test]
-fn fuzz_static_record_pack_multiframe() {
-    let mut failures: Vec<(u64, String)> = Vec::new();
-
-    for seed in 0..300u64 {
-        let mut rng = Rng::new(seed * 31 + 7);
-        let (src, args, expected) = gen_static_record_pack_multiframe(&mut rng);
-        if let Err(e) = run_multiframe_expect(&src, &args, expected) {
-            failures.push((seed, format!("{}\n{}", e, src)));
-        }
-
-        let mut rng2 = Rng::new(seed * 17 + 3);
-        let (src2, _, expected2) = gen_static_record_pack_churn(&mut rng2);
-        // For churn test: run spawn_all then sum_all
-        let result = (|| {
-            let mut p = Parser::new(Lexer::new(&src2)).with_source(src2.clone());
-            let ast = p.parse_program();
-            if !p.errors.is_empty() { return Err(format!("parse: {}", p.pretty_print_errors())); }
-            let mut c = Compiler::new().with_source(src2.clone());
-            let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
-            let mut vm = VirtualMachine::new();
-            vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
-            vm.call_export(&module, "spawn_all", &[])
-                .map_err(|e| format!("spawn_all: {}", e))?;
-            let v = vm.call_export(&module, "sum_all", &[])
-                .map_err(|e| format!("sum_all: {}", e))?;
-            let got = v.as_int();
-            if got != expected2 { return Err(format!("expected {}, got {}", expected2, got)); }
-            Ok(())
-        })();
-        if let Err(e) = result {
-            failures.push((seed, format!("churn: {}\n{}", e, src2)));
-        }
-    }
-
-    if !failures.is_empty() {
-        for (seed, msg) in &failures {
-            eprintln!("--- seed={} ---\n{}", seed, msg);
-        }
-        panic!("fuzz_static_record_pack_multiframe: {} failure(s)", failures.len());
-    }
-}
-
-#[test]
-fn fuzz_static_variant_array_multiframe() {
-    let mut failures: Vec<(u64, String)> = Vec::new();
-    for seed in 0..300u64 {
-        let mut rng = Rng::new(seed * 41 + 11);
-        let (src, args, expected) = gen_static_variant_array_multiframe(&mut rng);
-        if let Err(e) = run_multiframe_expect(&src, &args, expected) {
-            failures.push((seed, format!("{}\n{}", e, src)));
-        }
-    }
-    if !failures.is_empty() {
-        for (seed, msg) in &failures { eprintln!("--- seed={} ---\n{}", seed, msg); }
-        panic!("fuzz_static_variant_array_multiframe: {} failure(s)", failures.len());
     }
 }
 

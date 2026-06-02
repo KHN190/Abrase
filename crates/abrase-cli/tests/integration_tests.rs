@@ -114,51 +114,6 @@ fn test_const_decl() {
     assert_eq!(v, Value::from_int(110));
 }
 
-const STATIC_MUT: &str = r#"
-static mut COUNT: Int = 0
-static STEP: Int = 7
-
-fn bump() -> Int { COUNT = COUNT + 1; COUNT }
-fn add(x: Int) -> Int { COUNT = COUNT + x; COUNT }
-
-fn main() -> Int {
-    let _a = bump();
-    let _b = bump();
-    let _c = add(STEP);
-    add(STEP)
-}
-"#;
-
-#[test]
-fn test_static_mut() {
-    let v = run_src(STATIC_MUT)
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(16));
-}
-
-const STATIC_DROP: &str = r#"
-fn build() -> Array<Int> { [10, 20, 30] }
-
-static mut DATA: Array<Int> = build()
-
-fn peek() -> Int {
-    let d = DATA;
-    d[1]
-}
-
-fn main() -> Int {
-    let _a = peek();
-    let _b = peek();
-    peek()
-}
-"#;
-
-#[test]
-fn test_static_handle_drop_is_safe() {
-    let v = run_src(STATIC_DROP)
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(20));
-}
 
 const STATIC_INIT_CALL: &str = r#"
 fn build_bh(mh: Int) -> Array<Int> {
@@ -570,9 +525,9 @@ fn const_float_times_call_uses_float_mul() {
 }
 
 const STATIC_SUM3: &str = r#"
-static mut A: Int = 10
-static mut B: Int = 20
-static mut C: Int = 30
+static A: Int = 10
+static B: Int = 20
+static C: Int = 30
 fn main() -> Int { A + B + C }
 "#;
 
@@ -598,9 +553,9 @@ fn static_reads_share_one_module_table_load() {
 }
 
 const STATIC_LOOP_ACCUM: &str = r#"
-static mut A: Int = 10
-static mut B: Int = 20
-static mut C: Int = 30
+static A: Int = 10
+static B: Int = 20
+static C: Int = 30
 fn main() -> Int {
   let r = A + B + C;
   let mut i = 0;
@@ -618,8 +573,8 @@ fn cached_module_table_stays_correct_across_loop_iterations() {
 }
 
 const STATIC_IN_LOOP: &str = r#"
-static mut A: Int = 1
-static mut B: Int = 2
+static A: Int = 1
+static B: Int = 2
 fn main() -> Int {
   let mut i = 0;
   let mut acc = 0;
@@ -690,7 +645,7 @@ fn shared_ctor_of_bare_var_does_not_consume_it() {
 }
 
 const SEQUENTIAL_WHILE_STATIC: &str = r#"
-static mut A: Int = 3
+static A: Int = 3
 fn main() -> Int {
   let mut i = 0; let mut s1 = 0;
   while i < 3 { s1 = s1 + A; i = i + 1 };
@@ -819,88 +774,6 @@ fn range_pattern_open_end_matches_correctly() {
     assert_eq!(v, Value::from_int(99));
 }
 
-// --- static array-repeat of record type: each slot must be independent ---
-
-const RECORD_ARRAY_REPEAT_INDEPENDENT: &str = r#"
-type Pt = { x: Int, y: Int }
-static mut GRID: Array<Pt> = [Pt { x: 0, y: 0 }; 4]
-
-fn main() -> Int {
-  GRID[0].x = 10;
-  GRID[1].x = 20;
-  GRID[2].x = 30;
-  GRID[0].x + GRID[1].x + GRID[2].x + GRID[3].x
-}
-"#;
-
-#[test]
-fn record_array_repeat_slots_are_independent() {
-    // If all slots alias the same record, every write to [i].x would affect all —
-    // GRID[3].x would read 30 instead of 0.
-    let v = run_src(RECORD_ARRAY_REPEAT_INDEPENDENT).unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(60));
-}
-
-// --- float fields in repeated record stay Float (not Int) ---
-
-const RECORD_ARRAY_FLOAT_ARITH: &str = r#"
-type Bullet = { on: Int, x: Float, y: Float, vx: Float, vy: Float }
-static mut EB: Array<Bullet> = [Bullet { on: 0, x: 0.0, y: 0.0, vx: 0.0, vy: 0.0 }; 4]
-
-fn main() -> Int {
-  EB[0].on = 1;
-  EB[0].x  = 3.0;
-  EB[0].vx = 1.5;
-  EB[0].x  = EB[0].x + EB[0].vx;
-  EB[0].x.to_i()
-}
-"#;
-
-#[test]
-fn record_array_float_field_arithmetic_uses_fadd() {
-    // Regression: field type must be inferred as Float so FAdd is emitted.
-    // If Add (int) is emitted instead, the bit pattern of 3.0+1.5 is garbage.
-    let v = run_src(RECORD_ARRAY_FLOAT_ARITH).unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(4));
-}
-
-// --- static mut record array across call_export frames: slots independent ---
-
-const RECORD_STATIC_EXPORT_FRAMES: &str = r#"
-type Ent = { hp: Int, active: Int }
-static mut ENT: Array<Ent> = [Ent { hp: 10, active: 0 }; 3]
-
-pub fn damage(i: Int, d: Int) -> Unit { ENT[i].hp = ENT[i].hp - d }
-pub fn read_hp(i: Int) -> Int { ENT[i].hp }
-
-fn main() -> Int { 0 }
-"#;
-
-#[test]
-fn static_record_array_call_export_slots_independent() {
-    let src = RECORD_STATIC_EXPORT_FRAMES;
-    let mut p = abrase::parser::Parser::new(abrase::lexer::Lexer::new(src))
-        .with_source(src.into());
-    let ast = p.parse_program();
-    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
-    let mut compiler = abrase::compiler::Compiler::new().with_source(src.into());
-    let module = compiler.compile_module(&ast)
-        .unwrap_or_else(|_| panic!("\n{}", compiler.pretty_print_errors()));
-    let mut vm = myriad::VirtualMachine::new();
-    vm.run_module(&module).unwrap_or_else(|e| panic!("{}", e));
-    vm.call_export(&module, "damage", &[Value::from_int(1), Value::from_int(3)])
-        .unwrap_or_else(|e| panic!("{}", e));
-    let hp0 = vm.call_export(&module, "read_hp", &[Value::from_int(0)])
-        .unwrap_or_else(|e| panic!("{}", e));
-    let hp1 = vm.call_export(&module, "read_hp", &[Value::from_int(1)])
-        .unwrap_or_else(|e| panic!("{}", e));
-    let hp2 = vm.call_export(&module, "read_hp", &[Value::from_int(2)])
-        .unwrap_or_else(|e| panic!("{}", e));
-    // Only slot 1 was damaged; slots 0 and 2 must be untouched.
-    assert_eq!(hp0, Value::from_int(10), "slot 0 must be unaffected");
-    assert_eq!(hp1, Value::from_int(7),  "slot 1 damaged by 3");
-    assert_eq!(hp2, Value::from_int(10), "slot 2 must be unaffected");
-}
 
 const MUT_RECORD_DESTRUCTURE: &str = r#"
 type Pt = { x: Int, y: Int }
@@ -968,36 +841,3 @@ fn mixed_mut_and_immut_fields_in_destructure() {
     assert_eq!(v, Value::from_int(25)); // 11 + 2 + 12
 }
 
-// --- static array of records assigned via pack literal, then read back ---
-
-const STATIC_RECORD_ARRAY_PACK_WRITEREAD: &str = r#"
-type Bullet = { on: Int, vx: Float, vy: Float }
-static mut EB: Array<Bullet> = [Bullet { on: 0, vx: 0.0, vy: 0.0 }; 4]
-
-fn spawn(i: Int, vx: Float, vy: Float) -> Unit {
-  EB[i] = Bullet { on: 1, vx: vx, vy: vy }
-}
-
-fn step(i: Int) -> Unit {
-  let b = EB[i];
-  if b.on == 1 {
-    EB[i] = Bullet { on: b.on, vx: b.vx + 0.5, vy: b.vy + 0.5 }
-  }
-}
-
-fn main() -> Int {
-  spawn(0, 1.0, 2.0);
-  step(0);
-  let r = EB[0];
-  r.on * 1000 + r.vx.to_i() * 10 + r.vy.to_i()
-}
-"#;
-
-#[test]
-fn static_record_array_pack_write_survives_region_pop() {
-    // Regression: record literal EB[i] = Bullet{..} stored into a static array
-    // inside a function region was force_freed on region pop (use-after-free).
-    let v = run_src(STATIC_RECORD_ARRAY_PACK_WRITEREAD).unwrap_or_else(|e| panic!("\n{}", e));
-    // on=1*1000 + vx(1.5→1)*10 + vy(2.5→2) = 1012
-    assert_eq!(v, Value::from_int(1012));
-}

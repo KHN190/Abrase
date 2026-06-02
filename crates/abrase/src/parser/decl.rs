@@ -448,10 +448,6 @@ impl<'a> Parser<'a> {
 
     fn parse_static_decl(&mut self, is_pub: bool) -> Result<Decl, String> {
         self.next_token();
-        let is_mut = self.current_token == Token::Mut;
-        if is_mut {
-            self.next_token();
-        }
         let name = if let Token::Ident(n) = &self.current_token {
             n.clone()
         } else {
@@ -476,7 +472,7 @@ impl<'a> Parser<'a> {
         } else if self.current_token == Token::Semicolon {
             self.next_token();
         }
-        Ok(Decl::Static { is_pub, is_mut, name, ty, value })
+        Ok(Decl::Static { is_pub, name, ty, value })
     }
 
     fn parse_type_alias_decl(&mut self, is_pub: bool) -> Result<Decl, String> {

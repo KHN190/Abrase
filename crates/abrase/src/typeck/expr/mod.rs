@@ -84,11 +84,11 @@ impl Checker {
         if let Some(name) = lhs_name {
             let is_mut = self.scopes.iter().rev()
                 .find_map(|s| s.vars.get(&name).map(|m| m.is_mut))
-                .or_else(|| self.static_vars.get(&name).copied());
+                .or_else(|| self.static_vars.contains(&name).then_some(false));
             if let Some(false) = is_mut {
-                let kind = if self.static_vars.contains_key(&name) { "static" } else { "binding" };
+                let kind = if self.static_vars.contains(&name) { "static" } else { "binding" };
                 self.report_error(
-                    format!("Cannot assign to immutable {} '{}'; use `static mut {}` or `let mut {}` to allow mutation", kind, name, name, name),
+                    format!("Cannot assign to immutable {} '{}'; use `let mut {}` to allow mutation", kind, name, name),
                     left.span,
                 );
             }

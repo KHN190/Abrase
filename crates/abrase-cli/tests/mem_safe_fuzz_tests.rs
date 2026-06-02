@@ -27,12 +27,8 @@ struct Gen {
     has_record: bool,
     has_static: bool,
     has_variant: bool,
-    has_static_rec: bool,
-    has_static_rec_arr: bool,
     has_effect: bool,
     has_recursive_fn: bool,
-    has_float_arr: bool,
-    has_static_variant_arr: bool,
 }
 
 impl Gen {
@@ -41,23 +37,15 @@ impl Gen {
             rng: Rng::new(seed), next_var: 0, next_fn: 0,
             out: String::new(), helpers: String::new(), fuel: 250,
             has_record: false, has_static: false,
-            has_variant: false, has_static_rec: false, has_static_rec_arr: false,
-            has_effect: false, has_recursive_fn: false, has_float_arr: false,
-            has_static_variant_arr: false,
+            has_variant: false,
+            has_effect: false, has_recursive_fn: false,
         }
     }
     fn fresh(&mut self) -> String { let n = self.next_var; self.next_var += 1; format!("v{}", n) }
     fn fresh_fn(&mut self) -> String { let n = self.next_fn; self.next_fn += 1; format!("f{}", n) }
     fn push(&mut self, s: &str) { self.out.push_str(s); }
 
-    fn expected_static_live(&self) -> usize {
-        let mut n = 0;
-        if self.has_static_rec     { n += 1; }
-        if self.has_static_rec_arr { n += 5; } // 1 Array + 4 R records
-        if self.has_float_arr          { n += 1; } // 1 Array<Float>
-        if self.has_static_variant_arr { n += 5; } // 1 Array + 4 Tag objects (Zero)
-        n
-    }
+    fn expected_static_live(&self) -> usize { 0 }
 
     fn gen_program(&mut self) -> String {
         // Optional borrow-taking helper.
@@ -79,30 +67,6 @@ impl Gen {
         if self.rng.pick(2) == 0 {
             let v = self.rng.pick(100) as i64;
             self.helpers.push_str(&format!("static S: Int = {};\n", v));
-            self.has_static = true;
-        }
-        // Optional static mut record.
-        if self.has_record && self.rng.pick(3) == 0 {
-            self.helpers.push_str("static mut SR: R = R { a: 0, b: 0 }\n");
-            self.has_static_rec = true;
-            self.has_static = true;
-        }
-        // Optional static mut Array<R>.
-        if self.has_record && self.rng.pick(3) == 0 {
-            self.helpers.push_str("static mut SRA: Array<R> = [R { a: 0, b: 0 }; 4]\n");
-            self.has_static_rec_arr = true;
-            self.has_static = true;
-        }
-        // Optional static mut Array<Float>.
-        if self.rng.pick(3) == 0 {
-            self.helpers.push_str("static mut FA: Array<Float> = [0.0; 4]\n");
-            self.has_float_arr = true;
-            self.has_static = true;
-        }
-        // Optional static mut Array<Tag> (variant pack write regression same as records).
-        if self.has_variant && self.rng.pick(3) == 0 {
-            self.helpers.push_str("static mut VTA: Array<Tag> = [Zero; 4]\n");
-            self.has_static_variant_arr = true;
             self.has_static = true;
         }
         // Optional effect + helper.
@@ -271,24 +235,6 @@ impl Gen {
                     ));
                     ints.push(name);
                 }
-                // ── float static array ────────────────────────────────────
-                17 if self.has_float_arr => {
-                    let i = self.rng.pick(4);
-                    let v = self.rng.pick(100) as i64;
-                    self.push(&format!("  FA[{i}] = {v}.to_f();\n"));
-                }
-                18 if self.has_float_arr => {
-                    let name = self.fresh();
-                    let i = self.rng.pick(4);
-                    self.push(&format!("  let {}: Int = FA[{i}].to_i();\n", name));
-                    ints.push(name);
-                }
-                // ── float static array arithmetic ─────────────────────────
-                19 if self.has_float_arr => {
-                    let i = self.rng.pick(4);
-                    let j = self.rng.pick(4);
-                    self.push(&format!("  FA[{i}] = FA[{i}] + FA[{j}];\n"));
-                }
                 // ── effect handler ────────────────────────────────────────
                 20 if self.has_effect && loop_depth < 1 => {
                     let n = self.rng.pick(8) + 1;
@@ -383,20 +329,6 @@ impl Gen {
                     ));
                     ints.push(vname);
                 }
-                // ── static Array<Tag> pack write (variant escape regression) ─
-                28 if self.has_static_variant_arr && self.rng.pick(2) == 0 => {
-                    let i = self.rng.pick(4);
-                    let v = self.rng.pick(50) as i64;
-                    self.push(&format!("  VTA[{i}] = One({v});\n"));
-                }
-                29 if self.has_static_variant_arr => {
-                    let name = self.fresh();
-                    let i = self.rng.pick(4);
-                    self.push(&format!(
-                        "  let {name}: Int = match VTA[{i}] {{ One(n) => n, _ => 0 }};\n"
-                    ));
-                    ints.push(name);
-                }
                 // ── region returning record (region_forget path) ─────────
                 30 if region_depth == 0 && self.has_record => {
                     let name = self.fresh();
@@ -457,41 +389,6 @@ impl Gen {
                     let rec = records[self.rng.pick(records.len() as u64) as usize].clone();
                     let field = if self.rng.pick(2) == 0 { "a" } else { "b" };
                     self.push(&format!("  let {}: Int = {}.{};\n", name, rec, field));
-                    ints.push(name);
-                }
-                // ── static mut record ────────────────────────────────────
-                _ if self.has_static_rec && self.rng.pick(3) == 0 => {
-                    let v = self.rng.pick(50) as i64;
-                    let field = if self.rng.pick(2) == 0 { "a" } else { "b" };
-                    self.push(&format!("  SR.{} = {};\n", field, v));
-                }
-                _ if self.has_static_rec => {
-                    let name = self.fresh();
-                    let field = if self.rng.pick(2) == 0 { "a" } else { "b" };
-                    self.push(&format!("  let {}: Int = SR.{};\n", name, field));
-                    ints.push(name);
-                }
-                // ── static mut Array<R> (alias regression) ───────────────
-                _ if self.has_static_rec_arr && self.rng.pick(3) == 0 => {
-                    // Pack write: SRA[i] = R { a: .., b: .. }
-                    // Regression for region-escape bug: record literal in function
-                    // region stored into static array must be region_forget'd.
-                    let a = self.rng.pick(50) as i64;
-                    let b = self.rng.pick(50) as i64;
-                    let i = self.rng.pick(4);
-                    self.push(&format!("  SRA[{i}] = R {{ a: {a}, b: {b} }};\n"));
-                }
-                _ if self.has_static_rec_arr && !ints.is_empty() && self.rng.pick(2) == 0 => {
-                    let v = self.rng.pick(50) as i64;
-                    let i = self.rng.pick(4);
-                    let field = if self.rng.pick(2) == 0 { "a" } else { "b" };
-                    self.push(&format!("  SRA[{}].{} = {};\n", i, field, v));
-                }
-                _ if self.has_static_rec_arr => {
-                    let name = self.fresh();
-                    let i = self.rng.pick(4);
-                    let field = if self.rng.pick(2) == 0 { "a" } else { "b" };
-                    self.push(&format!("  let {}: Int = SRA[{}].{};\n", name, i, field));
                     ints.push(name);
                 }
                 // ── variants ─────────────────────────────────────────────

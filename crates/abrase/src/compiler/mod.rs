@@ -106,7 +106,6 @@ pub struct Compiler {
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
-    pub(super) static_mut_set: std::collections::HashSet<String>,
     pub(super) typeck_expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), crate::ty::Type>,
 }
 
@@ -182,7 +181,6 @@ impl Compiler {
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
-            static_mut_set: std::collections::HashSet::new(),
             typeck_expr_types: HashMap::new(),
         }
     }
@@ -434,13 +432,12 @@ impl Compiler {
                         )),
                     }
                 }
-                ast::Decl::Static { name, ty, is_mut, .. } => {
+                ast::Decl::Static { name, ty, .. } => {
                     let mod_path = module_stack.last().cloned().unwrap_or_default();
                     let mangled = Self::fqn(&mod_path, name);
                     let offset = self.static_offsets.len() as u16;
                     self.static_offsets.insert(mangled.clone(), offset);
                     self.static_types.insert(mangled.clone(), ty.clone());
-                    if *is_mut { self.static_mut_set.insert(mangled); }
                 }
                 _ => {}
             }
