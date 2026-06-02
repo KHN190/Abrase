@@ -198,26 +198,6 @@ impl Compiler {
         }
     }
 
-    pub(in crate::compiler) fn check_int32_literal(&self, n: i64) -> Result<(), String> {
-        if self.int32_mode && (n < i32::MIN as i64 || n > i32::MAX as i64) {
-            return Err(format!(
-                "Int literal {} out of i32 range; --int32 mode requires values in {}..={}",
-                n, i32::MIN, i32::MAX
-            ));
-        }
-        Ok(())
-    }
-
-    pub(in crate::compiler) fn check_float32_literal(&self, f: f64) -> Result<(), String> {
-        if self.int32_mode && f.is_finite() && (f as f32) as f64 != f {
-            return Err(format!(
-                "Float literal {} not representable as f32; --int32 mode requires f32-safe values",
-                f
-            ));
-        }
-        Ok(())
-    }
-
     pub(in crate::compiler) fn add_constant(&mut self, val: Value) -> Result<u16, String> {
         for (i, c) in self.constants.iter().enumerate() {
             if *c == val && !self.const_mask_bits[i] {

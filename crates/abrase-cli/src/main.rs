@@ -206,28 +206,17 @@ fn print_result(vm: &VirtualMachine, v: Value) {
 fn cmd_check(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -> ExitCode {
     let ast = &program.decls;
     let source = &program.entry_source;
-    let mut checker = Checker::new();
-    checker.check_program(ast);
-    if !checker.warnings.is_empty() {
-        print_warnings(program, &checker.warnings);
+    let mut compiler = Compiler::new()
+        .with_source(source.clone())
+        .with_int32_mode(int32)
+        .with_no_built_in(no_built_in);
+    compiler.run_typeck_only(ast);
+    if !compiler.warnings.is_empty() {
+        print_warnings(program, &compiler.warnings);
     }
-    if !checker.errors.is_empty() {
-        let errs: Vec<Error> = checker.errors.iter()
-            .map(|te| Error::new(ErrorCode::TypeError, te.span, te.message.clone())
-                .with_module(te.module.clone()))
-            .collect();
-        eprint!("{}", program.render_errors(&errs));
+    if !compiler.errors.is_empty() {
+        eprint!("{}", program.render_errors(&compiler.errors));
         return ExitCode::from(1);
-    }
-    if int32 || no_built_in {
-        let mut compiler = Compiler::new()
-            .with_source(source.clone())
-            .with_int32_mode(int32)
-            .with_no_built_in(no_built_in);
-        if let Err(errs) = compiler.compile_module(ast) {
-            eprint!("{}", program.render_errors(&errs));
-            return ExitCode::from(1);
-        }
     }
     println!("ok");
     ExitCode::SUCCESS

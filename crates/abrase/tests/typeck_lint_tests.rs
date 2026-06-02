@@ -164,6 +164,26 @@ fn unreachable_pattern_after_bind_warns() {
 }
 
 #[test]
+fn unit_variant_not_treated_as_catch_all() {
+    let src = "type List = Nil | Cons(Int, List) \
+               fn len(l: List) -> Int { match l { Nil => 0, Cons(_, rest) => 1 + len(rest) } } \
+               fn main() -> Int { len(Nil) }";
+    let ws = warnings_for(src);
+    assert!(!ws.iter().any(|w| w.starts_with("unreachable_pattern")),
+        "unit variant `Nil` must not be treated as catch-all: {:?}", ws);
+}
+
+#[test]
+fn constructor_after_unit_variant_no_warn() {
+    let src = "type T = A | B(Int) \
+               fn f(t: T) -> Int { match t { A => 0, B(n) => n } } \
+               fn main() -> Int { f(A) }";
+    let ws = warnings_for(src);
+    assert!(!ws.iter().any(|w| w.starts_with("unreachable_pattern")),
+        "constructor arm after unit variant must not warn: {:?}", ws);
+}
+
+#[test]
 fn last_wildcard_no_warn() {
     let src = "fn main() -> Int { match 1 { 1 => 10, 2 => 20, _ => 0 } }";
     assert!(!has_warning(src, "unreachable_pattern"), "wildcard at end must not warn");

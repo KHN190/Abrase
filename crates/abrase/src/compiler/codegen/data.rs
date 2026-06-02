@@ -75,11 +75,9 @@ impl Compiler {
         let reg = self.alloc_register()?;
         let idx = match lit {
             ast::Literal::Int(n)    => {
-                self.check_int32_literal(*n)?;
                 self.add_constant(Value::from_int(*n))?
             }
             ast::Literal::Float(f)  => {
-                self.check_float32_literal(*f)?;
                 let v = if self.int32_mode { Value::from_float_f32(*f) } else { Value::from_float(*f) };
                 self.add_constant(v)?
             }

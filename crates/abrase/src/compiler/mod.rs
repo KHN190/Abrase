@@ -549,6 +549,45 @@ impl Compiler {
         exports
     }
 
+    pub fn run_typeck_only(&mut self, ast: &[ast::Decl]) {
+        if !self.no_built_in { self.register_builtins(); }
+        let _ = self.run_typeck(ast);
+    }
+
+    fn check_int32_literals_in_decls(&mut self, ast: &[ast::Decl]) -> Result<(), Vec<Error>> {
+        let errors = &mut self.errors;
+        let mut check = |s: &ast::Spanned<ast::Expr>| {
+            use ast::Literal;
+            match &s.node {
+                ast::Expr::Literal(Literal::Int(n)) if *n < i32::MIN as i64 || *n > i32::MAX as i64 => {
+                    errors.push(Error::new(ErrorCode::TypeError, s.span,
+                        format!("Int literal {} out of i32 range; --int32 mode requires values in {}..={}", n, i32::MIN, i32::MAX),
+                    ));
+                }
+                ast::Expr::Literal(Literal::Float(f)) if f.is_finite() && (*f as f32) as f64 != *f => {
+                    errors.push(Error::new(ErrorCode::TypeError, s.span,
+                        format!("Float literal {} not representable as f32; --int32 mode requires f32-safe values", f),
+                    ));
+                }
+                _ => {}
+            }
+        };
+        for d in ast {
+            match d {
+                ast::Decl::Fn(f) => walk_block(&f.body, &mut check),
+                ast::Decl::Static { value, .. } | ast::Decl::Const { value, .. } => walk_expr(value, &mut check),
+                ast::Decl::Impl { methods, .. } => {
+                    for m in methods { walk_block(&m.body, &mut check); }
+                }
+                _ => {}
+            }
+        }
+        if !self.errors.is_empty() {
+            return Err(self.errors.clone());
+        }
+        Ok(())
+    }
+
     fn run_typeck(&mut self, ast: &[ast::Decl]) -> Result<(), Vec<Error>> {
         let mut checker = crate::typeck::Checker::new();
         if !self.no_built_in { self.register_builtins_to_checker(&mut checker); }
@@ -561,6 +600,7 @@ impl Compiler {
             ).with_module(te.module.clone())));
             return Err(self.errors.clone());
         }
+        if self.int32_mode { self.check_int32_literals_in_decls(ast)?; }
         Ok(())
     }
 
@@ -986,5 +1026,130 @@ fn walk_tail_expr(expr: &ast::Spanned<ast::Expr>, self_name: &str, out: &mut std
         }
         ast::Expr::Block(block) => walk_tail_block(block, self_name, out),
         _ => {}
+    }
+}
+
+fn walk_expr(spanned: &ast::Spanned<ast::Expr>, f: &mut impl FnMut(&ast::Spanned<ast::Expr>)) {
+    use ast::Expr;
+    f(spanned);
+    match &spanned.node {
+        Expr::Binary { left, right, .. } => {
+            walk_expr(left, f);
+            walk_expr(right, f);
+        }
+        Expr::Unary { op: ast::UnaryOp::Neg, right } => {
+            if let ast::Expr::Literal(ast::Literal::Int(n)) = &right.node {
+                let negated = ast::Spanned { node: ast::Expr::Literal(ast::Literal::Int(-n)), span: right.span };
+                f(&negated);
+            } else {
+                walk_expr(right, f);
+            }
+        }
+        Expr::Unary { right, .. } => walk_expr(right, f),
+        Expr::Call { callee, args } => {
+            walk_expr(callee, f);
+            for a in args { walk_expr(a, f); }
+        }
+        Expr::Index { base, index } => {
+            walk_expr(base, f);
+            walk_expr(index, f);
+        }
+        Expr::Block(block) => walk_block(block, f),
+        Expr::If { condition, consequence, alternative } => {
+            walk_expr(condition, f);
+            walk_expr(consequence, f);
+            if let Some(a) = alternative { walk_expr(a, f); }
+        }
+        Expr::Match { scrutinee, arms } => {
+            walk_expr(scrutinee, f);
+            for arm in arms {
+                walk_pattern(&arm.pattern, f);
+                if let Some(g) = &arm.guard { walk_expr(g, f); }
+                walk_expr(&arm.body, f);
+            }
+        }
+        Expr::For { pattern, iter, body } => {
+            walk_pattern(pattern, f);
+            walk_expr(iter, f);
+            walk_block(body, f);
+        }
+        Expr::While { condition, body } => {
+            walk_expr(condition, f);
+            walk_block(body, f);
+        }
+        Expr::Loop { body } => walk_block(body, f),
+        Expr::Break(Some(e)) | Expr::Return(Some(e)) | Expr::Throw(e)
+        | Expr::Question(e) | Expr::Paren(e) | Expr::Resume(Some(e)) => walk_expr(e, f),
+        Expr::Tuple(elems) | Expr::Array(elems) => {
+            for e in elems { walk_expr(e, f); }
+        }
+        Expr::ArrayRepeat { elem, count } => {
+            walk_expr(elem, f);
+            walk_expr(count, f);
+        }
+        Expr::Record { fields, .. } => {
+            for field in fields {
+                if let Some(v) = &field.value { walk_expr(v, f); }
+            }
+        }
+        Expr::Variant { args, .. } => {
+            for a in args { walk_expr(a, f); }
+        }
+        Expr::FieldAccess { base, .. } => walk_expr(base, f),
+        Expr::Closure { body, .. } => walk_expr(body, f),
+        Expr::Range { start, end, .. } => {
+            if let Some(s) = start { walk_expr(s, f); }
+            if let Some(e) = end { walk_expr(e, f); }
+        }
+        Expr::Region { body, .. } => walk_block(body, f),
+        Expr::Handle { expr, arms } => {
+            walk_expr(expr, f);
+            for arm in arms {
+                if let Some(p) = &arm.pattern { walk_pattern(p, f); }
+                walk_expr(&arm.body, f);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn walk_pattern(spanned: &ast::Spanned<ast::Pattern>, f: &mut impl FnMut(&ast::Spanned<ast::Expr>)) {
+    use ast::Pattern;
+    let emit_lit = |lit: &ast::Literal, f: &mut dyn FnMut(&ast::Spanned<ast::Expr>)| {
+        f(&ast::Spanned { node: ast::Expr::Literal(lit.clone()), span: spanned.span });
+    };
+    match &spanned.node {
+        Pattern::Literal(lit) => emit_lit(lit, f),
+        Pattern::Range { start, end, .. } => {
+            if let Some(lit) = start { emit_lit(lit, f); }
+            if let Some(lit) = end   { emit_lit(lit, f); }
+        }
+        Pattern::Tuple(ps) | Pattern::Array(ps) => {
+            for p in ps { walk_pattern(p, f); }
+        }
+        Pattern::Variant { args, .. } => {
+            for p in args { walk_pattern(p, f); }
+        }
+        Pattern::Record { fields, .. } => {
+            for field in fields {
+                if let Some(p) = &field.pattern { walk_pattern(p, f); }
+            }
+        }
+        Pattern::Ref(p) => walk_pattern(p, f),
+        _ => {}
+    }
+}
+
+fn walk_block(block: &ast::Block, f: &mut impl FnMut(&ast::Spanned<ast::Expr>)) {
+    use ast::Stmt;
+    for spanned_stmt in &block.stmts {
+        match &spanned_stmt.node {
+            Stmt::Expr(e) => walk_expr(e, f),
+            Stmt::Let { value, .. } => walk_expr(value, f),
+            Stmt::Empty => {}
+        }
+    }
+    if let Some(ret) = &block.ret {
+        walk_expr(ret, f);
     }
 }

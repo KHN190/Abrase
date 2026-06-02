@@ -1184,7 +1184,10 @@ fn lint_unreachable_patterns_expr(expr: &ast::Spanned<ast::Expr>, checker: &mut 
                 }
                 if arm.guard.is_none() {
                     match &arm.pattern.node {
-                        ast::Pattern::Wildcard | ast::Pattern::Bind(_) => { catch_all_seen = true; }
+                        ast::Pattern::Wildcard => { catch_all_seen = true; }
+                        ast::Pattern::Bind(n) if n.chars().next().map_or(true, |c| c.is_lowercase() || c == '_') => {
+                            catch_all_seen = true;
+                        }
                         _ => {}
                     }
                 }
