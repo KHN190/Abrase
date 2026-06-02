@@ -178,23 +178,44 @@ fn test_static_update_frames_no_leak() {
 }
 
 #[test]
-fn abandoned_continuation_reclaims_owned_value_held_across_raise() {
+fn throw_unwind_reclaims_owned_value_live_at_throw() {
     let source = r#"
+type DivErr = { code: Int }
 type Box = { v: Int }
-effect E { op tick() -> Int }
-fn body() -> <E> Int {
-  let s = Box { v: 7 }
-  let x = E.tick()
-  s.v + x
+fn body() -> <exn<DivErr>> Int {
+  let s = Box { v: 7 };
+  throw(DivErr { code: 1 });
+  s.v
 }
 fn main() -> Int {
-  handle body() { return v => v, E.tick _ => return(0) }
+  handle body() { return v => v, exn _ => 99 }
 }
 "#;
     let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
-    assert_eq!(v, Value::from_int(0));
+    assert_eq!(v, Value::from_int(99));
     assert_eq!(vm.heap_live_count(), 0,
-        "abandoned continuation leaked the owned record held across raise");
+        "throw unwind leaked the owned record live at the throw site");
+}
+
+#[test]
+fn throw_unwind_skips_moved_out_value_no_double_free() {
+    let source = r#"
+type DivErr = { code: Int }
+type Box = { v: Int }
+fn sink(b: Box) -> Int { b.v }
+fn body() -> <exn<DivErr>> Int {
+  let a = Box { v: 1 };
+  let b = Box { v: 2 };
+  let _ = sink(a);
+  throw(DivErr { code: 9 });
+  b.v
+}
+fn main() -> Int { handle body() { return v => v, exn _ => 77 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(77));
+    assert_eq!(vm.heap_live_count(), 0,
+        "throw unwind double-freed or leaked across a moved-out binding");
 }
 
 #[test]
