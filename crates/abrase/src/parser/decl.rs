@@ -13,7 +13,7 @@ impl<'a> Parser<'a> {
                 Ok(decl) => {
                     decls.push(decl);
                     if self.current_token != Token::Eof &&
-                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Static | Token::Use | Token::Effect | Token::Pub) {
+                       !matches!(self.current_token, Token::Fn | Token::Type | Token::Trait | Token::Impl | Token::Const | Token::Static | Token::Use | Token::Effect | Token::Pub | Token::At) {
                         self.report_error(top_level_token_error(&self.current_token), self.current_span);
                         self.synchronize();
                     }

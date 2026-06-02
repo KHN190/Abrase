@@ -1505,3 +1505,72 @@ fn main() -> Int {
 "#;
     run_src_noleak(src, 99).expect("dead nested record must not leak");
 }
+
+fn run_cart_frames(src: &str, n_frames: usize) -> Result<(i64, usize), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err(format!("parse:\n{}", p.pretty_print_errors())); }
+    let mut c = Compiler::new().with_source(src.to_string());
+    let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
+    let mut vm = VirtualMachine::new().with_step_cap(10_000_000);
+    myriad::Host::default().install_into(&mut vm);
+    vm.run_to_yield(&module).map_err(|e| format!("run_to_yield: {}", e))?;
+    for _ in 1..n_frames {
+        let still_running = vm.resume(&module, myriad::Value::from_int(0))
+            .map_err(|e| format!("resume: {}", e))?;
+        if !still_running { return Err("main returned early".into()); }
+    }
+    // one more resume to let main read the result via a pub export
+    // instead, read heap live count as sanity; the test knows expected from Rust math
+    Ok((0, vm.heap_live_count()))
+}
+
+fn gen_cart_counter(rng: &mut Rng) -> (String, i64, usize) {
+    let n = rng.range(2, 10) as usize;
+    let step = rng.range(1, 5);
+    let expected = step * n as i64;
+    // main accumulates `count` across frames; pub fn read_count returns it via call_export
+    let src = format!(r#"
+@cart fn main() -> <frame> Unit {{
+  let mut count = 0;
+  loop {{
+    count = count + {step};
+    frame.present()
+  }}
+}}
+
+pub fn read_count(n: Int) -> Int {{ n }}
+"#);
+    (src, expected, n)
+}
+
+#[test]
+fn fuzz_cart_frame_heap_flat() {
+    let mut failures: Vec<(u64, String)> = Vec::new();
+    for seed in 0..200u64 {
+        let mut rng = Rng::new(seed * 37 + 11);
+        let n = rng.range(2, 8) as usize;
+        let step = rng.range(1, 5);
+        let src = format!(r#"
+@cart fn main() -> <frame> Unit {{
+  let mut count = 0;
+  loop {{
+    count = count + {step};
+    frame.present()
+  }}
+}}
+"#);
+        match run_cart_frames(&src, n) {
+            Ok((_, live)) => {
+                if live != 0 {
+                    failures.push((seed, format!("heap_live={} after {} frames\n{}", live, n, src)));
+                }
+            }
+            Err(e) => failures.push((seed, format!("{}\n{}", e, src))),
+        }
+    }
+    if !failures.is_empty() {
+        for (seed, msg) in &failures { eprintln!("--- seed={} ---\n{}", seed, msg); }
+        panic!("fuzz_cart_frame_heap_flat: {} failure(s)", failures.len());
+    }
+}

@@ -183,6 +183,15 @@ impl Compiler {
     ) -> Result<Option<CallTarget<'a>>, String> {
         let ast::Expr::FieldAccess { base, field } = &callee.node else { return Ok(None) };
         let ast::Expr::Identifier(eff_name) = &base.node else { return Ok(None) };
+        if eff_name == "frame" && field == "present" {
+            if self.current_fn_name != "main" {
+                return Err("`frame.present()` can only be called from `@cart main`".into());
+            }
+            let id = *self.func_map.get("__frame_present")
+                .ok_or_else(|| "__frame_present not registered".to_string())?;
+            let fn_id = super::scaffold::to_u16(id, "__frame_present fn_id")?;
+            return Ok(Some(CallTarget::HostFn { fn_id }));
+        }
         let key = (eff_name.clone(), field.clone());
         if !self.effect_op_to_arm.contains_key(&key) { return Ok(None); }
         let effect_id = match self.effect_ids.get(eff_name).copied() {

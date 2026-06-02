@@ -19,6 +19,8 @@ impl Compiler {
         // Console
         self.register_typed_native("print",    vec![s.clone()],            u.clone(), 1);
         self.register_typed_native("println",  vec![s.clone()],            u.clone(), 1);
+        // Frame boundary (cart yield point — intercepted by VM, never dispatched to a Rust fn)
+        self.register_typed_native("__frame_present", vec![],              u.clone(), 0);
         // Float-only math
         self.register_typed_native("ceil",     vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("flr",      vec![f.clone()],            f.clone(), 1);
@@ -200,6 +202,15 @@ impl Compiler {
         // Graphics: a built-in user effect for screen/draw natives, kept
         // separate from <IO> so a cart can declare "draws but no file/net".
         checker.register_effect("Graphics".into(), vec![]);
+        checker.register_effect("frame".into(), vec!["present".into()]);
+        checker.register_effect_op(
+            "frame::present".into(),
+            crate::ty::Type::Function {
+                params: vec![],
+                ret: Box::new(crate::ty::Type::Unit),
+                effects: vec![],
+            },
+        );
     }
 
     pub(super) fn seed_builtin_method_dispatch(

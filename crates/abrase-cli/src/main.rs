@@ -134,12 +134,6 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
     let ast = &program.decls;
     let source = &program.entry_source;
 
-    let mut checker = abrase::typeck::Checker::new();
-    checker.check_program(ast);
-    if !checker.warnings.is_empty() {
-        print_warnings(program, &checker.warnings);
-    }
-
     let mut compiler = Compiler::new()
         .with_source(source.clone())
         .with_debug(codegen_debug)
@@ -152,6 +146,9 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
             return ExitCode::from(1);
         }
     };
+    if !compiler.warnings.is_empty() {
+        print_warnings(program, &compiler.warnings);
+    }
     let fn_names = compiler.fn_names();
     let static_names = compiler.static_names_by_offset();
 
@@ -162,18 +159,47 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
         .with_static_names(static_names);
 
     Host::default().install_into(&mut vm);
-    let main_returns_unit = main_returns_unit(ast);
-    match vm.run_module(&module) {
-        Ok(v) => {
+
+    let result = if is_cart_main(ast) {
+        run_cart(&mut vm, &module)
+    } else {
+        let main_returns_unit = main_returns_unit(ast);
+        vm.run_module(&module).map(|v| {
             if !main_returns_unit { print_result(&vm, v); }
-            if trace {
-                eprintln!("[heap] live={}", vm.heap_live_count());
+            ()
+        })
+    };
+    match result {
+        Ok(()) => {
+            if let Some(code) = vm.exit_code() {
+                if trace { eprintln!("[heap] live={}", vm.heap_live_count()); }
+                if leak { vm.dump_live_slots(); }
+                return ExitCode::from(code as u8);
             }
+            if trace { eprintln!("[heap] live={}", vm.heap_live_count()); }
             if leak { vm.dump_live_slots(); }
             ExitCode::SUCCESS
         }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
     }
+}
+
+fn run_cart(vm: &mut VirtualMachine, module: &polka::Module) -> Result<(), String> {
+    vm.run_to_yield(module)?;
+    loop {
+        let still_running = vm.resume(module, myriad::Value::from_int(0))?;
+        if !still_running { break; }
+    }
+    Ok(())
+}
+
+fn is_cart_main(ast: &[abrase::ast::Decl]) -> bool {
+    use abrase::ast::Decl;
+    ast.iter().any(|d| {
+        if let Decl::Fn(fd) = d {
+            fd.name == "main" && fd.attrs.iter().any(|a| a.name == "cart")
+        } else { false }
+    })
 }
 
 fn main_returns_unit(ast: &[abrase::ast::Decl]) -> bool {

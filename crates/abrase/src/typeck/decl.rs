@@ -35,13 +35,26 @@ impl Checker {
                     .map(|t| Box::new(self.convert_type(t)))
                     .unwrap_or_else(|| Box::new(Type::Unit));
 
-                // main() must be pure (no effects)
-                if fn_decl.name == "main" && !effects.is_empty() {
+                // main() must be pure unless annotated @cart (which permits the frame effect).
+                // @cart on any other function is an error.
+                let is_cart = fn_decl.attrs.iter().any(|a| a.name == "cart");
+                if is_cart && fn_decl.name != "main" {
                     self.report_error(
-                        format!("`main` function must be pure (no effects); found: {}",
-                            fn_decl.effects.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
-                        ast::Span { line: 0, col: 0 }
+                        "`@cart` can only be applied to `main`".into(),
+                        ast::Span { line: 0, col: 0 },
                     );
+                }
+                if fn_decl.name == "main" {
+                    let bad: Vec<_> = fn_decl.effects.iter()
+                        .filter(|e| !is_cart || e.name != ["frame"])
+                        .collect();
+                    if !bad.is_empty() {
+                        self.report_error(
+                            format!("`main` function must be pure (no effects); found: {}",
+                                bad.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
+                            ast::Span { line: 0, col: 0 }
+                        );
+                    }
                 }
 
                 let fn_type = Type::Function { params, effects, ret };
@@ -370,7 +383,10 @@ impl Checker {
         self.lint_unused_variables(fn_decl);
         self.lint_unused_mut(fn_decl);
         lint_unreachable_patterns(&fn_decl.body, self);
-        lint_infinite_loops(&fn_decl.body, self);
+        let is_cart = fn_decl.attrs.iter().any(|a| a.name == "cart");
+        if !is_cart {
+            lint_infinite_loops(&fn_decl.body, self);
+        }
     }
 
     fn lint_unused_variables(&mut self, fn_decl: &ast::FnDecl) {

@@ -1,6 +1,15 @@
+use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
+
+fn compiles(src: &str) -> bool {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return false; }
+    let mut c = Compiler::new().with_source(src.into());
+    c.compile_module(&ast).is_ok()
+}
 
 fn errors(src: &str) -> Vec<String> {
     let mut parser = Parser::new(Lexer::new(src)).with_source(src.into());
@@ -45,6 +54,56 @@ fn static_initializer_type_mismatch_errors() {
          fn main() -> Unit { () }\n",
     );
     assert!(!e.is_empty(), "expected a type-mismatch error for `Int = true`");
+}
+
+#[test]
+fn cart_main_compiles_with_frame_loop() {
+    let src = r#"
+@cart fn main() -> <frame> Unit {
+  let mut x = 0;
+  loop { x = x + 1; let _ = frame.present() }
+}
+"#;
+    assert!(compiles(src), "@cart main with frame loop must compile");
+}
+
+#[test]
+fn cart_main_persistent_state_compiles() {
+    let src = r#"
+@cart fn main() -> <frame> Unit {
+  let mut count = 0;
+  loop {
+    count = count + 1;
+    let _ = frame.present()
+  }
+}
+"#;
+    assert!(compiles(src), "@cart main with mutable state across yields must compile");
+}
+
+#[test]
+fn cart_main_allows_frame_effect() {
+    let e = errors(
+        "@cart fn main() -> <frame> Unit { () }\n",
+    );
+    assert!(e.is_empty(), "@cart main with frame effect must not error: {:?}", e);
+}
+
+#[test]
+fn non_cart_main_rejects_frame_effect() {
+    let e = errors(
+        "fn main() -> <frame> Unit { () }\n",
+    );
+    assert!(!e.is_empty(), "non-@cart main with frame effect must error");
+}
+
+#[test]
+fn cart_main_rejects_non_frame_effect() {
+    let e = errors(
+        "effect E { op tick() -> Unit }\n\
+         @cart fn main() -> <E> Unit { () }\n",
+    );
+    assert!(!e.is_empty(), "@cart main with non-frame effect must still error");
 }
 
 #[test]

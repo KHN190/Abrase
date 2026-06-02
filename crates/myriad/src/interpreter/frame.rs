@@ -30,6 +30,11 @@ impl VirtualMachine {
 
         let chunk = unsafe { module.functions.get_unchecked(fn_id) };
         if let Chunk::Native(n) = chunk {
+            if n.name == "__frame_present" {
+                self.yielded = true;
+                self.yield_dest_abs = dest_abs;
+                return Ok(());
+            }
             let param_count = n.param_count;
             const MAX_NATIVE_ARGS: usize = 8;
             if param_count > MAX_NATIVE_ARGS {

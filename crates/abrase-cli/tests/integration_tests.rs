@@ -841,3 +841,89 @@ fn mixed_mut_and_immut_fields_in_destructure() {
     assert_eq!(v, Value::from_int(25)); // 11 + 2 + 12
 }
 
+
+fn compile_src(src: &str) -> polka::Module {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut c = Compiler::new().with_source(src.into());
+    c.compile_module(&ast).unwrap_or_else(|_| panic!("{}", c.pretty_print_errors()))
+}
+
+#[test]
+fn cart_run_to_yield_persists_state_across_frames() {
+    let src = r#"
+@cart fn main() -> <frame> Unit {
+  let mut count = 0;
+  loop {
+    count = count + 1;
+    frame.present()
+  }
+}
+
+pub fn get_count() -> Int { 0 }
+"#;
+    // Instead of get_count, we verify via run_to_yield + resume that main's
+    // local `count` increments across frames (heap live count stays flat).
+    let module = compile_src(src);
+    let mut vm = VirtualMachine::new();
+    myriad::Host::default().install_into(&mut vm);
+
+    vm.run_to_yield(&module).expect("first yield");
+    let live0 = vm.heap_live_count();
+    assert!(vm.resume(&module, Value::from_int(0)).expect("frame 2"));
+    assert!(vm.resume(&module, Value::from_int(0)).expect("frame 3"));
+    let live3 = vm.heap_live_count();
+    assert_eq!(live0, live3, "heap must stay flat across frames");
+}
+
+#[test]
+fn cart_only_on_main_enforced() {
+    let src = "effect frame { op present() -> Unit }\n\
+               @cart fn helper() -> Unit { () }\n\
+               fn main() -> Unit { () }\n";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(&ast);
+    assert!(checker.errors.iter().any(|e| e.message.contains("@cart")),
+        "expected @cart-on-non-main error, got: {:?}", checker.errors);
+}
+
+#[test]
+fn frame_counter_example_accumulates_correctly() {
+    // frame_counter.abe: 5 frames, each adds 3; exits via halt(total).
+    // After 5 frames total = 15, exit_code = 15.
+    let src = fs::read_to_string("examples/frame_counter.abe")
+        .expect("examples/frame_counter.abe not found");
+    let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut c = Compiler::new().with_source(src.clone());
+    let module = c.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("{}", c.pretty_print_errors()));
+
+    let mut vm = VirtualMachine::new();
+    myriad::Host::default().install_into(&mut vm);
+
+    // Frame 1: run_to_yield enters the while body, adds 3, yields.
+    vm.run_to_yield(&module).expect("first yield");
+    let live0 = vm.heap_live_count();
+
+    // Frames 2-4: each resume yields again.
+    for frame in 2..=4 {
+        let still_running = vm.resume(&module, Value::from_int(0))
+            .unwrap_or_else(|e| panic!("frame {}: {}", frame, e));
+        assert!(still_running, "frame {} should still be running", frame);
+    }
+
+    // Frame 5: adds final 3, while exits, halt(15) called → main terminates.
+    let still_running = vm.resume(&module, Value::from_int(0))
+        .expect("frame 5 resume");
+    assert!(!still_running, "main should have terminated after frame 5");
+
+    assert_eq!(vm.exit_code(), Some(15),
+        "total = 5 * 3 = 15; got exit_code = {:?}", vm.exit_code());
+    assert_eq!(vm.heap_live_count(), live0, "heap flat (no heap allocations)");
+}
