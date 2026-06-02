@@ -923,6 +923,13 @@ fn collect_idents_expr(expr: &ast::Spanned<ast::Expr>, out: &mut std::collection
             if let Some(e) = end { collect_idents_expr(e, out); }
         }
         ArrayRepeat { elem, count } => { collect_idents_expr(elem, out); collect_idents_expr(count, out); }
+        Literal(ast::Literal::StringInterp(parts)) => {
+            for part in parts {
+                if let ast::StringPart::Interp(segments) = part {
+                    if let Some(name) = segments.first() { out.insert(name.clone()); }
+                }
+            }
+        }
         _ => {}
     }
 }

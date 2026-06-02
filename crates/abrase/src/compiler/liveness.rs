@@ -126,6 +126,14 @@ fn count_expr(expr: &Expr, counts: &mut HashMap<String, usize>, in_loop: bool) {
         }
         Expr::Resume(Some(e)) => count_expr(&e.node, counts, in_loop),
 
+        Expr::Literal(crate::ast::Literal::StringInterp(parts)) => {
+            for part in parts {
+                if let crate::ast::StringPart::Interp(segments) = part {
+                    if let Some(name) = segments.first() { add(counts, name, in_loop); }
+                }
+            }
+        }
+
         _ => {}
     }
 }

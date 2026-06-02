@@ -536,6 +536,17 @@ pub fn collect_assigned_idents(
                 if let Expr::Identifier(n) = &left.node {
                     if candidates.contains(n) { out.insert(n.clone()); }
                 }
+                let mut base = left.as_ref();
+                loop {
+                    match &base.node {
+                        Expr::FieldAccess { base: inner, .. } | Expr::Index { base: inner, .. } => base = inner,
+                        Expr::Identifier(n) => {
+                            if candidates.contains(n) { out.insert(n.clone()); }
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
             }
             collect_assigned_idents(left, candidates, out);
             collect_assigned_idents(right, candidates, out);
