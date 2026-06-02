@@ -19,8 +19,6 @@ impl Compiler {
         // Console
         self.register_typed_native("print",    vec![s.clone()],            u.clone(), 1);
         self.register_typed_native("println",  vec![s.clone()],            u.clone(), 1);
-        // Frame boundary (cart yield point — intercepted by VM, never dispatched to a Rust fn)
-        self.register_typed_native("__frame_present", vec![],              u.clone(), 0);
         // Float-only math
         self.register_typed_native("ceil",     vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("flr",      vec![f.clone()],            f.clone(), 1);
@@ -56,6 +54,10 @@ impl Compiler {
         // System
         self.register_typed_native("halt",  vec![i.clone()], u.clone(), 1);
         self.register_typed_native("abort", vec![s.clone()], u.clone(), 1);
+    }
+
+    pub(super) fn register_frame_present_native(&mut self) {
+        self.register_typed_native("__frame_present", vec![], crate::ty::Type::Unit, 0);
     }
 
     fn register_native_chunk(&mut self, name: &str, param_count: usize) -> usize {

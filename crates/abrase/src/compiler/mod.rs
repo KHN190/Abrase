@@ -349,7 +349,12 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
-        if !self.no_built_in { self.register_builtins(); }
+        if !self.no_built_in {
+            self.register_builtins();
+            if ast.iter().any(|d| matches!(d, ast::Decl::Fn(f) if f.name == "main" && f.attrs.iter().any(|a| a.name == "cart"))) {
+                self.register_frame_present_native();
+            }
+        }
         self.run_typeck(ast)?;
         let decls_with_impls = self.run_impl_lift(ast)?;
         let owned = self.run_mono(decls_with_impls)?;
