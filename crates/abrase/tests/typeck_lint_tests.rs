@@ -132,7 +132,139 @@ fn pub_type_no_dead_warn() {
 }
 
 #[test]
+fn unused_mut_warns() {
+    let src = "fn main() -> Int { let mut x = 5; x }";
+    assert!(has_warning(src, "unused_mut"), "never-reassigned mut must warn");
+}
+
+#[test]
+fn assigned_mut_no_warn() {
+    let src = "fn main() -> Int { let mut x = 0; x = x + 1; x }";
+    let ws = warnings_for(src);
+    assert!(!ws.iter().any(|w| w.starts_with("unused_mut")), "reassigned mut must not warn: {:?}", ws);
+}
+
+#[test]
+fn underscore_mut_no_warn() {
+    let src = "fn main() -> Int { let mut _x = 5; 0 }";
+    let ws = warnings_for(src);
+    assert!(!ws.iter().any(|w| w.starts_with("unused_mut")), "`_x` must not warn");
+}
+
+#[test]
+fn unreachable_pattern_after_wildcard_warns() {
+    let src = "fn main() -> Int { match 1 { _ => 0, 2 => 99 } }";
+    assert!(has_warning(src, "unreachable_pattern"), "arm after `_` must warn");
+}
+
+#[test]
+fn unreachable_pattern_after_bind_warns() {
+    let src = "fn main() -> Int { match 1 { x => x, 2 => 99 } }";
+    assert!(has_warning(src, "unreachable_pattern"), "arm after bind catch-all must warn");
+}
+
+#[test]
+fn last_wildcard_no_warn() {
+    let src = "fn main() -> Int { match 1 { 1 => 10, 2 => 20, _ => 0 } }";
+    assert!(!has_warning(src, "unreachable_pattern"), "wildcard at end must not warn");
+}
+
+#[test]
+fn guarded_wildcard_no_warn() {
+    let src = "fn main() -> Int { let x = 1; match x { _ if x > 5 => 1, _ => 0 } }";
+    let ws = warnings_for(src);
+    assert!(!ws.iter().any(|w| w.starts_with("unreachable_pattern")),
+        "guarded wildcard must not mark next arm unreachable: {:?}", ws);
+}
+
+#[test]
+fn infinite_loop_no_break_warns() {
+    let src = "fn main() -> Int { loop { 0 }; 0 }";
+    assert!(has_warning(src, "infinite_loop"), "`loop` without break must warn");
+}
+
+#[test]
+fn loop_with_break_no_warn() {
+    let src = "fn main() -> Int { loop { break 1 } }";
+    assert!(!has_warning(src, "infinite_loop"), "`loop` with break must not warn");
+}
+
+#[test]
+fn while_loop_no_infinite_warn() {
+    let src = "fn main() -> Int { while false { 0 }; 0 }";
+    assert!(!has_warning(src, "infinite_loop"), "`while` must not trigger infinite_loop");
+}
+
+#[test]
+fn nested_break_belongs_to_inner() {
+    let src = "fn main() -> Int { loop { loop { break }; 0 }; 0 }";
+    let ws = warnings_for(src);
+    assert!(ws.iter().any(|w| w.starts_with("infinite_loop")),
+        "outer loop without break must warn even if inner loop has break");
+}
+
+#[test]
+fn unhandled_effect_warns() {
+    let src = "effect E { op tick() -> Int } fn main() -> Int { 0 }";
+    assert!(has_warning(src, "dead_code"), "unhandled effect must warn");
+}
+
+#[test]
+fn handled_effect_no_warn() {
+    let src = r#"
+effect E { op tick() -> Int }
+fn body() -> <E> Int { E.tick() }
+fn main() -> Int {
+  handle body() { return v => v, E.tick => resume(1) }
+}
+"#;
+    let ws = warnings_for(src);
+    assert!(!ws.iter().any(|w| w.starts_with("dead_code") && w.contains("`E`")),
+        "handled effect must not warn: {:?}", ws);
+}
+
+#[test]
+fn pub_effect_no_warn() {
+    let src = "pub effect E { op tick() -> Int } fn main() -> Int { 0 }";
+    let ws = warnings_for(src);
+    assert!(!ws.iter().any(|w| w.contains("`E`")), "pub effect must not warn");
+}
+
+// ── unused_import ─────────────────────────────────────────────────────────────
+// We test at the AST level: `use module::{ item }` where the item is
+// never referenced in any expression. The typeck lint fires without needing
+// a real file on disk because module resolution happens in the loader, not
+// the checker.
+
+#[test]
+fn unused_import_warns() {
+    // `helper` is imported but never mentioned in the body
+    let src = "use lib::{ helper } fn main() -> Int { 0 }";
+    assert!(has_warning(src, "unused_import"),
+        "imported name never referenced must warn");
+}
+
+#[test]
 fn used_import_no_warn() {
-    let src = "fn main() -> Int { 0 }";
-    assert!(no_warnings(src));
+    // `helper` appears as an identifier in main's body
+    let src = "use lib::{ helper } fn main() -> Int { helper() }";
+    let ws = warnings_for(src);
+    assert!(!ws.iter().any(|w| w.starts_with("unused_import")),
+        "referenced import must not warn: {:?}", ws);
+}
+
+#[test]
+fn unused_import_alias_warns() {
+    let src = "use lib::{ helper as h } fn main() -> Int { 0 }";
+    let ws = warnings_for(src);
+    assert!(ws.iter().any(|w| w.starts_with("unused_import") && w.contains("`h`")),
+        "unused aliased import must warn by alias name: {:?}", ws);
+}
+
+#[test]
+fn used_import_alias_no_warn() {
+    let src = "use lib::{ helper as h } fn main() -> Int { h() }";
+    let ws = warnings_for(src);
+    assert!(!ws.iter().any(|w| w.starts_with("unused_import")),
+        "used alias must not warn: {:?}", ws);
 }
