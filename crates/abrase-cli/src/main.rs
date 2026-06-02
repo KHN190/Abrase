@@ -121,9 +121,24 @@ fn main() -> ExitCode {
     }
 }
 
+fn print_warnings(program: &loader::LoadedProgram, warnings: &[abrase::lint::Lint]) {
+    for w in warnings {
+        let src = program.module_sources.get(&w.module)
+            .map(|(_, s)| s.as_str())
+            .unwrap_or(&program.entry_source);
+        eprint!("{}", w.pretty_print(src));
+    }
+}
+
 fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen_debug: bool, int32: bool, no_built_in: bool, leak: bool) -> ExitCode {
     let ast = &program.decls;
     let source = &program.entry_source;
+
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(ast);
+    if !checker.warnings.is_empty() {
+        print_warnings(program, &checker.warnings);
+    }
 
     let mut compiler = Compiler::new()
         .with_source(source.clone())
@@ -193,6 +208,9 @@ fn cmd_check(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) ->
     let source = &program.entry_source;
     let mut checker = Checker::new();
     checker.check_program(ast);
+    if !checker.warnings.is_empty() {
+        print_warnings(program, &checker.warnings);
+    }
     if !checker.errors.is_empty() {
         let errs: Vec<Error> = checker.errors.iter()
             .map(|te| Error::new(ErrorCode::TypeError, te.span, te.message.clone())

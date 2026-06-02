@@ -151,6 +151,8 @@ pub struct Checker {
 
     // Authoritative per-expression types, keyed by (module, span, expr-kind). Populated by infer_expr.
     pub expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), Type>,
+
+    pub warnings: Vec<crate::lint::Lint>,
 }
 
 
@@ -230,7 +232,13 @@ impl Checker {
             import_collisions: std::collections::HashSet::new(),
             module_registry: HashMap::new(),
             expr_types: HashMap::new(),
+            warnings: Vec::new(),
         }
+    }
+
+    pub fn report_warning(&mut self, code: &'static str, message: impl Into<String>, span: ast::Span) {
+        let module = self.current_module.clone();
+        self.warnings.push(crate::lint::Lint::new(code, span, message).with_module(module));
     }
     pub fn enter_scope(&mut self) {
         self.scopes.push(Scope { vars: HashMap::new() });
