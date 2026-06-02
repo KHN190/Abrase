@@ -1767,3 +1767,125 @@ fn fuzz_if_call_arms_correct() {
         panic!("fuzz_if_call_arms_correct: {} failure(s)", fails.len());
     }
 }
+
+// These generators produce programs where intermediate values are provably dead.
+// After DCE the observable result (return value + heap_live=0) must be unchanged.
+
+fn gen_dead_let(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 50);
+    let b = rng.range(1, 50);
+    let dead = rng.range(1, 99);
+    (format!(
+        "fn main() -> Int {{\n\
+           let _ = {dead} * {dead};\n\
+           {a} + {b}\n\
+         }}"
+    ), a + b)
+}
+
+fn gen_dead_record(rng: &mut Rng) -> (String, i64) {
+    let x = rng.range(1, 30);
+    let y = rng.range(1, 30);
+    let result = rng.range(1, 99);
+    (format!(
+        "type P = {{ x: Int, y: Int }}\n\
+         fn main() -> Int {{\n\
+           let _ = P {{ x: {x}, y: {y} }};\n\
+           {result}\n\
+         }}"
+    ), result)
+}
+
+fn gen_dead_branch_val(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 30);
+    let b = rng.range(1, 30);
+    let result = rng.range(1, 99);
+    let cond = rng.next() % 2 == 0;
+    (format!(
+        "type Q = {{ v: Int }}\n\
+         fn main() -> Int {{\n\
+           let _ = if {} {{ Q {{ v: {a} }} }} else {{ Q {{ v: {b} }} }};\n\
+           {result}\n\
+         }}",
+        if cond { "true" } else { "false" }
+    ), result)
+}
+
+#[test]
+fn fuzz_dce_dead_let_correct() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 113 + 5);
+        let (src, expected) = gen_dead_let(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_dce_dead_let_correct: {} failure(s)", fails.len());
+    }
+}
+
+#[test]
+fn fuzz_dce_dead_record_noleak() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 127 + 11);
+        let (src, expected) = gen_dead_record(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_dce_dead_record_noleak: {} failure(s)", fails.len());
+    }
+}
+
+#[test]
+fn fuzz_dce_dead_branch_val_noleak() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 167 + 19);
+        let (src, expected) = gen_dead_branch_val(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_dce_dead_branch_val_noleak: {} failure(s)", fails.len());
+    }
+}
+
+#[test]
+fn dead_alloc_oracle_runs_clean() {
+    let src = r#"
+type P = { x: Int, y: Int }
+fn main() -> Int {
+  let _ = if true { P { x: 1, y: 2 } } else { P { x: 3, y: 4 } };
+  42
+}
+"#;
+    run_src_noleak(src, 42).expect("dead alloc from if-arm must not leak");
+}
+
+#[test]
+fn dead_nested_record_noleak() {
+    let src = r#"
+type Inner = { v: Int }
+type Outer = { a: Inner, b: Inner }
+fn main() -> Int {
+  let _ = Outer { a: Inner { v: 1 }, b: Inner { v: 2 } };
+  99
+}
+"#;
+    run_src_noleak(src, 99).expect("dead nested record must not leak");
+}
