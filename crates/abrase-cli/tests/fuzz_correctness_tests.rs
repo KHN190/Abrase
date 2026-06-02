@@ -1341,6 +1341,57 @@ fn fuzz_region_escape_oracle_runs_clean() {
     }
 }
 
+fn gen_mut_ref_field_write(rng: &mut Rng) -> (String, i64) {
+    let v = rng.range(1, 40);
+    let d = rng.range(1, 40);
+    let u = rng.range(1, 40);
+    match rng.next() % 4 {
+        // callee writes a field through &mut and returns it
+        0 => (format!(r#"
+type W = {{ x: Int }}
+fn bump(w: &mut W) -> Int {{ w.x = w.x + {d}; w.x }}
+fn main() -> Int {{ let mut wd = W {{ x: {v} }}; bump(&mut wd) }}
+"#), v + d),
+        // mutation through &mut is visible to the caller's binding
+        1 => (format!(r#"
+type W = {{ x: Int }}
+fn step(w: &mut W) {{ w.x = w.x + {d} }}
+fn main() -> Int {{ let mut wd = W {{ x: {v} }}; step(&mut wd); wd.x }}
+"#), v + d),
+        // two fields written through one &mut binding
+        2 => (format!(r#"
+type W = {{ x: Int, y: Int }}
+fn step(w: &mut W) {{ w.x = w.x + {d}; w.y = w.y + {u} }}
+fn main() -> Int {{ let mut wd = W {{ x: {v}, y: {u} }}; step(&mut wd); wd.x + wd.y }}
+"#), (v + d) + (u + u)),
+        // nested-field write through &mut
+        _ => (format!(r#"
+type Inner = {{ v: Int }}
+type W = {{ inner: Inner }}
+fn step(w: &mut W) {{ w.inner.v = w.inner.v + {d} }}
+fn main() -> Int {{ let mut wd = W {{ inner: Inner {{ v: {v} }} }}; step(&mut wd); wd.inner.v }}
+"#), v + d),
+    }
+}
+
+#[test]
+fn fuzz_mut_ref_field_write_correct() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 149 + 11);
+        let (src, expected) = gen_mut_ref_field_write(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_mut_ref_field_write_correct: {} failure(s)", fails.len());
+    }
+}
+
 #[test]
 fn nested_same_effect_handler_inner_wins_runs_clean() {
     let src = r#"

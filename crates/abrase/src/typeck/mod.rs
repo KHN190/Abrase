@@ -139,6 +139,7 @@ pub struct Checker {
 
     // Const Effect Checking
     function_effects: HashMap<String, Vec<ast::EffectItem>>,
+    native_effects: Vec<crate::ty::Effect>,
     const_vars: std::collections::HashSet<String>,
     pub(crate) static_vars: std::collections::HashSet<String>,
     op_effects: HashMap<String, Vec<ast::EffectItem>>,
@@ -223,6 +224,7 @@ impl Checker {
             },
             named_subtype_registry: HashMap::new(),
             function_effects: HashMap::new(),
+            native_effects: Vec::new(),
             const_vars: std::collections::HashSet::new(),
             static_vars: std::collections::HashSet::new(),
             op_effects: HashMap::new(),

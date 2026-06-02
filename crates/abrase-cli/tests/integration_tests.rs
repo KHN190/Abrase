@@ -878,6 +878,45 @@ pub fn get_count() -> Int { 0 }
 }
 
 #[test]
+fn cart_main_admits_runtime_provided_effects() {
+    // @cart main may declare any runtime-provided capability beyond <frame>;
+    // the host discharges them at the frame boundary.
+    let src = r#"
+@cart fn main() -> <frame, nondet, IO> Unit {
+  loop { frame.present() }
+}
+"#;
+    compile_src(src);
+}
+
+#[test]
+fn cart_main_admits_host_registered_graphics_capability() {
+    // The compute core does not provide Graphics; a graphics-capable host adds it
+    // by registering a draw native whose effect is <Graphics>. Then @cart main may
+    // declare and leak Graphics. Proves capabilities are derived dynamically from
+    // registered natives, not a hardcoded whitelist.
+    use abrase::ast::EffectItem;
+    use abrase::ty::Type as TyType;
+    let src = r#"
+@cart fn main() -> <frame, Graphics> Unit {
+  loop { draw(0); frame.present() }
+}
+"#;
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut c = Compiler::new().with_source(src.into());
+    c.register_host_fn(
+        "draw",
+        vec![TyType::Int],
+        TyType::Unit,
+        vec![EffectItem { name: vec!["Graphics".into()], arg: None }],
+    ).expect("register draw native");
+    c.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("{}", c.pretty_print_errors()));
+}
+
+#[test]
 fn cart_only_on_main_enforced() {
     let src = "effect frame { op present() -> Unit }\n\
                @cart fn helper() -> Unit { () }\n\

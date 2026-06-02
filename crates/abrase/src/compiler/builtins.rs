@@ -201,10 +201,13 @@ impl Compiler {
         for name in &["rand", "srand"] {
             checker.register_function_effects(name.to_string(), nondet.clone());
         }
-        // Graphics: a built-in user effect for screen/draw natives, kept
-        // separate from <IO> so a cart can declare "draws but no file/net".
+        // Graphics is declared so carts can name it, but the compute core does
+        // NOT provide it as a capability — only a graphics-capable host adds it,
+        // by registering a draw native whose effect is `<Graphics>`.
         checker.register_effect("Graphics".into(), vec![]);
+        // `frame` is the @cart yield mechanism the core itself drives.
         checker.register_effect("frame".into(), vec!["present".into()]);
+        checker.register_native_capability(crate::ty::Effect::UserEffect("frame".into()));
         checker.register_effect_op(
             "frame::present".into(),
             crate::ty::Type::Function {

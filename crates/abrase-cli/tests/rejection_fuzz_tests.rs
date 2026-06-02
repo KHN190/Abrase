@@ -116,6 +116,22 @@ fn gen_ref_escape_nested_region_effect(r: &mut Rng) -> String {
     )
 }
 
+fn gen_cart_non_native_effect(r: &mut Rng) -> String {
+    let v = r.range(0, 9);
+    format!(
+        "effect E {{ op tick() -> Int }}\n\
+         @cart\n\
+         fn main() -> <E> Unit {{ let _ = E.tick(); let _ = {v}; () }}"
+    )
+}
+
+fn gen_cart_graphics_without_host(r: &mut Rng) -> String {
+    // The compute core declares the `Graphics` effect but provides no native
+    // that discharges it, so a @cart main may not declare it here.
+    let _ = r.range(0, 9);
+    "@cart\nfn main() -> <frame, Graphics> Unit { loop { frame.present() } }".to_string()
+}
+
 fn gen_missing_effect_arm_in_handler(r: &mut Rng) -> String {
     let v = r.range(0, 9);
     format!(
@@ -140,6 +156,8 @@ const ILLEGAL_GENS: &[(&str, fn(&mut Rng) -> String)] = &[
     ("ref_payload_effect",       gen_ref_payload_effect),
     ("record_double_move",       gen_record_double_move),
     ("missing_effect_arm",       gen_missing_effect_arm_in_handler),
+    ("cart_non_native_effect",   gen_cart_non_native_effect),
+    ("cart_graphics_no_host",    gen_cart_graphics_without_host),
     ("field_double_move",        gen_field_double_move),
     ("ref_escape_nested_effect", gen_ref_escape_nested_region_effect),
     ("bad_syntax",               gen_bad_syntax),

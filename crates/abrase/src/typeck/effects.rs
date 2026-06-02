@@ -205,7 +205,22 @@ impl Checker {
     // Const Effect Checking
 
     pub fn register_function_effects(&mut self, fn_name: String, effects: Vec<ast::EffectItem>) {
+        for item in &effects {
+            if let Some(eff) = self.convert_effect(item) {
+                self.register_native_capability(eff);
+            }
+        }
         self.function_effects.insert(fn_name, effects);
+    }
+
+    pub fn register_native_capability(&mut self, effect: crate::ty::Effect) {
+        if !self.native_effects.iter().any(|e| self.effects_equal(e, &effect)) {
+            self.native_effects.push(effect);
+        }
+    }
+
+    pub fn is_native_capability(&self, effect: &crate::ty::Effect) -> bool {
+        self.native_effects.iter().any(|e| self.effects_equal(e, effect))
     }
 
     pub fn register_effect_for_op(&mut self, op_name: &str, effects: Vec<ast::EffectItem>) {

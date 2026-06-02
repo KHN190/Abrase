@@ -35,8 +35,6 @@ impl Checker {
                     .map(|t| Box::new(self.convert_type(t)))
                     .unwrap_or_else(|| Box::new(Type::Unit));
 
-                // main() must be pure unless annotated @cart (which permits the frame effect).
-                // @cart on any other function is an error.
                 let is_cart = fn_decl.attrs.iter().any(|a| a.name == "cart");
                 if is_cart && fn_decl.name != "main" {
                     self.report_error(
@@ -45,13 +43,24 @@ impl Checker {
                     );
                 }
                 if fn_decl.name == "main" {
-                    let bad: Vec<_> = fn_decl.effects.iter()
-                        .filter(|e| !is_cart || e.name != ["frame"])
-                        .collect();
-                    if !bad.is_empty() {
+                    if is_cart {
+                        let bad: Vec<_> = fn_decl.effects.iter()
+                            .filter(|e| e.name != ["frame"]
+                                && !self.convert_effect(e)
+                                    .map_or(false, |eff| self.is_native_capability(&eff)))
+                            .collect();
+                        if !bad.is_empty() {
+                            self.report_error(
+                                format!("`@cart main` may only use runtime-provided effects; \
+                                         the runtime has no native to discharge: {}",
+                                    bad.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
+                                ast::Span { line: 0, col: 0 }
+                            );
+                        }
+                    } else if !fn_decl.effects.is_empty() {
                         self.report_error(
                             format!("`main` function must be pure (no effects); found: {}",
-                                bad.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
+                                fn_decl.effects.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
                             ast::Span { line: 0, col: 0 }
                         );
                     }
