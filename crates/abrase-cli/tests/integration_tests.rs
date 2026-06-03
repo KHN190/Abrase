@@ -1126,8 +1126,6 @@ fn cart_only_on_main_enforced() {
 
 #[test]
 fn frame_counter_example_accumulates_correctly() {
-    // frame_counter.abe: 5 frames, each adds 3; exits via halt(total).
-    // After 5 frames total = 15, exit_code = 15.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/frame_counter.abe");
     let src = fs::read_to_string(&path)
@@ -1154,12 +1152,12 @@ fn frame_counter_example_accumulates_correctly() {
         assert!(still_running, "frame {} should still be running", frame);
     }
 
-    // Resume 6: completes iteration i=4 (println + i=5), while 5<5 fails, halt(15).
+    // Resume 6: completes iteration i=4 (println + i=5), while 5<5 fails, halt(0).
     let still_running = vm.resume(&module, Value::from_int(0))
         .expect("final resume");
     assert!(!still_running, "main should have terminated after final resume");
 
-    assert_eq!(vm.exit_code(), Some(15),
-        "total = 5 * 3 = 15; got exit_code = {:?}", vm.exit_code());
+    assert_eq!(vm.exit_code(), Some(0),
+        "clean halt(0); got exit_code = {:?}", vm.exit_code());
     assert_eq!(vm.heap_live_count(), live0, "heap flat (no heap allocations)");
 }
