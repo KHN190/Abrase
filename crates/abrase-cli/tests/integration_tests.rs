@@ -130,6 +130,27 @@ fn main() -> Int {
 "#;
 
 #[test]
+fn div_mod_by_power_of_two_signed_semantics() {
+    let cases: &[(&str, i64)] = &[
+        ("(7) % 4", 3), ("(8) % 4", 0), ("(0) % 8", 0), ("(2048) % 2048", 0),
+        ("(-5) % 4", -1),      // not 3 (which &3 would give)
+        ("(-1) % 32", -1),     // not 31
+        ("(-33) % 32", -1),    // not 31
+        ("(-8) % 4", 0),
+        ("(7) / 2", 3), ("(2048) / 2048", 1), ("(100) / 32", 3),
+        ("(-5) / 2", -2),      // truncate toward zero, not -3 (>>1)
+        ("(-1) / 2", 0),       // not -1
+        ("(-2048) / 2048", -1),
+        ("(-4096) / 2048", -2),
+    ];
+    for (expr, want) in cases {
+        let src = format!("fn main() -> Int {{ {expr} }}");
+        let v = run_src(&src).unwrap_or_else(|e| panic!("{}: {}", expr, e));
+        assert_eq!(v, Value::from_int(*want), "{} should be {}", expr, want);
+    }
+}
+
+#[test]
 fn test_static_init_call() {
     let v = run_src(STATIC_INIT_CALL)
         .unwrap_or_else(|e| panic!("\n{}", e));
