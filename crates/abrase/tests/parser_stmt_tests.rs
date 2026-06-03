@@ -2,12 +2,6 @@ use abrase::ast::*;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 
-fn parse_errs(input: &str) -> Vec<String> {
-    let mut p = Parser::new(Lexer::new(input));
-    let _ = p.parse_program();
-    p.errors.into_iter().map(|e| e.message).collect()
-}
-
 #[test]
 fn test_pattern_basic() {
     let mut p = Parser::new(Lexer::new("x"));
