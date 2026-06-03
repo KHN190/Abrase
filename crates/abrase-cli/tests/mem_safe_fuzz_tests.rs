@@ -489,6 +489,46 @@ fn try_run_checked(src: &str, step_cap: u64, expected_live: usize, heap_check: b
     Outcome::Ok
 }
 
+// Compile+run with drop-elision forced on or off. Err collapses all failure
+// kinds (parse/compile/hang/runtime) — used only to compare on-vs-off agreement.
+fn run_elision(src: &str, step_cap: u64, elide: bool) -> Result<(i64, usize), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err("parse".into()); }
+    let mut c = Compiler::new().with_drop_elision(elide);
+    let module = c.compile_module(&ast).map_err(|_| "compile".to_string())?;
+    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
+    let v = vm.run_module(&module).map_err(|e| e)?;
+    Ok((v.as_int(), vm.heap_live_count()))
+}
+
+// Empirical proof that drop-elision is a sound transform: across random programs
+// (closures, effects, handlers, statics, records) it changes neither the result
+// value nor the live-cell count vs no-elision. This is how we "prove" the handle
+// tag reliable enough to elide — oracle + fuzz, not a static borrow proof.
+#[test]
+fn fuzz_drop_elision_equivalence() {
+    let mut diverged = 0u32;
+    let mut report = String::new();
+    for seed in 0..ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let off = run_elision(&src, STEP_CAP, false);
+        let on  = run_elision(&src, STEP_CAP, true);
+        match (&off, &on) {
+            (Ok((vo, lo)), Ok((ve, le))) if vo == ve && lo == le => {}
+            (Err(_), Err(_)) => {}
+            _ => {
+                diverged += 1;
+                if report.len() < 4000 {
+                    report.push_str(&format!("--- seed={} off={:?} on={:?} ---\n{}\n", seed, off, on, src));
+                }
+            }
+        }
+    }
+    assert_eq!(diverged, 0, "drop-elision diverged on {} program(s):\n{}", diverged, report);
+}
+
 const ITER: u64 = 2_000;
 const STEP_CAP: u64 = 1_000_000;
 const EXAMPLES_PER_BUCKET: usize = 3;
