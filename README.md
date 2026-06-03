@@ -58,15 +58,12 @@ fn main() -> Int {
 
 Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x faster.
 
-* _See `wiki/12-Optimizations.md`._
-* _Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine)_.
+Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine).
 
 ## Polka — bytecode design
 
-* 46 opcodes, 4 bytes each.
-* 64 registers per frame, 64-bit each.
-* Untagged `u64` values; type is implied by the opcode and a per-frame handle mask.
-* Effect / region machinery via reserved port encodings (`0xE0` / `0xE1`); user-visible I/O via four core devices (System, Console) and imports.
+* 46 opcodes, 4 bytes each. Data & opcode are aligned.
+* 128 registers per frame.
 
 See [`Wiki / Bytecode Spec`](./wiki/Appendix-Bytecode-Spec.md).
 

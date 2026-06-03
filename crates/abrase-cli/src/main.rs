@@ -169,6 +169,7 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
             ()
         })
     };
+    vm.print_profile();
     match result {
         Ok(()) => {
             if let Some(code) = vm.exit_code() {

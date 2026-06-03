@@ -95,11 +95,7 @@ impl VirtualMachine {
             self.write_abs_raw(i, v.raw());
             self.set_reg_mask_bit(i, false);
         }
-        if self.debug_sink.is_some() {
-            self.run_loop::<true>(module)
-        } else {
-            self.run_loop::<false>(module)
-        }
+        self.enter_run_loop(module)
     }
 
     pub fn reset(&mut self) {
@@ -139,11 +135,7 @@ impl VirtualMachine {
         let needed = FRAME_REGS + STAGE_SLACK;
         self.ensure_registers(needed);
 
-        if self.debug_sink.is_some() {
-            self.run_loop::<true>(module)
-        } else {
-            self.run_loop::<false>(module)
-        }
+        self.enter_run_loop(module)
     }
 
     // Run the synthetic `__module_init` (if the module has statics) exactly
@@ -161,15 +153,20 @@ impl VirtualMachine {
         self.exit_code = None;
         let needed = FRAME_REGS + STAGE_SLACK;
         self.ensure_registers(needed);
-        if self.debug_sink.is_some() {
-            self.run_loop::<true>(module)?;
-        } else {
-            self.run_loop::<false>(module)?;
-        }
+        self.enter_run_loop(module)?;
         Ok(())
     }
 
-    fn run_loop<const TRACE: bool>(&mut self, module: &Module) -> Result<Value, String> {
+    fn enter_run_loop(&mut self, module: &Module) -> Result<Value, String> {
+        match (self.debug_sink.is_some(), self.profile) {
+            (false, false) => self.run_loop::<false, false>(module),
+            (true,  false) => self.run_loop::<true,  false>(module),
+            (false, true)  => self.run_loop::<false, true>(module),
+            (true,  true)  => self.run_loop::<true,  true>(module),
+        }
+    }
+
+    fn run_loop<const TRACE: bool, const PROF: bool>(&mut self, module: &Module) -> Result<Value, String> {
         'outer: loop {
             if self.yielded {
                 return Ok(Value::from_int(0));
@@ -215,6 +212,10 @@ impl VirtualMachine {
                         func: self.current_func, pc: opcode_pc, op: opcode,
                     };
                     self.emit_debug(&event);
+                }
+                if PROF {
+                    *self.prof_ops.entry(Self::op_name(opcode)).or_insert(0) += 1;
+                    *self.prof_fns.entry(self.current_func).or_insert(0) += 1;
                 }
                 self.pc = opcode_pc + 1;
                 self.steps = self.steps.wrapping_add(1);
@@ -263,7 +264,7 @@ impl VirtualMachine {
         self.halted = false;
         let needed = polka::FRAME_REGS + STAGE_SLACK;
         self.ensure_registers(needed);
-        self.run_loop::<false>(module)?;
+        self.enter_run_loop(module)?;
         if !self.yielded {
             return Err("run_to_yield: main returned without calling __frame_present".into());
         }
@@ -277,7 +278,7 @@ impl VirtualMachine {
         self.yielded = false;
         self.write_abs_raw(self.yield_dest_abs, input.raw());
         self.set_reg_mask_bit(self.yield_dest_abs, false);
-        self.run_loop::<false>(module)?;
+        self.enter_run_loop(module)?;
         Ok(self.yielded)
     }
 

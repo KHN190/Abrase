@@ -65,6 +65,9 @@ pub struct VirtualMachine {
     pub(crate) static_names: Vec<String>,
     pub(crate) trace_static_filter: Option<String>,
     pub(crate) heap_check: bool,
+    pub(crate) profile: bool,
+    pub(crate) prof_ops: std::collections::HashMap<&'static str, u64>,
+    pub(crate) prof_fns: std::collections::HashMap<usize, u64>,
     pub(crate) yielded: bool,
     pub(crate) yield_dest_abs: usize,
 }
@@ -153,6 +156,9 @@ impl VirtualMachine {
             trace_static_filter: std::env::var("TRACE_STATIC").ok()
                 .filter(|s| !s.is_empty()),
             heap_check: std::env::var("ABRASE_HEAP_CHECK").is_ok(),
+            profile: std::env::var("PROFILE").is_ok(),
+            prof_ops: std::collections::HashMap::new(),
+            prof_fns: std::collections::HashMap::new(),
             yielded: false,
             yield_dest_abs: 0,
         }
@@ -203,6 +209,41 @@ impl VirtualMachine {
     pub(crate) fn emit_debug(&mut self, event: &DebugEvent) {
         if let Some(sink) = &mut self.debug_sink {
             sink(event, &self.fn_names);
+        }
+    }
+
+    // Dump the opcode + per-fn execution histogram to stderr (PROFILE=1). Op
+    // counts are pacing-independent: they reflect work per run, not wall time.
+    pub fn print_profile(&self) {
+        if !self.profile { return; }
+        let mut ops: Vec<_> = self.prof_ops.iter().collect();
+        ops.sort_by(|a, b| b.1.cmp(a.1));
+        let total: u64 = self.prof_ops.values().sum();
+        eprintln!("[profile] {} ops executed", total);
+        for (name, n) in ops {
+            eprintln!("  {:>12} {:>6.1}%  {}", n, *n as f64 * 100.0 / total.max(1) as f64, name);
+        }
+        let mut fns: Vec<_> = self.prof_fns.iter().collect();
+        fns.sort_by(|a, b| b.1.cmp(a.1));
+        eprintln!("[profile] steps per fn (top 15):");
+        for (fid, n) in fns.into_iter().take(15) {
+            eprintln!("  {:>12} {}", n, debug::render_fn_label(*fid, &self.fn_names));
+        }
+    }
+
+    pub(crate) fn op_name(op: &polka::OpCode) -> &'static str {
+        use polka::OpCode::*;
+        match op {
+            Add(..) => "Add", Sub(..) => "Sub", Mul(..) => "Mul", Div(..) => "Div", Mod(..) => "Mod",
+            Neg(..) => "Neg", FAdd(..) => "FAdd", FSub(..) => "FSub", FMul(..) => "FMul", FDiv(..) => "FDiv",
+            FNeg(..) => "FNeg", FLt(..) => "FLt", FEq(..) => "FEq",
+            Eq(..) => "Eq", Neq(..) => "Neq", Lt(..) => "Lt", Gt(..) => "Gt", Lte(..) => "Lte", Gte(..) => "Gte",
+            And(..) => "And", Or(..) => "Or", Xor(..) => "Xor", Shl(..) => "Shl", Shr(..) => "Shr",
+            Jmp(..) => "Jmp", Jz(..) => "Jz", Jnz(..) => "Jnz", Call(..) => "Call", CallReg(..) => "CallReg",
+            Ret(..) => "Ret", PushConst(..) => "PushConst", Copy(..) => "Copy", Move(..) => "Move",
+            Ld(..) => "Ld", St(..) => "St", LdIdx(..) => "LdIdx", StIdx(..) => "StIdx",
+            AddImm(..) => "AddImm", SubImm(..) => "SubImm", Alloc(..) => "Alloc", Drop(..) => "Drop",
+            Dei(..) => "Dei", Deo(..) => "Deo", Handle(..) => "Handle", Resume(..) => "Resume", Raise(..) => "Raise",
         }
     }
 
