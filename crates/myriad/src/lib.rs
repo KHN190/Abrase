@@ -68,6 +68,7 @@ pub struct VirtualMachine {
     pub(crate) profile: bool,
     pub(crate) prof_ops: std::collections::HashMap<&'static str, u64>,
     pub(crate) prof_fns: std::collections::HashMap<usize, u64>,
+    pub(crate) prof_fn_ops: std::collections::HashMap<usize, std::collections::HashMap<&'static str, u64>>,
     pub(crate) yielded: bool,
     pub(crate) yield_dest_abs: usize,
 }
@@ -159,6 +160,7 @@ impl VirtualMachine {
             profile: std::env::var("PROFILE").is_ok(),
             prof_ops: std::collections::HashMap::new(),
             prof_fns: std::collections::HashMap::new(),
+            prof_fn_ops: std::collections::HashMap::new(),
             yielded: false,
             yield_dest_abs: 0,
         }
@@ -225,9 +227,19 @@ impl VirtualMachine {
         }
         let mut fns: Vec<_> = self.prof_fns.iter().collect();
         fns.sort_by(|a, b| b.1.cmp(a.1));
-        eprintln!("[profile] steps per fn (top 15):");
+        eprintln!("[profile] per-fn opcode breakdown (top 15 fns):");
         for (fid, n) in fns.into_iter().take(15) {
-            eprintln!("  {:>12} {}", n, debug::render_fn_label(*fid, &self.fn_names));
+            eprintln!("  {:>12} {} ({:.1}%)", n,
+                debug::render_fn_label(*fid, &self.fn_names),
+                *n as f64 * 100.0 / total.max(1) as f64);
+            if let Some(ops) = self.prof_fn_ops.get(fid) {
+                let mut fo: Vec<_> = ops.iter().collect();
+                fo.sort_by(|a, b| b.1.cmp(a.1));
+                let line: Vec<String> = fo.into_iter().take(8)
+                    .map(|(name, c)| format!("{} {:.0}%", name, *c as f64 * 100.0 / (*n).max(1) as f64))
+                    .collect();
+                eprintln!("               {}", line.join("  "));
+            }
         }
     }
 

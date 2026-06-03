@@ -214,8 +214,10 @@ impl VirtualMachine {
                     self.emit_debug(&event);
                 }
                 if PROF {
-                    *self.prof_ops.entry(Self::op_name(opcode)).or_insert(0) += 1;
+                    let name = Self::op_name(opcode);
+                    *self.prof_ops.entry(name).or_insert(0) += 1;
                     *self.prof_fns.entry(self.current_func).or_insert(0) += 1;
+                    *self.prof_fn_ops.entry(self.current_func).or_default().entry(name).or_insert(0) += 1;
                 }
                 self.pc = opcode_pc + 1;
                 self.steps = self.steps.wrapping_add(1);
