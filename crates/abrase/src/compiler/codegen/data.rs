@@ -357,6 +357,9 @@ impl Compiler {
         let idx_reg = self.compile_expr(index)?;
         let dest = self.alloc_register()?;
         self.emit(OpCode::LdIdx(dest, base_reg, idx_reg));
+        if !matches!(base.node, ast::Expr::Identifier(_)) {
+            self.emit(OpCode::Drop(base_reg));
+        }
         Ok(dest)
     }
 

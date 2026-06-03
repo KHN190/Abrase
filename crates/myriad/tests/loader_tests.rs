@@ -73,6 +73,23 @@ fn load_ignores_native_chunk_reg_count() {
 }
 
 #[test]
+fn load_rejects_register_operand_over_frame_budget() {
+    // op references r200, past the FRAME_REGS (128) physical window.
+    let m = Module {
+        functions: vec![Chunk::Bytecode(BytecodeChunk {
+            code: vec![OpCode::Copy(Register(200), Register(0)), OpCode::Ret(Register(0))],
+            reg_count: polka::FRAME_REGS, param_count: 0,
+            ..BytecodeChunk::default()
+        })],
+        entry: 0,
+        flags: 0,
+        exports: vec![],
+    };
+    let err = match load(m) { Ok(_) => panic!("expected error"), Err(e) => e };
+    assert!(err.contains("r200") && err.contains("frame budget"), "got: {}", err);
+}
+
+#[test]
 fn run_rejects_unregistered_native() {
     use polka::NativeChunk;
     let m = Module {
