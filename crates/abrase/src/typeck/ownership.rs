@@ -13,7 +13,7 @@ pub enum BorrowKind {
 
 fn at_span(span: Option<Span>) -> String {
     match span {
-        Some(s) => format!("from line {}:{} is ", s.line, s.col),
+        Some(s) => format!(" (previous borrow at line {}:{})", s.line, s.col),
         None => String::new(),
     }
 }
@@ -27,7 +27,7 @@ impl Checker {
                     return Err(format!("Cannot borrow '{}': value already moved", var_name));
                 }
                 if meta.mut_borrow_active {
-                    return Err(format!("Cannot immutably borrow '{}': mutable borrow {}still active (it ends at its last use)", var_name, at_span(meta.active_borrow_span)));
+                    return Err(format!("Cannot immutably borrow '{}': mutable borrow already active{} (it ends at its last use)", var_name, at_span(meta.active_borrow_span)));
                 }
                 meta.immut_borrow_count += 1;
                 if meta.active_borrow_span.is_none() { meta.active_borrow_span = Some(borrow_span); }
@@ -46,10 +46,10 @@ impl Checker {
                     return Err(format!("Cannot borrow '{}': value already moved", var_name));
                 }
                 if meta.immut_borrow_count > 0 {
-                    return Err(format!("Cannot mutably borrow '{}': immutable borrow {}still active (it ends at its last use)", var_name, at_span(meta.active_borrow_span)));
+                    return Err(format!("Cannot mutably borrow '{}': immutable borrow already active{} (it ends at its last use)", var_name, at_span(meta.active_borrow_span)));
                 }
                 if meta.mut_borrow_active {
-                    return Err(format!("Cannot mutably borrow '{}': previous mutable borrow {}still active (it ends at its last use)", var_name, at_span(meta.active_borrow_span)));
+                    return Err(format!("Cannot mutably borrow '{}': mutable borrow already active{} (it ends at its last use)", var_name, at_span(meta.active_borrow_span)));
                 }
                 if !meta.is_mut {
                     return Err(format!("Cannot mutably borrow immutable variable '{}'", var_name));

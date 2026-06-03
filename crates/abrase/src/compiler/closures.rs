@@ -840,3 +840,43 @@ fn infer_type_from_expr(expr: &Spanned<Expr>) -> Option<Type> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s() -> Span { Span::new(0, 0) }
+    fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: s() } }
+    fn free(name: &str) -> Spanned<Expr> { sp(Expr::Identifier(name.into())) }
+    fn lit_int() -> Spanned<Expr> { sp(Expr::Literal(Literal::Int(0))) }
+    fn empty_block() -> Block { Block { stmts: vec![], ret: None } }
+
+    fn rw(expr: Spanned<Expr>, layout: &HashMap<String, usize>) -> Spanned<Expr> {
+        rewrite_captures_with_cells(&expr, layout, &HashSet::new(), None, "lifted", &HashSet::new())
+    }
+
+    fn has_env_load(expr: &Spanned<Expr>) -> bool {
+        format!("{expr:?}").contains("__env_load")
+    }
+
+    #[test]
+    fn rewrite_node_propagates_capture_into_compound_exprs() {
+        let layout: HashMap<String, usize> = [("x".to_string(), 0)].into();
+
+        let cases: Vec<(&str, Spanned<Expr>)> = vec![
+            ("tuple",       sp(Expr::Tuple(vec![free("x")]))),
+            ("arrayrepeat", sp(Expr::ArrayRepeat { elem: Box::new(free("x")), count: Box::new(lit_int()) })),
+            ("match scrut", sp(Expr::Match { scrutinee: Box::new(free("x")), arms: vec![] })),
+            ("for iter",    sp(Expr::For { pattern: sp(Pattern::Bind("i".into())), iter: Box::new(free("x")), body: empty_block() })),
+            ("loop body",   sp(Expr::Loop { body: Block { stmts: vec![], ret: Some(Box::new(free("x"))) } })),
+            ("region body", sp(Expr::Region { label: None, body: Block { stmts: vec![], ret: Some(Box::new(free("x"))) } })),
+            ("handle expr", sp(Expr::Handle { expr: Box::new(free("x")), arms: vec![] })),
+            ("break value", sp(Expr::Break(Some(Box::new(free("x")))))),
+            ("question",    sp(Expr::Question(Box::new(free("x"))))),
+        ];
+
+        for (label, expr) in cases {
+            assert!(has_env_load(&rw(expr, &layout)), "{label}: capture x must be rewritten to __env_load");
+        }
+    }
+}

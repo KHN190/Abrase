@@ -1,4 +1,4 @@
-use abrase::ty::Type;
+use abrase::ty::{Type, Ownership};
 use abrase::typeck::Checker;
 use abrase::ast::{Block, Expr, Pattern, Span, Spanned, self};
 
@@ -1080,4 +1080,81 @@ fn verify_self_param_does_not_error_in_impl_method() {
     );
     assert!(checker.errors.is_empty(),
         "impl method with &self must not produce errors; got {:?}", checker.errors);
+}
+
+#[test]
+fn check_decl_signature_move_ownership_attr_registers_move() {
+    let mut checker = Checker::new();
+    let decl = abrase::ast::Decl::Type {
+        attrs: vec![],
+        is_pub: false,
+        ownership: Some(abrase::ast::OwnershipAttr::Move),
+        name: "MoveType".into(),
+        generics: vec![],
+        body: abrase::ast::TypeBody::Variant(vec![abrase::ast::VariantCase::Unit("V".into())]),
+    };
+    checker.check_program(&[decl]);
+    assert!(checker.errors.is_empty(), "Move attr must not produce errors; got {:?}", checker.errors);
+    assert_eq!(checker.get_type_ownership("MoveType"), Some(Ownership::Move));
+}
+
+#[test]
+fn check_decl_signature_share_ownership_attr_reports_error() {
+    let mut checker = Checker::new();
+    let decl = abrase::ast::Decl::Type {
+        attrs: vec![],
+        is_pub: false,
+        ownership: Some(abrase::ast::OwnershipAttr::Share),
+        name: "ShareType".into(),
+        generics: vec![],
+        body: abrase::ast::TypeBody::Variant(vec![abrase::ast::VariantCase::Unit("V".into())]),
+    };
+    checker.check_program(&[decl]);
+    assert!(!checker.errors.is_empty(), "@share on a type decl must report an error");
+    assert!(checker.errors[0].message.contains("share"), "error must mention 'share'; got: {}", checker.errors[0].message);
+}
+
+#[test]
+fn subst_self_in_ast_type_via_impl_method_self_return() {
+    let mut checker = Checker::new();
+
+    let trait_decl = abrase::ast::Decl::Trait {
+        is_pub: false,
+        name: "Builder".into(),
+        generics: vec![],
+        where_clause: vec![],
+        items: vec![abrase::ast::TraitItem::Required(abrase::ast::FnSignature {
+            name: "build".into(),
+            generics: vec![],
+            params: vec![abrase::ast::Param::SelfVal],
+            effects: vec![],
+            return_type: Some(abrase::ast::Type::Named("Self".into())),
+            where_clause: vec![],
+        })],
+    };
+
+    let impl_decl = abrase::ast::Decl::Impl {
+        generics: vec![],
+        trait_name: Some(vec!["Builder".into()]),
+        for_type: abrase::ast::Type::Named("Widget".into()),
+        where_clause: vec![],
+        methods: vec![abrase::ast::FnDecl {
+            attrs: vec![],
+            is_pub: false,
+            name: "build".into(),
+            generics: vec![],
+            params: vec![abrase::ast::Param::SelfVal],
+            effects: vec![],
+            return_type: Some(abrase::ast::Type::Named("Widget".into())),
+            where_clause: vec![],
+            body: Block { stmts: vec![], ret: None },
+        }],
+    };
+
+    checker.check_program(&[trait_decl, impl_decl]);
+    let self_errors: Vec<_> = checker.errors.iter()
+        .filter(|e| e.message.contains("Self"))
+        .collect();
+    assert!(self_errors.is_empty(),
+        "subst_self_in_ast_type must replace Self with Widget; leftover Self errors: {self_errors:?}");
 }
