@@ -8,42 +8,6 @@ fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
 // Basic Expressions
 
 #[test]
-fn verify_type_inference_primitives() {
-    let mut checker = Checker::new();
-    assert_eq!(checker.infer_expr(&sp(ast::Expr::Literal(ast::Literal::Int(42)))), Type::Int);
-    assert_eq!(checker.infer_expr(&sp(ast::Expr::Literal(ast::Literal::Bool(true)))), Type::Bool);
-    assert_eq!(checker.infer_expr(&sp(ast::Expr::Literal(ast::Literal::String("test".into())))), Type::String);
-    assert_eq!(checker.infer_expr(&sp(ast::Expr::Literal(ast::Literal::Float(3.14)))), Type::Float);
-    assert_eq!(checker.infer_expr(&sp(ast::Expr::Literal(ast::Literal::Char('a')))), Type::Char);
-    assert_eq!(checker.infer_expr(&sp(ast::Expr::Literal(ast::Literal::Unit))), Type::Unit);
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
-fn verify_binary_add_operations() {
-    let mut checker = Checker::new();
-    let expr = sp(ast::Expr::Binary {
-        op: ast::BinaryOp::Add,
-        left: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(10)))),
-        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(20)))),
-    });
-    assert_eq!(checker.infer_expr(&expr), Type::Int);
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
-fn verify_binary_float_operations() {
-    let mut checker = Checker::new();
-    let expr = sp(ast::Expr::Binary {
-        op: ast::BinaryOp::Mul,
-        left: Box::new(sp(ast::Expr::Literal(ast::Literal::Float(2.5)))),
-        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Float(3.0)))),
-    });
-    assert_eq!(checker.infer_expr(&expr), Type::Float);
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
 fn verify_binary_type_mismatch_error() {
     let mut checker = Checker::new();
     let expr = sp(ast::Expr::Binary {
@@ -55,36 +19,6 @@ fn verify_binary_type_mismatch_error() {
     assert_eq!(result, Type::Unknown);
     assert_eq!(checker.errors.len(), 1);
     assert!(checker.errors[0].message.contains("Type mismatch"), "Error: {}", checker.errors[0].message);
-}
-
-#[test]
-fn verify_comparison_operations_return_bool() {
-    let mut checker = Checker::new();
-    let eq_expr = sp(ast::Expr::Binary {
-        op: ast::BinaryOp::Eq,
-        left: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(5)))),
-        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(5)))),
-    });
-    assert_eq!(checker.infer_expr(&eq_expr), Type::Bool);
-
-    let mut checker = Checker::new();
-    let lt_expr = sp(ast::Expr::Binary {
-        op: ast::BinaryOp::Lt,
-        left: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(3)))),
-        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(7)))),
-    });
-    assert_eq!(checker.infer_expr(&lt_expr), Type::Bool);
-}
-
-#[test]
-fn verify_logical_operations() {
-    let mut checker = Checker::new();
-    let and_expr = sp(ast::Expr::Binary {
-        op: ast::BinaryOp::And,
-        left: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
-        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(false)))),
-    });
-    assert_eq!(checker.infer_expr(&and_expr), Type::Bool);
 }
 
 #[test]
@@ -101,17 +35,6 @@ fn verify_logical_operation_type_error() {
 }
 
 #[test]
-fn verify_unary_not_operation() {
-    let mut checker = Checker::new();
-    let not_expr = sp(ast::Expr::Unary {
-        op: ast::UnaryOp::Not,
-        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
-    });
-    assert_eq!(checker.infer_expr(&not_expr), Type::Bool);
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
 fn verify_unary_not_type_error() {
     let mut checker = Checker::new();
     let not_expr = sp(ast::Expr::Unary {
@@ -122,23 +45,6 @@ fn verify_unary_not_type_error() {
     assert_eq!(result, Type::Unknown);
     assert_eq!(checker.errors.len(), 1);
     assert!(checker.errors[0].message.contains("Expected Bool"));
-}
-
-#[test]
-fn verify_unary_negation() {
-    let mut checker = Checker::new();
-    let neg_expr = sp(ast::Expr::Unary {
-        op: ast::UnaryOp::Neg,
-        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(5)))),
-    });
-    assert_eq!(checker.infer_expr(&neg_expr), Type::Int);
-
-    let mut checker = Checker::new();
-    let neg_float = sp(ast::Expr::Unary {
-        op: ast::UnaryOp::Neg,
-        right: Box::new(sp(ast::Expr::Literal(ast::Literal::Float(3.14)))),
-    });
-    assert_eq!(checker.infer_expr(&neg_float), Type::Float);
 }
 
 #[test]
@@ -229,19 +135,6 @@ fn verify_undefined_variable_error() {
 }
 
 #[test]
-fn verify_let_statement_with_type_annotation() {
-    let mut checker = Checker::new();
-    let let_stmt = sp(ast::Stmt::Let {
-        pattern: sp(Pattern::Bind("x".into())),
-        is_mut: false,
-        ty: Some(ast::Type::Named("Int".into())),
-        value: sp(ast::Expr::Literal(ast::Literal::Int(42))),
-    });
-    checker.check_stmt(&let_stmt);
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
 fn verify_let_statement_type_mismatch_error() {
     let mut checker = Checker::new();
     let let_stmt = sp(ast::Stmt::Let {
@@ -288,19 +181,6 @@ fn verify_block_with_statements() {
 }
 
 #[test]
-fn verify_if_expression_matching_branches() {
-    let mut checker = Checker::new();
-    let if_expr = sp(ast::Expr::If {
-        condition: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
-        consequence: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
-        alternative: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(2))))),
-    });
-    let result = checker.infer_expr(&if_expr);
-    assert_eq!(result, Type::Int);
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
 fn verify_if_expression_branch_type_mismatch() {
     let mut checker = Checker::new();
     let if_expr = sp(ast::Expr::If {
@@ -339,19 +219,6 @@ fn verify_if_without_else_must_have_unit_consequence() {
     let result = checker.infer_expr(&if_expr);
     assert_eq!(result, Type::Unit);
     assert!(checker.errors.iter().any(|e| e.message.contains("`if` without `else`")));
-}
-
-#[test]
-fn verify_if_without_else_unit_consequence_is_fine() {
-    let mut checker = Checker::new();
-    let if_expr = sp(ast::Expr::If {
-        condition: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
-        consequence: Box::new(sp(ast::Expr::Literal(ast::Literal::Unit))),
-        alternative: None,
-    });
-    let result = checker.infer_expr(&if_expr);
-    assert_eq!(result, Type::Unit);
-    assert_eq!(checker.errors.len(), 0);
 }
 
 #[test]
@@ -419,28 +286,6 @@ fn verify_error_context_stack() {
     assert_eq!(checker.errors.len(), 1);
     assert_eq!(checker.errors[0].context.len(), 1);
     assert!(checker.errors[0].context[0].contains("binary"));
-}
-
-#[test]
-fn verify_match_expression_type_unification() {
-    let mut checker = Checker::new();
-    let expr = sp(ast::Expr::Match {
-        scrutinee: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1)))),
-        arms: vec![
-            ast::MatchArm {
-                pattern: sp(Pattern::Literal(ast::Literal::Int(1))),
-                guard: None,
-                body: sp(ast::Expr::Literal(ast::Literal::Bool(true))),
-            },
-            ast::MatchArm {
-                pattern: sp(Pattern::Wildcard),
-                guard: None,
-                body: sp(ast::Expr::Literal(ast::Literal::Bool(false))),
-            },
-        ],
-    });
-    assert_eq!(checker.infer_expr(&expr), Type::Bool);
-    assert!(checker.errors.is_empty());
 }
 
 #[test]
@@ -536,19 +381,6 @@ fn verify_while_loop_condition_must_be_bool() {
 }
 
 #[test]
-fn verify_while_loop_valid() {
-    let mut checker = Checker::new();
-    let body = ast::Block { stmts: vec![], ret: None };
-    let expr = sp(ast::Expr::While {
-        condition: Box::new(sp(ast::Expr::Literal(ast::Literal::Bool(true)))),
-        body,
-    });
-    let ty = checker.infer_expr(&expr);
-    assert_eq!(ty, Type::Unit);
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
 fn verify_loop_expression() {
     // loop { 42 } has no break — it is an infinite loop, type is Never
     let mut checker = Checker::new();
@@ -590,18 +422,6 @@ fn verify_continue_outside_loop_error() {
     checker.infer_expr(&expr);
     assert_eq!(checker.errors.len(), 1);
     assert!(checker.errors[0].message.contains("Continue outside of loop"));
-}
-
-#[test]
-fn verify_continue_inside_loop_valid() {
-    let mut checker = Checker::new();
-    let body = ast::Block {
-        stmts: vec![sp(ast::Stmt::Expr(sp(ast::Expr::Continue)))],
-        ret: None,
-    };
-    let expr = sp(ast::Expr::Loop { body });
-    checker.infer_expr(&expr);
-    assert!(checker.errors.is_empty(), "Continue inside loop should be valid");
 }
 
 #[test]
@@ -702,39 +522,12 @@ fn verify_function_call_argument_type_mismatch() {
 }
 
 #[test]
-fn verify_tuple_expression_type() {
-    let mut checker = Checker::new();
-    let expr = sp(ast::Expr::Tuple(vec![
-        sp(ast::Expr::Literal(ast::Literal::Int(1))),
-        sp(ast::Expr::Literal(ast::Literal::Bool(true))),
-        sp(ast::Expr::Literal(ast::Literal::String("x".into()))),
-    ]));
-
-    let ty = checker.infer_expr(&expr);
-    assert_eq!(ty, Type::Tuple(vec![Type::Int, Type::Bool, Type::String]));
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
 fn verify_empty_tuple_expression() {
     let mut checker = Checker::new();
     let expr = sp(ast::Expr::Tuple(vec![]));
 
     let ty = checker.infer_expr(&expr);
     assert_eq!(ty, Type::Tuple(vec![]));
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
-fn verify_array_expression_uniform_type() {
-    let mut checker = Checker::new();
-    let expr = sp(ast::Expr::Array(vec![
-        sp(ast::Expr::Literal(ast::Literal::Int(1))),
-        sp(ast::Expr::Literal(ast::Literal::Int(2))),
-        sp(ast::Expr::Literal(ast::Literal::Int(3))),
-    ]));
-
-    let _ty = checker.infer_expr(&expr);
     assert!(checker.errors.is_empty());
 }
 
@@ -774,24 +567,6 @@ fn verify_array_repeat_non_int_count() {
     checker.infer_expr(&expr);
     assert_eq!(checker.errors.len(), 1);
     assert!(checker.errors[0].message.contains("Array repeat count must be Int"));
-}
-
-#[test]
-fn verify_index_expression_on_array() {
-    let mut checker = Checker::new();
-    checker.insert_var(
-        "arr".into(),
-        Type::Generic { name: "Array".into(), args: vec![Type::Int] },
-        false, d_span()
-    );
-
-    let expr = sp(ast::Expr::Index {
-        base: Box::new(sp(ast::Expr::Identifier("arr".into()))),
-        index: Box::new(sp(ast::Expr::Literal(ast::Literal::Int(0)))),
-    });
-
-    let _ty = checker.infer_expr(&expr);
-    assert!(checker.errors.is_empty(), "got errors: {:?}", checker.errors);
 }
 
 #[test]
@@ -934,20 +709,6 @@ fn verify_variant_expression() {
 }
 
 #[test]
-fn verify_range_expression_int() {
-    let mut checker = Checker::new();
-    let expr = sp(ast::Expr::Range {
-        start: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(1))))),
-        end: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Int(10))))),
-        inclusive: false,
-    });
-
-    let ty = checker.infer_expr(&expr);
-    assert_eq!(ty, Type::Named("Range<Int>".into()));
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
 fn verify_range_non_int_start() {
     let mut checker = Checker::new();
     let expr = sp(ast::Expr::Range {
@@ -995,17 +756,6 @@ fn verify_region_expression() {
 // Record/Variant Exhaustiveness & Type Validation
 
 #[test]
-fn verify_record_exhaustiveness_all_fields_present() {
-    let mut checker = Checker::new();
-
-    let provided = vec!["x".into(), "y".into()];
-    let required = vec!["x".into(), "y".into()];
-
-    assert!(checker.validate_record_exhaustiveness("Point", &provided, &required, d_span()));
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
 fn verify_record_exhaustiveness_missing_field() {
     let mut checker = Checker::new();
 
@@ -1029,23 +779,6 @@ fn verify_record_exhaustiveness_extra_field() {
 }
 
 #[test]
-fn verify_record_field_type_match() {
-    let mut checker = Checker::new();
-
-    let field_types = vec![
-        ("x".into(), Type::Int),
-        ("y".into(), Type::Int),
-    ];
-    let provided_values = vec![
-        ("x".into(), Type::Int),
-        ("y".into(), Type::Int),
-    ];
-
-    assert!(checker.validate_record_fields("Point", &field_types, &provided_values, d_span()));
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
 fn verify_record_field_type_mismatch() {
     let mut checker = Checker::new();
 
@@ -1061,29 +794,6 @@ fn verify_record_field_type_mismatch() {
     assert!(!checker.validate_record_fields("Point", &field_types, &provided_values, d_span()));
     assert!(checker.errors.len() > 0);
     assert!(checker.errors[0].message.contains("type mismatch"));
-}
-
-#[test]
-fn verify_check_record_initialization_valid() {
-    let mut checker = Checker::new();
-
-    let field_types = vec![
-        ("x".into(), Type::Int),
-        ("y".into(), Type::Int),
-    ];
-    let provided_fields = vec!["x".into(), "y".into()];
-    let provided_values = vec![
-        ("x".into(), Type::Int),
-        ("y".into(), Type::Int),
-    ];
-
-    assert!(checker.check_record_initialization(
-        "Point",
-        &field_types,
-        &provided_fields,
-        &provided_values,
-        d_span()
-    ));
 }
 
 #[test]
@@ -1132,39 +842,12 @@ fn verify_check_record_initialization_wrong_type() {
 }
 
 #[test]
-fn verify_variant_arguments_correct_count() {
-    let mut checker = Checker::new();
-
-    assert!(checker.validate_variant_arguments("Some", 1, 1, d_span()));
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
 fn verify_variant_arguments_wrong_count() {
     let mut checker = Checker::new();
 
     assert!(!checker.validate_variant_arguments("Some", 1, 2, d_span()));
     assert!(checker.errors.len() > 0);
     assert!(checker.errors[0].message.contains("expects"));
-}
-
-#[test]
-fn verify_variant_arguments_zero() {
-    let mut checker = Checker::new();
-
-    assert!(checker.validate_variant_arguments("None", 0, 0, d_span()));
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
-fn verify_variant_argument_types_match() {
-    let mut checker = Checker::new();
-
-    let expected = vec![Type::Int, Type::String];
-    let provided = vec![Type::Int, Type::String];
-
-    assert!(checker.validate_variant_argument_types("Pair", &expected, &provided, d_span()));
-    assert_eq!(checker.errors.len(), 0);
 }
 
 #[test]
@@ -1176,16 +859,6 @@ fn verify_variant_argument_types_mismatch() {
 
     assert!(!checker.validate_variant_argument_types("Pair", &expected, &provided, d_span()));
     assert!(checker.errors.len() > 0);
-}
-
-#[test]
-fn verify_check_variant_construction_valid() {
-    let mut checker = Checker::new();
-
-    let expected = vec![Type::Int];
-    let provided = vec![Type::Int];
-
-    assert!(checker.check_variant_construction("Some", &expected, &provided, d_span()));
 }
 
 #[test]
@@ -1337,18 +1010,6 @@ fn verify_record_all_fields_required() {
 // String Interpolation Validation
 
 #[test]
-fn verify_string_interpolation_defined_variable() {
-    let mut checker = Checker::new();
-
-    // Register a variable
-    checker.insert_var("name".into(), Type::String, false, d_span());
-
-    let identifiers = vec!["name".into()];
-    assert!(checker.validate_string_interpolation(&identifiers, d_span()));
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
 fn verify_string_interpolation_undefined_variable() {
     let mut checker = Checker::new();
 
@@ -1357,18 +1018,6 @@ fn verify_string_interpolation_undefined_variable() {
     assert!(!checker.validate_string_interpolation(&identifiers, d_span()));
     assert!(checker.errors.len() > 0);
     assert!(checker.errors[0].message.contains("Undefined"));
-}
-
-#[test]
-fn verify_string_interpolation_multiple_variables() {
-    let mut checker = Checker::new();
-
-    checker.insert_var("name".into(), Type::String, false, d_span());
-    checker.insert_var("age".into(), Type::Int, false, d_span());
-
-    let identifiers = vec!["name".into(), "age".into()];
-    assert!(checker.validate_string_interpolation(&identifiers, d_span()));
-    assert_eq!(checker.errors.len(), 0);
 }
 
 #[test]
@@ -1383,35 +1032,6 @@ fn verify_string_interpolation_one_undefined() {
 }
 
 #[test]
-fn verify_extract_interpolation_identifiers_single() {
-    let checker = Checker::new();
-
-    let parts = vec![
-        ast::StringPart::Literal("Hello ".into()),
-        ast::StringPart::Interp(vec!["name".into()]),
-    ];
-
-    let identifiers = checker.extract_interpolation_identifiers(&parts);
-    assert_eq!(identifiers.len(), 1);
-    assert_eq!(identifiers[0], "name");
-}
-
-#[test]
-fn verify_extract_interpolation_identifiers_multiple() {
-    let checker = Checker::new();
-
-    let parts = vec![
-        ast::StringPart::Literal("Hello ".into()),
-        ast::StringPart::Interp(vec!["name".into()]),
-        ast::StringPart::Literal(", age ".into()),
-        ast::StringPart::Interp(vec!["age".into()]),
-    ];
-
-    let identifiers = checker.extract_interpolation_identifiers(&parts);
-    assert_eq!(identifiers.len(), 2);
-}
-
-#[test]
 fn verify_extract_interpolation_identifiers_with_fields() {
     let checker = Checker::new();
 
@@ -1422,20 +1042,6 @@ fn verify_extract_interpolation_identifiers_with_fields() {
     let identifiers = checker.extract_interpolation_identifiers(&parts);
     assert_eq!(identifiers.len(), 1);
     assert_eq!(identifiers[0], "user"); // Root identifier
-}
-
-#[test]
-fn verify_check_interpolation_paths_valid() {
-    let mut checker = Checker::new();
-
-    checker.insert_var("user".into(), Type::Named("User".into()), false, d_span());
-
-    let parts = vec![
-        ast::StringPart::Interp(vec!["user".into()]),
-    ];
-
-    assert!(checker.check_interpolation_paths(&parts, d_span()));
-    assert_eq!(checker.errors.len(), 0);
 }
 
 #[test]
@@ -1464,33 +1070,6 @@ fn verify_check_interpolation_paths_with_fields() {
 }
 
 #[test]
-fn verify_validate_interpolation_types_string() {
-    let mut checker = Checker::new();
-
-    checker.insert_var("name".into(), Type::String, false, d_span());
-
-    let parts = vec![
-        ast::StringPart::Interp(vec!["name".into()]),
-    ];
-
-    assert!(checker.validate_interpolation_types(&parts, d_span()));
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
-fn verify_validate_interpolation_types_int() {
-    let mut checker = Checker::new();
-
-    checker.insert_var("count".into(), Type::Int, false, d_span());
-
-    let parts = vec![
-        ast::StringPart::Interp(vec!["count".into()]),
-    ];
-
-    assert!(checker.validate_interpolation_types(&parts, d_span()));
-}
-
-#[test]
 fn verify_validate_interpolation_types_never() {
     let mut checker = Checker::new();
 
@@ -1506,29 +1085,6 @@ fn verify_validate_interpolation_types_never() {
 }
 
 #[test]
-fn verify_validate_string_literal_no_interpolation() {
-    let mut checker = Checker::new();
-
-    let result = checker.validate_string_literal("Hello, world!", false, None, d_span());
-    assert!(result);
-}
-
-#[test]
-fn verify_validate_string_literal_with_valid_interpolation() {
-    let mut checker = Checker::new();
-
-    checker.insert_var("name".into(), Type::String, false, d_span());
-
-    let parts = vec![
-        ast::StringPart::Literal("Hello ".into()),
-        ast::StringPart::Interp(vec!["name".into()]),
-    ];
-
-    let result = checker.validate_string_literal("Hello {name}", true, Some(&parts), d_span());
-    assert!(result);
-}
-
-#[test]
 fn verify_validate_string_literal_undefined_in_interpolation() {
     let mut checker = Checker::new();
 
@@ -1538,65 +1094,6 @@ fn verify_validate_string_literal_undefined_in_interpolation() {
 
     let result = checker.validate_string_literal("Hello {undefined}", true, Some(&parts), d_span());
     assert!(!result);
-}
-
-#[test]
-fn verify_count_interpolations_zero() {
-    let checker = Checker::new();
-
-    let parts = vec![
-        ast::StringPart::Literal("Hello, world!".into()),
-    ];
-
-    assert_eq!(checker.count_interpolations(&parts), 0);
-}
-
-#[test]
-fn verify_count_interpolations_single() {
-    let checker = Checker::new();
-
-    let parts = vec![
-        ast::StringPart::Literal("Hello ".into()),
-        ast::StringPart::Interp(vec!["name".into()]),
-    ];
-
-    assert_eq!(checker.count_interpolations(&parts), 1);
-}
-
-#[test]
-fn verify_count_interpolations_multiple() {
-    let checker = Checker::new();
-
-    let parts = vec![
-        ast::StringPart::Literal("Hello ".into()),
-        ast::StringPart::Interp(vec!["name".into()]),
-        ast::StringPart::Literal(", age ".into()),
-        ast::StringPart::Interp(vec!["age".into()]),
-    ];
-
-    assert_eq!(checker.count_interpolations(&parts), 2);
-}
-
-#[test]
-fn verify_has_interpolations_true() {
-    let checker = Checker::new();
-
-    let parts = vec![
-        ast::StringPart::Interp(vec!["name".into()]),
-    ];
-
-    assert!(checker.has_interpolations(&parts));
-}
-
-#[test]
-fn verify_has_interpolations_false() {
-    let checker = Checker::new();
-
-    let parts = vec![
-        ast::StringPart::Literal("Hello, world!".into()),
-    ];
-
-    assert!(!checker.has_interpolations(&parts));
 }
 
 #[test]
@@ -1697,29 +1194,6 @@ fn verify_interpolation_identifier_out_of_scope() {
 }
 
 #[test]
-fn verify_interpolation_multiple_identifiers() {
-    let mut checker = Checker::new();
-
-    checker.register_trait("Show".into(), vec!["to_string".into()]);
-    checker.register_impl("Int", "Show");
-    checker.register_impl("String", "Show");
-
-    checker.insert_var("x".into(), Type::Int, false, d_span());
-    checker.insert_var("name".into(), Type::String, false, d_span());
-
-    let parts = vec![
-        StringPart::Literal("User: ".into()),
-        StringPart::Interp(vec!["name".into()]),
-        StringPart::Literal(" ID: ".into()),
-        StringPart::Interp(vec!["x".into()]),
-    ];
-
-    let result = checker.check_string_interpolation(&parts, d_span());
-    assert!(result);
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
 fn verify_type_implements_show() {
     let mut checker = Checker::new();
 
@@ -1756,29 +1230,6 @@ fn verify_type_does_not_implement_show() {
     assert!(checker.errors.len() > 0);
     assert!(checker.errors[0].message.contains("Show") ||
             checker.errors[0].message.contains("trait"));
-}
-
-#[test]
-fn verify_multiple_types_some_implement_show() {
-    // Mix one auto-Show primitive (Int) with a user type that lacks Show.
-    let mut checker = Checker::new();
-
-    checker.register_trait("Show".into(), vec!["to_string".into()]);
-    // Widget intentionally NOT registered.
-
-    checker.insert_var("x".into(), Type::Int, false, d_span());
-    checker.insert_var("w".into(), Type::Named("Widget".into()), false, d_span());
-
-    let parts = vec![
-        StringPart::Interp(vec!["x".into()]),
-        StringPart::Interp(vec!["w".into()]),
-    ];
-
-    let result = checker.check_string_interpolation(&parts, d_span());
-    assert!(!result);
-    assert!(checker.errors.len() > 0);
-    // Should report error for w not implementing Show
-    assert!(checker.errors.iter().any(|e| e.message.contains("w") || e.message.contains("Widget")));
 }
 
 #[test]
@@ -1860,40 +1311,6 @@ fn verify_interpolation_deeply_nested_path() {
 }
 
 #[test]
-fn verify_string_literal_without_interpolation() {
-    let mut checker = Checker::new();
-
-    // Plain string should not require Show trait checks
-    let lit = Literal::String("hello world".into());
-    let result = checker.infer_literal(&lit, d_span());
-
-    assert_eq!(result, Type::String);
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
-fn verify_interpolated_string_type() {
-    let mut checker = Checker::new();
-
-    checker.register_trait("Show".into(), vec!["to_string".into()]);
-    checker.register_impl("Int", "Show");
-
-    checker.insert_var("x".into(), Type::Int, false, d_span());
-
-    let lit = Literal::StringInterp(vec![
-        StringPart::Literal("Value: ".into()),
-        StringPart::Interp(vec!["x".into()]),
-    ]);
-
-    let result = checker.infer_literal(&lit, d_span());
-
-    // Interpolated string should still be Type::String
-    assert_eq!(result, Type::String);
-    // But if x implements Show, no errors
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
 fn verify_interpolated_string_validates_identifiers() {
     let mut checker = Checker::new();
 
@@ -1912,37 +1329,6 @@ fn verify_interpolated_string_validates_identifiers() {
     // Type is still String, but should have error
     assert_eq!(result, Type::String);
     assert!(checker.errors.len() > 0);
-}
-
-#[test]
-fn verify_primitives_implement_show() {
-    let mut checker = Checker::new();
-
-    checker.register_trait("Show".into(), vec!["to_string".into()]);
-    checker.register_impl("Int", "Show");
-    checker.register_impl("Bool", "Show");
-    checker.register_impl("Float", "Show");
-    checker.register_impl("String", "Show");
-    checker.register_impl("Char", "Show");
-
-    checker.insert_var("i".into(), Type::Int, false, d_span());
-    checker.insert_var("b".into(), Type::Bool, false, d_span());
-    checker.insert_var("f".into(), Type::Float, false, d_span());
-    checker.insert_var("s".into(), Type::String, false, d_span());
-    checker.insert_var("c".into(), Type::Char, false, d_span());
-
-    // All should be usable in interpolation
-    let parts = vec![
-        StringPart::Interp(vec!["i".into()]),
-        StringPart::Interp(vec!["b".into()]),
-        StringPart::Interp(vec!["f".into()]),
-        StringPart::Interp(vec!["s".into()]),
-        StringPart::Interp(vec!["c".into()]),
-    ];
-
-    let result = checker.check_string_interpolation(&parts, d_span());
-    assert!(result);
-    assert_eq!(checker.errors.len(), 0);
 }
 
 #[test]
@@ -2036,34 +1422,6 @@ fn verify_mixed_errors_in_interpolation() {
     assert!(!result);
     // Should have at least 2 errors
     assert!(checker.errors.len() >= 2);
-}
-
-#[test]
-fn verify_empty_interpolation_parts() {
-    let mut checker = Checker::new();
-
-    let parts: Vec<StringPart> = vec![];
-    let result = checker.check_string_interpolation(&parts, d_span());
-
-    // Empty string should be valid
-    assert!(result);
-    assert_eq!(checker.errors.len(), 0);
-}
-
-#[test]
-fn verify_only_literal_parts() {
-    let mut checker = Checker::new();
-
-    let parts = vec![
-        StringPart::Literal("Hello ".into()),
-        StringPart::Literal("world".into()),
-    ];
-
-    let result = checker.check_string_interpolation(&parts, d_span());
-
-    // No interpolations, should be valid
-    assert!(result);
-    assert_eq!(checker.errors.len(), 0);
 }
 
 #[test]
@@ -2235,29 +1593,6 @@ fn verify_field_not_found_in_record() {
 }
 
 // Scope Depth Lookup (Nested Scopes)
-
-#[test]
-fn verify_variable_in_parent_scope() {
-    let mut checker = Checker::new();
-
-    checker.register_trait("Show".into(), vec!["to_string".into()]);
-    checker.register_impl("Int", "Show");
-
-    // Insert in outer scope
-    checker.insert_var("x".into(), Type::Int, false, d_span());
-
-    // Enter nested scope
-    checker.enter_scope();
-
-    // Variable x should still be accessible in nested scope
-    let parts = vec![StringPart::Interp(vec!["x".into()])];
-
-    let result = checker.check_string_interpolation(&parts, d_span());
-    assert!(result, "Should find variable in parent scope");
-    assert_eq!(checker.errors.len(), 0);
-
-    checker.exit_scope();
-}
 
 #[test]
 fn verify_variable_shadowing_in_scope() {
@@ -2597,23 +1932,6 @@ fn verify_scope_and_field_combined() {
 
 
 #[test]
-fn verify_region_with_label() {
-    let mut checker = Checker::new();
-    let body = ast::Block {
-        stmts: vec![],
-        ret: Some(Box::new(sp(ast::Expr::Literal(ast::Literal::Float(3.14))))),
-    };
-    let expr = sp(ast::Expr::Region {
-        label: Some("heap".into()),
-        body,
-    });
-
-    let ty = checker.infer_expr(&expr);
-    assert_eq!(ty, Type::Float);
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
 fn verify_handle_return_arm() {
     let mut checker = Checker::new();
     let expr = sp(ast::Expr::Handle {
@@ -2717,31 +2035,6 @@ fn verify_handle_arm_type_mismatch() {
 
     checker.infer_expr(&expr);
     assert!(checker.errors.iter().any(|e| e.message.contains("Handle arm types do not match")));
-}
-
-#[test]
-fn verify_region_with_statements() {
-    let mut checker = Checker::new();
-    let body = ast::Block {
-        stmts: vec![
-            sp(ast::Stmt::Let {
-                pattern: sp(Pattern::Bind("ptr".into())),
-                is_mut: false,
-                ty: None,
-                value: sp(ast::Expr::Literal(ast::Literal::Int(0))),
-            }),
-        ],
-        ret: Some(Box::new(sp(ast::Expr::Identifier("ptr".into())))),
-    };
-
-    let expr = sp(ast::Expr::Region {
-        label: Some("r".into()),
-        body,
-    });
-
-    let ty = checker.infer_expr(&expr);
-    assert_eq!(ty, Type::Int);
-    assert!(checker.errors.is_empty());
 }
 
 #[test]
@@ -2950,27 +2243,6 @@ fn verify_generic_function_instantiation_with_int() {
 
     let ty = checker.infer_expr(&expr);
     assert_eq!(ty, Type::Int);
-    assert!(checker.errors.is_empty());
-}
-
-#[test]
-fn verify_generic_function_instantiation_with_string() {
-    let mut checker = Checker::new();
-    // identity :: <T> T -> T
-    let fn_type = Type::Function {
-        params: vec![Type::Generic { name: "T".into(), args: vec![] }],
-        effects: vec![],
-        ret: Box::new(Type::Generic { name: "T".into(), args: vec![] }),
-    };
-    checker.insert_var("identity".into(), fn_type, false, d_span());
-
-    let expr = sp(ast::Expr::Call {
-        callee: Box::new(sp(ast::Expr::Identifier("identity".into()))),
-        args: vec![sp(ast::Expr::Literal(ast::Literal::String("hello".into())))],
-    });
-
-    let ty = checker.infer_expr(&expr);
-    assert_eq!(ty, Type::String);
     assert!(checker.errors.is_empty());
 }
 

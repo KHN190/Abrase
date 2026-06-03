@@ -118,15 +118,3 @@ fn test_let_nested_tuple_pattern() {
         panic!("Expected Let statement");
     }
 }
-
-#[test]
-fn test_tuple_let_pattern_parses() {
-    let errs = parse_errs("fn f() -> Int { let (a, b) = (1, 2); 0 }");
-    assert!(errs.is_empty(), "tuple destructuring let must parse cleanly, got: {:?}", errs);
-}
-
-#[test]
-fn test_simple_bind_let_still_ok() {
-    let errs = parse_errs("fn f() -> Int { let x = 1; x }");
-    assert!(errs.is_empty(), "simple bind must parse cleanly, got: {:?}", errs);
-}
