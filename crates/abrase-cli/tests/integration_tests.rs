@@ -177,6 +177,48 @@ fn test_static_update_frames_no_leak() {
         "heap not flat across frames: {:?}", &counts);
 }
 
+// NLL precision: a `&mut` whose last use is *before* an effect op does not
+// cross it, so the base is freely usable after — liveness, not syntax, decides.
+#[test]
+fn mut_borrow_dead_before_effect_lets_base_be_used_after() {
+    let source = r#"
+type Box = { v: Int }
+effect E { op tick() -> Int }
+fn body() -> <E> Int {
+  let mut x = Box { v: 10 };
+  let r = &mut x;
+  r.v = r.v + 5;
+  let t = E.tick();
+  x.v = x.v + t;
+  x.v
+}
+fn main() -> Int { handle body() { return v => v, E.tick _ => resume(100) } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(115));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+// A `&mut` genuinely live across an effect op (used after it) compiles and the
+// write through the borrow survives the suspension/resume.
+#[test]
+fn mut_borrow_live_across_effect_writes_through_after_resume() {
+    let source = r#"
+type Box = { v: Int }
+effect E { op tick() -> Int }
+fn body(c: Bool) -> <E> Int {
+  let mut x = Box { v: 10 };
+  let r = &mut x;
+  let t = E.tick();
+  if c { r.v = r.v + t; r.v } else { 0 }
+}
+fn main() -> Int { handle body(true) { return v => v, E.tick _ => resume(7) } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(17));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
 #[test]
 fn throw_unwind_reclaims_owned_value_live_at_throw() {
     let source = r#"
