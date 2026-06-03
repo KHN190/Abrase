@@ -720,8 +720,26 @@ fn main() -> Int {{
     (src, expected)
 }
 
+fn gen_sequential_mut_borrows(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(0, 30);
+    let k = rng.range(2, 8);
+    let expected = n + k;
+    let src = format!(r#"
+type W = {{ n: Int }}
+fn f(w: &mut W) -> Unit {{ w.n = w.n + 1 }}
+fn main() -> Int {{
+  let mut w = W {{ n: {n} }};
+  let mut i = 0;
+  while i < {k} {{ f(&mut w); i = i + 1 }}
+  w.n
+}}
+"#);
+    (src, expected)
+}
+
 const SINGLE_GENS: &[(&str, Gen)] = &[
     ("mut_borrow_field_writethrough", gen_mut_borrow_field_writethrough),
+    ("sequential_mut_borrows",        gen_sequential_mut_borrows),
     ("int_arith",           gen_int_arith),
     ("float_arith",         gen_float_arith),
     ("int_match",           gen_int_match),

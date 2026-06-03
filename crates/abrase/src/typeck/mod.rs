@@ -48,6 +48,7 @@ struct VarMeta {
     moved_at: Option<Span>,
     immut_borrow_count: usize,
     mut_borrow_active: bool,
+    active_borrow_span: Option<Span>,
     bound_at_region_depth: usize,
     borrows: Option<String>,
     borrow_invalidated: bool,
@@ -262,19 +263,32 @@ impl Checker {
         let target_depth = self.scopes.len().saturating_sub(1);
         while let Some((_, _, depth)) = self.borrow_stack.last() {
             if *depth <= target_depth { break; }
-            let (name, is_mut, _) = self.borrow_stack.pop().unwrap();
-            for scope in self.scopes.iter_mut().rev() {
-                if let Some(meta) = scope.vars.get_mut(&name) {
-                    if is_mut {
-                        meta.mut_borrow_active = false;
-                    } else {
-                        meta.immut_borrow_count = meta.immut_borrow_count.saturating_sub(1);
-                    }
-                    break;
-                }
-            }
+            self.pop_one_borrow();
         }
         self.scopes.pop();
+    }
+    // Release every borrow pushed since `mark` (statement-boundary release of
+    // temporaries). Named `let r = &…` borrows are kept below the mark.
+    fn release_borrows_to(&mut self, mark: usize) {
+        while self.borrow_stack.len() > mark {
+            self.pop_one_borrow();
+        }
+    }
+    fn pop_one_borrow(&mut self) {
+        let (name, is_mut, _) = match self.borrow_stack.pop() { Some(b) => b, None => return };
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(meta) = scope.vars.get_mut(&name) {
+                if is_mut {
+                    meta.mut_borrow_active = false;
+                } else {
+                    meta.immut_borrow_count = meta.immut_borrow_count.saturating_sub(1);
+                }
+                if !meta.mut_borrow_active && meta.immut_borrow_count == 0 {
+                    meta.active_borrow_span = None;
+                }
+                break;
+            }
+        }
     }
     pub fn display_errors(&self) -> String {
         if self.errors.is_empty() {
@@ -300,6 +314,7 @@ impl Checker {
                 moved_at: None,
                 immut_borrow_count: 0,
                 mut_borrow_active: false,
+                active_borrow_span: None,
                 bound_at_region_depth: depth,
                 borrows: None,
                 borrow_invalidated: false,

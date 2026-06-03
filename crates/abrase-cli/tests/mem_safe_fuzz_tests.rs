@@ -53,9 +53,10 @@ impl Gen {
             let name = self.fresh_fn();
             self.helpers.push_str(&format!("fn {}(x: &Int) -> Int {{ *x }}\n", name));
         }
-        // Optional record type R = { a: Int, b: Int }.
+        // Optional record type R = { a: Int, b: Int } + a &mut-taking mutator.
         if self.rng.pick(2) == 0 {
             self.helpers.push_str("type R = { a: Int, b: Int }\n");
+            self.helpers.push_str("fn mutr(r: &mut R) -> Int { r.a = r.a + 1; r.a }\n");
             self.has_record = true;
         }
         // Optional variant type Tag = Zero | One(Int).
@@ -374,6 +375,19 @@ impl Gen {
                             "  let {f} = move |x: Int| x + {cap};\n  let {name}: Int = {f}({arg});\n"));
                     }
                     ints.push(name);
+                }
+                // ── sequential &mut borrows of one binding (last-use release) ─
+                _ if self.has_record && self.rng.pick(3) == 0 => {
+                    let a = self.rng.pick(50) as i64;
+                    let b = self.rng.pick(50) as i64;
+                    let x = self.fresh();
+                    let r1 = self.fresh();
+                    let r2 = self.fresh();
+                    self.push(&format!(
+                        "  let mut {x}: R = R {{ a: {a}, b: {b} }};\n  let {r1}: Int = mutr(&mut {x});\n  let {r2}: Int = mutr(&mut {x});\n"
+                    ));
+                    ints.push(r1);
+                    ints.push(r2);
                 }
                 // ── records ──────────────────────────────────────────────
                 _ if self.has_record && self.rng.pick(3) == 0 => {

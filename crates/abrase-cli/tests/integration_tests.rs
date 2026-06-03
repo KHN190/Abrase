@@ -6,7 +6,6 @@ use abrase::typeck::Checker;
 use myriad::{Value, VirtualMachine, read_string};
 use std::fs;
 
-// Compile `src` and return the entry function's opcodes (for bytecode-shape tests).
 fn compile_entry_ops(src: &str) -> Vec<OpCode> {
     let mut parser = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let ast = parser.parse_program();
@@ -177,8 +176,6 @@ fn test_static_update_frames_no_leak() {
         "heap not flat across frames: {:?}", &counts);
 }
 
-// NLL precision: a `&mut` whose last use is *before* an effect op does not
-// cross it, so the base is freely usable after — liveness, not syntax, decides.
 #[test]
 fn mut_borrow_dead_before_effect_lets_base_be_used_after() {
     let source = r#"
@@ -199,8 +196,6 @@ fn main() -> Int { handle body() { return v => v, E.tick _ => resume(100) } }
     assert_eq!(vm.heap_live_count(), 0);
 }
 
-// A `&mut` genuinely live across an effect op (used after it) compiles and the
-// write through the borrow survives the suspension/resume.
 #[test]
 fn mut_borrow_live_across_effect_writes_through_after_resume() {
     let source = r#"
@@ -219,8 +214,6 @@ fn main() -> Int { handle body(true) { return v => v, E.tick _ => resume(7) } }
     assert_eq!(vm.heap_live_count(), 0);
 }
 
-// `&mut` of a record-typed place (field / through a `&mut` param) aliases the
-// field's cell, so a write through the borrow persists in the base.
 #[test]
 fn mut_borrow_of_record_field_writes_through() {
     let source = r#"
@@ -237,6 +230,25 @@ fn main() -> Int {
 "#;
     let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
     assert_eq!(v, Value::from_int(43));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+#[test]
+fn sequential_mut_borrows_of_same_binding_each_write_through() {
+    let source = r#"
+type W = { n: Int }
+fn f(w: &mut W) -> Unit { w.n = w.n + 1 }
+fn main() -> Int {
+  let mut w = W { n: 0 };
+  f(&mut w);
+  f(&mut w);
+  let mut i = 0;
+  while i < 5 { f(&mut w); i = i + 1 }
+  w.n
+}
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(7));
     assert_eq!(vm.heap_live_count(), 0);
 }
 
@@ -834,7 +846,6 @@ fn main() -> Int {
 
 #[test]
 fn block_expr_composes_inside_parens() {
-    // A parenthesized if/match composes in arithmetic with correct precedence:
     // 10 + (5 * 2) = 20, not (10 + 5) * 2 = 30.
     assert_eq!(run_src(PARENTHESIZED_IF).unwrap_or_else(|e| panic!("\n{}", e)),
         Value::from_int(20));
@@ -869,9 +880,6 @@ fn main() -> Int {
 
 #[test]
 fn shr_token_splits_at_nested_generic_close() {
-    // `<exn<Int>>` ends in a `>>` Shr token; the parser must split it into two
-    // `>` to close the inner+outer generics. And `b >> 1` in the body must
-    // still parse as a shift, not as anything else.
     assert_eq!(run_src(SHR_WITH_NESTED_GENERIC).unwrap_or_else(|e| panic!("\n{}", e)),
         Value::from_int(32));
 }
@@ -1013,8 +1021,6 @@ fn compile_src(src: &str) -> polka::Module {
 
 #[test]
 fn mut_ref_param_written_through_effect_in_loop_compiles() {
-    // A &mut parameter may be written inside a loop whose body performs an effect
-    // op. The borrow is live across the op but does not escape, so it is allowed.
     let src = r#"
 effect R { op ri() -> Int }
 type W = { a: Array<Int>, n: Int }
@@ -1043,8 +1049,6 @@ fn cart_run_to_yield_persists_state_across_frames() {
 
 pub fn get_count() -> Int { 0 }
 "#;
-    // Instead of get_count, we verify via run_to_yield + resume that main's
-    // local `count` increments across frames (heap live count stays flat).
     let module = compile_src(src);
     let mut vm = VirtualMachine::new();
     myriad::Host::default().install_into(&mut vm);

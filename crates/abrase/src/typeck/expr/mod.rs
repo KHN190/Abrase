@@ -184,11 +184,28 @@ impl Checker {
         }
     }
 
+    // A `let r = &x` / `let r = &mut x` binding keeps its borrow alive past the
+    // statement (until scope exit); every other statement's borrows are temporary.
+    fn stmt_binds_named_borrow(stmt: &Spanned<ast::Stmt>) -> bool {
+        if let ast::Stmt::Let { value, .. } = &stmt.node {
+            if let ast::Expr::Unary { op: ast::UnaryOp::Ref | ast::UnaryOp::RefMut, right } = &value.node {
+                return matches!(&right.node, ast::Expr::Identifier(_));
+            }
+        }
+        false
+    }
+
     pub fn infer_block(&mut self, block: &ast::Block) -> Type {
         let prop = self.exn_prop;
         self.enter_scope();
         self.exn_prop = false;
-        for stmt in &block.stmts { self.check_stmt(stmt); }
+        for stmt in &block.stmts {
+            let mark = self.borrow_stack.len();
+            self.check_stmt(stmt);
+            if !Self::stmt_binds_named_borrow(stmt) {
+                self.release_borrows_to(mark);
+            }
+        }
         let ty = if let Some(ret_expr) = &block.ret {
             self.exn_prop = prop;
             self.infer_expr(ret_expr)

@@ -11,18 +11,26 @@ pub enum BorrowKind {
     Move,
 }
 
+fn at_span(span: Option<Span>) -> String {
+    match span {
+        Some(s) => format!("from line {}:{} is ", s.line, s.col),
+        None => String::new(),
+    }
+}
+
 impl Checker {
 
-    pub fn try_immut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
+    pub fn try_immut_borrow(&mut self, var_name: &str, borrow_span: Span) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(var_name) {
                 if meta.is_moved {
                     return Err(format!("Cannot borrow '{}': value already moved", var_name));
                 }
                 if meta.mut_borrow_active {
-                    return Err(format!("Cannot immutably borrow '{}': mutable borrow already active", var_name));
+                    return Err(format!("Cannot immutably borrow '{}': mutable borrow {}still active (it ends at its last use)", var_name, at_span(meta.active_borrow_span)));
                 }
                 meta.immut_borrow_count += 1;
+                if meta.active_borrow_span.is_none() { meta.active_borrow_span = Some(borrow_span); }
                 let depth = self.scopes.len();
                 self.borrow_stack.push((var_name.to_string(), false, depth));
                 return Ok(());
@@ -31,22 +39,23 @@ impl Checker {
         Err(format!("Variable '{}' not found", var_name))
     }
 
-    pub fn try_mut_borrow(&mut self, var_name: &str, _borrow_span: Span) -> Result<(), String> {
+    pub fn try_mut_borrow(&mut self, var_name: &str, borrow_span: Span) -> Result<(), String> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(meta) = scope.vars.get_mut(var_name) {
                 if meta.is_moved {
                     return Err(format!("Cannot borrow '{}': value already moved", var_name));
                 }
                 if meta.immut_borrow_count > 0 {
-                    return Err(format!("Cannot mutably borrow '{}': immutable borrow already active", var_name));
+                    return Err(format!("Cannot mutably borrow '{}': immutable borrow {}still active (it ends at its last use)", var_name, at_span(meta.active_borrow_span)));
                 }
                 if meta.mut_borrow_active {
-                    return Err(format!("Cannot mutably borrow '{}': mutable borrow already active", var_name));
+                    return Err(format!("Cannot mutably borrow '{}': previous mutable borrow {}still active (it ends at its last use)", var_name, at_span(meta.active_borrow_span)));
                 }
                 if !meta.is_mut {
                     return Err(format!("Cannot mutably borrow immutable variable '{}'", var_name));
                 }
                 meta.mut_borrow_active = true;
+                meta.active_borrow_span = Some(borrow_span);
                 let depth = self.scopes.len();
                 self.borrow_stack.push((var_name.to_string(), true, depth));
                 return Ok(());
