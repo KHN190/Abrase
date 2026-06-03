@@ -10,11 +10,14 @@ impl Checker {
         arms: &[ast::MatchArm],
         span: ast::Span,
     ) -> Type {
+                let prop = self.exn_prop;
+                self.exn_prop = false;
                 self.context_stack.push("In match expression".into());
                 let required_before = self.fn_required_effects.clone();
                 let scrutinee_ty = if let ast::Expr::Identifier(name) = &scrutinee.node {
                     self.get_var(name, true, scrutinee.span)
                 } else {
+                    self.exn_prop = true;
                     self.infer_expr(scrutinee)
                 };
                 let exn_added: Vec<_> = self.fn_required_effects.iter()
@@ -62,6 +65,7 @@ impl Checker {
                             self.report_error("Guard must be Bool".into(), guard.span);
                         }
                     }
+                    self.exn_prop = prop;
                     let body_ty = self.infer_expr(&arm.body);
                     for e in self.fn_required_effects.iter() {
                         if !pre_arm_effects.iter().any(|p| self.effects_equal(p, e))
@@ -77,6 +81,21 @@ impl Checker {
                 for e in arm_effects {
                     if !self.fn_required_effects.iter().any(|p| self.effects_equal(p, &e)) {
                         self.fn_required_effects.push(e);
+                    }
+                }
+
+                if prop {
+                    let mut yields = arms.iter()
+                        .filter(|a| !matches!(a.body.node, ast::Expr::Throw(_) | ast::Expr::Return(_)))
+                        .map(|a| self.tail_yields_result(&a.body));
+                    if let Some(first) = yields.next() {
+                        if yields.any(|y| y != first) {
+                            self.report_error(
+                                "in a fallible tail, all `match` arms must be uniformly fallible or \
+                                 uniformly plain values; add `?` to the fallible arms".into(),
+                                span,
+                            );
+                        }
                     }
                 }
 

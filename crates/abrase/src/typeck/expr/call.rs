@@ -10,6 +10,8 @@ impl Checker {
         args: &[Spanned<ast::Expr>],
         span: ast::Span,
     ) -> Type {
+                let exn_prop = self.exn_prop;
+                self.exn_prop = false;
                 self.context_stack.push(format!("In function call"));
 
                 // `Shared(x)` must be inside a region
@@ -290,6 +292,16 @@ impl Checker {
                         }
                     }
 
+                    if effects.iter().any(|e| matches!(e, crate::ty::Effect::Exn(_))) {
+                        self.result_value_spans.insert(span);
+                        if !exn_prop {
+                            self.report_error(
+                                "fallible call must be consumed with `?` (or matched / handled); \
+                                 its error cannot be silently used as a value".into(),
+                                span,
+                            );
+                        }
+                    }
                     for effect in &effects {
                         self.add_required_effect(effect.clone());
                     }

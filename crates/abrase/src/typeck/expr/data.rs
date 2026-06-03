@@ -155,6 +155,7 @@ impl Checker {
     }
 
     pub(super) fn infer_question(&mut self, inner: &Spanned<ast::Expr>) -> Type {
+        self.exn_prop = true;
         let inner_ty = self.infer_expr(inner);
         let in_exn_fn = self.fn_declared_effects.iter().any(|e| matches!(e, crate::ty::Effect::Exn(_)));
         match &inner_ty {

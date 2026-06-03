@@ -349,7 +349,21 @@ impl Checker {
                 },
             }
         }
+        let is_fallible = self.fn_declared_effects.iter().any(|e| matches!(e, crate::ty::Effect::Exn(_)));
+        self.exn_prop = is_fallible;
         let body_type = self.infer_block(&fn_decl.body);
+        self.exn_prop = false;
+        if is_fallible {
+            if let Some(ret) = &fn_decl.body.ret {
+                if self.tail_yields_result(ret) {
+                    let module = match self.current_module.split_first() {
+                        Some((head, rest)) if head == "root" => rest.to_vec(),
+                        _ => self.current_module.clone(),
+                    };
+                    self.result_tail_spans.insert((module, ret.span));
+                }
+            }
+        }
 
         if let Some(return_ty) = &fn_decl.return_type {
             let expected_return = self.convert_type(return_ty);

@@ -141,7 +141,27 @@ fn gen_missing_effect_arm_in_handler(r: &mut Rng) -> String {
     )
 }
 
+fn gen_fallible_call_without_question(r: &mut Rng) -> String {
+    let v = r.range(1, 99);
+    format!(
+        "fn inner() -> <exn<Int>> Int {{ {v} }}\n\
+         fn mid() -> <exn<Int>> Int {{ let x = inner(); x + 1 }}\n\
+         fn main() -> Int {{ handle mid() {{ return v => v, exn _ => 0 }} }}"
+    )
+}
+
+fn gen_mixed_fallible_plain_if_tail(r: &mut Rng) -> String {
+    let v = r.range(1, 99);
+    format!(
+        "fn inner() -> <exn<Int>> Int {{ {v} }}\n\
+         fn f(c: Bool) -> <exn<Int>> Int {{ if c {{ inner() }} else {{ {v} }} }}\n\
+         fn main() -> Int {{ handle f(true) {{ return v => v, exn _ => 0 }} }}"
+    )
+}
+
 const ILLEGAL_GENS: &[(&str, fn(&mut Rng) -> String)] = &[
+    ("fallible_no_question",      gen_fallible_call_without_question),
+    ("mixed_fallible_if_tail",    gen_mixed_fallible_plain_if_tail),
     ("shared_escape",            gen_shared_escape),
     ("closure_captures_shared",  gen_closure_captures_shared),
     ("break_outside_loop",       gen_break_outside_loop),
@@ -184,6 +204,26 @@ fn body() -> <E> Int { region { let a = 5; E.send(&a) } }
 fn main() -> Int { handle body() { return v => v, E.send q => resume(*q) } }
 "#;
     assert!(is_rejected(src), "&T escaping region via effect payload must be rejected");
+}
+
+#[test]
+fn rejection_fallible_call_value_without_question() {
+    let src = r#"
+fn inner() -> <exn<Int>> Int { 5 }
+fn mid() -> <exn<Int>> Int { let x = inner(); x + 1 }
+fn main() -> Int { handle mid() { return v => v, exn _ => 0 } }
+"#;
+    assert!(is_rejected(src), "fallible call used as a value without `?` must be rejected");
+}
+
+#[test]
+fn rejection_mixed_fallible_plain_if_tail() {
+    let src = r#"
+fn inner() -> <exn<Int>> Int { 5 }
+fn f(c: Bool) -> <exn<Int>> Int { if c { inner() } else { 7 } }
+fn main() -> Int { handle f(true) { return v => v, exn _ => 0 } }
+"#;
+    assert!(is_rejected(src), "mixed fallible/plain `if` branches in a fallible tail must be rejected");
 }
 
 #[test]

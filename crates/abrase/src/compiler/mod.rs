@@ -107,6 +107,7 @@ pub struct Compiler {
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
     pub(super) typeck_expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), crate::ty::Type>,
+    pub(super) result_tail_spans: std::collections::HashSet<(Vec<String>, ast::Span)>,
 }
 
 impl Compiler {
@@ -182,6 +183,7 @@ impl Compiler {
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
             typeck_expr_types: HashMap::new(),
+            result_tail_spans: std::collections::HashSet::new(),
         }
     }
 
@@ -598,6 +600,7 @@ impl Compiler {
         if !self.no_built_in { self.register_builtins_to_checker(&mut checker); }
         checker.check_program(ast);
         self.typeck_expr_types = std::mem::take(&mut checker.expr_types);
+        self.result_tail_spans = std::mem::take(&mut checker.result_tail_spans);
         self.warnings = std::mem::take(&mut checker.warnings);
         if !checker.errors.is_empty() {
             self.errors.extend(checker.errors.iter().map(|te| Error::new(
@@ -766,9 +769,12 @@ impl Compiler {
 
         let param_count = fn_decl.params.iter().filter(|p| matches!(p, ast::Param::Named { .. })).count();
 
+        let tail_already_result = fn_decl.body.ret.as_ref().map_or(false, |r| {
+            self.result_tail_spans.contains(&(self.current_fn_module.clone(), r.span))
+        });
         match self.compile_block(&fn_decl.body) {
             Ok(result_reg) => {
-                let ret_reg = if self.current_fn_fallible {
+                let ret_reg = if self.current_fn_fallible && !tail_already_result {
                     match self.wrap_ok(result_reg) {
                         Ok(r) => r,
                         Err(msg) => {

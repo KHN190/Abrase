@@ -20,6 +20,7 @@ impl Checker {
                 let saved_handled = std::mem::take(&mut self.handled_effects);
 
                 let required_before = self.fn_required_effects.clone();
+                self.exn_prop = true;
                 let _expr_ty = self.infer_expr(handler_expr);
                 let required_from_inner: Vec<_> = self.fn_required_effects.iter()
                     .filter(|e| !required_before.iter().any(|b| self.effects_equal(b, e)))

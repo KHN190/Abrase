@@ -100,11 +100,14 @@ impl Checker {
     }
 
     pub(super) fn infer_block_expr(&mut self, block: &ast::Block) -> Type {
+        let prop = self.exn_prop;
         self.enter_scope();
+        self.exn_prop = false;
         for stmt in &block.stmts {
             self.check_stmt(stmt);
         }
         let ty = if let Some(ret_expr) = &block.ret {
+            self.exn_prop = prop;
             self.infer_expr(ret_expr)
         } else {
             Type::Unit
@@ -114,6 +117,8 @@ impl Checker {
     }
 
     pub(super) fn infer_if(&mut self, condition: &Spanned<ast::Expr>, consequence: &Spanned<ast::Expr>, alternative: &Option<Box<Spanned<ast::Expr>>>, _span: ast::Span) -> Type {
+        let prop = self.exn_prop;
+        self.exn_prop = false;
         self.context_stack.push("In if condition".into());
         let cond_ty = self.infer_expr(condition);
         self.context_stack.pop();
@@ -123,15 +128,26 @@ impl Checker {
         }
 
         let snapshot = self.scopes.clone();
+        self.exn_prop = prop;
         let cons_ty = self.infer_expr(consequence);
         if let Some(alt) = alternative {
             self.scopes = snapshot;
+            self.exn_prop = prop;
             let alt_ty = self.infer_expr(alt);
             let compatible = cons_ty == alt_ty
                 || cons_ty == Type::Unknown || alt_ty == Type::Unknown
                 || cons_ty == Type::Never || alt_ty == Type::Never;
             if !compatible {
                 self.report_error("If branch types do not match".into(), alt.span);
+            }
+            if prop && cons_ty != Type::Never && alt_ty != Type::Never
+                && self.tail_yields_result(consequence) != self.tail_yields_result(alt)
+            {
+                self.report_error(
+                    "in a fallible tail, both `if` branches must be uniformly fallible or \
+                     uniformly plain values; add `?` to the fallible branch".into(),
+                    alt.span,
+                );
             }
             if cons_ty == Type::Never { alt_ty } else { cons_ty }
         } else {

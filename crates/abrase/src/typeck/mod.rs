@@ -95,6 +95,13 @@ pub struct Checker {
     // Effect Unification & Inference
     fn_declared_effects: Vec<crate::ty::Effect>,
     fn_required_effects: Vec<crate::ty::Effect>,
+    // True when the expression being inferred sits in a position that may carry
+    // a raw `exn` value onward: the operand of `?`, a handled scrutinee, or the
+    // tail of a fallible function. Elsewhere a fallible call must use `?`.
+    exn_prop: bool,
+    // Spans of expressions whose value is a raw Result (a fallible call), recorded
+    // during inference; consulted by tail_yields_result.
+    result_value_spans: std::collections::HashSet<Span>,
 
     // Effect Shadowing, Propagation & Scope Semantics
     handled_effects: Vec<String>,
@@ -152,6 +159,9 @@ pub struct Checker {
 
     // Authoritative per-expression types, keyed by (module, span, expr-kind). Populated by infer_expr.
     pub expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), Type>,
+    // Body-tail spans of fallible functions whose tail expression already yields
+    // a Result skips the function-level `Ok`-wrap for these.
+    pub result_tail_spans: std::collections::HashSet<(Vec<String>, ast::Span)>,
 
     pub warnings: Vec<crate::lint::Lint>,
 }
@@ -190,6 +200,8 @@ impl Checker {
             ownership_registry: HashMap::new(),
             fn_declared_effects: Vec::new(),
             fn_required_effects: Vec::new(),
+            exn_prop: false,
+            result_value_spans: std::collections::HashSet::new(),
             handled_effects: Vec::new(),
             unhandled_effects: Vec::new(),
             trait_registry: HashMap::new(),
@@ -234,6 +246,7 @@ impl Checker {
             import_collisions: std::collections::HashSet::new(),
             module_registry: HashMap::new(),
             expr_types: HashMap::new(),
+            result_tail_spans: std::collections::HashSet::new(),
             warnings: Vec::new(),
         }
     }

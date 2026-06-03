@@ -198,6 +198,63 @@ fn main() -> Int {
 }
 
 #[test]
+fn throw_propagated_through_intermediate_exn_frame_does_not_leak() {
+    let source = r#"
+fn inner() -> <exn<Int>> Int { throw(99); 0 }
+fn mid() -> <exn<Int>> Int { inner() }
+fn main() -> Int { handle mid() { return v => v, exn _ => 42 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(42));
+    assert_eq!(vm.heap_live_count(), 0,
+        "throw propagation through an intermediate frame leaked the Result wrapper");
+}
+
+#[test]
+fn ok_propagated_through_intermediate_exn_frame_is_correct_and_clean() {
+    let source = r#"
+fn inner() -> <exn<Int>> Int { 5 }
+fn mid() -> <exn<Int>> Int { inner() }
+fn main() -> Int { handle mid() { return v => v, exn _ => 42 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(5), "tail propagation double-wrapped the Ok value");
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+#[test]
+fn uniform_fallible_if_tail_propagates_clean() {
+    let source = r#"
+fn a() -> <exn<Int>> Int { 1 }
+fn b() -> <exn<Int>> Int { 2 }
+fn f(c: Bool) -> <exn<Int>> Int { if c { a() } else { b() } }
+fn main() -> Int { handle f(true) { return v => v, exn _ => 0 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(1));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+#[test]
+fn throw_caught_directly_by_handle_does_not_leak() {
+    let source = r#"
+type DivErr = { code: Int }
+type Box = { v: Int }
+fn inner() -> <exn<DivErr>> Int {
+  let x = Box { v: 7 };
+  let y = Box { v: 8 };
+  throw(DivErr { code: 1 });
+  x.v + y.v
+}
+fn main() -> Int { handle inner() { return v => v, exn _ => 42 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(42));
+    assert_eq!(vm.heap_live_count(), 0,
+        "throw caught directly by the handle leaked owned locals or the error");
+}
+
+#[test]
 fn throw_unwind_skips_moved_out_value_no_double_free() {
     let source = r#"
 type DivErr = { code: Int }

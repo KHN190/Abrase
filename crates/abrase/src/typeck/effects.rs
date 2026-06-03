@@ -240,6 +240,30 @@ impl Checker {
         effects.is_empty()
     }
 
+    // Whether an expression's *value* is already a Result: a fallible call (its
+    // span was recorded in `result_value_spans` during inference), or a
+    // forwarding construct all of whose value branches yield a Result. Used both
+    // for the tail-branch consistency check and the codegen wrap decision.
+    pub fn tail_yields_result(&self, expr: &Spanned<ast::Expr>) -> bool {
+        match &expr.node {
+            ast::Expr::Paren(inner) => self.tail_yields_result(inner),
+            ast::Expr::Block(b) => b.ret.as_ref().map_or(false, |r| self.tail_yields_result(r)),
+            ast::Expr::Call { .. } => self.result_value_spans.contains(&expr.span),
+            ast::Expr::If { consequence, alternative, .. } => {
+                alternative.is_some() && self.tail_yields_result(consequence)
+            }
+            ast::Expr::Match { arms, .. } => {
+                arms.first().map_or(false, |a| self.tail_yields_result(&a.body))
+            }
+            // A handle that does not catch `exn` forwards the body's Result.
+            ast::Expr::Handle { expr: body, arms } => {
+                !arms.iter().any(|a| matches!(a.kind, ast::HandleArmKind::Exn))
+                    && self.tail_yields_result(body)
+            }
+            _ => false,
+        }
+    }
+
     pub fn infer_expr_effects(&self, expr: &ast::Expr) -> Vec<ast::EffectItem> {
         match expr {
             ast::Expr::Paren(inner) => self.infer_expr_effects(&inner.node),

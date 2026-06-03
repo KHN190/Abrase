@@ -124,16 +124,18 @@ impl Checker {
     }
 
     fn infer_expr_inner(&mut self, expr: &Spanned<ast::Expr>) -> Type {
+        let prop = self.exn_prop;
+        self.exn_prop = false;
         match &expr.node {
             ast::Expr::Error                                => Type::Unknown,
-            ast::Expr::Paren(inner)                        => self.infer_expr(inner),
+            ast::Expr::Paren(inner)                        => { self.exn_prop = prop; self.infer_expr(inner) }
             ast::Expr::Literal(lit)                        => self.infer_literal(lit, expr.span),
             ast::Expr::Identifier(name)                    => self.get_var(name, false, expr.span),
             ast::Expr::Unary { op, right }                 => self.infer_unary(op, right, expr.span),
             ast::Expr::Binary { op, left, right }          => self.infer_binary(op, left, right, expr.span),
-            ast::Expr::Block(block)                        => self.infer_block_expr(block),
-            ast::Expr::If { condition, consequence, alternative } => self.infer_if(condition, consequence, alternative, expr.span),
-            ast::Expr::Match { scrutinee, arms }           => self.infer_match(scrutinee, arms, expr.span),
+            ast::Expr::Block(block)                        => { self.exn_prop = prop; self.infer_block_expr(block) }
+            ast::Expr::If { condition, consequence, alternative } => { self.exn_prop = prop; self.infer_if(condition, consequence, alternative, expr.span) }
+            ast::Expr::Match { scrutinee, arms }           => { self.exn_prop = prop; self.infer_match(scrutinee, arms, expr.span) }
             ast::Expr::For { pattern, iter, body }         => self.infer_for(pattern, iter, body, expr.span),
             ast::Expr::While { condition, body }           => self.infer_while(condition, body, expr.span),
             ast::Expr::Loop { body }                       => self.infer_loop(body, expr.span),
@@ -165,7 +167,7 @@ impl Checker {
                 self.add_required_effect(crate::ty::Effect::Exn(Box::new(ex_ty)));
                 Type::Never
             }
-            ast::Expr::Call { callee, args }               => self.infer_call(callee, args, expr.span),
+            ast::Expr::Call { callee, args }               => { self.exn_prop = prop; self.infer_call(callee, args, expr.span) }
             ast::Expr::Tuple(elems)                        => self.infer_tuple(elems),
             ast::Expr::Array(elems)                        => self.infer_array(elems),
             ast::Expr::ArrayRepeat { elem, count }         => self.infer_array_repeat(elem, count),
@@ -183,9 +185,14 @@ impl Checker {
     }
 
     pub fn infer_block(&mut self, block: &ast::Block) -> Type {
+        let prop = self.exn_prop;
         self.enter_scope();
+        self.exn_prop = false;
         for stmt in &block.stmts { self.check_stmt(stmt); }
-        let ty = if let Some(ret_expr) = &block.ret { self.infer_expr(ret_expr) } else { Type::Unit };
+        let ty = if let Some(ret_expr) = &block.ret {
+            self.exn_prop = prop;
+            self.infer_expr(ret_expr)
+        } else { Type::Unit };
         self.exit_scope();
         ty
     }
