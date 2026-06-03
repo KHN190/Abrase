@@ -16,6 +16,40 @@ fn must_reject(src: &str) -> String {
     }
 }
 
+// Known limitation: a `handle` nested inside a handler arm body is rejected
+// (not silently miscompiled). Flat single-shot handlers are the stable contract.
+#[test]
+fn nested_handle_in_arm_body_rejected() {
+    let src = r#"
+        effect E { op a() -> Int }
+        effect F { op b() -> Int }
+        fn g() -> <F> Int { F.b() }
+        fn main() -> Int {
+            handle E.a() {
+                return x => x,
+                E.a _ => resume(handle g() { return y => y, F.b _ => resume(1) }),
+            }
+        }
+    "#;
+    let err = must_reject(src);
+    assert!(err.contains("nested `handle`"), "expected nested-handle rejection, got: {}", err);
+}
+
+// Known limitation: array destructure with a pattern after `..` needs runtime
+// length; rejected at compile time rather than miscompiled.
+#[test]
+fn array_destructure_trailing_after_rest_rejected() {
+    let src = r#"
+        fn main() -> Int {
+            let xs = [1, 2, 3, 4];
+            let [first, .., last] = xs;
+            first + last
+        }
+    "#;
+    let err = must_reject(src);
+    assert!(err.contains("trailing pattern after `..`"), "expected trailing-rest rejection, got: {}", err);
+}
+
 #[test]
 fn variant_pattern_too_many_args_rejected() {
     // `Some` has 1 payload; matching with 3 args was silently typed Unknown.
