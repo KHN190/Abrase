@@ -383,8 +383,17 @@ impl Mono {
             return None;
         }
         let mut bindings: HashMap<String, Type> = HashMap::new();
+        let mut consistent = true;
         for (p, a) in param_types.iter().zip(arg_types.iter()) {
-            unify(p, a, &gens, &mut bindings);
+            consistent &= unify(p, a, &gens, &mut bindings);
+        }
+        if !consistent {
+            self.errors.push(Error::new(
+                ErrorCode::CodegenError,
+                span,
+                format!("Conflicting type arguments for call to '{}'", generic_fd.name),
+            ));
+            return None;
         }
         let mut out = Vec::with_capacity(gens.len());
         for g in &gens {
@@ -470,29 +479,37 @@ fn lit_type(lit: &Literal) -> Type {
     }
 }
 
-fn unify(param: &Type, arg: &Type, gens: &[String], subst: &mut HashMap<String, Type>) {
+fn unify(param: &Type, arg: &Type, gens: &[String], subst: &mut HashMap<String, Type>) -> bool {
     match (param, arg) {
         (Type::Named(n), arg_ty) if gens.contains(n) => {
-            subst.entry(n.clone()).or_insert_with(|| arg_ty.clone());
+            let is_hole = |t: &Type| matches!(t, Type::Named(s) if s == "Unknown" || s == "?");
+            if is_hole(arg_ty) { return true; }
+            match subst.get(n) {
+                Some(existing) if is_hole(existing) => {
+                    subst.insert(n.clone(), arg_ty.clone()); true
+                }
+                Some(existing) => existing == arg_ty,
+                None => { subst.insert(n.clone(), arg_ty.clone()); true }
+            }
         }
         (Type::Generic { name: pn, args: pa }, Type::Generic { name: an, args: aa })
             if pn == an && pa.len() == aa.len() =>
         {
-            for (p, a) in pa.iter().zip(aa.iter()) { unify(p, a, gens, subst); }
+            pa.iter().zip(aa.iter()).all(|(p, a)| unify(p, a, gens, subst))
         }
         (Type::Tuple(ps), Type::Tuple(as_)) if ps.len() == as_.len() => {
-            for (p, a) in ps.iter().zip(as_.iter()) { unify(p, a, gens, subst); }
+            ps.iter().zip(as_.iter()).all(|(p, a)| unify(p, a, gens, subst))
         }
         (Type::Reference { inner: pi, .. }, Type::Reference { inner: ai, .. }) => {
-            unify(pi, ai, gens, subst);
+            unify(pi, ai, gens, subst)
         }
         (Type::Function { params: pp, ret: pr, .. },
          Type::Function { params: ap, ret: ar, .. }) if pp.len() == ap.len() =>
         {
-            for (p, a) in pp.iter().zip(ap.iter()) { unify(p, a, gens, subst); }
-            unify(pr, ar, gens, subst);
+            pp.iter().zip(ap.iter()).all(|(p, a)| unify(p, a, gens, subst))
+                && unify(pr, ar, gens, subst)
         }
-        _ => {}
+        _ => true,
     }
 }
 

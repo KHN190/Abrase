@@ -226,3 +226,88 @@ fn int32_safe_flt_reads_operands_as_f32() {
     let v = run_int32("fn main() -> Bool { 2.5 < 1.5 }", true);
     assert_eq!(v.raw(), 0, "INT32_SAFE FLt: 2.5 < 1.5 = false");
 }
+
+#[test]
+fn int32_mode_rejects_out_of_range_in_static() {
+    let src = r#"
+        static X: Int = 2147483648;
+        fn main() -> Int { 0 }
+    "#;
+    let err = compile_with_int32(src, true).unwrap_err();
+    assert!(err.contains("out of i32 range"),
+        "expected i32 range error in static, got: {}", err);
+}
+
+#[test]
+fn int32_mode_rejects_out_of_range_in_const() {
+    let src = r#"
+        const X: Int = 2147483648;
+        fn main() -> Int { 0 }
+    "#;
+    let err = compile_with_int32(src, true).unwrap_err();
+    assert!(err.contains("out of i32 range"),
+        "expected i32 range error in const, got: {}", err);
+}
+
+#[test]
+fn int32_mode_rejects_out_of_range_in_impl_method() {
+    let src = r#"
+        impl Int {
+            fn bad(self) -> Int { 2147483648 }
+        }
+        fn main() -> Int { 0 }
+    "#;
+    let err = compile_with_int32(src, true).unwrap_err();
+    assert!(err.contains("out of i32 range"),
+        "expected i32 range error in impl method, got: {}", err);
+}
+
+#[test]
+fn int32_mode_rejects_out_of_range_in_if_branch() {
+    let src = "fn main() -> Int { if true { 2147483648 } else { 0 } }";
+    let err = compile_with_int32(src, true).unwrap_err();
+    assert!(err.contains("out of i32 range"), "if branch: {}", err);
+}
+
+#[test]
+fn int32_mode_rejects_out_of_range_in_while_body() {
+    let src = "fn main() -> Int { while false { 2147483648; } 0 }";
+    let err = compile_with_int32(src, true).unwrap_err();
+    assert!(err.contains("out of i32 range"), "while body: {}", err);
+}
+
+#[test]
+fn int32_mode_rejects_out_of_range_in_closure() {
+    let src = "fn main() -> Int { let f = || 2147483648; 0 }";
+    let err = compile_with_int32(src, true).unwrap_err();
+    assert!(err.contains("out of i32 range"), "closure: {}", err);
+}
+
+#[test]
+fn int32_mode_rejects_out_of_range_in_array() {
+    let src = "fn main() -> Int { let _ = [2147483648]; 0 }";
+    let err = compile_with_int32(src, true).unwrap_err();
+    assert!(err.contains("out of i32 range"), "array literal: {}", err);
+}
+
+#[test]
+fn int32_mode_rejects_out_of_range_in_tuple() {
+    let src = "fn main() -> Int { let _ = (2147483648, 1); 0 }";
+    let err = compile_with_int32(src, true).unwrap_err();
+    assert!(err.contains("out of i32 range"), "tuple literal: {}", err);
+}
+
+#[test]
+fn int32_mode_rejects_out_of_range_in_match_pattern_range() {
+    let src = r#"
+        fn main() -> Int {
+            match 1 {
+                0..2147483648 => 0
+                _ => 1
+            }
+        }
+    "#;
+    let err = compile_with_int32(src, true).unwrap_err();
+    assert!(err.contains("out of i32 range"),
+        "expected i32 range error in pattern range, got: {}", err);
+}

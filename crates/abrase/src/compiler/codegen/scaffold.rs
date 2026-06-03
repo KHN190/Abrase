@@ -6,6 +6,33 @@ use crate::compiler::Compiler;
 use crate::compiler::effects;
 use crate::bytecode::Value;
 
+fn op_reads_reg(op: &OpCode, r: Register) -> bool {
+    use OpCode::*;
+    match op {
+        Add(_, a, b) | Sub(_, a, b) | Mul(_, a, b) | Div(_, a, b) | Mod(_, a, b)
+        | Eq(_, a, b) | Neq(_, a, b) | Lt(_, a, b) | Gt(_, a, b) | Lte(_, a, b) | Gte(_, a, b)
+        | And(_, a, b) | Or(_, a, b) | Xor(_, a, b) | Shl(_, a, b) | Shr(_, a, b)
+        | FAdd(_, a, b) | FSub(_, a, b) | FMul(_, a, b) | FDiv(_, a, b)
+        | FLt(_, a, b) | FEq(_, a, b) => *a == r || *b == r,
+        Neg(_, a) | FNeg(_, a) => *a == r,
+        Copy(_, s) | Move(_, s) => *s == r,
+        Drop(s) => *s == r,
+        Jz(c, _) | Jnz(c, _) => *c == r,
+        Ret(s) => *s == r,
+        AddImm(_, s, _) | SubImm(_, s, _) => *s == r,
+        Ld(_, b, _) => *b == r,
+        St(v, b, _) => *v == r || *b == r,
+        LdIdx(_, b, i) => *b == r || *i == r,
+        StIdx(v, b, i) => *v == r || *b == r || *i == r,
+        Deo(s, p) | Dei(s, p) => *s == r || *p == r,
+        CallReg(_, f) => *f == r,
+        Resume(_, v) => *v == r,
+        Raise(_, k, a) => *k == r || *a == r,
+        Handle(t, _) => *t == r,
+        _ => false,
+    }
+}
+
 pub(in crate::compiler) fn to_u16(n: usize, what: &str) -> Result<u16, String> {
     u16::try_from(n).map_err(|_| format!("{} exceeds u16 range (got {}, max {})", what, n, u16::MAX))
 }
@@ -113,24 +140,62 @@ impl Compiler {
         }
     }
 
-    pub(in crate::compiler) fn check_int32_literal(&self, n: i64) -> Result<(), String> {
-        if self.int32_mode && (n < i32::MIN as i64 || n > i32::MAX as i64) {
-            return Err(format!(
-                "Int literal {} out of i32 range; --int32 mode requires values in {}..={}",
-                n, i32::MIN, i32::MAX
-            ));
+    pub(in crate::compiler) fn try_redirect_alloc_block(&mut self, old: Register, new: Register) -> bool {
+        if old == new { return true; }
+        let len = self.code.len();
+        let mut alloc_pos = None;
+        for i in (0..len).rev() {
+            match &self.code[i] {
+                OpCode::Alloc(d, _) if *d == old => { alloc_pos = Some(i); break; }
+                OpCode::St(v, b, _) => {
+                    if *v == old { return false; }
+                    if *b != old { if op_reads_reg(&self.code[i], old) { return false; } }
+                }
+                op => { if op_reads_reg(op, old) { return false; } }
+            }
         }
-        Ok(())
+        let alloc_pos = match alloc_pos { Some(p) => p, None => return false };
+        for i in alloc_pos..len {
+            match &mut self.code[i] {
+                OpCode::Alloc(d, _) if *d == old => { *d = new; }
+                OpCode::St(_, b, _) if *b == old => { *b = new; }
+                _ => {}
+            }
+        }
+        let old_i = old.0 as usize;
+        if old_i < self.reg_holds_handle.len() { self.reg_holds_handle[old_i] = false; }
+        let new_i = new.0 as usize;
+        if new_i >= self.reg_holds_handle.len() { self.reg_holds_handle.resize(new_i + 1, false); }
+        self.reg_holds_handle[new_i] = true;
+        true
     }
 
-    pub(in crate::compiler) fn check_float32_literal(&self, f: f64) -> Result<(), String> {
-        if self.int32_mode && f.is_finite() && (f as f32) as f64 != f {
-            return Err(format!(
-                "Float literal {} not representable as f32; --int32 mode requires f32-safe values",
-                f
-            ));
+    pub(in crate::compiler) fn peephole_copy_drop(&mut self) {
+        let mut i = 0;
+        while i < self.code.len() {
+            if let OpCode::Copy(dest, src) = self.code[i] {
+                let src_is_handle = (src.0 as usize) < self.reg_holds_handle.len()
+                    && self.reg_holds_handle[src.0 as usize];
+                if src_is_handle {
+                    let limit = (self.code.len() - i - 1).min(8);
+                    let mut drop_pos = None;
+                    let mut blocked = false;
+                    for j in 1..=limit {
+                        match &self.code[i + j] {
+                            OpCode::Drop(r) if *r == src => { drop_pos = Some(i + j); break; }
+                            op if op_reads_reg(op, src) => { blocked = true; break; }
+                            _ => {}
+                        }
+                    }
+                    if let Some(_dp) = drop_pos {
+                        if !blocked {
+                            self.code[i] = OpCode::Move(dest, src);
+                        }
+                    }
+                }
+            }
+            i += 1;
         }
-        Ok(())
     }
 
     pub(in crate::compiler) fn add_constant(&mut self, val: Value) -> Result<u16, String> {
@@ -233,73 +298,21 @@ impl Compiler {
         Ok(())
     }
 
-    // Walk type structure emitting region_forget for carried value + reachable handles.
+    // Forget the carried value so region_pop won't force-free it.
     pub(in crate::compiler) fn emit_region_forget_typed(
         &mut self,
         reg: Register,
         ty: &ast::Type,
     ) -> Result<(), String> {
-        self.emit_region_forget_typed_inner(reg, ty, 0)
-    }
-
-    fn emit_region_forget_typed_inner(
-        &mut self,
-        reg: Register,
-        ty: &ast::Type,
-        depth: usize,
-    ) -> Result<(), String> {
-        const MAX_DEPTH: usize = 32;
-        if depth > MAX_DEPTH {
-            return Err(format!(
-                "region_forget type recursion exceeded {} levels — \
-                 carried value is too deeply nested to escape; \
-                 bind to a let inside the region instead",
-                MAX_DEPTH
-            ));
-        }
-        match ty {
+        let is_scalar = matches!(
+            ty,
             ast::Type::Named(n) if matches!(
                 n.as_str(),
                 "Int" | "Float" | "Bool" | "Char" | "Unit" | "Never"
-            ) => Ok(()),
-
-            ast::Type::Reference { .. }
-            | ast::Type::Function { .. } => {
-                self.emit_region_forget(reg)
-            }
-
-            ast::Type::Tuple(items) => {
-                self.emit_region_forget(reg)?;
-                for (i, t) in items.iter().enumerate() {
-                    let inner = self.alloc_register()?;
-                    let offset = u16::try_from(i)
-                        .map_err(|_| "tuple index exceeds u16".to_string())?;
-                    self.emit(OpCode::Ld(inner, reg, offset));
-                    self.emit_region_forget_typed_inner(inner, t, depth + 1)?;
-                }
-                Ok(())
-            }
-
-            ast::Type::Named(n) => {
-                self.emit_region_forget(reg)?;
-                if let Some(layout) = self.layouts.records.get(n).cloned() {
-                    for (i, fty) in layout.field_types.iter().enumerate() {
-                        let inner = self.alloc_register()?;
-                        let offset = u16::try_from(i)
-                            .map_err(|_| "record field index exceeds u16".to_string())?;
-                        self.emit(OpCode::Ld(inner, reg, offset));
-                        self.emit_region_forget_typed_inner(inner, fty, depth + 1)?;
-                    }
-                }
-                Ok(())
-            }
-
-            ast::Type::Generic { .. } => {
-                self.emit_region_forget(reg)
-            }
-
-            _ => self.emit_region_forget(reg),
-        }
+            )
+        );
+        if is_scalar { return Ok(()); }
+        self.emit_region_forget(reg)
     }
 
     pub(in crate::compiler) fn emit_drops_for_exit(

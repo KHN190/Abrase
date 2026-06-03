@@ -1,0 +1,1647 @@
+// Correctness fuzz: generate programs with known expected outputs, verify results.
+// Each generator produces (source, expected_i64). Covers: int, float,
+// multi-module, record pack/unpack, mut destructure, effect, match, loop, recursion.
+
+use abrase::{compiler::Compiler, lexer::Lexer, loader::load_program, parser::Parser};
+use myriad::{VirtualMachine};
+use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static DIR_CTR: AtomicU64 = AtomicU64::new(0);
+
+struct Rng(u64);
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Self(seed.wrapping_mul(6364136223846793005).wrapping_add(1))
+    }
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0
+    }
+    fn pick(&mut self, n: u64) -> u64 { self.next() % n }
+    fn range(&mut self, lo: i64, hi: i64) -> i64 {
+        lo + (self.pick((hi - lo) as u64) as i64)
+    }
+}
+
+fn run_src_expect(src: &str, expected: i64) -> Result<(), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() {
+        return Err(format!("parse:\n{}", p.pretty_print_errors()));
+    }
+    let mut c = Compiler::new().with_source(src.to_string());
+    let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
+    let mut vm = VirtualMachine::new().with_step_cap(5_000_000);
+    let v = vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
+    let got = v.as_int();
+    if got != expected {
+        return Err(format!("expected {}, got {}", expected, got));
+    }
+    Ok(())
+}
+
+fn run_files_expect(lib_src: &str, main_src: &str, expected: i64) -> Result<(), String> {
+    let n = DIR_CTR.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir()
+        .join(format!("abrase_correct_{}_{}", std::process::id(), n));
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    fs::write(dir.join("lib.abe"), lib_src).map_err(|e| e.to_string())?;
+    fs::write(dir.join("main.abe"), main_src).map_err(|e| e.to_string())?;
+    let entry = dir.join("main.abe");
+    let result = (|| {
+        let loaded = load_program(&entry).map_err(|e| format!("load: {:?}", e))?;
+        let mut c = Compiler::new().with_source(loaded.entry_source.clone());
+        let module = c.compile_module(&loaded.decls)
+            .map_err(|_| loaded.render_errors(&c.errors))?;
+        let mut vm = VirtualMachine::new().with_step_cap(5_000_000);
+        let v = vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
+        let got = v.as_int();
+        if got != expected {
+            return Err(format!("expected {}, got {}", expected, got));
+        }
+        Ok(())
+    })();
+    fs::remove_dir_all(&dir).ok();
+    result
+}
+
+fn gen_int_arith(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 50);
+    let b = rng.range(1, 30);
+    let c = rng.range(0, 100);
+    let d = rng.range(0, 50);
+    let expected = a * b + c - d;
+    let src = format!(
+        "fn main() -> Int {{ {a} * {b} + {c} - {d} }}"
+    );
+    (src, expected)
+}
+
+fn gen_float_arith(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 20);
+    let b = rng.range(1, 20);
+    let c = rng.range(1, 10);
+    let d = rng.range(0, 20);
+    let expected = (a + b) * c - d;
+    let src = format!(r#"
+fn main() -> Int {{
+  let fa = {a}.to_f();
+  let fb = {b}.to_f();
+  let fc = {c}.to_f();
+  let fd = {d}.to_f();
+  ((fa + fb) * fc - fd).to_i()
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_int_match(rng: &mut Rng) -> (String, i64) {
+    let b1 = rng.range(2, 8);
+    let b2 = rng.range(b1 + 2, 18);
+    let vals: Vec<i64> = (0..4).map(|_| rng.range(0, 22)).collect();
+    let classify = |n: i64| if n < b1 { 1 } else if n < b2 { 2 } else { 3 };
+    let expected = classify(vals[0])
+        + classify(vals[1]) * 10
+        + classify(vals[2]) * 100
+        + classify(vals[3]) * 1000;
+    let src = format!(r#"
+fn classify(n: Int) -> Int {{
+  match n {{
+    _ if n < {b1} => 1,
+    _ if n < {b2} => 2,
+    _ => 3,
+  }}
+}}
+fn main() -> Int {{
+  classify({v0}) + classify({v1}) * 10 + classify({v2}) * 100 + classify({v3}) * 1000
+}}
+"#, b1=b1, b2=b2, v0=vals[0], v1=vals[1], v2=vals[2], v3=vals[3]);
+    (src, expected)
+}
+
+fn gen_range_match(rng: &mut Rng) -> (String, i64) {
+    let vals: Vec<i64> = (0..5).map(|_| rng.range(0, 30)).collect();
+    let bucket = |n: i64| if n < 10 { 0 } else if n < 20 { 1 } else { 2 };
+    let expected: i64 = vals.iter().map(|&v| bucket(v)).sum();
+    let src = format!(r#"
+fn bucket(n: Int) -> Int {{
+  match n {{
+    0..10  => 0,
+    10..20 => 1,
+    _      => 2,
+  }}
+}}
+fn main() -> Int {{
+  bucket({v0}) + bucket({v1}) + bucket({v2}) + bucket({v3}) + bucket({v4})
+}}
+"#, v0=vals[0], v1=vals[1], v2=vals[2], v3=vals[3], v4=vals[4]);
+    (src, expected)
+}
+
+fn gen_loop(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(3, 25);
+    let step = rng.range(1, 4);
+    let expected: i64 = (0..n).step_by(step as usize).sum();
+    let src = format!(r#"
+fn main() -> Int {{
+  let mut acc = 0;
+  let mut i = 0;
+  while i < {n} {{ acc = acc + i; i = i + {step} }};
+  acc
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_record_pack(rng: &mut Rng) -> (String, i64) {
+    let ax = rng.range(-8, 8);
+    let ay = rng.range(-8, 8);
+    let bx = rng.range(-8, 8);
+    let by = rng.range(-8, 8);
+    let s = rng.range(1, 5);
+    let expected = (ax * s) * bx + (ay * s) * by;
+    let src = format!(r#"
+type Vec2 = {{ x: Int, y: Int }}
+fn dot(a: Vec2, b: Vec2) -> Int {{ a.x * b.x + a.y * b.y }}
+fn scale(v: Vec2, k: Int) -> Vec2 {{ Vec2 {{ x: v.x * k, y: v.y * k }} }}
+fn main() -> Int {{
+  let a = Vec2 {{ x: {ax}, y: {ay} }};
+  let b = Vec2 {{ x: {bx}, y: {by} }};
+  dot(scale(a, {s}), b)
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_record_mut_unpack(rng: &mut Rng) -> (String, i64) {
+    let x = rng.range(1, 15);
+    let y = rng.range(1, 15);
+    let dx = rng.range(0, 8);
+    let dy = rng.range(0, 8);
+    let s = rng.range(1, 4);
+    let expected = (x + dx) * s + (y + dy) * s;
+    let src = format!(r#"
+type Pt = {{ x: Int, y: Int }}
+fn transform(p: Pt, dx: Int, dy: Int, scale: Int) -> Int {{
+  let mut Pt {{ x, y }} = p;
+  x = (x + dx) * scale;
+  y = (y + dy) * scale;
+  x + y
+}}
+fn main() -> Int {{
+  transform(Pt {{ x: {x}, y: {y} }}, {dx}, {dy}, {s})
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_effect_counter(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(1, 20) as i64;
+    let expected = n;
+    let src = format!(r#"
+effect Ctr {{ op inc() -> Unit }}
+fn run_n(n: Int) -> <Ctr> Unit {{
+  let mut i = 0;
+  while i < n {{ Ctr.inc(); i = i + 1 }}
+}}
+fn main() -> Int {{
+  let mut total = 0;
+  handle run_n({n}) {{
+    return _ => total,
+    Ctr.inc => {{ total = total + 1; resume(()) }}
+  }}
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_effect_accumulate(rng: &mut Rng) -> (String, i64) {
+    let vals: Vec<i64> = (0..5).map(|_| rng.range(1, 10)).collect();
+    let expected: i64 = vals.iter().sum();
+    let items = vals.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+    let src = format!(r#"
+effect Adder {{ op push(n: Int) -> Unit }}
+fn feed() -> <Adder> Unit {{
+  let arr = [{items}];
+  let mut i = 0;
+  while i < 5 {{ Adder.push(arr[i]); i = i + 1 }}
+}}
+fn main() -> Int {{
+  let mut sum = 0;
+  handle feed() {{
+    return _  => sum,
+    Adder.push n => {{ sum = sum + n; resume(()) }}
+  }}
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_recursion_fib(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(1, 12) as usize;
+    let fib = {
+        let mut a = 0i64; let mut b = 1i64;
+        for _ in 0..n { let t = a + b; a = b; b = t; }
+        a
+    };
+    let src = format!(r#"
+fn fib(n: Int) -> Int {{
+  if n <= 1 {{ n }} else {{ fib(n - 1) + fib(n - 2) }}
+}}
+fn main() -> Int {{ fib({n}) }}
+"#);
+    (src, fib)
+}
+
+fn gen_recursion_sum(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(1, 30);
+    let expected = n * (n + 1) / 2;
+    let src = format!(r#"
+fn sum_to(n: Int) -> Int {{
+  if n <= 0 {{ 0 }} else {{ n + sum_to(n - 1) }}
+}}
+fn main() -> Int {{ sum_to({n}) }}
+"#);
+    (src, expected)
+}
+
+fn gen_record_array_float(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(2, 6) as usize;
+    let xs: Vec<i64> = (0..n).map(|_| rng.range(1, 10)).collect();
+    let ys: Vec<i64> = (0..n).map(|_| rng.range(1, 10)).collect();
+    let dx = rng.range(1, 5);
+    let expected: i64 = xs.iter().zip(ys.iter()).map(|(x, y)| (x + dx) * y).sum();
+    let inits: String = xs.iter().zip(ys.iter())
+        .map(|(x, y)| format!("Ent {{ x: {x}.to_f(), y: {y} }}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let src = format!(r#"
+type Ent = {{ x: Float, y: Int }}
+fn main() -> Int {{
+  let arr = [{inits}];
+  let mut acc = 0;
+  let mut i = 0;
+  while i < {n} {{
+    let e = arr[i];
+    acc = acc + (e.x.to_i() + {dx}) * e.y;
+    i = i + 1
+  }};
+  acc
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_multi_module_record(rng: &mut Rng) -> (String, String, i64) {
+    let ax = rng.range(1, 10);
+    let ay = rng.range(1, 10);
+    let bx = rng.range(1, 10);
+    let by = rng.range(1, 10);
+    let expected = ax * bx + ay * by; // dot product
+    let lib = format!(r#"
+pub type Vec2 = {{ x: Int, y: Int }}
+pub fn dot(a: Vec2, b: Vec2) -> Int {{ a.x * b.x + a.y * b.y }}
+fn main() -> Int {{ 0 }}
+"#);
+    let main = format!(r#"
+use lib::{{Vec2, dot}}
+fn main() -> Int {{
+  let a = Vec2 {{ x: {ax}, y: {ay} }};
+  let b = Vec2 {{ x: {bx}, y: {by} }};
+  dot(a, b)
+}}
+"#);
+    (lib, main, expected)
+}
+
+fn gen_variant_match(rng: &mut Rng) -> (String, i64) {
+    // type Shape = Circle(Int) | Rect(Int, Int) | Point
+    let r  = rng.range(1, 15);
+    let w  = rng.range(1, 15);
+    let h  = rng.range(1, 15);
+    // area: Circle(r)→r*r, Rect(w,h)→w*h, Point→0
+    let expected = r*r + w*h + 0;
+    let src = format!(r#"
+type Shape = Circle(Int) | Rect(Int, Int) | Point
+fn area(s: Shape) -> Int {{
+  match s {{
+    Circle(r)    => r * r,
+    Rect(w, h)   => w * h,
+    Point        => 0,
+  }}
+}}
+fn main() -> Int {{
+  area(Circle({r})) + area(Rect({w}, {h})) + area(Point)
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_variant_guard_match(rng: &mut Rng) -> (String, i64) {
+    let vals: Vec<i64> = (0..4).map(|_| rng.range(0, 20)).collect();
+    let thresh = rng.range(5, 15);
+    // Some(n): n > thresh → n, else → 0; None → -1
+    let _classify = |v: i64| v;  // all are Some(v), result = v if > thresh else 0
+    let expected: i64 = vals.iter().map(|&v| {
+        if v > thresh { v } else { 0 }
+    }).sum();
+    let src = format!(r#"
+type Opt = None | Some(Int)
+fn extract(o: Opt) -> Int {{
+  match o {{
+    Some(n) if n > {thresh} => n,
+    Some(_) => 0,
+    None    => -1,
+  }}
+}}
+fn main() -> Int {{
+  extract(Some({v0})) + extract(Some({v1})) + extract(Some({v2})) + extract(Some({v3}))
+}}
+"#, thresh=thresh, v0=vals[0], v1=vals[1], v2=vals[2], v3=vals[3]);
+    (src, expected)
+}
+
+fn gen_for_loop(rng: &mut Rng) -> (String, i64) {
+    let start = rng.range(0, 5);
+    let end   = start + rng.range(3, 15);
+    let mul   = rng.range(1, 4);
+    let expected: i64 = (start..end).map(|i| i * mul).sum();
+    let src = format!(r#"
+fn main() -> Int {{
+  let mut acc = 0;
+  for i in {start}..{end} {{ acc = acc + i * {mul} }};
+  acc
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_for_break(rng: &mut Rng) -> (String, i64) {
+    let n     = rng.range(5, 20);
+    let stop  = rng.range(2, n - 1);
+    let expected: i64 = (0..stop).sum();  // accumulates 0..stop, breaks at stop
+    let src = format!(r#"
+fn main() -> Int {{
+  let mut acc = 0;
+  for i in 0..{n} {{
+    if i == {stop} {{ break }};
+    acc = acc + i
+  }};
+  acc
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_loop_break_value(rng: &mut Rng) -> (String, i64) {
+    let n        = rng.range(3, 15);
+    let target   = rng.range(1, n - 1);
+    let expected = target * target;
+    let src = format!(r#"
+fn main() -> Int {{
+  let mut i = 0;
+  let result = loop {{
+    if i == {target} {{ break i * i }};
+    i = i + 1
+  }};
+  result
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_closure_capture(rng: &mut Rng) -> (String, i64) {
+    let base = rng.range(1, 20);
+    let step = rng.range(1, 10);
+    let n    = rng.range(2, 8);
+    // add(i) = base + i*step; sum over 0..n
+    let expected: i64 = (0..n).map(|i| base + i * step).sum();
+    let src = format!(r#"
+fn main() -> Int {{
+  let base = {base};
+  let step = {step};
+  let add = |i| base + i * step;
+  let mut acc = 0;
+  let mut i = 0;
+  while i < {n} {{ acc = acc + add(i); i = i + 1 }};
+  acc
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_exception(rng: &mut Rng) -> (String, i64) {
+    let good = rng.range(2, 10);
+    let bad  = 0i64;
+    let expected = good / 2; // divide(good, 2) ok; divide(bad, 0) → Err → 0
+    let src = format!(r#"
+fn divide(x: Int, y: Int) -> <exn<Int>> Int {{
+  if y == 0 {{ throw -1 }} else {{ x / y }}
+}}
+fn safe_div(x: Int, y: Int) -> Int {{
+  handle divide(x, y) {{
+    return v  => v,
+    exn _     => 0,
+  }}
+}}
+fn main() -> Int {{
+  safe_div({good}, 2) + safe_div({bad}, 0)
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_char_ops(rng: &mut Rng) -> (String, i64) {
+    let n     = rng.range(0, 26) as u8;
+    let code  = b'A' + n;
+    let expected = code as i64;
+    let src = format!(r#"
+fn main() -> Int {{
+  let c: Char = {code}.to_c();
+  c.to_i()
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_tuple_destructure(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 50);
+    let b = rng.range(1, 50);
+    let c = rng.range(1, 20);
+    let expected = (a + c) * (b - c);
+    let src = format!(r#"
+fn swap_add(p: (Int, Int), d: Int) -> Int {{
+  let (x, y) = p;
+  (x + d) * (y - d)
+}}
+fn main() -> Int {{ swap_add(({a}, {b}), {c}) }}
+"#);
+    (src, expected)
+}
+
+fn gen_recursion_static(rng: &mut Rng) -> (String, i64) {
+    let mul = rng.range(1, 5);
+    let n   = rng.range(1, 8);
+    // sum_mul(n) = MUL * (1 + 2 + ... + n) = MUL * n*(n+1)/2
+    let expected = mul * n * (n + 1) / 2;
+    let src = format!(r#"
+static MUL: Int = {mul}
+fn sum_mul(n: Int) -> Int {{
+  if n <= 0 {{ 0 }} else {{ MUL * n + sum_mul(n - 1) }}
+}}
+fn main() -> Int {{ sum_mul({n}) }}
+"#);
+    (src, expected)
+}
+
+fn gen_multi_module_variant(rng: &mut Rng) -> (String, String, i64) {
+    let present_val = rng.range(1, 30);
+    let default_val = rng.range(1, 20);
+    let expected = present_val + default_val; // get_or(present) + get_or(absent, default)
+    let lib = format!(r#"
+pub type Opt = Absent | Present(Int)
+pub fn make_present(n: Int) -> Opt {{ Present(n) }}
+pub fn make_absent() -> Opt {{ Absent }}
+pub fn get_or(o: Opt, def: Int) -> Int {{
+  match o {{ Present(n) => n, _ => def }}
+}}
+fn main() -> Int {{ 0 }}
+"#);
+    let main = format!(r#"
+use lib::{{Opt, make_present, make_absent, get_or}}
+fn main() -> Int {{
+  let a = get_or(make_present({present_val}), 0);
+  let b = get_or(make_absent(), {default_val});
+  a + b
+}}
+"#);
+    (lib, main, expected)
+}
+
+fn gen_array_ops(rng: &mut Rng) -> (String, i64) {
+    let vals: Vec<i64> = (0..5).map(|_| rng.range(1, 20)).collect();
+    let add = rng.range(1, 10);
+    let idx = rng.range(0, 5) as usize;
+    let mut expected_vals = vals.clone();
+    expected_vals[idx] += add;
+    let expected: i64 = expected_vals.iter().sum();
+    let items = vals.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+    let src = format!(r#"
+fn main() -> Int {{
+  let mut arr = [{items}];
+  arr[{idx}] = arr[{idx}] + {add};
+  arr[0] + arr[1] + arr[2] + arr[3] + arr[4]
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_bitwise(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(0, 255);
+    let b = rng.range(0, 255);
+    let shift = rng.range(0, 4);
+    let expected = (a & b) + (a | b) + (a ^ b) + (a << shift) + (a >> shift);
+    let src = format!(r#"
+fn main() -> Int {{
+  let a = {a};
+  let b = {b};
+  let sh = {shift};
+  (a & b) + (a | b) + (a ^ b) + (a << sh) + (a >> sh)
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_closure_record_capture(rng: &mut Rng) -> (String, i64) {
+    let x = rng.range(1, 20);
+    let y = rng.range(1, 20);
+    let scale = rng.range(1, 5);
+    let expected = (x + y) * scale;
+    let src = format!(r#"
+type Pt = {{ x: Int, y: Int }}
+fn main() -> Int {{
+  let p = Pt {{ x: {x}, y: {y} }};
+  let dot = move |s| (p.x + p.y) * s;
+  dot({scale})
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_closure_array_capture(rng: &mut Rng) -> (String, i64) {
+    let vals: Vec<i64> = (0..4).map(|_| rng.range(1, 15)).collect();
+    let idx = rng.range(0, 4) as usize;
+    let add = rng.range(1, 10);
+    let expected = vals[idx] + add;
+    let items = vals.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+    let src = format!(r#"
+fn main() -> Int {{
+  let arr = [{items}];
+  let get = move |i| arr[i] + {add};
+  get({idx})
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_move_closure(rng: &mut Rng) -> (String, i64) {
+    let offset = rng.range(1, 15);
+    let vals: Vec<i64> = (0..4).map(|_| rng.range(1, 10)).collect();
+    let expected: i64 = vals.iter().map(|v| v + offset).sum();
+    let items = vals.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+    let src = format!(r#"
+fn main() -> Int {{
+  let off = {offset};
+  let arr = [{items}];
+  let f = move |x| x + off;
+  f(arr[0]) + f(arr[1]) + f(arr[2]) + f(arr[3])
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_record_nested(rng: &mut Rng) -> (String, i64) {
+    let x = rng.range(1, 15);
+    let y = rng.range(1, 15);
+    let z = rng.range(1, 15);
+    let expected = x + y + z;
+    let src = format!(r#"
+type Inner = {{ x: Int, y: Int }}
+type Outer = {{ a: Inner, z: Int }}
+fn sum_outer(o: Outer) -> Int {{ o.a.x + o.a.y + o.z }}
+fn main() -> Int {{
+  let i = Inner {{ x: {x}, y: {y} }};
+  let o = Outer {{ a: i, z: {z} }};
+  sum_outer(o)
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_record_recursion(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(2, 8);
+    let expected = n * (n + 1) / 2;
+    let src = format!(r#"
+type Acc = {{ sum: Int, count: Int }}
+fn fold(n: Int, acc: Acc) -> Acc {{
+  if n <= 0 {{ acc }} else {{
+    fold(n - 1, Acc {{ sum: acc.sum + n, count: acc.count + 1 }})
+  }}
+}}
+fn main() -> Int {{
+  let r = fold({n}, Acc {{ sum: 0, count: 0 }});
+  r.sum
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_region_escape(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 20);
+    let b = rng.range(1, 20);
+    let c = rng.range(1, 10);
+    let expected = (a + b) * c;
+    let src = format!(r#"
+type Pt = {{ x: Int, y: Int }}
+fn main() -> Int {{
+  let p = region {{ Pt {{ x: {a}, y: {b} }} }};
+  (p.x + p.y) * {c}
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_closure_multimodule(rng: &mut Rng) -> (String, String, i64) {
+    let base = rng.range(1, 10);
+    let n    = rng.range(2, 8);
+    let expected = (0..n).map(|i| base + i).sum::<i64>();
+    let lib = format!(r#"
+pub fn sum_with(n: Int, f: (Int) -> Int) -> Int {{
+  let mut acc = 0;
+  let mut i = 0;
+  while i < n {{ acc = acc + f(i); i = i + 1 }};
+  acc
+}}
+fn main() -> Int {{ 0 }}
+"#);
+    let main = format!(r#"
+use lib::{{sum_with}}
+fn main() -> Int {{
+  let base = {base};
+  sum_with({n}, |i: Int| base + i)
+}}
+"#);
+    (lib, main, expected)
+}
+
+fn gen_multi_module_effect(rng: &mut Rng) -> (String, String, i64) {
+    let n = rng.range(2, 10);
+    let expected = n * (n + 1) / 2; // 1+2+...+n
+    let lib = format!(r#"
+effect Counter {{ op bump(x: Int) -> Unit }}
+pub fn run_sum(n: Int) -> <Counter> Unit {{
+  let mut i = 1;
+  while i <= n {{ Counter.bump(i); i = i + 1 }}
+}}
+fn main() -> Int {{ 0 }}
+"#);
+    let main = format!(r#"
+use lib::{{run_sum}}
+fn main() -> Int {{
+  let mut total = 0;
+  handle run_sum({n}) {{
+    return _     => total,
+    Counter.bump x => {{ total = total + x; resume(()) }}
+  }}
+}}
+"#);
+    (lib, main, expected)
+}
+
+type Gen = fn(&mut Rng) -> (String, i64);
+type MMGen = fn(&mut Rng) -> (String, String, i64);
+fn gen_mut_borrow_field_writethrough(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(0, 50);
+    let k = rng.range(1, 6);
+    let expected = n + k;
+    let src = format!(r#"
+type S = {{ n: Int }}
+type W = {{ s: S }}
+fn bump(s: &mut S) -> Unit {{ s.n = s.n + 1 }}
+fn via(w: &mut W) -> Unit {{ bump(&mut w.s) }}
+fn main() -> Int {{
+  let mut w = W {{ s: S {{ n: {n} }} }};
+  let mut i = 0;
+  while i < {k} {{ via(&mut w); i = i + 1 }}
+  w.s.n
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_sequential_mut_borrows(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(0, 30);
+    let k = rng.range(2, 8);
+    let expected = n + k;
+    let src = format!(r#"
+type W = {{ n: Int }}
+fn f(w: &mut W) -> Unit {{ w.n = w.n + 1 }}
+fn main() -> Int {{
+  let mut w = W {{ n: {n} }};
+  let mut i = 0;
+  while i < {k} {{ f(&mut w); i = i + 1 }}
+  w.n
+}}
+"#);
+    (src, expected)
+}
+
+const SINGLE_GENS: &[(&str, Gen)] = &[
+    ("mut_borrow_field_writethrough", gen_mut_borrow_field_writethrough),
+    ("sequential_mut_borrows",        gen_sequential_mut_borrows),
+    ("int_arith",           gen_int_arith),
+    ("float_arith",         gen_float_arith),
+    ("int_match",           gen_int_match),
+    ("range_match",         gen_range_match),
+    ("loop",                gen_loop),
+    ("record_pack",         gen_record_pack),
+    ("record_mut_unpack",   gen_record_mut_unpack),
+    ("effect_counter",      gen_effect_counter),
+    ("effect_accumulate",   gen_effect_accumulate),
+    ("recursion_fib",       gen_recursion_fib),
+    ("recursion_sum",       gen_recursion_sum),
+    ("record_array_float",  gen_record_array_float),
+    ("variant_match",       gen_variant_match),
+    ("variant_guard_match", gen_variant_guard_match),
+    ("for_loop",            gen_for_loop),
+    ("for_break",           gen_for_break),
+    ("loop_break_value",    gen_loop_break_value),
+    ("closure_capture",          gen_closure_capture),
+    ("move_closure",             gen_move_closure),
+    ("closure_record_capture",   gen_closure_record_capture),
+    ("closure_array_capture",    gen_closure_array_capture),
+    ("record_nested",            gen_record_nested),
+    ("record_recursion",         gen_record_recursion),
+    ("exception",           gen_exception),
+    ("char_ops",            gen_char_ops),
+    ("tuple_destructure",   gen_tuple_destructure),
+    ("recursion_static",    gen_recursion_static),
+    ("array_ops",           gen_array_ops),
+    ("bitwise",             gen_bitwise),
+    ("region_escape",       gen_region_escape),
+    ("hof_apply_loop",      gen_hof_apply_loop),
+    ("closure_returned",    gen_closure_returned),
+];
+
+fn gen_hof_apply_loop(rng: &mut Rng) -> (String, i64) {
+    let m = rng.range(1, 6);
+    let b = rng.range(0, 10);
+    let n = rng.range(2, 8);
+    let expected: i64 = (0..n).map(|i| i * m + b).sum();
+    let src = format!(r#"
+fn apply_n(f: (Int) -> Int, n: Int) -> Int {{
+  let mut acc = 0;
+  let mut i = 0;
+  while i < n {{ acc = acc + f(i); i = i + 1 }};
+  acc
+}}
+fn main() -> Int {{
+  let m = {m};
+  let b = {b};
+  apply_n(move |x: Int| x * m + b, {n})
+}}
+"#);
+    (src, expected)
+}
+
+fn gen_closure_returned(rng: &mut Rng) -> (String, i64) {
+    let b = rng.range(1, 20);
+    let p = rng.range(1, 10);
+    let q = rng.range(1, 10);
+    let expected = (p + b) + (q + b);
+    let src = format!(r#"
+fn adder(b: Int) -> (Int) -> Int {{ move |x: Int| x + b }}
+fn main() -> Int {{
+  let g = adder({b});
+  g({p}) + g({q})
+}}
+"#);
+    (src, expected)
+}
+
+const MM_GENS: &[(&str, MMGen)] = &[
+    ("multi_module_record",  gen_multi_module_record),
+    ("multi_module_variant", gen_multi_module_variant),
+    ("multi_module_effect",   gen_multi_module_effect),
+];
+
+const ITERS: u64 = 300;
+
+#[test]
+fn fuzz_correctness() {
+    let mut failures: Vec<(u64, &str, String, String)> = Vec::new();
+
+    for seed in 0..ITERS {
+        for (name, f) in SINGLE_GENS {
+            let mut rng = Rng::new(seed * 97 + name.len() as u64);
+            let (src, expected) = f(&mut rng);
+            if let Err(e) = run_src_expect(&src, expected) {
+                failures.push((seed, name, e, src));
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        for (seed, name, err, src) in &failures {
+            eprintln!("--- seed={} gen={} ---\n{}\nError: {}", seed, name, src, err);
+        }
+        panic!("fuzz_correctness: {} failure(s)", failures.len());
+    }
+}
+
+#[test]
+fn fuzz_correctness_multi_module() {
+    let mut failures: Vec<(u64, &str, String)> = Vec::new();
+
+    for seed in 0..150u64 {
+        for (name, f) in MM_GENS {
+            let mut rng = Rng::new(seed * 53 + name.len() as u64);
+            let (lib, main, expected) = f(&mut rng);
+            if let Err(e) = run_files_expect(&lib, &main, expected) {
+                let combined = format!("--- lib ---\n{}--- main ---\n{}", lib, main);
+                failures.push((seed, name, format!("{}\n{}", e, combined)));
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        for (seed, name, msg) in &failures {
+            eprintln!("--- seed={} gen={} ---\n{}", seed, name, msg);
+        }
+        panic!("fuzz_correctness_multi_module: {} failure(s)", failures.len());
+    }
+}
+
+#[test]
+fn closure_passed_to_multimodule_fn() {
+    let mut failures: Vec<(u64, String)> = Vec::new();
+    for seed in 0..150u64 {
+        let mut rng = Rng::new(seed * 53 + "closure_multimodule".len() as u64);
+        let (lib, main, expected) = gen_closure_multimodule(&mut rng);
+        if let Err(e) = run_files_expect(&lib, &main, expected) {
+            let combined = format!("--- lib ---\n{}--- main ---\n{}", lib, main);
+            failures.push((seed, format!("{}\n{}", e, combined)));
+        }
+    }
+    if !failures.is_empty() {
+        for (seed, msg) in &failures { eprintln!("--- seed={} ---\n{}", seed, msg); }
+        panic!("closure_passed_to_multimodule_fn: {} failure(s)", failures.len());
+    }
+}
+
+// ── first-class closure fuzz ──────────────────────────────────────────────────
+// Closures crossing a function boundary: passed as an argument, returned, stored,
+// or captured-then-called. Each generator has a known result; the runner checks
+// BOTH the value and heap_live_count() == 0 (no leak of the [fn_id, env] cell).
+fn run_src_noleak(src: &str, expected: i64) -> Result<(), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err(format!("parse:\n{}", p.pretty_print_errors())); }
+    let mut c = Compiler::new().with_source(src.to_string());
+    let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
+    let mut vm = VirtualMachine::new().with_step_cap(5_000_000);
+    let v = vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
+    let got = v.as_int();
+    if got != expected { return Err(format!("expected {}, got {}", expected, got)); }
+    let live = vm.heap_live_count();
+    if live != 0 { return Err(format!("leak: heap_live_count = {} (want 0)", live)); }
+    Ok(())
+}
+
+fn gen_fc_pass_arg(rng: &mut Rng) -> (String, i64) {
+    let off = rng.range(1, 20);
+    let v = rng.range(1, 30);
+    (format!(r#"
+fn apply(f: (Int) -> Int, x: Int) -> Int {{ f(x) }}
+fn main() -> Int {{
+  let off = {off};
+  apply(move |x: Int| x + off, {v})
+}}
+"#), v + off)
+}
+
+fn gen_fc_return(rng: &mut Rng) -> (String, i64) {
+    let b = rng.range(1, 20);
+    let v = rng.range(1, 30);
+    (format!(r#"
+fn mk(b: Int) -> (Int) -> Int {{ move |x: Int| x + b }}
+fn main() -> Int {{
+  let g = mk({b});
+  g({v}) + g({v})
+}}
+"#), 2 * (v + b))
+}
+
+fn gen_fc_store_record(rng: &mut Rng) -> (String, i64) {
+    let k = rng.range(1, 10);
+    let v = rng.range(1, 30);
+    (format!(r#"
+type Box = {{ f: (Int) -> Int }}
+fn main() -> Int {{
+  let k = {k};
+  let b = Box {{ f: move |x: Int| x * k }};
+  b.f({v})
+}}
+"#), v * k)
+}
+
+fn gen_fc_capture_closure(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 10);
+    let v = rng.range(1, 20);
+    // Outer closure captures inner closure `g` and calls it (the env_load path).
+    (format!(r#"
+fn main() -> Int {{
+  let a = {a};
+  let g = move |x: Int| x + a;
+  let h = move |y: Int| g(y) + g(y);
+  h({v})
+}}
+"#), 2 * (v + a))
+}
+
+const FC_GENS: &[(&str, Gen)] = &[
+    ("fc_pass_arg",        gen_fc_pass_arg),
+    ("fc_return",          gen_fc_return),
+    ("fc_store_record",    gen_fc_store_record),
+    ("fc_capture_closure", gen_fc_capture_closure),
+];
+
+#[test]
+fn fuzz_first_class_closures() {
+    let mut failures: Vec<(u64, &str, String, String)> = Vec::new();
+    for seed in 0..200u64 {
+        for (name, f) in FC_GENS {
+            let mut rng = Rng::new(seed * 89 + name.len() as u64);
+            let (src, expected) = f(&mut rng);
+            if let Err(e) = run_src_noleak(&src, expected) {
+                failures.push((seed, name, e, src));
+            }
+        }
+    }
+    if !failures.is_empty() {
+        for (seed, name, err, src) in failures.iter().take(8) {
+            eprintln!("--- seed={} gen={} ---\n{}\nError: {}", seed, name, src, err);
+        }
+        panic!("fuzz_first_class_closures: {} failure(s)", failures.len());
+    }
+}
+
+#[test]
+fn nested_record_in_escaping_record_forgotten() {
+    let src = r#"
+type P = { v: Int }
+type Q = { p: P }
+fn main() -> Int {
+  let q = region { let inner = P { v: 9 }; Q { p: inner } };
+  q.p.v
+}
+"#;
+    run_src_noleak(src, 9).expect("nested record should run leak-free");
+}
+
+#[test]
+fn match_variant_handle_payload_leaks() {
+    let src = r#"
+type P = { v: Int }
+type O = None | Some(P)
+fn main() -> Int {
+  let p = P { v: 8 };
+  let o = Some(p);
+  match o { Some(q) => q.v, None => 0 }
+}
+"#;
+    run_src_noleak(src, 8).expect("match variant payload should run leak-free");
+}
+
+#[test]
+fn nested_record_in_escaping_tuple_forgotten() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  let t = region { let p = P { v: 6 }; (p, 0) };
+  t.0.v
+}
+"#;
+    run_src_noleak(src, 6).expect("nested record in tuple should run leak-free");
+}
+
+#[test]
+fn doubly_nested_record_in_escaping_record_forgotten() {
+    let src = r#"
+type P = { v: Int }
+type Q = { p: P }
+type R = { q: Q }
+fn main() -> Int {
+  let r = region { let p = P { v: 4 }; R { q: Q { p: p } } };
+  r.q.p.v
+}
+"#;
+    run_src_noleak(src, 4).expect("doubly-nested record should run leak-free");
+}
+
+#[test]
+fn closure_in_escaping_record_forgets_region_capture() {
+    let src = r#"
+type P = { v: Int }
+type Box = { f: (Int) -> Int }
+fn main() -> Int {
+  let b = region {
+    let p = P { v: 7 };
+    Box { f: move |x: Int| x + p.v }
+  };
+  (b.f)(3)
+}
+"#;
+    run_src_noleak(src, 10).expect("closure-in-record should run leak-free");
+}
+
+fn run_int_noleak(src: &str) -> Result<i64, String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err("parse".into()); }
+    let mut c = Compiler::new().with_source(src.to_string());
+    let module = c.compile_module(&ast).map_err(|_| "compile".to_string())?;
+    let mut vm = VirtualMachine::new().with_step_cap(5_000_000);
+    let v = vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
+    let live = vm.heap_live_count();
+    if live != 0 { return Err(format!("leak {}", live)); }
+    Ok(v.as_int())
+}
+
+fn g_int_expr(rng: &mut Rng, depth: u32) -> String {
+    if depth == 0 { return format!("{}", rng.range(0, 20)); }
+    match rng.pick(5) {
+        0 => format!("{}", rng.range(0, 20)),
+        1 => format!("({} {} {})", g_int_expr(rng, depth - 1),
+                ["+", "-", "*"][rng.pick(3) as usize], g_int_expr(rng, depth - 1)),
+        2 => format!("(if {} > {} {{ {} }} else {{ {} }})",
+                g_int_expr(rng, depth - 1), g_int_expr(rng, depth - 1),
+                g_int_expr(rng, depth - 1), g_int_expr(rng, depth - 1)),
+        3 => format!("(match {} {{ 0..5 => {}, _ => {} }})",
+                g_int_expr(rng, depth - 1), g_int_expr(rng, depth - 1), g_int_expr(rng, depth - 1)),
+        _ => format!("({})", g_int_expr(rng, depth - 1)),
+    }
+}
+
+// Each transform preserves the Int value of `e`.
+fn meta_transform(rng: &mut Rng, e: &str) -> String {
+    match rng.pick(6) {
+        0 => format!("({})", e),
+        1 => format!("(region {{ {} }})", e),
+        2 => format!("((move |__z: Int| __z)({}))", e),
+        3 => format!("({{ let __t: Int = {}; __t }})", e),
+        4 => format!("({} + 0)", e),
+        _ => format!("(match ({}) {{ __k => __k }})", e),
+    }
+}
+
+#[test]
+fn fuzz_metamorphic_equiv() {
+    let mut failures: Vec<(u64, String, String, String)> = Vec::new();
+    for seed in 0..1_000u64 {
+        let mut rng = Rng::new(seed * 131 + 7);
+        let base = g_int_expr(&mut rng, 3);
+        let mut variant = base.clone();
+        for _ in 0..3 { variant = meta_transform(&mut rng, &variant); }
+        let p0 = format!("fn main() -> Int {{ {} }}", base);
+        let p1 = format!("fn main() -> Int {{ {} }}", variant);
+        match (run_int_noleak(&p0), run_int_noleak(&p1)) {
+            (Ok(a), Ok(b)) if a == b => {}
+            (Ok(a), Ok(b)) => failures.push((seed,
+                format!("value diverged: {} vs {}", a, b), p0, p1)),
+            (r0, r1) if format!("{:?}", r0) == format!("{:?}", r1) => {}
+            (r0, r1) => failures.push((seed,
+                format!("outcome diverged: {:?} vs {:?}", r0, r1), p0, p1)),
+        }
+    }
+    if !failures.is_empty() {
+        for (seed, why, p0, p1) in failures.iter().take(6) {
+            eprintln!("--- seed={} {} ---\nbase:    {}\nvariant: {}", seed, why, p0, p1);
+        }
+        panic!("fuzz_metamorphic_equiv: {} divergence(s)", failures.len());
+    }
+}
+
+fn run_raw(src: &str, int32: bool) -> Result<u64, String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err(format!("parse:\n{}", p.pretty_print_errors())); }
+    let mut c = Compiler::new().with_source(src.to_string()).with_int32_mode(int32);
+    let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
+    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
+    let v = vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
+    Ok(v.raw())
+}
+
+const F_OPS: &[(&str, fn(f64, f64) -> f64)] = &[
+    ("+", |a, b| a + b), ("-", |a, b| a - b), ("*", |a, b| a * b), ("/", |a, b| a / b),
+];
+
+const F_OPERANDS: &[(&str, f64)] = &[
+    ("0.0", 0.0), ("1.0", 1.0), ("2.0", 2.0), ("3.0", 3.0),
+    ("0.5", 0.5), ("0.25", 0.25), ("8.0", 8.0), ("16.0", 16.0),
+];
+
+fn float_bits_ok(got: u64, exp: f64, int32: bool) -> bool {
+    if int32 {
+        let g = f32::from_bits(got as u32);
+        let e = exp as f32;
+        (g.is_nan() && e.is_nan()) || g.to_bits() == e.to_bits()
+    } else {
+        let g = f64::from_bits(got);
+        (g.is_nan() && exp.is_nan()) || g.to_bits() == exp.to_bits()
+    }
+}
+
+#[test]
+fn fuzz_float_ieee() {
+    let mut fails: Vec<String> = Vec::new();
+    for int32 in [false, true] {
+        for seed in 0..400u64 {
+            let mut rng = Rng::new(seed * 131 + int32 as u64);
+            let (la, va) = F_OPERANDS[rng.pick(F_OPERANDS.len() as u64) as usize];
+            let (lb, vb) = F_OPERANDS[rng.pick(F_OPERANDS.len() as u64) as usize];
+            let (op, f) = F_OPS[rng.pick(F_OPS.len() as u64) as usize];
+            let src = format!("fn main() -> Float {{ let a = {la}; let b = {lb}; a {op} b }}");
+            let exp = f(va, vb);
+            match run_raw(&src, int32) {
+                Ok(raw) if float_bits_ok(raw, exp, int32) => {}
+                Ok(raw) => fails.push(format!("int32={} {} -> {:#x}, want {}", int32, src, raw, exp)),
+                Err(e) => fails.push(format!("int32={} {} : {}", int32, src, e)),
+            }
+        }
+    }
+    assert!(fails.is_empty(), "float IEEE divergence:\n{}", fails.join("\n"));
+}
+
+const I_OPS: &[(&str, fn(i64, i64) -> i64)] = &[
+    ("+", i64::wrapping_add), ("-", i64::wrapping_sub), ("*", i64::wrapping_mul),
+];
+
+const I_OPERANDS: &[i64] = &[
+    0, 1, -1, 2, 3, 9223372036854775807, 4294967296, -4294967296, 1000000000000, -7,
+];
+
+#[test]
+fn fuzz_int_wraparound() {
+    let mut fails: Vec<String> = Vec::new();
+    for seed in 0..600u64 {
+        let mut rng = Rng::new(seed * 137 + 1);
+        let a = I_OPERANDS[rng.pick(I_OPERANDS.len() as u64) as usize];
+        let b = I_OPERANDS[rng.pick(I_OPERANDS.len() as u64) as usize];
+        let (op, f) = I_OPS[rng.pick(I_OPS.len() as u64) as usize];
+        let src = format!("fn main() -> Int {{ let a = {a}; let b = {b}; a {op} b }}");
+        let exp = f(a, b);
+        match run_raw(&src, false) {
+            Ok(raw) if raw as i64 == exp => {}
+            Ok(raw) => fails.push(format!("{} -> {}, want {}", src, raw as i64, exp)),
+            Err(e) => fails.push(format!("{} : {}", src, e)),
+        }
+    }
+    assert!(fails.is_empty(), "int wraparound divergence:\n{}", fails.join("\n"));
+}
+
+#[test]
+fn fuzz_int_div_mod_zero_traps() {
+    for op in ["/", "%"] {
+        let src = format!("fn main() -> Int {{ let a = 5; let b = 0; a {op} b }}");
+        assert!(run_raw(&src, false).is_err(), "{} must trap", src);
+    }
+    for (a, b) in [(17i64, 5i64), (-17, 5), (17, -5), (100, 7)] {
+        let d = format!("fn main() -> Int {{ let a = {a}; let b = {b}; a / b }}");
+        let m = format!("fn main() -> Int {{ let a = {a}; let b = {b}; a % b }}");
+        assert_eq!(run_raw(&d, false).map(|r| r as i64), Ok(a / b), "{}", d);
+        assert_eq!(run_raw(&m, false).map(|r| r as i64), Ok(a % b), "{}", m);
+    }
+}
+
+#[test]
+fn effect_arg_handle_region_uaf() {
+    let src = r#"
+type P = { v: Int }
+effect E { op send(p: P) -> Int }
+fn body() -> <E> Int {
+  region { let p = P { v: 42 }; E.send(p) }
+}
+fn main() -> Int {
+  handle body() { return v => v, E.send q => resume(q.v) }
+}
+"#;
+    run_src_noleak(src, 42).expect("effect handle arg across region must be rc-safe");
+}
+
+#[test]
+fn effect_arg_handle_leaks() {
+    let src = r#"
+type P = { v: Int }
+effect E { op send(p: P) -> Int }
+fn body() -> <E> Int { let p = P { v: 42 }; E.send(p) }
+fn main() -> Int {
+  handle body() { return v => v, E.send q => resume(q.v) }
+}
+"#;
+    run_src_noleak(src, 42).expect("effect handle arg must be rc-balanced");
+}
+
+fn gen_effect_handle_payload(rng: &mut Rng) -> (String, i64) {
+    let v = rng.range(1, 99);
+    let regioned = rng.pick(2) == 0;
+    let (arm, expected) = match rng.pick(3) {
+        0 => ("E.grab q => resume(q.v)".to_string(), v),
+        1 => ("E.grab q => resume(q.v + 1)".to_string(), v + 1),
+        _ => ("E.grab q => { let _w = q; resume(0) }".to_string(), 0),
+    };
+    let body_inner = format!("let p = P {{ v: {v} }}; E.grab(p)");
+    let body = if regioned { format!("region {{ {body_inner} }}") } else { body_inner };
+    let src = format!(r#"
+type P = {{ v: Int }}
+effect E {{ op grab(p: P) -> Int }}
+fn body() -> <E> Int {{ {body} }}
+fn main() -> Int {{
+  handle body() {{ return r => r, {arm} }}
+}}
+"#);
+    (src, expected)
+}
+
+#[test]
+fn fuzz_effect_handle_payload() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..300u64 {
+        let mut rng = Rng::new(seed * 149 + 7);
+        let (src, expected) = gen_effect_handle_payload(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_effect_handle_payload: {} failure(s)", fails.len());
+    }
+}
+
+// oracle: must_forget=2 (closure var + captured handle both need region_forget)
+#[test]
+fn move_closure_escaping_region_runs_clean() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  let f = region { let p = P { v: 7 }; move |x: Int| x + p.v };
+  f(3)
+}
+"#;
+    run_src_noleak(src, 10).expect("move closure escaping region must run clean");
+}
+
+// call the escaped closure twice: env-copy must not double-free the capture
+#[test]
+fn move_closure_escaping_region_called_twice_runs_clean() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  let f = region { let p = P { v: 4 }; move |x: Int| x + p.v };
+  f(1) + f(2)
+}
+"#;
+    run_src_noleak(src, 11).expect("escaped closure called twice must run clean");
+}
+
+// inner handle escapes to outer region; outer region_pop force_frees it
+#[test]
+fn handle_escaping_inner_region_to_outer_runs_clean() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  region {
+    let p = region { P { v: 5 } };
+    p.v
+  }
+}
+"#;
+    run_src_noleak(src, 5).expect("handle escaping inner to outer region must run clean");
+}
+
+// closure escaping inner region, used in outer region
+#[test]
+fn closure_escaping_inner_region_to_outer_runs_clean() {
+    let src = r#"
+type P = { v: Int }
+fn main() -> Int {
+  region {
+    let f = region { let p = P { v: 6 }; move |x: Int| x + p.v };
+    f(2)
+  }
+}
+"#;
+    run_src_noleak(src, 8).expect("closure escaping inner to outer region must run clean");
+}
+
+fn gen_region_escape_oracle(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 20);
+    let b = rng.range(1, 20);
+    let off = rng.range(0, 10);
+    match rng.next() % 4 {
+        0 => (format!(r#"
+type Pt = {{ x: Int, y: Int }}
+fn main() -> Int {{
+  let p = region {{ Pt {{ x: {a}, y: {b} }} }};
+  p.x + p.y + {off}
+}}"#), a + b + off),
+        1 => (format!(r#"
+fn main() -> Int {{
+  let f = region {{ move |x: Int| x + {b} }};
+  f({a})
+}}"#), a + b),
+        2 => (format!(r#"
+type Inner = {{ v: Int }}
+type Outer = {{ inner: Inner }}
+fn main() -> Int {{
+  let o = region {{ Outer {{ inner: Inner {{ v: {a} }} }} }};
+  o.inner.v + {off}
+}}"#), a + off),
+        _ => (format!(r#"
+type Pt = {{ x: Int, y: Int }}
+fn main() -> Int {{
+  let p = region {{ let q = region {{ Pt {{ x: {a}, y: {b} }} }}; q }};
+  p.x + p.y
+}}"#), a + b),
+    }
+}
+
+#[test]
+fn fuzz_region_escape_oracle_runs_clean() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 137 + 3);
+        let (src, expected) = gen_region_escape_oracle(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_region_escape_oracle_runs_clean: {} failure(s)", fails.len());
+    }
+}
+
+fn gen_mut_ref_field_write(rng: &mut Rng) -> (String, i64) {
+    let v = rng.range(1, 40);
+    let d = rng.range(1, 40);
+    let u = rng.range(1, 40);
+    match rng.next() % 4 {
+        // callee writes a field through &mut and returns it
+        0 => (format!(r#"
+type W = {{ x: Int }}
+fn bump(w: &mut W) -> Int {{ w.x = w.x + {d}; w.x }}
+fn main() -> Int {{ let mut wd = W {{ x: {v} }}; bump(&mut wd) }}
+"#), v + d),
+        // mutation through &mut is visible to the caller's binding
+        1 => (format!(r#"
+type W = {{ x: Int }}
+fn step(w: &mut W) {{ w.x = w.x + {d} }}
+fn main() -> Int {{ let mut wd = W {{ x: {v} }}; step(&mut wd); wd.x }}
+"#), v + d),
+        // two fields written through one &mut binding
+        2 => (format!(r#"
+type W = {{ x: Int, y: Int }}
+fn step(w: &mut W) {{ w.x = w.x + {d}; w.y = w.y + {u} }}
+fn main() -> Int {{ let mut wd = W {{ x: {v}, y: {u} }}; step(&mut wd); wd.x + wd.y }}
+"#), (v + d) + (u + u)),
+        // nested-field write through &mut
+        _ => (format!(r#"
+type Inner = {{ v: Int }}
+type W = {{ inner: Inner }}
+fn step(w: &mut W) {{ w.inner.v = w.inner.v + {d} }}
+fn main() -> Int {{ let mut wd = W {{ inner: Inner {{ v: {v} }} }}; step(&mut wd); wd.inner.v }}
+"#), v + d),
+    }
+}
+
+#[test]
+fn fuzz_mut_ref_field_write_correct() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 149 + 11);
+        let (src, expected) = gen_mut_ref_field_write(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_mut_ref_field_write_correct: {} failure(s)", fails.len());
+    }
+}
+
+#[test]
+fn nested_same_effect_handler_inner_wins_runs_clean() {
+    let src = r#"
+effect E { op tick() -> Int }
+fn body() -> <E> Int { E.tick() }
+fn main() -> Int {
+  handle body() { return v => v, E.tick => resume(1) }
+}
+"#;
+    run_src_noleak(src, 1).expect("inner handler must catch E.tick and resume(1)");
+}
+
+fn gen_if_call_arms(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 50);
+    let b = rng.range(51, 100);
+    let cond = rng.next() % 2 == 0;
+    let expected = if cond { b } else { a };
+    (format!(
+        "fn fa() -> Int {{ {a} }}\n\
+         fn fb() -> Int {{ {b} }}\n\
+         fn main() -> Int {{ let g = if {} {{ fb() }} else {{ fa() }}; g }}",
+        if cond { "true" } else { "false" }
+    ), expected)
+}
+
+#[test]
+fn fuzz_if_call_arms_correct() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 131 + 17);
+        let (src, expected) = gen_if_call_arms(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_if_call_arms_correct: {} failure(s)", fails.len());
+    }
+}
+
+// These generators produce programs where intermediate values are provably dead.
+// After DCE the observable result (return value + heap_live=0) must be unchanged.
+
+fn gen_dead_let(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 50);
+    let b = rng.range(1, 50);
+    let dead = rng.range(1, 99);
+    (format!(
+        "fn main() -> Int {{\n\
+           let _ = {dead} * {dead};\n\
+           {a} + {b}\n\
+         }}"
+    ), a + b)
+}
+
+fn gen_dead_record(rng: &mut Rng) -> (String, i64) {
+    let x = rng.range(1, 30);
+    let y = rng.range(1, 30);
+    let result = rng.range(1, 99);
+    (format!(
+        "type P = {{ x: Int, y: Int }}\n\
+         fn main() -> Int {{\n\
+           let _ = P {{ x: {x}, y: {y} }};\n\
+           {result}\n\
+         }}"
+    ), result)
+}
+
+fn gen_dead_branch_val(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(1, 30);
+    let b = rng.range(1, 30);
+    let result = rng.range(1, 99);
+    let cond = rng.next() % 2 == 0;
+    (format!(
+        "type Q = {{ v: Int }}\n\
+         fn main() -> Int {{\n\
+           let _ = if {} {{ Q {{ v: {a} }} }} else {{ Q {{ v: {b} }} }};\n\
+           {result}\n\
+         }}",
+        if cond { "true" } else { "false" }
+    ), result)
+}
+
+#[test]
+fn fuzz_dce_dead_let_correct() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 113 + 5);
+        let (src, expected) = gen_dead_let(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_dce_dead_let_correct: {} failure(s)", fails.len());
+    }
+}
+
+#[test]
+fn fuzz_dce_dead_record_noleak() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 127 + 11);
+        let (src, expected) = gen_dead_record(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_dce_dead_record_noleak: {} failure(s)", fails.len());
+    }
+}
+
+#[test]
+fn fuzz_dce_dead_branch_val_noleak() {
+    let mut fails: Vec<(u64, String, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed * 167 + 19);
+        let (src, expected) = gen_dead_branch_val(&mut rng);
+        if let Err(e) = run_src_noleak(&src, expected) {
+            fails.push((seed, e, src));
+        }
+    }
+    if !fails.is_empty() {
+        for (seed, e, src) in fails.iter().take(6) {
+            eprintln!("--- seed={} ---\n{}\nError: {}", seed, src, e);
+        }
+        panic!("fuzz_dce_dead_branch_val_noleak: {} failure(s)", fails.len());
+    }
+}
+
+#[test]
+fn dead_alloc_oracle_runs_clean() {
+    let src = r#"
+type P = { x: Int, y: Int }
+fn main() -> Int {
+  let _ = if true { P { x: 1, y: 2 } } else { P { x: 3, y: 4 } };
+  42
+}
+"#;
+    run_src_noleak(src, 42).expect("dead alloc from if-arm must not leak");
+}
+
+#[test]
+fn dead_nested_record_noleak() {
+    let src = r#"
+type Inner = { v: Int }
+type Outer = { a: Inner, b: Inner }
+fn main() -> Int {
+  let _ = Outer { a: Inner { v: 1 }, b: Inner { v: 2 } };
+  99
+}
+"#;
+    run_src_noleak(src, 99).expect("dead nested record must not leak");
+}
+
+fn run_cart_frames(src: &str, n_frames: usize) -> Result<(i64, usize), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err(format!("parse:\n{}", p.pretty_print_errors())); }
+    let mut c = Compiler::new().with_source(src.to_string());
+    let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
+    let mut vm = VirtualMachine::new().with_step_cap(10_000_000);
+    myriad::Host::default().install_into(&mut vm);
+    vm.run_to_yield(&module).map_err(|e| format!("run_to_yield: {}", e))?;
+    for _ in 1..n_frames {
+        let still_running = vm.resume(&module, myriad::Value::from_int(0))
+            .map_err(|e| format!("resume: {}", e))?;
+        if !still_running { return Err("main returned early".into()); }
+    }
+    // one more resume to let main read the result via a pub export
+    // instead, read heap live count as sanity; the test knows expected from Rust math
+    Ok((0, vm.heap_live_count()))
+}
+
+
+#[test]
+fn fuzz_cart_frame_heap_flat() {
+    let mut failures: Vec<(u64, String)> = Vec::new();
+    for seed in 0..200u64 {
+        let mut rng = Rng::new(seed * 37 + 11);
+        let n = rng.range(2, 8) as usize;
+        let step = rng.range(1, 5);
+        let src = format!(r#"
+@cart fn main() -> <frame> Unit {{
+  let mut count = 0;
+  loop {{
+    count = count + {step};
+    frame.present()
+  }}
+}}
+"#);
+        match run_cart_frames(&src, n) {
+            Ok((_, live)) => {
+                if live != 0 {
+                    failures.push((seed, format!("heap_live={} after {} frames\n{}", live, n, src)));
+                }
+            }
+            Err(e) => failures.push((seed, format!("{}\n{}", e, src))),
+        }
+    }
+    if !failures.is_empty() {
+        for (seed, msg) in &failures { eprintln!("--- seed={} ---\n{}", seed, msg); }
+        panic!("fuzz_cart_frame_heap_flat: {} failure(s)", failures.len());
+    }
+}

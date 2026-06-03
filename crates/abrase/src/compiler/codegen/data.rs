@@ -75,11 +75,9 @@ impl Compiler {
         let reg = self.alloc_register()?;
         let idx = match lit {
             ast::Literal::Int(n)    => {
-                self.check_int32_literal(*n)?;
                 self.add_constant(Value::from_int(*n))?
             }
             ast::Literal::Float(f)  => {
-                self.check_float32_literal(*f)?;
                 let v = if self.int32_mode { Value::from_float_f32(*f) } else { Value::from_float(*f) };
                 self.add_constant(v)?
             }
@@ -197,12 +195,21 @@ impl Compiler {
             if unboxed { self.set_reg_handle(dest, false); }
             return Ok(dest);
         }
-        if let Some(fid) = self.resolve_fn_callee(name) {
-            let dest = self.alloc_register()?;
+        if self.resolve_fn_callee(name).is_some() {
+            // A top-level fn used as a value becomes a [fn_id, env=NONE] cell via
+            // its __fnval_ adapter, so it shares the closure calling convention.
+            let adapter = self.fn_value_adapters.get(name).cloned()
+                .ok_or_else(|| format!("internal: fn '{}' used as value has no adapter", name))?;
+            let fid = *self.func_map.get(&adapter)
+                .ok_or_else(|| format!("internal: fn-value adapter '{}' not in fn table", adapter))?;
+            let cell = self.alloc_register()?;
+            self.emit(OpCode::Alloc(cell, 2));
+            let fid_reg = self.alloc_register()?;
             let idx = self.add_constant(Value::from_int(fid as i64))?;
-            self.emit(OpCode::PushConst(dest, idx));
-            self.set_reg_handle(dest, false);
-            return Ok(dest);
+            self.emit(OpCode::PushConst(fid_reg, idx));
+            self.set_reg_handle(fid_reg, false);
+            self.emit(OpCode::St(fid_reg, cell, 0));
+            return Ok(cell);
         }
         if let Some(info) = self.layouts.variants.get(name).cloned() {
             let dest = self.alloc_register()?;
@@ -315,6 +322,12 @@ impl Compiler {
             .ok_or_else(|| format!("No field '{}' in {}", field, type_name))?;
         let dest = self.alloc_register()?;
         self.emit(OpCode::Ld(dest, base_reg, idx));
+        // Drop the base cell if it was a temporary (not a direct variable binding).
+        // Named variables are kept alive by their scope; only anonymous sub-expressions
+        // allocate a cell that nobody else owns after the field is extracted.
+        if !matches!(base.node, ast::Expr::Identifier(_)) {
+            self.emit(OpCode::Drop(base_reg));
+        }
         Ok(dest)
     }
 
@@ -376,14 +389,26 @@ impl Compiler {
         let dest = self.alloc_register()?;
         let n_u16 = to_u16(n, "Array-repeat length")?;
         self.emit(OpCode::Alloc(dest, n_u16));
-        let src = self.compile_expr(elem)?;
-        let mark = self.snapshot_register_high_water();
-        for i in 0..n {
-            let offset = to_u16(i, "Array-repeat offset")?;
-            let copy = self.alloc_register()?;
-            self.emit(OpCode::Copy(copy, src));
-            self.emit(OpCode::St(copy, dest, offset));
-            self.restore_register_high_water(mark);
+        let elem_ty = self.infer_expr_type(elem);
+        let is_heap = elem_ty.as_ref().map(super::is_move_type).unwrap_or(false);
+        if is_heap {
+            for i in 0..n {
+                let offset = to_u16(i, "Array-repeat offset")?;
+                let mark = self.snapshot_register_high_water();
+                let src = self.compile_expr(elem)?;
+                self.emit(OpCode::St(src, dest, offset));
+                self.restore_register_high_water(mark);
+            }
+        } else {
+            let src = self.compile_expr(elem)?;
+            let mark = self.snapshot_register_high_water();
+            for i in 0..n {
+                let offset = to_u16(i, "Array-repeat offset")?;
+                let copy = self.alloc_register()?;
+                self.emit(OpCode::Copy(copy, src));
+                self.emit(OpCode::St(copy, dest, offset));
+                self.restore_register_high_water(mark);
+            }
         }
         Ok(dest)
     }

@@ -84,11 +84,11 @@ impl Checker {
         if let Some(name) = lhs_name {
             let is_mut = self.scopes.iter().rev()
                 .find_map(|s| s.vars.get(&name).map(|m| m.is_mut))
-                .or_else(|| self.static_vars.get(&name).copied());
+                .or_else(|| self.static_vars.contains(&name).then_some(false));
             if let Some(false) = is_mut {
-                let kind = if self.static_vars.contains_key(&name) { "static" } else { "binding" };
+                let kind = if self.static_vars.contains(&name) { "static" } else { "binding" };
                 self.report_error(
-                    format!("Cannot assign to immutable {} '{}'; use `static mut {}` or `let mut {}` to allow mutation", kind, name, name, name),
+                    format!("Cannot assign to immutable {} '{}'; use `let mut {}` to allow mutation", kind, name, name),
                     left.span,
                 );
             }
@@ -97,7 +97,9 @@ impl Checker {
             }
         } else if matches!(&left.node, ast::Expr::Index { .. } | ast::Expr::FieldAccess { .. }) {
             if let Some(root) = Self::root_ident(left) {
-                let is_mut = self.scopes.iter().rev().find_map(|s| s.vars.get(&root).map(|m| m.is_mut));
+                let is_mut = self.scopes.iter().rev().find_map(|s| s.vars.get(&root).map(|m| {
+                    m.is_mut || matches!(&m.ty, Type::Reference { is_mut: true, .. })
+                }));
                 if let Some(false) = is_mut {
                     self.report_error(
                         format!("Cannot mutate through immutable binding '{}'; use `let mut {}` to allow mutation", root, root),
@@ -122,16 +124,18 @@ impl Checker {
     }
 
     fn infer_expr_inner(&mut self, expr: &Spanned<ast::Expr>) -> Type {
+        let prop = self.exn_prop;
+        self.exn_prop = false;
         match &expr.node {
             ast::Expr::Error                                => Type::Unknown,
-            ast::Expr::Paren(inner)                        => self.infer_expr(inner),
+            ast::Expr::Paren(inner)                        => { self.exn_prop = prop; self.infer_expr(inner) }
             ast::Expr::Literal(lit)                        => self.infer_literal(lit, expr.span),
             ast::Expr::Identifier(name)                    => self.get_var(name, false, expr.span),
             ast::Expr::Unary { op, right }                 => self.infer_unary(op, right, expr.span),
             ast::Expr::Binary { op, left, right }          => self.infer_binary(op, left, right, expr.span),
-            ast::Expr::Block(block)                        => self.infer_block_expr(block),
-            ast::Expr::If { condition, consequence, alternative } => self.infer_if(condition, consequence, alternative, expr.span),
-            ast::Expr::Match { scrutinee, arms }           => self.infer_match(scrutinee, arms, expr.span),
+            ast::Expr::Block(block)                        => { self.exn_prop = prop; self.infer_block_expr(block) }
+            ast::Expr::If { condition, consequence, alternative } => { self.exn_prop = prop; self.infer_if(condition, consequence, alternative, expr.span) }
+            ast::Expr::Match { scrutinee, arms }           => { self.exn_prop = prop; self.infer_match(scrutinee, arms, expr.span) }
             ast::Expr::For { pattern, iter, body }         => self.infer_for(pattern, iter, body, expr.span),
             ast::Expr::While { condition, body }           => self.infer_while(condition, body, expr.span),
             ast::Expr::Loop { body }                       => self.infer_loop(body, expr.span),
@@ -163,7 +167,7 @@ impl Checker {
                 self.add_required_effect(crate::ty::Effect::Exn(Box::new(ex_ty)));
                 Type::Never
             }
-            ast::Expr::Call { callee, args }               => self.infer_call(callee, args, expr.span),
+            ast::Expr::Call { callee, args }               => { self.exn_prop = prop; self.infer_call(callee, args, expr.span) }
             ast::Expr::Tuple(elems)                        => self.infer_tuple(elems),
             ast::Expr::Array(elems)                        => self.infer_array(elems),
             ast::Expr::ArrayRepeat { elem, count }         => self.infer_array_repeat(elem, count),
@@ -180,10 +184,32 @@ impl Checker {
         }
     }
 
+    // A `let r = &x` / `let r = &mut x` binding keeps its borrow alive past the
+    // statement (until scope exit); every other statement's borrows are temporary.
+    fn stmt_binds_named_borrow(stmt: &Spanned<ast::Stmt>) -> bool {
+        if let ast::Stmt::Let { value, .. } = &stmt.node {
+            if let ast::Expr::Unary { op: ast::UnaryOp::Ref | ast::UnaryOp::RefMut, right } = &value.node {
+                return matches!(&right.node, ast::Expr::Identifier(_));
+            }
+        }
+        false
+    }
+
     pub fn infer_block(&mut self, block: &ast::Block) -> Type {
+        let prop = self.exn_prop;
         self.enter_scope();
-        for stmt in &block.stmts { self.check_stmt(stmt); }
-        let ty = if let Some(ret_expr) = &block.ret { self.infer_expr(ret_expr) } else { Type::Unit };
+        self.exn_prop = false;
+        for stmt in &block.stmts {
+            let mark = self.borrow_stack.len();
+            self.check_stmt(stmt);
+            if !Self::stmt_binds_named_borrow(stmt) {
+                self.release_borrows_to(mark);
+            }
+        }
+        let ty = if let Some(ret_expr) = &block.ret {
+            self.exn_prop = prop;
+            self.infer_expr(ret_expr)
+        } else { Type::Unit };
         self.exit_scope();
         ty
     }

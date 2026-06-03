@@ -61,9 +61,12 @@ pub struct VirtualMachine {
     pub(crate) module_table_raw: u64,
     pub(crate) module_table_is_handle: bool,
     pub(crate) steps: u64,
-    pub(crate) step_cap: Option<u64>,
+    pub(crate) step_cap: u64,
     pub(crate) static_names: Vec<String>,
     pub(crate) trace_static_filter: Option<String>,
+    pub(crate) heap_check: bool,
+    pub(crate) yielded: bool,
+    pub(crate) yield_dest_abs: usize,
 }
 
 pub struct HandlerFrame {
@@ -145,10 +148,13 @@ impl VirtualMachine {
             module_table_raw: polka::HANDLE_NONE,
             module_table_is_handle: false,
             steps: 0,
-            step_cap: None,
+            step_cap: u64::MAX,
             static_names: Vec::new(),
             trace_static_filter: std::env::var("TRACE_STATIC").ok()
                 .filter(|s| !s.is_empty()),
+            heap_check: std::env::var("ABRASE_HEAP_CHECK").is_ok(),
+            yielded: false,
+            yield_dest_abs: 0,
         }
     }
 
@@ -158,7 +164,12 @@ impl VirtualMachine {
     }
 
     pub fn with_step_cap(mut self, cap: u64) -> Self {
-        self.step_cap = Some(cap);
+        self.step_cap = cap;
+        self
+    }
+
+    pub fn with_heap_check(mut self, on: bool) -> Self {
+        self.heap_check = on;
         self
     }
 
@@ -236,6 +247,38 @@ impl VirtualMachine {
         total.saturating_sub(const_live).saturating_sub(module_live)
     }
 
+
+    // Debug: print every live heap cell
+    pub fn dump_live_slots(&self) {
+        let owned: std::collections::HashSet<(u32, u32)> = {
+            let mut s: std::collections::HashSet<(u32, u32)> =
+                self.string_const_handles.iter().copied().collect();
+            if self.module_table_is_handle && self.module_table_raw != polka::HANDLE_NONE {
+                s.insert(crate::memory::handle_parts(self.module_table_raw));
+            }
+            s
+        };
+        let cells = self.heap.live_cells();
+        eprintln!("[heap] {} live cell(s), {} user:", cells.len(), self.heap_live_count());
+        for (slot, gen_, rc, data, handles) in &cells {
+            let tag = if owned.contains(&(*slot, *gen_)) { "rt  " } else { "USER" };
+            let slots: Vec<String> = data.iter().zip(handles.iter()).map(|(v, h)| {
+                if *h { format!("h:{:#x}", v) } else { format!("{}", *v as i64) }
+            }).collect();
+            let note = self.closure_cell_label(data, handles);
+            eprintln!("  [{}] slot={} gen={} rc={} [{}]{}", tag, slot, gen_, rc, slots.join(", "), note);
+        }
+    }
+
+    fn closure_cell_label(&self, data: &[u64], handles: &[bool]) -> String {
+        if data.len() != 2 || handles.first() != Some(&false) { return String::new(); }
+        let fid = data[0] as usize;
+        match self.fn_names.get(fid) {
+            Some(n) if n.starts_with("__closure_") || n.starts_with("__fnval_") =>
+                format!("  ; closure({})", n),
+            _ => String::new(),
+        }
+    }
 
     pub fn heap_ref(&self) -> &Heap { &self.heap }
     pub fn heap_mut(&mut self) -> &mut Heap { &mut self.heap }

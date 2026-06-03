@@ -1,9 +1,6 @@
 // Parser fuzz. Two strategies, both deterministic per seed, 0 deps.
 //   byte-fuzz: random printable-ASCII source → Lexer → Parser.
 //   token-fuzz: random concat of grammar-vocabulary tokens.
-// Each input is size-bounded (lexer/parser ops bounded as a side effect, so a
-// hang signals a real non-terminating state machine). Failures bucketed, bulk
-// report; coverage stats asserted so the fuzz can't silently degenerate.
 
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
@@ -178,4 +175,179 @@ fn parser_fuzz_random_tokens() {
         let count = ((Rng::new(seed ^ 0xCAFE).pick(80) + 5) as usize).min(120);
         gen_tokens(seed, count)
     });
+}
+
+fn gen_closure_position(seed: u64) -> String {
+    let mut r = Rng::new(seed ^ 0xC105);
+    let mv = if r.pick(2) == 0 { "move " } else { "" };
+    let ann = if r.pick(2) == 0 { ": Int" } else { "" };
+    let body = match r.pick(3) {
+        0 => "x + base",
+        1 => "x * 2",
+        _ => "x",
+    };
+    let clo = format!("{mv}|x{ann}| {body}");
+    match r.pick(4) {
+        0 => format!("fn main() -> Int {{ let base = 1; let f = {clo}; f(2) }}"),
+        1 => format!("fn main() -> Int {{ let base = 1; {{ let _t = 0; {clo} }}; 0 }}"),
+        2 => format!("fn mk(base: Int) -> (Int) -> Int {{ let _t = base; {clo} }}\nfn main() -> Int {{ 0 }}"),
+        _ => format!("fn main() -> Int {{ let g = region {{ let base = 1; {clo} }}; 0 }}"),
+    }
+}
+
+#[test]
+fn parser_fuzz_closure_tail_positions() {
+    let mut bad: Vec<(u64, usize, String)> = Vec::new();
+    for seed in 0..500u64 {
+        let src = gen_closure_position(seed);
+        if let Outcome::Ok(r) = parse_one(src.clone()) {
+            if r.errors != 0 { bad.push((seed, r.errors, src)); }
+        } else {
+            bad.push((seed, 0, src));
+        }
+    }
+    if !bad.is_empty() {
+        for (seed, errs, src) in bad.iter().take(8) {
+            eprintln!("--- seed={} errors={} ---\n{}", seed, errs, src);
+        }
+        panic!("parser_fuzz_closure_tail_positions: {} program(s) failed to parse", bad.len());
+    }
+}
+
+struct GRng(u64);
+impl GRng {
+    fn new(seed: u64) -> Self { Self(seed.wrapping_mul(6364136223846793005).wrapping_add(1)) }
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0
+    }
+    fn pick(&mut self, n: u64) -> u64 { self.next() % n.max(1) }
+}
+
+fn g_leaf(r: &mut GRng) -> String {
+    match r.pick(6) {
+        0 => "0".into(), 1 => "1".into(), 2 => "42".into(),
+        3 => "x".into(), 4 => "n".into(), _ => "i".into(),
+    }
+}
+
+fn g_expr(r: &mut GRng, d: u32) -> String {
+    if d == 0 { return g_leaf(r); }
+    match r.pick(8) {
+        0 => g_leaf(r),
+        1 => format!("({} {} {})", g_expr(r, d-1),
+                ["+","-","*","%"][r.pick(4) as usize], g_expr(r, d-1)),
+        2 => g_block(r, d-1),
+        3 => format!("if {} {{ {} }} else {{ {} }}",
+                g_expr(r, d-1), g_expr(r, d-1), g_expr(r, d-1)),
+        4 => format!("match {} {{ 0..2 => {}, _ if {} => {}, _ => {} }}",
+                g_expr(r, d-1), g_expr(r, d-1), g_expr(r, d-1), g_expr(r, d-1), g_expr(r, d-1)),
+        5 => format!("loop {{ {} break {} }}", g_stmts(r, d-1), g_expr(r, d-1)),
+        6 => format!("region {{ {} }}", g_block_inner(r, d-1)),
+        _ => format!("f({})", g_expr(r, d-1)),
+    }
+}
+
+fn g_range(r: &mut GRng) -> String {
+    let hi = r.pick(6) + 1;
+    if r.pick(2) == 0 { format!("0..{}", hi) } else { format!("0..={}", hi) }
+}
+
+fn g_stmt(r: &mut GRng, d: u32) -> String {
+    match r.pick(6) {
+        0 => format!("let y{} = {};", r.pick(1000), g_expr(r, d)),
+        1 => format!("x = {};", g_expr(r, d)),
+        2 => format!("while {} {{ {} }};", g_expr(r, d), g_stmts(r, d.saturating_sub(1))),
+        3 => format!("for k in {} {{ {} }};", g_range(r), g_stmts(r, d.saturating_sub(1))),
+        4 => format!("if {} {{ {} }};", g_expr(r, d), g_stmts(r, d.saturating_sub(1))),
+        _ => format!("{};", g_expr(r, d)),
+    }
+}
+
+fn g_stmts(r: &mut GRng, d: u32) -> String {
+    let n = r.pick(3);
+    (0..n).map(|_| g_stmt(r, d)).collect::<Vec<_>>().join(" ") + " "
+}
+
+fn g_block_inner(r: &mut GRng, d: u32) -> String {
+    format!("{}{}", g_stmts(r, d), g_expr(r, d))
+}
+
+fn g_block(r: &mut GRng, d: u32) -> String {
+    format!("{{ {} }}", g_block_inner(r, d))
+}
+
+fn gen_grammar(seed: u64) -> String {
+    let mut r = GRng::new(seed);
+    let depth = 2 + (seed % 3) as u32;
+    let helper = "fn f(n: Int) -> Int { if n <= 0 { 0 } else { n + f(n - 1) } }\n";
+    // Occasionally wrap a helper call in an effect handler.
+    if r.pick(4) == 0 {
+        format!(
+            "{helper}effect E {{ op ask(q: Int) -> Int }}\n\
+             fn g() -> <E> Int {{ E.ask({}) }}\n\
+             fn main() -> Int {{ let x = 1; let i = 2; handle g() {{ return v => v, E.ask q => resume(({} + q)) }} }}\n",
+            g_expr(&mut r, 1), g_leaf(&mut r))
+    } else {
+        format!("{helper}fn main() -> Int {{ let x = 1; let n = 2; let i = 3; {} }}\n",
+            g_block_inner(&mut r, depth))
+    }
+}
+
+#[test]
+fn parser_fuzz_grammar_nested() {
+    let mut bad: Vec<(u64, usize, String)> = Vec::new();
+    for seed in 0..3_000u64 {
+        let src = gen_grammar(seed);
+        match run_with_timeout(src.clone(), Duration::from_secs(2)) {
+            Outcome::Ok(r) if r.errors == 0 => {}
+            Outcome::Ok(r) => bad.push((seed, r.errors, src)),
+            Outcome::Panic(m) => bad.push((seed, 0, format!("PANIC {}\n{}", m, src))),
+            Outcome::Hang => bad.push((seed, 0, format!("HANG\n{}", src))),
+        }
+    }
+    if !bad.is_empty() {
+        for (seed, errs, src) in bad.iter().take(8) {
+            eprintln!("--- seed={} errors={} ---\n{}", seed, errs, truncate(src, 400));
+        }
+        panic!("parser_fuzz_grammar_nested: {}/3000 programs failed to parse cleanly", bad.len());
+    }
+}
+
+fn gen_resume_index_block(seed: u64) -> String {
+    let mut r = Rng::new(seed ^ 0x9111);
+    let block = match r.pick(5) {
+        0 => "if 1 { 1 } else { 2 }",
+        1 => "match 0 { _ => 1 }",
+        2 => "{ 1 }",
+        3 => "loop { break 1 }",
+        _ => "region { 1 }",
+    };
+    if r.pick(2) == 0 {
+        format!(
+            "effect E {{ op e() -> Int }}\nfn g() -> <E> Int {{ E.e() }}\n\
+             fn main() -> Int {{ handle g() {{ return v => v, E.e => resume({}) }} }}\n", block)
+    } else {
+        format!("fn main() -> Int {{ let a = [1, 2, 3]; a[{}] }}\n", block)
+    }
+}
+
+#[test]
+fn parser_fuzz_resume_index_block_args() {
+    let mut bad: Vec<(u64, usize, String)> = Vec::new();
+    for seed in 0..400u64 {
+        let src = gen_resume_index_block(seed);
+        match parse_one(src.clone()) {
+            Outcome::Ok(r) if r.errors == 0 => {}
+            Outcome::Ok(r) => bad.push((seed, r.errors, src)),
+            other => bad.push((seed, 0, format!("{:?}\n{}",
+                matches!(other, Outcome::Panic(_)), src))),
+        }
+    }
+    if !bad.is_empty() {
+        for (seed, errs, src) in bad.iter().take(6) {
+            eprintln!("--- seed={} errors={} ---\n{}", seed, errs, src);
+        }
+        panic!("parser_fuzz_resume_index_block_args: {}/400 failed to parse", bad.len());
+    }
 }

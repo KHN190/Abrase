@@ -1,0 +1,21 @@
+// Cross-frame state demo using @cart persistent-main.
+//
+// main() runs for exactly 5 frames. Each frame adds 3 to `total`.
+// After 5 frames: total = 15. main exits via halt(total).
+//
+// The host drives it with run_to_yield (first frame) + 4 resume calls.
+// main's local `total` and `i` persist across all yields because
+// main's stack is never cleared between frames.
+
+@cart
+fn main() -> <frame> Unit {
+  let mut total = 0;
+  let mut i = 0;
+  while i < 5 {
+    total = total + 3;
+    frame.present();
+    println(i.to_s());
+    i = i + 1
+  };
+  halt(total)
+}

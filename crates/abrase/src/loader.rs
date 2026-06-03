@@ -56,7 +56,14 @@ impl LoadedProgram {
 }
 
 pub fn load_program(entry: &Path) -> Result<LoadedProgram, LoadError> {
-    let root = entry.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    load_program_with_root(entry, None)
+}
+
+pub fn load_program_with_root(entry: &Path, root_override: Option<&Path>) -> Result<LoadedProgram, LoadError> {
+    let root = root_override
+        .map(Path::to_path_buf)
+        .or_else(|| entry.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."));
     let mut out = LoadedProgram {
         decls: Vec::new(),
         sources: Vec::new(),

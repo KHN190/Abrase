@@ -1,3 +1,0 @@
-pub static mut COUNTER: Int = 0;
-
-pub fn bump() -> Int { COUNTER = COUNTER + 1; COUNTER }

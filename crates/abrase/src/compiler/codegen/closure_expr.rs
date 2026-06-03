@@ -1,8 +1,10 @@
 use crate::ast;
-use crate::bytecode::{OpCode, Register};
+use crate::bytecode::{OpCode, Register, Value};
 use crate::compiler::Compiler;
 
 impl Compiler {
+    // A closure compiles to a self-contained 2-slot value cell [fn_id, env]:
+    //   slot 0 = lifted fn id (plain int)   slot 1 = env cell (captures)
     pub(in crate::compiler) fn compile_closure(
         &mut self,
         span: ast::Span,
@@ -11,6 +13,8 @@ impl Compiler {
             .ok_or_else(|| format!(
                 "internal: closure at {:?} not registered by pre-pass", span
             ))?;
+        let fn_id = *self.func_map.get(&info.lifted_fn)
+            .ok_or_else(|| format!("internal: lifted closure fn '{}' not in fn table", info.lifted_fn))?;
 
         let env_reg = self.alloc_register()?;
         let n = info.captures.len();
@@ -47,6 +51,16 @@ impl Compiler {
                 self.emit(OpCode::St(tmp, env_reg, offset));
             }
         }
-        Ok(env_reg)
+
+        // Wrap into the [fn_id, env] value cell.
+        let cell = self.alloc_register()?;
+        self.emit(OpCode::Alloc(cell, 2));
+        let fid_reg = self.alloc_register()?;
+        let idx = self.add_constant(Value::from_int(fn_id as i64))?;
+        self.emit(OpCode::PushConst(fid_reg, idx));
+        self.set_reg_handle(fid_reg, false);
+        self.emit(OpCode::St(fid_reg, cell, 0));
+        self.emit(OpCode::St(env_reg, cell, 1));
+        Ok(cell)
     }
 }

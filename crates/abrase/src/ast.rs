@@ -110,7 +110,7 @@ pub enum Pattern {
 #[derive(Debug, PartialEq, Clone)]
 pub struct FieldPattern {
     pub name: String,
-
+    pub is_mut: bool,
     pub pattern: Option<Spanned<Pattern>>,
 }
 
@@ -316,7 +316,6 @@ pub enum Decl {
     },
     Static {
         is_pub: bool,
-        is_mut: bool,
         name: String,
         ty: Type,
         value: Spanned<Expr>,

@@ -79,6 +79,8 @@ pub struct Compiler {
     pub method_dispatch: HashMap<(String, String), String>,
     pub(super) closure_by_span: HashMap<ast::Span, closures::ClosureInfo>,
     pub(super) closure_by_var: HashMap<String, closures::ClosureInfo>,
+    pub(super) fn_value_adapters: HashMap<String, String>,
+    pub(super) closure_as_value_ok: bool,
     pub(super) loop_stack: Vec<LoopCtx>,
     pub(super) concat_fn_id: Option<usize>,
     pub(super) to_str_fn_id: Option<usize>,
@@ -95,6 +97,7 @@ pub struct Compiler {
     pub(super) handler_table_stack: Vec<Register>,
     pub(super) fn_handler_baseline: usize,
     pub errors: Vec<Error>,
+    pub warnings: Vec<crate::lint::Lint>,
     pub source: String,
     pub(super) debug_sink: Option<debug::CompileDebugSink>,
     pub(super) remaining_uses: HashMap<String, usize>,
@@ -103,8 +106,8 @@ pub struct Compiler {
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
-    pub(super) static_mut_set: std::collections::HashSet<String>,
     pub(super) typeck_expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), crate::ty::Type>,
+    pub(super) result_tail_spans: std::collections::HashSet<(Vec<String>, ast::Span)>,
 }
 
 impl Compiler {
@@ -152,6 +155,8 @@ impl Compiler {
             method_dispatch: HashMap::new(),
             closure_by_span: HashMap::new(),
             closure_by_var: HashMap::new(),
+            fn_value_adapters: HashMap::new(),
+            closure_as_value_ok: false,
             loop_stack: Vec::new(),
             concat_fn_id: None,
             to_str_fn_id: None,
@@ -168,6 +173,7 @@ impl Compiler {
             handler_table_stack: Vec::new(),
             fn_handler_baseline: 0,
             errors: Vec::new(),
+            warnings: Vec::new(),
             source: String::new(),
             debug_sink: None,
             remaining_uses: HashMap::new(),
@@ -176,8 +182,8 @@ impl Compiler {
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
-            static_mut_set: std::collections::HashSet::new(),
             typeck_expr_types: HashMap::new(),
+            result_tail_spans: std::collections::HashSet::new(),
         }
     }
 
@@ -345,7 +351,12 @@ impl Compiler {
     }
 
     pub fn compile_module(&mut self, ast: &[ast::Decl]) -> Result<Module, Vec<Error>> {
-        if !self.no_built_in { self.register_builtins(); }
+        if !self.no_built_in {
+            self.register_builtins();
+            if ast.iter().any(|d| matches!(d, ast::Decl::Fn(f) if f.name == "main" && f.attrs.iter().any(|a| a.name == "cart"))) {
+                self.register_frame_present_native();
+            }
+        }
         self.run_typeck(ast)?;
         let decls_with_impls = self.run_impl_lift(ast)?;
         let owned = self.run_mono(decls_with_impls)?;
@@ -428,13 +439,12 @@ impl Compiler {
                         )),
                     }
                 }
-                ast::Decl::Static { name, ty, is_mut, .. } => {
+                ast::Decl::Static { name, ty, .. } => {
                     let mod_path = module_stack.last().cloned().unwrap_or_default();
                     let mangled = Self::fqn(&mod_path, name);
                     let offset = self.static_offsets.len() as u16;
                     self.static_offsets.insert(mangled.clone(), offset);
                     self.static_types.insert(mangled.clone(), ty.clone());
-                    if *is_mut { self.static_mut_set.insert(mangled); }
                 }
                 _ => {}
             }
@@ -546,17 +556,59 @@ impl Compiler {
         exports
     }
 
+    pub fn run_typeck_only(&mut self, ast: &[ast::Decl]) {
+        if !self.no_built_in { self.register_builtins(); }
+        let _ = self.run_typeck(ast);
+    }
+
+    fn check_int32_literals_in_decls(&mut self, ast: &[ast::Decl]) -> Result<(), Vec<Error>> {
+        let errors = &mut self.errors;
+        let mut check = |s: &ast::Spanned<ast::Expr>| {
+            use ast::Literal;
+            match &s.node {
+                ast::Expr::Literal(Literal::Int(n)) if *n < i32::MIN as i64 || *n > i32::MAX as i64 => {
+                    errors.push(Error::new(ErrorCode::TypeError, s.span,
+                        format!("Int literal {} out of i32 range; --int32 mode requires values in {}..={}", n, i32::MIN, i32::MAX),
+                    ));
+                }
+                ast::Expr::Literal(Literal::Float(f)) if f.is_finite() && (*f as f32) as f64 != *f => {
+                    errors.push(Error::new(ErrorCode::TypeError, s.span,
+                        format!("Float literal {} not representable as f32; --int32 mode requires f32-safe values", f),
+                    ));
+                }
+                _ => {}
+            }
+        };
+        for d in ast {
+            match d {
+                ast::Decl::Fn(f) => walk_block(&f.body, &mut check),
+                ast::Decl::Static { value, .. } | ast::Decl::Const { value, .. } => walk_expr(value, &mut check),
+                ast::Decl::Impl { methods, .. } => {
+                    for m in methods { walk_block(&m.body, &mut check); }
+                }
+                _ => {}
+            }
+        }
+        if !self.errors.is_empty() {
+            return Err(self.errors.clone());
+        }
+        Ok(())
+    }
+
     fn run_typeck(&mut self, ast: &[ast::Decl]) -> Result<(), Vec<Error>> {
         let mut checker = crate::typeck::Checker::new();
         if !self.no_built_in { self.register_builtins_to_checker(&mut checker); }
         checker.check_program(ast);
         self.typeck_expr_types = std::mem::take(&mut checker.expr_types);
+        self.result_tail_spans = std::mem::take(&mut checker.result_tail_spans);
+        self.warnings = std::mem::take(&mut checker.warnings);
         if !checker.errors.is_empty() {
             self.errors.extend(checker.errors.iter().map(|te| Error::new(
                 ErrorCode::TypeError, te.span, te.message.clone(),
             ).with_module(te.module.clone())));
             return Err(self.errors.clone());
         }
+        if self.int32_mode { self.check_int32_literals_in_decls(ast)?; }
         Ok(())
     }
 
@@ -589,6 +641,7 @@ impl Compiler {
         let mut closure_lowering = closures::ClosureLowering::new();
         closure_lowering.lower(ast);
         self.closure_by_span = closure_lowering.by_span;
+        self.fn_value_adapters = closure_lowering.fn_value_adapters;
         let mut decls = ast.to_vec();
         for fd in closure_lowering.synthetic_fns { decls.push(ast::Decl::Fn(fd)); }
         decls
@@ -647,6 +700,13 @@ impl Compiler {
                 .map(|(i, c)| (c.name.clone(), i))
                 .collect();
             self.current_closure_capture_types = info.captures.iter().enumerate()
+                .map(|(i, c)| (i, c.ty.clone()))
+                .collect();
+        } else if let Some(captures) = self.arm_captures.get(&fn_decl.name).cloned() {
+            self.current_closure_layout = captures.iter().enumerate()
+                .map(|(i, c)| (c.name.clone(), i))
+                .collect();
+            self.current_closure_capture_types = captures.iter().enumerate()
                 .map(|(i, c)| (i, c.ty.clone()))
                 .collect();
         }
@@ -709,9 +769,12 @@ impl Compiler {
 
         let param_count = fn_decl.params.iter().filter(|p| matches!(p, ast::Param::Named { .. })).count();
 
+        let tail_already_result = fn_decl.body.ret.as_ref().map_or(false, |r| {
+            self.result_tail_spans.contains(&(self.current_fn_module.clone(), r.span))
+        });
         match self.compile_block(&fn_decl.body) {
             Ok(result_reg) => {
-                let ret_reg = if self.current_fn_fallible {
+                let ret_reg = if self.current_fn_fallible && !tail_already_result {
                     match self.wrap_ok(result_reg) {
                         Ok(r) => r,
                         Err(msg) => {
@@ -748,6 +811,8 @@ impl Compiler {
             ));
             return Err(self.errors.clone());
         }
+
+        self.peephole_copy_drop();
 
         let reg_count = self.max_reg as usize;
         let taken_constants = std::mem::take(&mut self.constants);
@@ -979,5 +1044,130 @@ fn walk_tail_expr(expr: &ast::Spanned<ast::Expr>, self_name: &str, out: &mut std
         }
         ast::Expr::Block(block) => walk_tail_block(block, self_name, out),
         _ => {}
+    }
+}
+
+fn walk_expr(spanned: &ast::Spanned<ast::Expr>, f: &mut impl FnMut(&ast::Spanned<ast::Expr>)) {
+    use ast::Expr;
+    f(spanned);
+    match &spanned.node {
+        Expr::Binary { left, right, .. } => {
+            walk_expr(left, f);
+            walk_expr(right, f);
+        }
+        Expr::Unary { op: ast::UnaryOp::Neg, right } => {
+            if let ast::Expr::Literal(ast::Literal::Int(n)) = &right.node {
+                let negated = ast::Spanned { node: ast::Expr::Literal(ast::Literal::Int(-n)), span: right.span };
+                f(&negated);
+            } else {
+                walk_expr(right, f);
+            }
+        }
+        Expr::Unary { right, .. } => walk_expr(right, f),
+        Expr::Call { callee, args } => {
+            walk_expr(callee, f);
+            for a in args { walk_expr(a, f); }
+        }
+        Expr::Index { base, index } => {
+            walk_expr(base, f);
+            walk_expr(index, f);
+        }
+        Expr::Block(block) => walk_block(block, f),
+        Expr::If { condition, consequence, alternative } => {
+            walk_expr(condition, f);
+            walk_expr(consequence, f);
+            if let Some(a) = alternative { walk_expr(a, f); }
+        }
+        Expr::Match { scrutinee, arms } => {
+            walk_expr(scrutinee, f);
+            for arm in arms {
+                walk_pattern(&arm.pattern, f);
+                if let Some(g) = &arm.guard { walk_expr(g, f); }
+                walk_expr(&arm.body, f);
+            }
+        }
+        Expr::For { pattern, iter, body } => {
+            walk_pattern(pattern, f);
+            walk_expr(iter, f);
+            walk_block(body, f);
+        }
+        Expr::While { condition, body } => {
+            walk_expr(condition, f);
+            walk_block(body, f);
+        }
+        Expr::Loop { body } => walk_block(body, f),
+        Expr::Break(Some(e)) | Expr::Return(Some(e)) | Expr::Throw(e)
+        | Expr::Question(e) | Expr::Paren(e) | Expr::Resume(Some(e)) => walk_expr(e, f),
+        Expr::Tuple(elems) | Expr::Array(elems) => {
+            for e in elems { walk_expr(e, f); }
+        }
+        Expr::ArrayRepeat { elem, count } => {
+            walk_expr(elem, f);
+            walk_expr(count, f);
+        }
+        Expr::Record { fields, .. } => {
+            for field in fields {
+                if let Some(v) = &field.value { walk_expr(v, f); }
+            }
+        }
+        Expr::Variant { args, .. } => {
+            for a in args { walk_expr(a, f); }
+        }
+        Expr::FieldAccess { base, .. } => walk_expr(base, f),
+        Expr::Closure { body, .. } => walk_expr(body, f),
+        Expr::Range { start, end, .. } => {
+            if let Some(s) = start { walk_expr(s, f); }
+            if let Some(e) = end { walk_expr(e, f); }
+        }
+        Expr::Region { body, .. } => walk_block(body, f),
+        Expr::Handle { expr, arms } => {
+            walk_expr(expr, f);
+            for arm in arms {
+                if let Some(p) = &arm.pattern { walk_pattern(p, f); }
+                walk_expr(&arm.body, f);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn walk_pattern(spanned: &ast::Spanned<ast::Pattern>, f: &mut impl FnMut(&ast::Spanned<ast::Expr>)) {
+    use ast::Pattern;
+    let emit_lit = |lit: &ast::Literal, f: &mut dyn FnMut(&ast::Spanned<ast::Expr>)| {
+        f(&ast::Spanned { node: ast::Expr::Literal(lit.clone()), span: spanned.span });
+    };
+    match &spanned.node {
+        Pattern::Literal(lit) => emit_lit(lit, f),
+        Pattern::Range { start, end, .. } => {
+            if let Some(lit) = start { emit_lit(lit, f); }
+            if let Some(lit) = end   { emit_lit(lit, f); }
+        }
+        Pattern::Tuple(ps) | Pattern::Array(ps) => {
+            for p in ps { walk_pattern(p, f); }
+        }
+        Pattern::Variant { args, .. } => {
+            for p in args { walk_pattern(p, f); }
+        }
+        Pattern::Record { fields, .. } => {
+            for field in fields {
+                if let Some(p) = &field.pattern { walk_pattern(p, f); }
+            }
+        }
+        Pattern::Ref(p) => walk_pattern(p, f),
+        _ => {}
+    }
+}
+
+fn walk_block(block: &ast::Block, f: &mut impl FnMut(&ast::Spanned<ast::Expr>)) {
+    use ast::Stmt;
+    for spanned_stmt in &block.stmts {
+        match &spanned_stmt.node {
+            Stmt::Expr(e) => walk_expr(e, f),
+            Stmt::Let { value, .. } => walk_expr(value, f),
+            Stmt::Empty => {}
+        }
+    }
+    if let Some(ret) = &block.ret {
+        walk_expr(ret, f);
     }
 }

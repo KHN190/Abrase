@@ -4,7 +4,7 @@ use crate::ty::Type;
 use super::super::*;
 
 impl Checker {
-    pub(super) fn infer_for(&mut self, pattern: &Spanned<ast::Pattern>, iter: &Spanned<ast::Expr>, body: &ast::Block, span: ast::Span) -> Type {
+    pub(super) fn infer_for(&mut self, pattern: &Spanned<ast::Pattern>, iter: &Spanned<ast::Expr>, body: &ast::Block, _span: ast::Span) -> Type {
         self.context_stack.push("In for loop".into());
         let iter_ty = self.infer_expr(iter);
         self.enter_scope();
@@ -18,7 +18,6 @@ impl Checker {
         self.loop_body_region_depth.push(self.region_stack.len());
         let _body_ty = self.infer_block(body);
         self.loop_body_region_depth.pop();
-        self.check_borrow_barrier("for loop exit", span);
         self.pop_region();
         self.loop_depth -= 1;
         let break_ty = self.loop_break_types.pop().flatten();
@@ -27,7 +26,7 @@ impl Checker {
         break_ty.unwrap_or(Type::Unit)
     }
 
-    pub(super) fn infer_while(&mut self, condition: &Spanned<ast::Expr>, body: &ast::Block, span: ast::Span) -> Type {
+    pub(super) fn infer_while(&mut self, condition: &Spanned<ast::Expr>, body: &ast::Block, _span: ast::Span) -> Type {
         self.context_stack.push("In while loop".into());
         let cond_ty = self.infer_expr(condition);
         if cond_ty != Type::Bool && cond_ty != Type::Unknown {
@@ -39,7 +38,6 @@ impl Checker {
         self.loop_body_region_depth.push(self.region_stack.len());
         let _body_ty = self.infer_block(body);
         self.loop_body_region_depth.pop();
-        self.check_borrow_barrier("while loop exit", span);
         self.pop_region();
         self.loop_depth -= 1;
         let break_ty = self.loop_break_types.pop().flatten();
@@ -47,7 +45,7 @@ impl Checker {
         break_ty.unwrap_or(Type::Unit)
     }
 
-    pub(super) fn infer_loop(&mut self, body: &ast::Block, span: ast::Span) -> Type {
+    pub(super) fn infer_loop(&mut self, body: &ast::Block, _span: ast::Span) -> Type {
         self.context_stack.push("In loop".into());
         self.loop_depth += 1;
         self.loop_break_types.push(None);
@@ -55,7 +53,6 @@ impl Checker {
         self.loop_body_region_depth.push(self.region_stack.len());
         let _body_ty = self.infer_block(body);
         self.loop_body_region_depth.pop();
-        self.check_borrow_barrier("loop exit", span);
         self.pop_region();
         self.loop_depth -= 1;
         let break_ty = self.loop_break_types.pop().flatten();
@@ -106,9 +103,17 @@ impl Checker {
             .unwrap_or_else(|| format!("region_{}", self.region_stack.len()));
         self.push_region(region_name.clone());
         self.effect_stack.push(self.active_effects.clone());
-        let body_ty = self.infer_block(body);
+        self.enter_scope();
+        for stmt in &body.stmts { self.check_stmt(stmt); }
+        let body_ty = if let Some(ret_expr) = &body.ret { self.infer_expr(ret_expr) } else { Type::Unit };
+        if let Some((name, esc_span)) = self.check_region_result_escape(body) {
+            self.report_error(
+                format!("borrow '{}' cannot escape its region (`&T` cannot outlive the region that owns its referent)", name),
+                esc_span,
+            );
+        }
+        self.exit_scope();
         self.effect_stack.pop();
-        self.check_borrow_barrier("region exit", span);
         self.pop_region();
         self.context_stack.pop();
         if self.type_contains_shared(&body_ty) {

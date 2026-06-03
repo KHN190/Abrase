@@ -1729,7 +1729,7 @@ fn verify_resume_can_be_called_twice_in_same_arm() {
 }
 
 #[test]
-fn verify_borrow_barrier_catches_outer_borrow_across_effect_op() {
+fn borrow_held_across_effect_op_is_allowed() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
     let op_ty = abrase::ty::Type::Function {
@@ -1790,8 +1790,8 @@ fn verify_borrow_barrier_catches_outer_borrow_across_effect_op() {
     };
     checker.check_fn_decl(&fn_decl);
     assert!(
-        checker.errors.iter().any(|e| e.message.contains("live across effect operation")),
-        "expected borrow-barrier error; got {:?}",
+        !checker.errors.iter().any(|e| e.message.contains("live across")),
+        "a borrow live across an effect op must be allowed (it does not escape); got {:?}",
         checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
@@ -2186,7 +2186,7 @@ fn verify_borrow_barrier_silent_for_pure_call() {
 }
 
 #[test]
-fn verify_borrow_barrier_catches_mut_borrow_across_effect_op() {
+fn mut_borrow_held_across_effect_op_is_allowed() {
     let mut checker = Checker::new();
     checker.register_effect("logger".into(), vec!["log".into()]);
     let op_ty = abrase::ty::Type::Function {
@@ -2247,8 +2247,8 @@ fn verify_borrow_barrier_catches_mut_borrow_across_effect_op() {
     };
     checker.check_fn_decl(&fn_decl);
     assert!(
-        checker.errors.iter().any(|e| e.message.contains("live across effect operation")),
-        "borrow barrier must fire for &mut held across an effect op; got {:?}",
+        !checker.errors.iter().any(|e| e.message.contains("live across")),
+        "a `&mut` live across an effect op must be allowed (it does not escape); got {:?}",
         checker.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }

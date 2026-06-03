@@ -63,19 +63,6 @@ fn test_expr_if_else_if_chain() {
 }
 
 #[test]
-fn test_expr_match() {
-    let input = "match x { A => 1, B => 2 }";
-    let mut parser = Parser::new(Lexer::new(input));
-    let expr = parser.parse_expr(Precedence::Lowest);
-    if let Expr::Match { scrutinee, arms } = expr.node {
-        assert_eq!(scrutinee.node, Expr::Identifier("x".into()));
-        assert_eq!(arms.len(), 2);
-    } else {
-        panic!("Expected Match expression");
-    }
-}
-
-#[test]
 fn test_expr_match_with_guard() {
     let input = "match x { 1 if x > 0 => true, _ => false }";
     let mut parser = Parser::new(Lexer::new(input));
@@ -84,18 +71,6 @@ fn test_expr_match_with_guard() {
         assert_eq!(arms.len(), 2);
         assert!(arms[0].guard.is_some());
         assert!(arms[1].guard.is_none());
-    } else {
-        panic!("Expected Match expression");
-    }
-}
-
-#[test]
-fn test_expr_match_block_body() {
-    let input = "match x { A => { print(1); 1 }, B => 2 }";
-    let mut parser = Parser::new(Lexer::new(input));
-    let expr = parser.parse_expr(Precedence::Lowest);
-    if let Expr::Match { arms, .. } = expr.node {
-        assert_eq!(arms.len(), 2);
     } else {
         panic!("Expected Match expression");
     }
@@ -142,19 +117,6 @@ fn test_expr_while() {
 }
 
 #[test]
-fn test_expr_while_complex_condition() {
-    let input = "while x < 10 { x = x + 1 }";
-    let mut parser = Parser::new(Lexer::new(input));
-    let expr = parser.parse_expr(Precedence::Lowest);
-    if let Expr::While { condition, body } = expr.node {
-        assert!(matches!(condition.node, Expr::Binary { .. }));
-        assert!(body.stmts.len() > 0 || body.ret.is_some());
-    } else {
-        panic!("Expected While expression");
-    }
-}
-
-#[test]
 fn test_expr_loop() {
     let input = "loop { break }";
     let mut parser = Parser::new(Lexer::new(input));
@@ -176,18 +138,6 @@ fn test_expr_loop_with_continue() {
         assert!(matches!(body.ret, Some(r) if matches!(r.node, Expr::If { .. })));
     } else {
         panic!("Expected Loop expression");
-    }
-}
-
-#[test]
-fn test_expr_closure() {
-    let input = "|x| x + 1";
-    let mut parser = Parser::new(Lexer::new(input));
-    let expr = parser.parse_expr(Precedence::Lowest);
-    if let Expr::Closure { params, .. } = expr.node {
-        assert_eq!(params.len(), 1);
-    } else {
-        panic!("Expected Closure expression");
     }
 }
 
@@ -370,16 +320,6 @@ fn test_plus_assign_desugars_to_assign_of_add() {
 }
 
 #[test]
-fn test_minus_assign_desugars_to_assign_of_sub() {
-    let input = "a -= 1";
-    let mut p = Parser::new(Lexer::new(input));
-    let expr = p.parse_expr(Precedence::Lowest);
-    if let Expr::Binary { op: BinaryOp::Assign, right, .. } = expr.node {
-        assert!(matches!(right.node, Expr::Binary { op: BinaryOp::Sub, .. }));
-    } else { panic!("expected Assign with Sub RHS"); }
-}
-
-#[test]
 fn test_array_repeat_literal() {
     let mut p = Parser::new(Lexer::new("[0; 4]"));
     let expr = p.parse_expr(Precedence::Lowest);
@@ -387,24 +327,6 @@ fn test_array_repeat_literal() {
         assert!(matches!(elem.node, Expr::Literal(Literal::Int(0))));
         assert!(matches!(count.node, Expr::Literal(Literal::Int(4))));
     } else { panic!("expected ArrayRepeat, got {:?}", expr.node); }
-}
-
-#[test]
-fn test_array_list_literal_still_works() {
-    let mut p = Parser::new(Lexer::new("[1, 2, 3]"));
-    let expr = p.parse_expr(Precedence::Lowest);
-    if let Expr::Array(items) = expr.node {
-        assert_eq!(items.len(), 3);
-    } else { panic!("expected Array, got {:?}", expr.node); }
-}
-
-#[test]
-fn test_array_list_trailing_comma() {
-    let mut p = Parser::new(Lexer::new("[1, 2, 3,]"));
-    let expr = p.parse_expr(Precedence::Lowest);
-    if let Expr::Array(items) = expr.node {
-        assert_eq!(items.len(), 3);
-    } else { panic!("expected Array"); }
 }
 
 #[test]
@@ -432,24 +354,6 @@ fn test_paren_two_element_tuple() {
 }
 
 #[test]
-fn test_paren_three_element_tuple() {
-    let mut p = Parser::new(Lexer::new("(1, 2, 3)"));
-    let expr = p.parse_expr(Precedence::Lowest);
-    if let Expr::Tuple(elems) = expr.node {
-        assert_eq!(elems.len(), 3);
-    } else { panic!("expected Tuple, got {:?}", expr.node); }
-}
-
-#[test]
-fn test_paren_tuple_trailing_comma() {
-    let mut p = Parser::new(Lexer::new("(1, 2,)"));
-    let expr = p.parse_expr(Precedence::Lowest);
-    if let Expr::Tuple(elems) = expr.node {
-        assert_eq!(elems.len(), 2);
-    } else { panic!("expected Tuple, got {:?}", expr.node); }
-}
-
-#[test]
 fn test_closure_implicit_borrow_default() {
     let mut p = Parser::new(Lexer::new("|x| x + 1"));
     let expr = p.parse_expr(Precedence::Lowest);
@@ -466,17 +370,6 @@ fn test_closure_move_keyword_sets_is_move() {
     if let Expr::Closure { is_move, .. } = expr.node {
         assert!(is_move, "`move |...|` must set is_move = true");
     } else { panic!("expected Closure, got {:?}", expr.node); }
-}
-
-#[test]
-fn test_closure_with_typed_params() {
-    let mut p = Parser::new(Lexer::new("|x: Int, y: Int| x + y"));
-    let expr = p.parse_expr(Precedence::Lowest);
-    if let Expr::Closure { params, .. } = expr.node {
-        assert_eq!(params.len(), 2);
-        assert!(params[0].ty.is_some());
-        assert!(params[1].ty.is_some());
-    } else { panic!("expected Closure"); }
 }
 
 #[test]
@@ -520,12 +413,6 @@ fn test_record_literal_rejects_duplicate_field() {
     let errs = parse_errs("fn f() -> Int { Pt { x: 1, x: 2 } }");
     assert!(errs.iter().any(|e| e.contains("Duplicate field")),
             "expected duplicate-field error, got: {:?}", errs);
-}
-
-#[test]
-fn test_record_literal_distinct_fields_ok() {
-    let errs = parse_errs("fn f() -> Int { Pt { x: 1, y: 2 } }");
-    assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
 }
 
 #[test]

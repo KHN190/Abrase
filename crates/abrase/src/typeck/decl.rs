@@ -13,6 +13,10 @@ impl Checker {
         for decl in decls {
             self.check_decl_body(decl);
         }
+        let all_idents = all_program_idents(decls);
+        lint_unused_imports(decls, &all_idents, self);
+        lint_dead_code(decls, self);
+        lint_unused_effects(decls, self);
     }
 
     fn check_decl_signature(&mut self, decl: &ast::Decl) {
@@ -31,13 +35,35 @@ impl Checker {
                     .map(|t| Box::new(self.convert_type(t)))
                     .unwrap_or_else(|| Box::new(Type::Unit));
 
-                // main() must be pure (no effects)
-                if fn_decl.name == "main" && !effects.is_empty() {
+                let is_cart = fn_decl.attrs.iter().any(|a| a.name == "cart");
+                if is_cart && fn_decl.name != "main" {
                     self.report_error(
-                        format!("`main` function must be pure (no effects); found: {}",
-                            fn_decl.effects.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
-                        ast::Span { line: 0, col: 0 }
+                        "`@cart` can only be applied to `main`".into(),
+                        ast::Span { line: 0, col: 0 },
                     );
+                }
+                if fn_decl.name == "main" {
+                    if is_cart {
+                        let bad: Vec<_> = fn_decl.effects.iter()
+                            .filter(|e| e.name != ["frame"]
+                                && !self.convert_effect(e)
+                                    .map_or(false, |eff| self.is_native_capability(&eff)))
+                            .collect();
+                        if !bad.is_empty() {
+                            self.report_error(
+                                format!("`@cart main` may only use runtime-provided effects; \
+                                         the runtime has no native to discharge: {}",
+                                    bad.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
+                                ast::Span { line: 0, col: 0 }
+                            );
+                        }
+                    } else if !fn_decl.effects.is_empty() {
+                        self.report_error(
+                            format!("`main` function must be pure (no effects); found: {}",
+                                fn_decl.effects.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
+                            ast::Span { line: 0, col: 0 }
+                        );
+                    }
                 }
 
                 let fn_type = Type::Function { params, effects, ret };
@@ -157,20 +183,8 @@ impl Checker {
                 }
             },
 
-            ast::Decl::Static { name, ty, is_pub, is_mut, .. } => {
+            ast::Decl::Static { name, ty, is_pub, .. } => {
                 let static_type = self.convert_type(ty);
-                if matches!(static_type, Type::Shared { .. }) {
-                    self.report_error(
-                        format!("`static {}` cannot hold `Shared<T>`; Shared must be constructed inside a region", name),
-                        ast::Span { line: 0, col: 0 },
-                    );
-                }
-                if matches!(static_type, Type::Reference { .. }) {
-                    self.report_error(
-                        format!("`static {}` cannot hold `&T`; references are region-scoped", name),
-                        ast::Span { line: 0, col: 0 },
-                    );
-                }
                 let module_path = self.current_module.clone();
                 if self.lookup_module_item(&module_path, name).is_some() {
                     self.report_error(
@@ -179,7 +193,7 @@ impl Checker {
                     );
                 }
                 self.register_module_item(&module_path, name.clone(), static_type.clone());
-                self.insert_static_var(name.clone(), static_type, *is_mut);
+                self.insert_static_var(name.clone(), static_type);
                 if *is_pub {
                     self.mark_public(name.clone());
                 }
@@ -335,7 +349,21 @@ impl Checker {
                 },
             }
         }
+        let is_fallible = self.fn_declared_effects.iter().any(|e| matches!(e, crate::ty::Effect::Exn(_)));
+        self.exn_prop = is_fallible;
         let body_type = self.infer_block(&fn_decl.body);
+        self.exn_prop = false;
+        if is_fallible {
+            if let Some(ret) = &fn_decl.body.ret {
+                if self.tail_yields_result(ret) {
+                    let module = match self.current_module.split_first() {
+                        Some((head, rest)) if head == "root" => rest.to_vec(),
+                        _ => self.current_module.clone(),
+                    };
+                    self.result_tail_spans.insert((module, ret.span));
+                }
+            }
+        }
 
         if let Some(return_ty) = &fn_decl.return_type {
             let expected_return = self.convert_type(return_ty);
@@ -374,6 +402,54 @@ impl Checker {
         self.fn_declared_effects = saved_declared;
         self.fn_required_effects = saved_required;
         self.handled_effects = saved_handled;
+
+        self.lint_unused_variables(fn_decl);
+        self.lint_unused_mut(fn_decl);
+        lint_unreachable_patterns(&fn_decl.body, self);
+        let is_cart = fn_decl.attrs.iter().any(|a| a.name == "cart");
+        if !is_cart {
+            lint_infinite_loops(&fn_decl.body, self);
+        }
+    }
+
+    fn lint_unused_variables(&mut self, fn_decl: &ast::FnDecl) {
+        let uses = crate::compiler::liveness::count_uses(&fn_decl.body);
+
+        // Parameters
+        for param in &fn_decl.params {
+            if let ast::Param::Named { pattern, .. } = param {
+                if let ast::Pattern::Bind(name) = &pattern.node {
+                    if !name.starts_with('_') && uses.get(name.as_str()).copied().unwrap_or(0) == 0 {
+                        self.report_warning(
+                            "unused_variable",
+                            format!("unused parameter `{}`", name),
+                            pattern.span,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Let bindings in function body
+        lint_unused_in_block(&fn_decl.body, &uses, self);
+    }
+
+    fn lint_unused_mut(&mut self, fn_decl: &ast::FnDecl) {
+        // Collect all `let mut name` bindings in the body
+        let mut mut_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        collect_mut_bindings_block(&fn_decl.body, &mut mut_names);
+        if mut_names.is_empty() { return; }
+
+        // Find which are actually assigned (via x = ..., x += ...)
+        let mut assigned: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let body_expr = ast::Spanned {
+            node: ast::Expr::Block(fn_decl.body.clone()),
+            span: ast::Span { line: 0, col: 0 },
+        };
+        crate::compiler::closures::collect_assigned_idents(&body_expr, &mut_names, &mut assigned);
+
+        // Report mut bindings that are never reassigned
+        lint_unused_mut_in_block(&fn_decl.body, &assigned, self);
     }
 
     // Per-declaration check
@@ -776,5 +852,536 @@ fn subst_self_in_ast_type(ty: &ast::Type, receiver: &str) -> ast::Type {
             effects: effects.clone(),
             ret: Box::new(subst_self_in_ast_type(ret, receiver)),
         },
+    }
+}
+
+fn lint_unused_in_block(block: &ast::Block, uses: &std::collections::HashMap<String, usize>, checker: &mut super::Checker) {
+    for stmt in &block.stmts {
+        lint_unused_in_stmt(stmt, uses, checker);
+    }
+    if let Some(ret) = &block.ret {
+        lint_unused_in_expr(ret, uses, checker);
+    }
+}
+
+fn lint_unused_in_stmt(stmt: &ast::Spanned<ast::Stmt>, uses: &std::collections::HashMap<String, usize>, checker: &mut super::Checker) {
+    match &stmt.node {
+        ast::Stmt::Let { pattern, value, .. } => {
+            if let ast::Pattern::Bind(name) = &pattern.node {
+                if !name.starts_with('_') && uses.get(name.as_str()).copied().unwrap_or(0) == 0 {
+                    checker.report_warning(
+                        "unused_variable",
+                        format!("unused variable `{}`", name),
+                        pattern.span,
+                    );
+                }
+            }
+            lint_unused_in_expr(value, uses, checker);
+        }
+        ast::Stmt::Expr(e) => lint_unused_in_expr(e, uses, checker),
+        ast::Stmt::Empty => {}
+    }
+}
+
+fn lint_unused_in_expr(expr: &ast::Spanned<ast::Expr>, uses: &std::collections::HashMap<String, usize>, checker: &mut super::Checker) {
+    match &expr.node {
+        ast::Expr::Block(b) => lint_unused_in_block(b, uses, checker),
+        ast::Expr::If { consequence, alternative, .. } => {
+            lint_unused_in_expr(consequence, uses, checker);
+            if let Some(alt) = alternative { lint_unused_in_expr(alt, uses, checker); }
+        }
+        ast::Expr::While { body, .. } | ast::Expr::Loop { body } => {
+            lint_unused_in_block(body, uses, checker);
+        }
+        ast::Expr::For { body, .. } => lint_unused_in_block(body, uses, checker),
+        ast::Expr::Region { body, .. } => lint_unused_in_block(body, uses, checker),
+        _ => {}
+    }
+}
+
+fn collect_idents_block(block: &ast::Block, out: &mut std::collections::HashSet<String>) {
+    for stmt in &block.stmts { collect_idents_stmt(stmt, out); }
+    if let Some(r) = &block.ret { collect_idents_expr(r, out); }
+}
+
+fn collect_idents_stmt(stmt: &ast::Spanned<ast::Stmt>, out: &mut std::collections::HashSet<String>) {
+    match &stmt.node {
+        ast::Stmt::Let { value, .. } => collect_idents_expr(value, out),
+        ast::Stmt::Expr(e) => collect_idents_expr(e, out),
+        ast::Stmt::Empty => {}
+    }
+}
+
+fn collect_idents_expr(expr: &ast::Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>) {
+    use ast::Expr::*;
+    match &expr.node {
+        Identifier(n) => { out.insert(n.clone()); }
+        Call { callee, args } => {
+            collect_idents_expr(callee, out);
+            for a in args { collect_idents_expr(a, out); }
+        }
+        Binary { left, right, .. } => { collect_idents_expr(left, out); collect_idents_expr(right, out); }
+        Unary { right, .. } => collect_idents_expr(right, out),
+        If { condition, consequence, alternative } => {
+            collect_idents_expr(condition, out);
+            collect_idents_expr(consequence, out);
+            if let Some(alt) = alternative { collect_idents_expr(alt, out); }
+        }
+        Block(b) => collect_idents_block(b, out),
+        While { condition, body } => { collect_idents_expr(condition, out); collect_idents_block(body, out); }
+        For { iter, body, .. } => { collect_idents_expr(iter, out); collect_idents_block(body, out); }
+        Loop { body } => collect_idents_block(body, out),
+        Region { body, .. } => collect_idents_block(body, out),
+        Match { scrutinee, arms } => {
+            collect_idents_expr(scrutinee, out);
+            for arm in arms {
+                collect_idents_expr(&arm.body, out);
+                if let Some(g) = &arm.guard { collect_idents_expr(g, out); }
+            }
+        }
+        Handle { expr, arms } => {
+            collect_idents_expr(expr, out);
+            for arm in arms { collect_idents_expr(&arm.body, out); }
+        }
+        FieldAccess { base, .. } => collect_idents_expr(base, out),
+        Index { base, index } => { collect_idents_expr(base, out); collect_idents_expr(index, out); }
+        Record { ty, fields } => {
+            if let Some(n) = ty.last() { out.insert(n.clone()); }
+            for f in fields { if let Some(v) = &f.value { collect_idents_expr(v, out); } }
+        }
+        Variant { ty, args } => {
+            if let Some(n) = ty.last() { out.insert(n.clone()); }
+            for a in args { collect_idents_expr(a, out); }
+        }
+        Tuple(items) | Array(items) => { for i in items { collect_idents_expr(i, out); } }
+        Closure { body, .. } => collect_idents_expr(body, out),
+        Return(Some(e)) | Throw(e) | Paren(e) | Question(e) | Resume(Some(e)) => collect_idents_expr(e, out),
+        Break(Some(e)) => collect_idents_expr(e, out),
+        Range { start, end, .. } => {
+            if let Some(s) = start { collect_idents_expr(s, out); }
+            if let Some(e) = end { collect_idents_expr(e, out); }
+        }
+        ArrayRepeat { elem, count } => { collect_idents_expr(elem, out); collect_idents_expr(count, out); }
+        Literal(ast::Literal::StringInterp(parts)) => {
+            for part in parts {
+                if let ast::StringPart::Interp(segments) = part {
+                    if let Some(name) = segments.first() { out.insert(name.clone()); }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_type_names(ty: &ast::Type, out: &mut std::collections::HashSet<String>) {
+    match ty {
+        ast::Type::Named(n) => { out.insert(n.clone()); }
+        ast::Type::Generic { name, args } => {
+            out.insert(name.clone());
+            for a in args { collect_type_names(a, out); }
+        }
+        ast::Type::Tuple(ts) => { for t in ts { collect_type_names(t, out); } }
+        ast::Type::Array { elem, .. } => collect_type_names(elem, out),
+        ast::Type::Function { params, ret, .. } => {
+            for p in params { collect_type_names(p, out); }
+            collect_type_names(ret, out);
+        }
+        ast::Type::Reference { inner, .. } => collect_type_names(inner, out),
+        _ => {}
+    }
+}
+
+// Collect all idents referenced across every function/static body in the program.
+fn all_program_idents(decls: &[ast::Decl]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for decl in decls {
+        match decl {
+            ast::Decl::Fn(f) => {
+                collect_idents_block(&f.body, &mut out);
+                for param in &f.params {
+                    if let ast::Param::Named { ty, .. } = param {
+                        collect_type_names(ty, &mut out);
+                    }
+                }
+                if let Some(ret) = &f.return_type { collect_type_names(ret, &mut out); }
+            }
+            ast::Decl::Static { value, ty, .. } | ast::Decl::Const { value, ty, .. } => {
+                collect_idents_expr(value, &mut out);
+                collect_type_names(ty, &mut out);
+            }
+            ast::Decl::Type { body, .. } => {
+                collect_type_names_in_body(body, &mut out);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn collect_type_names_in_body(body: &ast::TypeBody, out: &mut std::collections::HashSet<String>) {
+    match body {
+        ast::TypeBody::Record(fields) => {
+            for f in fields { collect_type_names(&f.ty, out); }
+        }
+        ast::TypeBody::Variant(variants) => {
+            for v in variants {
+                match v {
+                    ast::VariantCase::Tuple(_, tys) => { for t in tys { collect_type_names(t, out); } }
+                    ast::VariantCase::Record(_, fields) => { for f in fields { collect_type_names(&f.ty, out); } }
+                    ast::VariantCase::Unit(_) => {}
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn lint_unused_imports(decls: &[ast::Decl], all_idents: &std::collections::HashSet<String>, checker: &mut super::Checker) {
+    for decl in decls {
+        if let ast::Decl::Use { items, .. } = decl {
+            for item in items {
+                let local_name = item.alias.as_ref().unwrap_or(&item.name);
+                if !all_idents.contains(local_name.as_str()) {
+                    checker.report_warning(
+                        "unused_import",
+                        format!("unused import `{}`", local_name),
+                        ast::Span { line: 0, col: 0 },
+                    );
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn lint_dead_code(decls: &[ast::Decl], checker: &mut super::Checker) {
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    // Collect fn metadata: name → (is_pub, span, is_synthetic)
+    let mut fn_info: HashMap<String, (bool, ast::Span)> = HashMap::new();
+    // Per-function referenced idents
+    let mut fn_refs: HashMap<String, HashSet<String>> = HashMap::new();
+    // Type metadata
+    let mut type_info: HashMap<String, (bool, ast::Span)> = HashMap::new();
+
+    for decl in decls {
+        match decl {
+            ast::Decl::Fn(f) => {
+                let synthetic = f.name.starts_with("__");
+                if !synthetic {
+                    fn_info.insert(f.name.clone(), (f.is_pub, ast::Span { line: 0, col: 0 }));
+                }
+                let mut refs = HashSet::new();
+                collect_idents_block(&f.body, &mut refs);
+                fn_refs.insert(f.name.clone(), refs);
+            }
+            ast::Decl::Type { name, is_pub, .. } => {
+                type_info.insert(name.clone(), (*is_pub, ast::Span { line: 0, col: 0 }));
+            }
+            _ => {}
+        }
+    }
+
+    // BFS from live roots: main + pub fns + synthetic fns
+    let mut live: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+
+    for name in fn_info.keys() {
+        let (is_pub, _) = fn_info[name];
+        if is_pub || name == "main" {
+            live.insert(name.clone());
+            queue.push_back(name.clone());
+        }
+    }
+    // Also seed synthetic fns as live
+    for name in fn_refs.keys() {
+        if name.starts_with("__") {
+            live.insert(name.clone());
+            queue.push_back(name.clone());
+        }
+    }
+
+    while let Some(fn_name) = queue.pop_front() {
+        if let Some(refs) = fn_refs.get(&fn_name) {
+            for r in refs {
+                if fn_refs.contains_key(r) && !live.contains(r) {
+                    live.insert(r.clone());
+                    queue.push_back(r.clone());
+                }
+            }
+        }
+    }
+
+    // Collect all type references across all fn bodies
+    let all_idents = all_program_idents(decls);
+
+    // Report dead functions
+    for (name, (is_pub, span)) in &fn_info {
+        if !is_pub && !live.contains(name) {
+            checker.report_warning(
+                "dead_code",
+                format!("function `{}` is never used", name),
+                *span,
+            );
+        }
+    }
+
+    // Report dead types (non-pub, never referenced as ident or in type positions)
+    for (name, (is_pub, span)) in &type_info {
+        if !is_pub && !all_idents.contains(name.as_str()) {
+            checker.report_warning(
+                "dead_code",
+                format!("type `{}` is never used", name),
+                *span,
+            );
+        }
+    }
+}
+
+fn collect_mut_bindings_block(block: &ast::Block, out: &mut std::collections::HashSet<String>) {
+    for stmt in &block.stmts { collect_mut_bindings_stmt(stmt, out); }
+    if let Some(r) = &block.ret { collect_mut_bindings_expr(r, out); }
+}
+
+fn collect_mut_bindings_stmt(stmt: &ast::Spanned<ast::Stmt>, out: &mut std::collections::HashSet<String>) {
+    match &stmt.node {
+        ast::Stmt::Let { pattern, is_mut: true, .. } => {
+            if let ast::Pattern::Bind(name) = &pattern.node {
+                if !name.starts_with('_') { out.insert(name.clone()); }
+            }
+        }
+        ast::Stmt::Let { value, .. } => collect_mut_bindings_expr(value, out),
+        ast::Stmt::Expr(e) => collect_mut_bindings_expr(e, out),
+        ast::Stmt::Empty => {}
+    }
+}
+
+fn collect_mut_bindings_expr(expr: &ast::Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>) {
+    match &expr.node {
+        ast::Expr::Block(b) => collect_mut_bindings_block(b, out),
+        ast::Expr::If { consequence, alternative, .. } => {
+            collect_mut_bindings_expr(consequence, out);
+            if let Some(a) = alternative { collect_mut_bindings_expr(a, out); }
+        }
+        ast::Expr::While { body, .. } | ast::Expr::Loop { body } => collect_mut_bindings_block(body, out),
+        ast::Expr::For { body, .. } => collect_mut_bindings_block(body, out),
+        _ => {}
+    }
+}
+
+fn lint_unused_mut_in_block(block: &ast::Block, assigned: &std::collections::HashSet<String>, checker: &mut super::Checker) {
+    for stmt in &block.stmts {
+        if let ast::Stmt::Let { pattern, is_mut: true, .. } = &stmt.node {
+            if let ast::Pattern::Bind(name) = &pattern.node {
+                if !name.starts_with('_') && !assigned.contains(name.as_str()) {
+                    checker.report_warning(
+                        "unused_mut",
+                        format!("variable `{}` does not need to be mutable", name),
+                        pattern.span,
+                    );
+                }
+            }
+        }
+        if let ast::Stmt::Expr(e) = &stmt.node {
+            lint_unused_mut_in_expr(e, assigned, checker);
+        }
+    }
+    if let Some(r) = &block.ret { lint_unused_mut_in_expr(r, assigned, checker); }
+}
+
+fn lint_unused_mut_in_expr(expr: &ast::Spanned<ast::Expr>, assigned: &std::collections::HashSet<String>, checker: &mut super::Checker) {
+    match &expr.node {
+        ast::Expr::Block(b) => lint_unused_mut_in_block(b, assigned, checker),
+        ast::Expr::If { consequence, alternative, .. } => {
+            lint_unused_mut_in_expr(consequence, assigned, checker);
+            if let Some(a) = alternative { lint_unused_mut_in_expr(a, assigned, checker); }
+        }
+        ast::Expr::While { body, .. } | ast::Expr::Loop { body } => lint_unused_mut_in_block(body, assigned, checker),
+        ast::Expr::For { body, .. } => lint_unused_mut_in_block(body, assigned, checker),
+        _ => {}
+    }
+}
+
+fn lint_unreachable_patterns(block: &ast::Block, checker: &mut super::Checker) {
+    lint_unreachable_patterns_block(block, checker);
+}
+
+fn lint_unreachable_patterns_block(block: &ast::Block, checker: &mut super::Checker) {
+    for stmt in &block.stmts {
+        match &stmt.node {
+            ast::Stmt::Expr(e) => lint_unreachable_patterns_expr(e, checker),
+            ast::Stmt::Let { value, .. } => lint_unreachable_patterns_expr(value, checker),
+            ast::Stmt::Empty => {}
+        }
+    }
+    if let Some(r) = &block.ret { lint_unreachable_patterns_expr(r, checker); }
+}
+
+fn lint_unreachable_patterns_expr(expr: &ast::Spanned<ast::Expr>, checker: &mut super::Checker) {
+    match &expr.node {
+        ast::Expr::Match { scrutinee, arms } => {
+            lint_unreachable_patterns_expr(scrutinee, checker);
+            let mut catch_all_seen = false;
+            for arm in arms {
+                if catch_all_seen {
+                    checker.report_warning(
+                        "unreachable_pattern",
+                        "unreachable match arm (covered by a previous catch-all pattern)",
+                        arm.pattern.span,
+                    );
+                }
+                if arm.guard.is_none() {
+                    match &arm.pattern.node {
+                        ast::Pattern::Wildcard => { catch_all_seen = true; }
+                        ast::Pattern::Bind(n) if n.chars().next().map_or(true, |c| c.is_lowercase() || c == '_') => {
+                            catch_all_seen = true;
+                        }
+                        _ => {}
+                    }
+                }
+                lint_unreachable_patterns_expr(&arm.body, checker);
+            }
+        }
+        ast::Expr::Block(b) => lint_unreachable_patterns_block(b, checker),
+        ast::Expr::If { consequence, alternative, .. } => {
+            lint_unreachable_patterns_expr(consequence, checker);
+            if let Some(a) = alternative { lint_unreachable_patterns_expr(a, checker); }
+        }
+        ast::Expr::While { body, .. } | ast::Expr::Loop { body } => lint_unreachable_patterns_block(body, checker),
+        ast::Expr::For { body, .. } => lint_unreachable_patterns_block(body, checker),
+        ast::Expr::Handle { expr, arms } => {
+            lint_unreachable_patterns_expr(expr, checker);
+            for arm in arms { lint_unreachable_patterns_expr(&arm.body, checker); }
+        }
+        _ => {}
+    }
+}
+
+fn lint_infinite_loops(block: &ast::Block, checker: &mut super::Checker) {
+    lint_infinite_loops_block(block, checker);
+}
+
+fn lint_infinite_loops_block(block: &ast::Block, checker: &mut super::Checker) {
+    for stmt in &block.stmts {
+        match &stmt.node {
+            ast::Stmt::Expr(e) => lint_infinite_loops_expr(e, checker),
+            ast::Stmt::Let { value, .. } => lint_infinite_loops_expr(value, checker),
+            ast::Stmt::Empty => {}
+        }
+    }
+    if let Some(r) = &block.ret { lint_infinite_loops_expr(r, checker); }
+}
+
+fn lint_infinite_loops_expr(expr: &ast::Spanned<ast::Expr>, checker: &mut super::Checker) {
+    match &expr.node {
+        ast::Expr::Loop { body } => {
+            if !block_has_break(body) {
+                checker.report_warning(
+                    "infinite_loop",
+                    "infinite loop without a `break`",
+                    expr.span,
+                );
+            }
+            lint_infinite_loops_block(body, checker);
+        }
+        ast::Expr::Block(b) => lint_infinite_loops_block(b, checker),
+        ast::Expr::If { consequence, alternative, .. } => {
+            lint_infinite_loops_expr(consequence, checker);
+            if let Some(a) = alternative { lint_infinite_loops_expr(a, checker); }
+        }
+        ast::Expr::While { body, .. } | ast::Expr::For { body, .. } => lint_infinite_loops_block(body, checker),
+        ast::Expr::Handle { expr, arms } => {
+            lint_infinite_loops_expr(expr, checker);
+            for arm in arms { lint_infinite_loops_expr(&arm.body, checker); }
+        }
+        _ => {}
+    }
+}
+
+fn block_has_break(block: &ast::Block) -> bool {
+    block.stmts.iter().any(|s| stmt_has_break(s))
+        || block.ret.as_ref().map_or(false, |r| expr_has_break(r))
+}
+
+fn stmt_has_break(stmt: &ast::Spanned<ast::Stmt>) -> bool {
+    match &stmt.node {
+        ast::Stmt::Expr(e) => expr_has_break(e),
+        ast::Stmt::Let { value, .. } => expr_has_break(value),
+        ast::Stmt::Empty => false,
+    }
+}
+
+fn expr_has_break(expr: &ast::Spanned<ast::Expr>) -> bool {
+    match &expr.node {
+        ast::Expr::Break(_) => true,
+        ast::Expr::Block(b) => block_has_break(b),
+        ast::Expr::If { consequence, alternative, .. } =>
+            expr_has_break(consequence) || alternative.as_ref().map_or(false, |a| expr_has_break(a)),
+        // Don't descend into nested loops — their breaks belong to them, not the outer loop
+        ast::Expr::Loop { .. } | ast::Expr::While { .. } | ast::Expr::For { .. } => false,
+        ast::Expr::Match { arms, .. } => arms.iter().any(|a| expr_has_break(&a.body)),
+        _ => false,
+    }
+}
+
+pub(super) fn lint_unused_effects(decls: &[ast::Decl], checker: &mut super::Checker) {
+    use std::collections::HashSet;
+
+    // Collect all declared effect names (non-pub only)
+    let mut effect_info: Vec<(String, bool)> = Vec::new();
+    for decl in decls {
+        if let ast::Decl::Effect { name, is_pub, .. } = decl {
+            effect_info.push((name.clone(), *is_pub));
+        }
+    }
+    if effect_info.is_empty() { return; }
+
+    // Collect all effect names referenced in handle arms across all fn bodies
+    let mut handled: HashSet<String> = HashSet::new();
+    for decl in decls {
+        if let ast::Decl::Fn(f) = decl {
+            collect_handled_effects_block(&f.body, &mut handled);
+        }
+    }
+
+    for (name, is_pub) in &effect_info {
+        if !is_pub && !handled.contains(name.as_str()) {
+            checker.report_warning(
+                "dead_code",
+                format!("effect `{}` is declared but never handled", name),
+                ast::Span { line: 0, col: 0 },
+            );
+        }
+    }
+}
+
+fn collect_handled_effects_block(block: &ast::Block, out: &mut std::collections::HashSet<String>) {
+    for stmt in &block.stmts {
+        if let ast::Stmt::Expr(e) = &stmt.node { collect_handled_effects_expr(e, out); }
+    }
+    if let Some(r) = &block.ret { collect_handled_effects_expr(r, out); }
+}
+
+fn collect_handled_effects_expr(expr: &ast::Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>) {
+    match &expr.node {
+        ast::Expr::Handle { expr: body, arms } => {
+            collect_handled_effects_expr(body, out);
+            for arm in arms {
+                if let ast::HandleArmKind::Effect(path) = &arm.kind {
+                    if path.len() >= 2 {
+                        out.insert(path[path.len() - 2].clone());
+                    } else if let Some(n) = path.first() {
+                        out.insert(n.clone());
+                    }
+                }
+                collect_handled_effects_expr(&arm.body, out);
+            }
+        }
+        ast::Expr::Block(b) => collect_handled_effects_block(b, out),
+        ast::Expr::If { consequence, alternative, .. } => {
+            collect_handled_effects_expr(consequence, out);
+            if let Some(a) = alternative { collect_handled_effects_expr(a, out); }
+        }
+        ast::Expr::While { body, .. } | ast::Expr::Loop { body } => collect_handled_effects_block(body, out),
+        ast::Expr::For { body, .. } => collect_handled_effects_block(body, out),
+        _ => {}
     }
 }

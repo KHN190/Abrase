@@ -205,7 +205,22 @@ impl Checker {
     // Const Effect Checking
 
     pub fn register_function_effects(&mut self, fn_name: String, effects: Vec<ast::EffectItem>) {
+        for item in &effects {
+            if let Some(eff) = self.convert_effect(item) {
+                self.register_native_capability(eff);
+            }
+        }
         self.function_effects.insert(fn_name, effects);
+    }
+
+    pub fn register_native_capability(&mut self, effect: crate::ty::Effect) {
+        if !self.native_effects.iter().any(|e| self.effects_equal(e, &effect)) {
+            self.native_effects.push(effect);
+        }
+    }
+
+    pub fn is_native_capability(&self, effect: &crate::ty::Effect) -> bool {
+        self.native_effects.iter().any(|e| self.effects_equal(e, effect))
     }
 
     pub fn register_effect_for_op(&mut self, op_name: &str, effects: Vec<ast::EffectItem>) {
@@ -217,12 +232,36 @@ impl Checker {
         self.const_registry.insert(name, ty);
     }
 
-    pub fn insert_static_var(&mut self, name: String, ty: Type, is_mut: bool) {
-        self.static_vars.insert(name.clone(), is_mut);
+    pub fn insert_static_var(&mut self, name: String, ty: Type) {
+        self.static_vars.insert(name.clone());
         self.const_registry.insert(name, ty);
     }
     fn has_pure_effects(effects: &[ast::EffectItem]) -> bool {
         effects.is_empty()
+    }
+
+    // Whether an expression's *value* is already a Result: a fallible call (its
+    // span was recorded in `result_value_spans` during inference), or a
+    // forwarding construct all of whose value branches yield a Result. Used both
+    // for the tail-branch consistency check and the codegen wrap decision.
+    pub fn tail_yields_result(&self, expr: &Spanned<ast::Expr>) -> bool {
+        match &expr.node {
+            ast::Expr::Paren(inner) => self.tail_yields_result(inner),
+            ast::Expr::Block(b) => b.ret.as_ref().map_or(false, |r| self.tail_yields_result(r)),
+            ast::Expr::Call { .. } => self.result_value_spans.contains(&expr.span),
+            ast::Expr::If { consequence, alternative, .. } => {
+                alternative.is_some() && self.tail_yields_result(consequence)
+            }
+            ast::Expr::Match { arms, .. } => {
+                arms.first().map_or(false, |a| self.tail_yields_result(&a.body))
+            }
+            // A handle that does not catch `exn` forwards the body's Result.
+            ast::Expr::Handle { expr: body, arms } => {
+                !arms.iter().any(|a| matches!(a.kind, ast::HandleArmKind::Exn))
+                    && self.tail_yields_result(body)
+            }
+            _ => false,
+        }
     }
 
     pub fn infer_expr_effects(&self, expr: &ast::Expr) -> Vec<ast::EffectItem> {

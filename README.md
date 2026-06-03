@@ -11,10 +11,11 @@ Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language made for LLM & 
 
 It features:
 
-* Static type check
-* Effect system
-* Simplified lifecycle management
-* Performative & Leak free
+* Strong typed
+* Algebraic effects
+* Region memory lifecycle design - no GC, leak free
+* Myriad runtime — computation core, or OS embedded
+* Linter & Debugger
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
@@ -66,24 +67,6 @@ Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x f
 * 64 registers per frame, 64-bit each.
 * Untagged `u64` values; type is implied by the opcode and a per-frame handle mask.
 * Effect / region machinery via reserved port encodings (`0xE0` / `0xE1`); user-visible I/O via four core devices (System, Console) and imports.
-
-```h
-HEADER (8 bytes)
-  magic:4              0xECFF00EC
-  version:2            0x0100
-  flags:2
-
-FUNCTION TABLE
-  count:4
-  entry                { fn_id:2, reg_count:1, param_count:1, code_offset:4 }
-
-DATA POOL
-  count:4
-  values:8 x count     scalar literals + string-pool handles
-
-CODE
-  4 bytes per instruction
-```
 
 See [`Wiki / Bytecode Spec`](./wiki/Appendix-Bytecode-Spec.md).
 

@@ -7,6 +7,7 @@ use super::helpers::is_block_terminated;
 impl<'a> Parser<'a> {
     pub fn parse_expr(&mut self, precedence: Precedence) -> Spanned<Expr> {
         let span = self.current_span;
+        self.trace_cursor("parse_expr enter");
         let _guard = match self.enter_depth() {
             Some(g) => g,
             None => return Spanned { node: Expr::Error, span },
@@ -18,13 +19,17 @@ impl<'a> Parser<'a> {
                 Spanned { node: Expr::Error, span }
             }
         };
+        self.trace_cursor("parse_expr post-prefix");
         if is_block_terminated(&left.node)
             && !matches!(self.current_token,
                 Token::Dot | Token::LParen | Token::LBracket | Token::Question)
         {
             return left;
         }
-        while self.peek_token != Token::Semicolon && precedence < self.peek_token.precedence() {
+        while self.current_token != Token::Semicolon
+            && self.peek_token != Token::Semicolon
+            && precedence < self.peek_token.precedence()
+        {
             self.next_token();
             left = self.parse_infix(left);
         }
@@ -263,10 +268,11 @@ impl<'a> Parser<'a> {
         self.no_record_literal = true;
         let scrutinee = Box::new(self.parse_expr(Precedence::Lowest));
         self.no_record_literal = prev;
-        if !self.expect_peek(Token::LBrace) {
+        if self.current_token != Token::LBrace && !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' after match expr".into());
         }
         let mut arms = Vec::new();
+        let mut overshot = false;
         self.next_token();
         while self.current_token != Token::RBrace && self.current_token != Token::Eof {
             let pattern = self.parse_pattern()?;
@@ -275,7 +281,7 @@ impl<'a> Parser<'a> {
                 self.next_token();
                 Some(self.parse_expr(Precedence::Lowest))
             } else { None };
-            if !self.expect_peek(Token::FatArrow) {
+            if self.current_token != Token::FatArrow && !self.expect_peek(Token::FatArrow) {
                 return Err("Expected '=>' in match arm".into());
             }
             self.next_token();
@@ -286,6 +292,12 @@ impl<'a> Parser<'a> {
             if body_is_block_terminated {
                 if self.current_token == Token::Comma || self.current_token == Token::Semicolon {
                     self.next_token();
+                } else if self.current_token != Token::RBrace
+                    && !Self::is_arm_pattern_start(&self.current_token)
+                {
+                    // parse_block already consumed past `}`.
+                    overshot = true;
+                    break;
                 }
             } else if self.peek_token == Token::Comma || self.peek_token == Token::Semicolon {
                 self.next_token();
@@ -294,10 +306,12 @@ impl<'a> Parser<'a> {
                 self.next_token();
             }
         }
-        if self.current_token != Token::RBrace {
-            return Err("Expected '}' in match expr".into());
+        if !overshot {
+            if self.current_token != Token::RBrace {
+                return Err("Expected '}' in match expr".into());
+            }
+            self.next_token();
         }
-        self.next_token();
         Ok(Expr::Match { scrutinee, arms })
     }
 
@@ -312,7 +326,7 @@ impl<'a> Parser<'a> {
         self.no_record_literal = true;
         let iter = Box::new(self.parse_expr(Precedence::Lowest));
         self.no_record_literal = prev;
-        if !self.expect_peek(Token::LBrace) {
+        if self.current_token != Token::LBrace && !self.expect_peek(Token::LBrace) {
             return Err("Expected '{' in for loop".into());
         }
         let body = self.parse_block()?;
@@ -398,11 +412,42 @@ impl<'a> Parser<'a> {
         let first = self.parse_expr(Precedence::Lowest);
         let first_block_terminated = is_block_terminated(&first.node);
         if first_block_terminated {
+            //   "current is operator"  — right sub-expr was block-terminated
+            //   "current is terminal"  — normal; peek may be next operator
+            let mut left = first;
+            let mut consumed_infix = false;
+            loop {
+                let delim = matches!(self.current_token,
+                    Token::RParen | Token::Comma | Token::Semicolon | Token::Eof);
+                if delim { break; }
+                let cur_is_op = Precedence::Lowest < self.current_token.precedence();
+                let peek_is_op = !cur_is_op
+                    && !matches!(self.peek_token,
+                        Token::RParen | Token::Comma | Token::Semicolon | Token::Eof)
+                    && Precedence::Lowest < self.peek_token.precedence();
+                if cur_is_op {
+                    left = self.parse_infix(left);
+                    consumed_infix = true;
+                } else if peek_is_op {
+                    self.next_token();
+                    left = self.parse_infix(left);
+                    consumed_infix = true;
+                } else {
+                    break;
+                }
+            }
+            // Advance unless already at a non-inner delimiter.
+            if consumed_infix
+                && !matches!(self.current_token, Token::Comma | Token::Semicolon | Token::Eof)
+                && (self.current_token != Token::RParen || self.peek_token == Token::RParen)
+            {
+                self.next_token();
+            }
             if self.current_token == Token::RParen {
-                return Spanned { node: Expr::Paren(Box::new(first)), span };
+                return Spanned { node: Expr::Paren(Box::new(left)), span };
             }
             if self.current_token == Token::Comma {
-                let mut elems = vec![first];
+                let mut elems = vec![left];
                 while self.current_token == Token::Comma {
                     self.next_token();
                     if self.current_token == Token::RParen { break; }
@@ -452,7 +497,8 @@ impl<'a> Parser<'a> {
             None
         } else {
             let e = self.parse_expr(Precedence::Lowest);
-            if !self.expect_peek(Token::RParen) {
+            let at_close = is_block_terminated(&e.node) && self.current_token == Token::RParen;
+            if !at_close && !self.expect_peek(Token::RParen) {
                 return Err("Expected ')' in resume".into());
             }
             Some(Box::new(e))
@@ -606,7 +652,8 @@ impl<'a> Parser<'a> {
                 self.next_token();
                 let index = self.parse_expr(Precedence::Lowest);
                 let span = self.current_span;
-                if !self.expect_peek(Token::RBracket) {
+                let at_close = is_block_terminated(&index.node) && self.current_token == Token::RBracket;
+                if !at_close && !self.expect_peek(Token::RBracket) {
                     self.report_error("Expected ']' in index expression".into(), self.current_span);
                 }
                 return Spanned { node: Expr::Index { base: Box::new(left), index: Box::new(index) }, span };
@@ -679,6 +726,8 @@ impl<'a> Parser<'a> {
             args.push(arg);
             if self.current_token == Token::Comma {
                 self.next_token();
+            } else if is_block && self.current_token == Token::RParen {
+                break is_block;
             } else if self.peek_token == Token::Comma {
                 self.next_token();
                 self.next_token();
@@ -780,5 +829,13 @@ impl<'a> Parser<'a> {
             Ok(block) => Expr::Block(block),
             Err(_) => Expr::Error,
         }
+    }
+
+    fn is_arm_pattern_start(tok: &Token) -> bool {
+        matches!(tok,
+            Token::Underscore | Token::Ident(_) | Token::Return
+            | Token::Int(_) | Token::Float(_) | Token::True | Token::False
+            | Token::Char(_) | Token::String(_) | Token::LParen
+        )
     }
 }

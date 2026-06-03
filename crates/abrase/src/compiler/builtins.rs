@@ -26,9 +26,9 @@ impl Compiler {
         self.register_typed_native("sin",      vec![f.clone()],            f.clone(), 1);
         self.register_typed_native("sqrt",     vec![f.clone()],            f.clone(), 1);
         // Method-body native chunks for built-in traits
-        self.register_typed_native("max",         vec![i.clone(), i.clone()], i.clone(), 2);
-        self.register_typed_native("min",         vec![i.clone(), i.clone()], i.clone(), 2);
-        self.register_typed_native("abs",         vec![i.clone()],            i.clone(), 1);
+        self.register_typed_native("__int_max",   vec![i.clone(), i.clone()], i.clone(), 2);
+        self.register_typed_native("__int_min",   vec![i.clone(), i.clone()], i.clone(), 2);
+        self.register_typed_native("__int_abs",   vec![i.clone()],            i.clone(), 1);
         self.register_typed_native("__float_max", vec![f.clone(), f.clone()], f.clone(), 2);
         self.register_typed_native("__float_min", vec![f.clone(), f.clone()], f.clone(), 2);
         self.register_typed_native("__float_abs", vec![f.clone()],            f.clone(), 1);
@@ -54,6 +54,10 @@ impl Compiler {
         // System
         self.register_typed_native("halt",  vec![i.clone()], u.clone(), 1);
         self.register_typed_native("abort", vec![s.clone()], u.clone(), 1);
+    }
+
+    pub(super) fn register_frame_present_native(&mut self) {
+        self.register_typed_native("__frame_present", vec![], crate::ty::Type::Unit, 0);
     }
 
     fn register_native_chunk(&mut self, name: &str, param_count: usize) -> usize {
@@ -148,7 +152,7 @@ impl Compiler {
         checker.register_trait_method_sig("ToS", "to_s", vec![self_ty.clone()], s.clone());
 
         for &(ty, mx, mn, ab) in &[
-            ("Int",   "max",         "min",         "abs"),
+            ("Int",   "__int_max",   "__int_min",   "__int_abs"),
             ("Float", "__float_max", "__float_min", "__float_abs"),
         ] {
             checker.register_impl_method("Ord", ty, "max", mx.into());
@@ -197,18 +201,30 @@ impl Compiler {
         for name in &["rand", "srand"] {
             checker.register_function_effects(name.to_string(), nondet.clone());
         }
-        // Graphics: a built-in user effect for screen/draw natives, kept
-        // separate from <IO> so a cart can declare "draws but no file/net".
+        // Graphics is declared so carts can name it, but the compute core does
+        // NOT provide it as a capability — only a graphics-capable host adds it,
+        // by registering a draw native whose effect is `<Graphics>`.
         checker.register_effect("Graphics".into(), vec![]);
+        // `frame` is the @cart yield mechanism the core itself drives.
+        checker.register_effect("frame".into(), vec!["present".into()]);
+        checker.register_native_capability(crate::ty::Effect::UserEffect("frame".into()));
+        checker.register_effect_op(
+            "frame::present".into(),
+            crate::ty::Type::Function {
+                params: vec![],
+                ret: Box::new(crate::ty::Type::Unit),
+                effects: vec![],
+            },
+        );
     }
 
     pub(super) fn seed_builtin_method_dispatch(
         dispatch: &mut std::collections::HashMap<(String, String), String>,
     ) {
         let entries: &[(&str, &str, &str)] = &[
-            ("Int",    "max",  "max"),
-            ("Int",    "min",  "min"),
-            ("Int",    "abs",  "abs"),
+            ("Int",    "max",  "__int_max"),
+            ("Int",    "min",  "__int_min"),
+            ("Int",    "abs",  "__int_abs"),
             ("Float",  "max",  "__float_max"),
             ("Float",  "min",  "__float_min"),
             ("Float",  "abs",  "__float_abs"),

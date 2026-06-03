@@ -97,23 +97,9 @@ fn for_loop_static_module_table_hoisted() {
     assert_eq!(dei, 1, "module-table load must be hoisted before the for loop: {ops:?}");
 }
 
-const FOR_WRITES_STATIC: &str = r#"
-static mut A: Int = 0
-fn main() -> Int {
-  for _ in 0..3 { A = A + 1 };
-  A
-}
-"#;
-
-#[test]
-fn for_loop_writes_static_mut_correctly() {
-    let v = run_src(FOR_WRITES_STATIC).unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(3));
-}
-
 const FOR_MULTI_STATIC: &str = r#"
-static mut A: Int = 1
-static mut B: Int = 2
+static A: Int = 1
+static B: Int = 2
 fn main() -> Int {
   let mut acc = 0;
   for _ in 0..4 { acc = acc + A + B };
@@ -236,21 +222,6 @@ fn for_loop_record_static_no_extra_leak() {
     assert_eq!(v, Value::from_int(21));
     // 1 live = ORIGIN record cell (static; intentional).
     assert_eq!(live, 1, "only the static ORIGIN cell must remain live: {live}");
-}
-
-const RECORD_STATIC_MUT_FOR: &str = r#"
-type Counter = { n: Int }
-static mut C: Counter = Counter { n: 0 }
-fn main() -> Int {
-  for _ in 0..5 { C.n = C.n + 1 };
-  C.n
-}
-"#;
-
-#[test]
-fn for_loop_mutates_record_static_field() {
-    let v = run_src(RECORD_STATIC_MUT_FOR).unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(5));
 }
 
 const RECORD_ARRAY_STATIC_FOR: &str = r#"
@@ -447,3 +418,56 @@ fn float_chain_not_poisoned_by_int_module() {
     // diff(14.0, 0.0, 0.5) = (14.5 - 13.5) / 1.0 = 1.0
     assert_eq!(v, Value::from_float(1.0));
 }
+
+const IF_ELSE_STATIC_ELSE_BRANCH: &str = r#"
+static A: Int = 10
+static B: Int = 20
+fn pick(flag: Bool) -> Int { if flag { A } else { B } }
+fn main() -> Int { pick(false) }
+"#;
+
+#[test]
+fn if_else_branch_reads_static_without_stale_register() {
+    let v = run_src(IF_ELSE_STATIC_ELSE_BRANCH).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(20));
+}
+
+#[test]
+fn if_both_branches_read_static_correctly() {
+    let src = r#"
+static A: Int = 10
+static B: Int = 20
+fn pick(flag: Bool) -> Int { if flag { A } else { B } }
+fn main() -> Int { pick(true) + pick(false) }
+"#;
+    let v = run_src(src).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(30));
+}
+
+const MATCH_STATIC_ARMS: &str = r#"
+static A: Int = 10
+static B: Int = 20
+static C: Int = 30
+fn pick(s: Int) -> Int { match s { 0 => A, 1 => B, _ => C } }
+fn main() -> Int { pick(0) + pick(1) + pick(2) }
+"#;
+
+#[test]
+fn match_all_arms_read_static_correctly() {
+    let v = run_src(MATCH_STATIC_ARMS).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(60));
+}
+
+#[test]
+fn match_non_first_arm_reads_static_without_stale_register() {
+    let src = r#"
+static A: Int = 10
+static B: Int = 20
+static C: Int = 30
+fn pick(s: Int) -> Int { match s { 0 => A, 1 => B, _ => C } }
+fn main() -> Int { pick(2) }
+"#;
+    let v = run_src(src).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(30));
+}
+

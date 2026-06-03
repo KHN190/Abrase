@@ -171,6 +171,9 @@ impl VirtualMachine {
 
     fn run_loop<const TRACE: bool>(&mut self, module: &Module) -> Result<Value, String> {
         'outer: loop {
+            if self.yielded {
+                return Ok(Value::from_int(0));
+            }
             if self.halted {
                 if let Some(code) = self.exit_code {
                     self.last_result_is_handle = false;
@@ -215,21 +218,67 @@ impl VirtualMachine {
                 }
                 self.pc = opcode_pc + 1;
                 self.steps = self.steps.wrapping_add(1);
-                if let Some(cap) = self.step_cap {
-                    if self.steps > cap {
-                        self.failing_pc = opcode_pc;
-                        return Err(format!("step cap exceeded ({} ops)", cap));
-                    }
+                if self.steps > self.step_cap {
+                    self.failing_pc = opcode_pc;
+                    return Err(format!("step cap exceeded ({} ops)", self.step_cap));
+                }
+                if self.heap_check {
+                    self.heap.trace_pc = opcode_pc;
                 }
                 if let Err(e) = self.exec(module, bc, opcode) {
                     self.failing_pc = opcode_pc;
                     return Err(e);
                 }
-                if self.halted || self.current_func != entry_func {
+                if self.heap_check {
+                    if let Err(e) = self.check_handle_tags(&format!("after {:?}", opcode)) {
+                        self.failing_pc = opcode_pc;
+                        return Err(e);
+                    }
+                }
+                if self.halted || self.yielded || self.current_func != entry_func {
                     continue 'outer;
                 }
             }
         }
+    }
+
+    pub fn run_to_yield(&mut self, module: &Module) -> Result<(), String> {
+        self.yielded = false;
+        validate_module_register_budget(module)?;
+        self.int32_safe = (module.flags & polka::CART_FLAG_INT32_SAFE) != 0;
+        if self.resolved_constants.is_empty() {
+            self.frames.clear();
+            self.handlers.clear();
+            self.region_table.clear();
+            self.heap.clear();
+            self.string_const_handles.clear();
+            self.resolve_constants(module)?;
+            self.module_table_raw = polka::HANDLE_NONE;
+            self.module_table_is_handle = false;
+            self.run_module_init(module)?;
+        }
+        self.pc = 0;
+        self.base_reg = 0;
+        self.current_func = module.entry as usize;
+        self.halted = false;
+        let needed = polka::FRAME_REGS + STAGE_SLACK;
+        self.ensure_registers(needed);
+        self.run_loop::<false>(module)?;
+        if !self.yielded {
+            return Err("run_to_yield: main returned without calling __frame_present".into());
+        }
+        Ok(())
+    }
+
+    pub fn resume(&mut self, module: &Module, input: Value) -> Result<bool, String> {
+        if !self.yielded {
+            return Err("resume: VM is not suspended".into());
+        }
+        self.yielded = false;
+        self.write_abs_raw(self.yield_dest_abs, input.raw());
+        self.set_reg_mask_bit(self.yield_dest_abs, false);
+        self.run_loop::<false>(module)?;
+        Ok(self.yielded)
     }
 
     #[inline(always)]

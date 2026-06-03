@@ -1,6 +1,15 @@
+use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
+
+fn compiles(src: &str) -> bool {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return false; }
+    let mut c = Compiler::new().with_source(src.into());
+    c.compile_module(&ast).is_ok()
+}
 
 fn errors(src: &str) -> Vec<String> {
     let mut parser = Parser::new(Lexer::new(src)).with_source(src.into());
@@ -16,39 +25,15 @@ fn assert_clean(src: &str) {
     assert!(e.is_empty(), "expected no type errors, got: {:?}", e);
 }
 
-// `static` (immutable), `static mut`, and `const` all type-check.
 #[test]
 fn static_and_const_declarations_type_check() {
     assert_clean(
         "const MAX: Int = 100;\n\
          static GREETING: Int = 7;\n\
-         static mut FRAME: Int = 0;\n\
          fn main() -> Unit { () }\n",
     );
 }
 
-// A static is readable from a function and carries its declared type.
-#[test]
-fn static_is_readable_with_its_type() {
-    assert_clean(
-        "static mut FRAME: Int = 0;\n\
-         fn main() -> Unit { () }\n\
-         fn current() -> Int { FRAME }\n",
-    );
-}
-
-// `static mut` is module-level mutable state — assignment is allowed.
-#[test]
-fn static_mut_is_assignable() {
-    assert_clean(
-        "static mut FRAME: Int = 0;\n\
-         fn main() -> Unit { () }\n\
-         fn tick() -> Unit { FRAME = FRAME + 1 }\n",
-    );
-}
-
-// Immutable `static` (no `mut`) rejects assignment — reuses the binding
-// mutability check.
 #[test]
 fn immutable_static_rejects_assignment() {
     let e = errors(
@@ -62,22 +47,70 @@ fn immutable_static_rejects_assignment() {
     );
 }
 
-// Initializer type must match the declared type.
 #[test]
 fn static_initializer_type_mismatch_errors() {
     let e = errors(
-        "static mut FRAME: Int = true;\n\
+        "static FRAME: Int = true;\n\
          fn main() -> Unit { () }\n",
     );
     assert!(!e.is_empty(), "expected a type-mismatch error for `Int = true`");
 }
 
-// Re-declaring a static with a name already taken is an error by design.
+#[test]
+fn cart_main_compiles_with_frame_loop() {
+    let src = r#"
+@cart fn main() -> <frame> Unit {
+  let mut x = 0;
+  loop { x = x + 1; let _ = frame.present() }
+}
+"#;
+    assert!(compiles(src), "@cart main with frame loop must compile");
+}
+
+#[test]
+fn cart_main_persistent_state_compiles() {
+    let src = r#"
+@cart fn main() -> <frame> Unit {
+  let mut count = 0;
+  loop {
+    count = count + 1;
+    let _ = frame.present()
+  }
+}
+"#;
+    assert!(compiles(src), "@cart main with mutable state across yields must compile");
+}
+
+#[test]
+fn cart_main_allows_frame_effect() {
+    let e = errors(
+        "@cart fn main() -> <frame> Unit { () }\n",
+    );
+    assert!(e.is_empty(), "@cart main with frame effect must not error: {:?}", e);
+}
+
+#[test]
+fn non_cart_main_rejects_frame_effect() {
+    let e = errors(
+        "fn main() -> <frame> Unit { () }\n",
+    );
+    assert!(!e.is_empty(), "non-@cart main with frame effect must error");
+}
+
+#[test]
+fn cart_main_rejects_non_frame_effect() {
+    let e = errors(
+        "effect E { op tick() -> Unit }\n\
+         @cart fn main() -> <E> Unit { () }\n",
+    );
+    assert!(!e.is_empty(), "@cart main with non-frame effect must still error");
+}
+
 #[test]
 fn redeclaring_same_static_name_errors() {
     let e = errors(
-        "static mut N: Int = 0;\n\
-         static mut N: Int = 1;\n\
+        "static N: Int = 0;\n\
+         static N: Int = 1;\n\
          fn main() -> Unit { () }\n",
     );
     assert!(!e.is_empty(), "expected a redeclaration error for duplicate static `N`");

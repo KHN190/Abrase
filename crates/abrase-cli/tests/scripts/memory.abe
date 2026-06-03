@@ -10,7 +10,7 @@ fn main() -> Int {
     *cell
   };
   let s = "moved";
-  let t = s;
+  let _t = s;
   {
     let inner = "scoped";
     inner;

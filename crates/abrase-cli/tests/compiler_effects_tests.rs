@@ -267,7 +267,6 @@ fn handler_pop_frees_cont_cell_when_arm_throws() {
 }
 
 #[test]
-#[ignore = "multi-suspension cont cell cleanup pending (WIP)"]
 fn handler_pop_frees_cont_cells_across_multiple_suspensions() {
     let src = r#"
         effect scale { op apply(x: Int) -> Int }

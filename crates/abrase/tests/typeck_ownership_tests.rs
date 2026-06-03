@@ -155,15 +155,29 @@ fn verify_reference_operation_immutable() {
 }
 
 #[test]
-fn verify_reference_operation_mutable() {
+fn verify_mut_reference_of_scalar_rejected() {
+    // `&mut` of a scalar has no stable address (codegen would box a copy that
+    // never writes back), so it is rejected rather than silently dropping writes.
     let mut checker = Checker::new();
     checker.insert_var("x".into(), Type::Int, true, d_span());
     let expr = sp(ast::Expr::Unary {
         op: ast::UnaryOp::RefMut,
         right: Box::new(sp(ast::Expr::Identifier("x".into()))),
     });
+    let _ty = checker.infer_expr(&expr);
+    assert!(checker.errors.iter().any(|e| e.message.contains("scalar")));
+}
+
+#[test]
+fn verify_mut_reference_of_record_typed() {
+    let mut checker = Checker::new();
+    checker.insert_var("x".into(), Type::Named("Box".into()), true, d_span());
+    let expr = sp(ast::Expr::Unary {
+        op: ast::UnaryOp::RefMut,
+        right: Box::new(sp(ast::Expr::Identifier("x".into()))),
+    });
     let ty = checker.infer_expr(&expr);
-    assert_eq!(ty, Type::Reference { is_mut: true, inner: Box::new(Type::Int) });
+    assert_eq!(ty, Type::Reference { is_mut: true, inner: Box::new(Type::Named("Box".into())) });
     assert!(checker.errors.is_empty());
 }
 

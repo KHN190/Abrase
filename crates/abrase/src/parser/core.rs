@@ -29,6 +29,7 @@ pub struct Parser<'a> {
     pub source: String,
     pub(crate) no_record_literal: bool,
     pub(crate) depth: usize,
+    pub(crate) trace: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -46,6 +47,15 @@ impl<'a> Parser<'a> {
             source: String::new(),
             no_record_literal: false,
             depth: 0,
+            trace: std::env::var("ABRASE_PARSE_TRACE").is_ok(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn trace_cursor(&self, label: &str) {
+        if self.trace {
+            eprintln!("[parse] {:<22} cur={:<14} peek={}",
+                label, self.current_token.display(), self.peek_token.display());
         }
     }
 
@@ -165,6 +175,7 @@ impl<'a> Parser<'a> {
             | Token::Ident(_) | Token::Int(_) | Token::Float(_)
             | Token::String(_) | Token::StringInterp(_) | Token::True | Token::False
             | Token::Bang | Token::Minus | Token::Ampersand | Token::Asterisk | Token::LParen
+            | Token::Pipe | Token::Or | Token::Move | Token::LBracket
         )
     }
 }

@@ -17,13 +17,12 @@ effect Visit { op visit(v: Int) -> Unit }
 
 fn traverse(t: Tree) -> <Visit> Unit {
   match t {
-    Leaf             => ()
-    Node(l, v, r)   => {
+    Leaf           => ()
+    Node(l, v, r) => {
       traverse(l);
       Visit.visit(v);
       traverse(r)
     }
-    _ => ()
   }
 }
 

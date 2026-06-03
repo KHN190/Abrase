@@ -6,7 +6,6 @@ use abrase::typeck::Checker;
 use myriad::{Value, VirtualMachine, read_string};
 use std::fs;
 
-// Compile `src` and return the entry function's opcodes (for bytecode-shape tests).
 fn compile_entry_ops(src: &str) -> Vec<OpCode> {
     let mut parser = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let ast = parser.parse_program();
@@ -114,51 +113,6 @@ fn test_const_decl() {
     assert_eq!(v, Value::from_int(110));
 }
 
-const STATIC_MUT: &str = r#"
-static mut COUNT: Int = 0
-static STEP: Int = 7
-
-fn bump() -> Int { COUNT = COUNT + 1; COUNT }
-fn add(x: Int) -> Int { COUNT = COUNT + x; COUNT }
-
-fn main() -> Int {
-    let _a = bump();
-    let _b = bump();
-    let _c = add(STEP);
-    add(STEP)
-}
-"#;
-
-#[test]
-fn test_static_mut() {
-    let v = run_src(STATIC_MUT)
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(16));
-}
-
-const STATIC_DROP: &str = r#"
-fn build() -> Array<Int> { [10, 20, 30] }
-
-static mut DATA: Array<Int> = build()
-
-fn peek() -> Int {
-    let d = DATA;
-    d[1]
-}
-
-fn main() -> Int {
-    let _a = peek();
-    let _b = peek();
-    peek()
-}
-"#;
-
-#[test]
-fn test_static_handle_drop_is_safe() {
-    let v = run_src(STATIC_DROP)
-        .unwrap_or_else(|e| panic!("\n{}", e));
-    assert_eq!(v, Value::from_int(20));
-}
 
 const STATIC_INIT_CALL: &str = r#"
 fn build_bh(mh: Int) -> Array<Int> {
@@ -220,6 +174,180 @@ fn test_static_update_frames_no_leak() {
     let plateau = counts[1];
     assert!(counts[1..].iter().all(|&c| c == plateau),
         "heap not flat across frames: {:?}", &counts);
+}
+
+#[test]
+fn mut_borrow_dead_before_effect_lets_base_be_used_after() {
+    let source = r#"
+type Box = { v: Int }
+effect E { op tick() -> Int }
+fn body() -> <E> Int {
+  let mut x = Box { v: 10 };
+  let r = &mut x;
+  r.v = r.v + 5;
+  let t = E.tick();
+  x.v = x.v + t;
+  x.v
+}
+fn main() -> Int { handle body() { return v => v, E.tick _ => resume(100) } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(115));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+#[test]
+fn mut_borrow_live_across_effect_writes_through_after_resume() {
+    let source = r#"
+type Box = { v: Int }
+effect E { op tick() -> Int }
+fn body(c: Bool) -> <E> Int {
+  let mut x = Box { v: 10 };
+  let r = &mut x;
+  let t = E.tick();
+  if c { r.v = r.v + t; r.v } else { 0 }
+}
+fn main() -> Int { handle body(true) { return v => v, E.tick _ => resume(7) } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(17));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+#[test]
+fn mut_borrow_of_record_field_writes_through() {
+    let source = r#"
+type S = { n: Int }
+type W = { s: S }
+fn bump(s: &mut S) -> Unit { s.n = s.n + 1 }
+fn via(w: &mut W) -> Unit { bump(&mut w.s) }
+fn main() -> Int {
+  let mut w = W { s: S { n: 41 } };
+  via(&mut w);
+  bump(&mut w.s);
+  w.s.n
+}
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(43));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+#[test]
+fn sequential_mut_borrows_of_same_binding_each_write_through() {
+    let source = r#"
+type W = { n: Int }
+fn f(w: &mut W) -> Unit { w.n = w.n + 1 }
+fn main() -> Int {
+  let mut w = W { n: 0 };
+  f(&mut w);
+  f(&mut w);
+  let mut i = 0;
+  while i < 5 { f(&mut w); i = i + 1 }
+  w.n
+}
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(7));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+#[test]
+fn throw_unwind_reclaims_owned_value_live_at_throw() {
+    let source = r#"
+type DivErr = { code: Int }
+type Box = { v: Int }
+fn body() -> <exn<DivErr>> Int {
+  let s = Box { v: 7 };
+  throw(DivErr { code: 1 });
+  s.v
+}
+fn main() -> Int {
+  handle body() { return v => v, exn _ => 99 }
+}
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(99));
+    assert_eq!(vm.heap_live_count(), 0,
+        "throw unwind leaked the owned record live at the throw site");
+}
+
+#[test]
+fn throw_propagated_through_intermediate_exn_frame_does_not_leak() {
+    let source = r#"
+fn inner() -> <exn<Int>> Int { throw(99); 0 }
+fn mid() -> <exn<Int>> Int { inner() }
+fn main() -> Int { handle mid() { return v => v, exn _ => 42 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(42));
+    assert_eq!(vm.heap_live_count(), 0,
+        "throw propagation through an intermediate frame leaked the Result wrapper");
+}
+
+#[test]
+fn ok_propagated_through_intermediate_exn_frame_is_correct_and_clean() {
+    let source = r#"
+fn inner() -> <exn<Int>> Int { 5 }
+fn mid() -> <exn<Int>> Int { inner() }
+fn main() -> Int { handle mid() { return v => v, exn _ => 42 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(5), "tail propagation double-wrapped the Ok value");
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+#[test]
+fn uniform_fallible_if_tail_propagates_clean() {
+    let source = r#"
+fn a() -> <exn<Int>> Int { 1 }
+fn b() -> <exn<Int>> Int { 2 }
+fn f(c: Bool) -> <exn<Int>> Int { if c { a() } else { b() } }
+fn main() -> Int { handle f(true) { return v => v, exn _ => 0 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(1));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
+#[test]
+fn throw_caught_directly_by_handle_does_not_leak() {
+    let source = r#"
+type DivErr = { code: Int }
+type Box = { v: Int }
+fn inner() -> <exn<DivErr>> Int {
+  let x = Box { v: 7 };
+  let y = Box { v: 8 };
+  throw(DivErr { code: 1 });
+  x.v + y.v
+}
+fn main() -> Int { handle inner() { return v => v, exn _ => 42 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(42));
+    assert_eq!(vm.heap_live_count(), 0,
+        "throw caught directly by the handle leaked owned locals or the error");
+}
+
+#[test]
+fn throw_unwind_skips_moved_out_value_no_double_free() {
+    let source = r#"
+type DivErr = { code: Int }
+type Box = { v: Int }
+fn sink(b: Box) -> Int { b.v }
+fn body() -> <exn<DivErr>> Int {
+  let a = Box { v: 1 };
+  let b = Box { v: 2 };
+  let _ = sink(a);
+  throw(DivErr { code: 9 });
+  b.v
+}
+fn main() -> Int { handle body() { return v => v, exn _ => 77 } }
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(77));
+    assert_eq!(vm.heap_live_count(), 0,
+        "throw unwind double-freed or leaked across a moved-out binding");
 }
 
 #[test]
@@ -570,9 +698,9 @@ fn const_float_times_call_uses_float_mul() {
 }
 
 const STATIC_SUM3: &str = r#"
-static mut A: Int = 10
-static mut B: Int = 20
-static mut C: Int = 30
+static A: Int = 10
+static B: Int = 20
+static C: Int = 30
 fn main() -> Int { A + B + C }
 "#;
 
@@ -598,9 +726,9 @@ fn static_reads_share_one_module_table_load() {
 }
 
 const STATIC_LOOP_ACCUM: &str = r#"
-static mut A: Int = 10
-static mut B: Int = 20
-static mut C: Int = 30
+static A: Int = 10
+static B: Int = 20
+static C: Int = 30
 fn main() -> Int {
   let r = A + B + C;
   let mut i = 0;
@@ -618,8 +746,8 @@ fn cached_module_table_stays_correct_across_loop_iterations() {
 }
 
 const STATIC_IN_LOOP: &str = r#"
-static mut A: Int = 1
-static mut B: Int = 2
+static A: Int = 1
+static B: Int = 2
 fn main() -> Int {
   let mut i = 0;
   let mut acc = 0;
@@ -690,7 +818,7 @@ fn shared_ctor_of_bare_var_does_not_consume_it() {
 }
 
 const SEQUENTIAL_WHILE_STATIC: &str = r#"
-static mut A: Int = 3
+static A: Int = 3
 fn main() -> Int {
   let mut i = 0; let mut s1 = 0;
   while i < 3 { s1 = s1 + A; i = i + 1 };
@@ -718,7 +846,6 @@ fn main() -> Int {
 
 #[test]
 fn block_expr_composes_inside_parens() {
-    // A parenthesized if/match composes in arithmetic with correct precedence:
     // 10 + (5 * 2) = 20, not (10 + 5) * 2 = 30.
     assert_eq!(run_src(PARENTHESIZED_IF).unwrap_or_else(|e| panic!("\n{}", e)),
         Value::from_int(20));
@@ -753,9 +880,272 @@ fn main() -> Int {
 
 #[test]
 fn shr_token_splits_at_nested_generic_close() {
-    // `<exn<Int>>` ends in a `>>` Shr token; the parser must split it into two
-    // `>` to close the inner+outer generics. And `b >> 1` in the body must
-    // still parse as a shift, not as anything else.
     assert_eq!(run_src(SHR_WITH_NESTED_GENERIC).unwrap_or_else(|e| panic!("\n{}", e)),
         Value::from_int(32));
+}
+
+const RANGE_PATTERN_EXCLUSIVE: &str = r#"
+fn classify(n: Int) -> Int {
+  match n {
+    0..10  => 0,
+    10..20 => 1,
+    _      => 2,
+  }
+}
+fn main() -> Int {
+  classify(0) + classify(5) + classify(9) * 10
+  + classify(10) * 100 + classify(19) * 1000
+  + classify(20) * 10000
+}
+"#;
+
+#[test]
+fn range_pattern_exclusive_classifies_correctly() {
+    // 0+0+0 + 100 + 1000 + 20000 = 21100
+    let v = run_src(RANGE_PATTERN_EXCLUSIVE).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(21100));
+}
+
+const RANGE_PATTERN_INCLUSIVE: &str = r#"
+fn grade(n: Int) -> Int {
+  match n {
+    90..=100 => 4,
+    75..=89  => 3,
+    60..=74  => 2,
+    _        => 1,
+  }
+}
+fn main() -> Int { grade(95) * 1000 + grade(80) * 100 + grade(65) * 10 + grade(50) }
+"#;
+
+#[test]
+fn range_pattern_inclusive_grades_correctly() {
+    // 4000 + 300 + 20 + 1 = 4321
+    let v = run_src(RANGE_PATTERN_INCLUSIVE).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(4321));
+}
+
+const RANGE_PATTERN_OPEN_END: &str = r#"
+fn sign(n: Int) -> Int {
+  match n {
+    0..1 => 0,
+    1..  => 1,
+    _    => -1,
+  }
+}
+fn main() -> Int { sign(-5) + sign(0) * 10 + sign(7) * 100 }
+"#;
+
+#[test]
+fn range_pattern_open_end_matches_correctly() {
+    // -1 + 0 + 100 = 99
+    let v = run_src(RANGE_PATTERN_OPEN_END).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(99));
+}
+
+
+const MUT_RECORD_DESTRUCTURE: &str = r#"
+type Pt = { x: Int, y: Int }
+fn main() -> Int {
+  let p = Pt { x: 3, y: 7 };
+  let mut Pt { x, y } = p;
+  x = x * 2;
+  y = y + 1;
+  x + y
+}
+"#;
+
+#[test]
+fn mut_record_destructure_binds_are_mutable() {
+    let v = run_src(MUT_RECORD_DESTRUCTURE).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(14)); // 3*2 + 7+1 = 14
+}
+
+const MUT_TUPLE_DESTRUCTURE: &str = r#"
+fn main() -> Int {
+  let mut (a, b) = (10, 20);
+  a = a + 5;
+  b = b - 3;
+  a + b
+}
+"#;
+
+#[test]
+fn mut_tuple_destructure_binds_are_mutable() {
+    let v = run_src(MUT_TUPLE_DESTRUCTURE).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(32)); // 15 + 17
+}
+
+const FIELD_MUT_ANNOTATION: &str = r#"
+type Flow = { x: Int, y: Int }
+fn main() -> Int {
+  let fl = Flow { x: 5, y: 10 };
+  let Flow { mut x, y } = fl;
+  x = x * 3;
+  x + y
+}
+"#;
+
+#[test]
+fn per_field_mut_annotation_in_record_pattern() {
+    // { mut x } makes only x mutable; y stays immutable
+    let v = run_src(FIELD_MUT_ANNOTATION).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(25)); // 5*3 + 10
+}
+
+const MIXED_MUT_FIELD: &str = r#"
+type Pt = { x: Int, y: Int, z: Int }
+fn main() -> Int {
+  let p = Pt { x: 1, y: 2, z: 3 };
+  let Pt { mut x, y, mut z } = p;
+  x = x + 10;
+  z = z * 4;
+  x + y + z
+}
+"#;
+
+#[test]
+fn mixed_mut_and_immut_fields_in_destructure() {
+    let v = run_src(MIXED_MUT_FIELD).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(25)); // 11 + 2 + 12
+}
+
+
+fn compile_src(src: &str) -> polka::Module {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut c = Compiler::new().with_source(src.into());
+    c.compile_module(&ast).unwrap_or_else(|_| panic!("{}", c.pretty_print_errors()))
+}
+
+#[test]
+fn mut_ref_param_written_through_effect_in_loop_compiles() {
+    let src = r#"
+effect R { op ri() -> Int }
+type W = { a: Array<Int>, n: Int }
+fn step(w: &mut W) -> <R> Unit {
+  let mut i = 0;
+  while i < 4 { w.a[i] = R.ri(); w.n = w.n + R.ri(); i = i + 1 }
+}
+fn main() -> Int {
+  let mut wd = W { a: [0, 0, 0, 0], n: 0 };
+  handle step(&mut wd) { return _ => wd.n, R.ri => resume(1) }
+}
+"#;
+    compile_src(src);
+}
+
+#[test]
+fn cart_run_to_yield_persists_state_across_frames() {
+    let src = r#"
+@cart fn main() -> <frame> Unit {
+  let mut count = 0;
+  loop {
+    count = count + 1;
+    frame.present()
+  }
+}
+
+pub fn get_count() -> Int { 0 }
+"#;
+    let module = compile_src(src);
+    let mut vm = VirtualMachine::new();
+    myriad::Host::default().install_into(&mut vm);
+
+    vm.run_to_yield(&module).expect("first yield");
+    let live0 = vm.heap_live_count();
+    assert!(vm.resume(&module, Value::from_int(0)).expect("frame 2"));
+    assert!(vm.resume(&module, Value::from_int(0)).expect("frame 3"));
+    let live3 = vm.heap_live_count();
+    assert_eq!(live0, live3, "heap must stay flat across frames");
+}
+
+#[test]
+fn cart_main_admits_runtime_provided_effects() {
+    // @cart main may declare any runtime-provided capability beyond <frame>;
+    // the host discharges them at the frame boundary.
+    let src = r#"
+@cart fn main() -> <frame, nondet, IO> Unit {
+  loop { frame.present() }
+}
+"#;
+    compile_src(src);
+}
+
+#[test]
+fn cart_main_admits_host_registered_graphics_capability() {
+    use abrase::ast::EffectItem;
+    use abrase::ty::Type as TyType;
+    let src = r#"
+@cart fn main() -> <frame, Graphics> Unit {
+  loop { draw(0); frame.present() }
+}
+"#;
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut c = Compiler::new().with_source(src.into());
+    c.register_host_fn(
+        "draw",
+        vec![TyType::Int],
+        TyType::Unit,
+        vec![EffectItem { name: vec!["Graphics".into()], arg: None }],
+    ).expect("register draw native");
+    c.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("{}", c.pretty_print_errors()));
+}
+
+#[test]
+fn cart_only_on_main_enforced() {
+    let src = "effect frame { op present() -> Unit }\n\
+               @cart fn helper() -> Unit { () }\n\
+               fn main() -> Unit { () }\n";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(&ast);
+    assert!(checker.errors.iter().any(|e| e.message.contains("@cart")),
+        "expected @cart-on-non-main error, got: {:?}", checker.errors);
+}
+
+#[test]
+fn frame_counter_example_accumulates_correctly() {
+    // frame_counter.abe: 5 frames, each adds 3; exits via halt(total).
+    // After 5 frames total = 15, exit_code = 15.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/frame_counter.abe");
+    let src = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
+    let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut c = Compiler::new().with_source(src.clone());
+    let module = c.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("{}", c.pretty_print_errors()));
+
+    let mut vm = VirtualMachine::new();
+    myriad::Host::default().install_into(&mut vm);
+
+    // Frame 1: run_to_yield enters the while body, adds 3, yields.
+    vm.run_to_yield(&module).expect("first yield");
+    let live0 = vm.heap_live_count();
+
+    // Resumes 2-5: each resume finishes the current iteration (println + i++) then
+    // enters the next iteration and yields again at frame.present().
+    for frame in 2..=5 {
+        let still_running = vm.resume(&module, Value::from_int(0))
+            .unwrap_or_else(|e| panic!("frame {}: {}", frame, e));
+        assert!(still_running, "frame {} should still be running", frame);
+    }
+
+    // Resume 6: completes iteration i=4 (println + i=5), while 5<5 fails, halt(15).
+    let still_running = vm.resume(&module, Value::from_int(0))
+        .expect("final resume");
+    assert!(!still_running, "main should have terminated after final resume");
+
+    assert_eq!(vm.exit_code(), Some(15),
+        "total = 5 * 3 = 15; got exit_code = {:?}", vm.exit_code());
+    assert_eq!(vm.heap_live_count(), live0, "heap flat (no heap allocations)");
 }

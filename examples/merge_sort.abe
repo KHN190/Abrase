@@ -14,7 +14,6 @@ fn split_alt(lst: List, a: List, b: List, flip: Bool) -> Split {
     } else {
       split_alt(rest, a, Cons(x, b), true)
     }
-    _ => Split(a, b)
   }
 }
 
@@ -26,7 +25,6 @@ fn merge_with(x: Int, rest_a: List, b: List) -> List {
     } else {
       Cons(y, merge(Cons(x, rest_a), rest_b))
     }
-    _ => Cons(x, rest_a)
   }
 }
 
@@ -34,7 +32,6 @@ fn merge(a: List, b: List) -> List {
   match a {
     Nil             => b
     Cons(x, rest_a) => merge_with(x, rest_a, b)
-    _ => b
   }
 }
 
@@ -45,10 +42,8 @@ fn sort(lst: List) -> List {
       Nil   => Cons(x, Nil)
       other => match split_alt(Cons(x, other), Nil, Nil, true) {
         Split(a, b) => merge(sort(a), sort(b))
-        _ => Nil
       }
     }
-    _ => Nil
   }
 }
 
@@ -56,7 +51,6 @@ fn last_of(lst: List, acc: Int) -> Int {
   match lst {
     Nil           => acc
     Cons(x, rest) => last_of(rest, x)
-    _ => acc
   }
 }
 

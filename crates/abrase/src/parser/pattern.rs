@@ -32,14 +32,22 @@ impl<'a> Parser<'a> {
             Token::Int(v) => {
                 let start = Literal::Int(*v);
                 if self.peek_token == Token::Range {
-                    self.next_token();
-                    self.next_token();
-                    let end = if let Token::Int(n) = self.current_token { Some(Literal::Int(n)) } else { None };
+                    self.next_token(); // consume `..`
+                    let end = if let Token::Int(n) = self.peek_token {
+                        self.next_token();
+                        Some(Literal::Int(n))
+                    } else {
+                        None
+                    };
                     Pattern::Range { start: Some(start), end, inclusive: false }
                 } else if self.peek_token == Token::RangeInclusive {
-                    self.next_token();
-                    self.next_token();
-                    let end = if let Token::Int(n) = self.current_token { Some(Literal::Int(n)) } else { None };
+                    self.next_token(); // consume `..=`
+                    let end = if let Token::Int(n) = self.peek_token {
+                        self.next_token();
+                        Some(Literal::Int(n))
+                    } else {
+                        None
+                    };
                     Pattern::Range { start: Some(start), end, inclusive: true }
                 } else {
                     Pattern::Literal(start)
@@ -94,6 +102,8 @@ impl<'a> Parser<'a> {
                             self.next_token();
                             break;
                         }
+                        let field_mut = self.current_token == Token::Mut;
+                        if field_mut { self.next_token(); }
                         let fname = if let Token::Ident(n) = &self.current_token { n.clone() } else {
                             return Err(format!("Expected field name in record pattern, got {:?}", self.current_token));
                         };
@@ -102,7 +112,7 @@ impl<'a> Parser<'a> {
                             self.next_token();
                             Some(self.parse_pattern()?)
                         } else { None };
-                        fields.push(FieldPattern { name: fname, pattern: inner });
+                        fields.push(FieldPattern { name: fname, is_mut: field_mut, pattern: inner });
                         if self.peek_token == Token::Comma {
                             self.next_token();
                             self.next_token();

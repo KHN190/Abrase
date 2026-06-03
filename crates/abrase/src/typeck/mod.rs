@@ -1,5 +1,3 @@
-// src/typeck.rs
-
 use std::collections::HashMap;
 use crate::ast::{self, Span};
 use crate::ty::{Ownership, Type};
@@ -50,8 +48,10 @@ struct VarMeta {
     moved_at: Option<Span>,
     immut_borrow_count: usize,
     mut_borrow_active: bool,
-    // Depth of region_stack at the time this var was bound (0 = no enclosing region).
+    active_borrow_span: Option<Span>,
     bound_at_region_depth: usize,
+    borrows: Option<String>,
+    borrow_invalidated: bool,
 }
 
 #[derive(Clone)]
@@ -96,6 +96,13 @@ pub struct Checker {
     // Effect Unification & Inference
     fn_declared_effects: Vec<crate::ty::Effect>,
     fn_required_effects: Vec<crate::ty::Effect>,
+    // True when the expression being inferred sits in a position that may carry
+    // a raw `exn` value onward: the operand of `?`, a handled scrutinee, or the
+    // tail of a fallible function. Elsewhere a fallible call must use `?`.
+    exn_prop: bool,
+    // Spans of expressions whose value is a raw Result (a fallible call), recorded
+    // during inference; consulted by tail_yields_result.
+    result_value_spans: std::collections::HashSet<Span>,
 
     // Effect Shadowing, Propagation & Scope Semantics
     handled_effects: Vec<String>,
@@ -140,8 +147,9 @@ pub struct Checker {
 
     // Const Effect Checking
     function_effects: HashMap<String, Vec<ast::EffectItem>>,
+    native_effects: Vec<crate::ty::Effect>,
     const_vars: std::collections::HashSet<String>,
-    pub(crate) static_vars: std::collections::HashMap<String, bool>,
+    pub(crate) static_vars: std::collections::HashSet<String>,
     op_effects: HashMap<String, Vec<ast::EffectItem>>,
 
     // Effect Operations (effect_name::op_name -> Type)
@@ -152,6 +160,11 @@ pub struct Checker {
 
     // Authoritative per-expression types, keyed by (module, span, expr-kind). Populated by infer_expr.
     pub expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), Type>,
+    // Body-tail spans of fallible functions whose tail expression already yields
+    // a Result skips the function-level `Ok`-wrap for these.
+    pub result_tail_spans: std::collections::HashSet<(Vec<String>, ast::Span)>,
+
+    pub warnings: Vec<crate::lint::Lint>,
 }
 
 
@@ -188,6 +201,8 @@ impl Checker {
             ownership_registry: HashMap::new(),
             fn_declared_effects: Vec::new(),
             fn_required_effects: Vec::new(),
+            exn_prop: false,
+            result_value_spans: std::collections::HashSet::new(),
             handled_effects: Vec::new(),
             unhandled_effects: Vec::new(),
             trait_registry: HashMap::new(),
@@ -222,8 +237,9 @@ impl Checker {
             },
             named_subtype_registry: HashMap::new(),
             function_effects: HashMap::new(),
+            native_effects: Vec::new(),
             const_vars: std::collections::HashSet::new(),
-            static_vars: std::collections::HashMap::new(),
+            static_vars: std::collections::HashSet::new(),
             op_effects: HashMap::new(),
             effect_ops_registry: HashMap::new(),
             type_alias_registry: HashMap::new(),
@@ -231,7 +247,14 @@ impl Checker {
             import_collisions: std::collections::HashSet::new(),
             module_registry: HashMap::new(),
             expr_types: HashMap::new(),
+            result_tail_spans: std::collections::HashSet::new(),
+            warnings: Vec::new(),
         }
+    }
+
+    pub fn report_warning(&mut self, code: &'static str, message: impl Into<String>, span: ast::Span) {
+        let module = self.current_module.clone();
+        self.warnings.push(crate::lint::Lint::new(code, span, message).with_module(module));
     }
     pub fn enter_scope(&mut self) {
         self.scopes.push(Scope { vars: HashMap::new() });
@@ -240,19 +263,32 @@ impl Checker {
         let target_depth = self.scopes.len().saturating_sub(1);
         while let Some((_, _, depth)) = self.borrow_stack.last() {
             if *depth <= target_depth { break; }
-            let (name, is_mut, _) = self.borrow_stack.pop().unwrap();
-            for scope in self.scopes.iter_mut().rev() {
-                if let Some(meta) = scope.vars.get_mut(&name) {
-                    if is_mut {
-                        meta.mut_borrow_active = false;
-                    } else {
-                        meta.immut_borrow_count = meta.immut_borrow_count.saturating_sub(1);
-                    }
-                    break;
-                }
-            }
+            self.pop_one_borrow();
         }
         self.scopes.pop();
+    }
+    // Release every borrow pushed since `mark` (statement-boundary release of
+    // temporaries). Named `let r = &…` borrows are kept below the mark.
+    fn release_borrows_to(&mut self, mark: usize) {
+        while self.borrow_stack.len() > mark {
+            self.pop_one_borrow();
+        }
+    }
+    fn pop_one_borrow(&mut self) {
+        let (name, is_mut, _) = match self.borrow_stack.pop() { Some(b) => b, None => return };
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(meta) = scope.vars.get_mut(&name) {
+                if is_mut {
+                    meta.mut_borrow_active = false;
+                } else {
+                    meta.immut_borrow_count = meta.immut_borrow_count.saturating_sub(1);
+                }
+                if !meta.mut_borrow_active && meta.immut_borrow_count == 0 {
+                    meta.active_borrow_span = None;
+                }
+                break;
+            }
+        }
     }
     pub fn display_errors(&self) -> String {
         if self.errors.is_empty() {
@@ -278,30 +314,31 @@ impl Checker {
                 moved_at: None,
                 immut_borrow_count: 0,
                 mut_borrow_active: false,
+                active_borrow_span: None,
                 bound_at_region_depth: depth,
+                borrows: None,
+                borrow_invalidated: false,
             });
         }
     }
 
-    pub fn check_borrow_barrier(&mut self, op_name: &str, span: Span) {
-        let cur_depth = self.region_stack.len();
-        let mut leaks: Vec<String> = Vec::new();
-        for scope in &self.scopes {
-            for (name, meta) in &scope.vars {
-                if meta.is_moved { continue; }
-                let is_ref = matches!(meta.ty, Type::Reference { .. });
-                if is_ref && meta.bound_at_region_depth < cur_depth {
-                    leaks.push(name.clone());
-                }
+    // Record that `name` is a `&base` borrow, so moving `base` invalidates it.
+    pub fn set_var_borrows(&mut self, name: &str, base: String) {
+        if let Some(scope) = self.scopes.last_mut() {
+            if let Some(meta) = scope.vars.get_mut(name) {
+                meta.borrows = Some(base);
             }
         }
-        for name in leaks {
-            self.report_error(
-                format!("Borrow '{}' is live across effect operation '{}'; \
-                         move it into the current region or drop it before the call",
-                    name, op_name),
-                span,
-            );
+    }
+
+    // Mark every live `&base` borrow as invalid (called when `base` is moved).
+    pub fn invalidate_borrows_of(&mut self, base: &str) {
+        for scope in self.scopes.iter_mut() {
+            for meta in scope.vars.values_mut() {
+                if meta.borrows.as_deref() == Some(base) {
+                    meta.borrow_invalidated = true;
+                }
+            }
         }
     }
 

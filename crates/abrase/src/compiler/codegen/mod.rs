@@ -117,10 +117,29 @@ impl Compiler {
         src_reg: Register,
         value_ty: Option<&ast::Type>,
     ) -> Result<(), String> {
+        self.compile_destructure_mut(pattern, src_reg, value_ty, false)
+    }
+
+    pub(in crate::compiler) fn compile_destructure_mut(
+        &mut self,
+        pattern: &ast::Spanned<ast::Pattern>,
+        src_reg: Register,
+        value_ty: Option<&ast::Type>,
+        is_mut: bool,
+    ) -> Result<(), String> {
         match &pattern.node {
             ast::Pattern::Wildcard => Ok(()),
             ast::Pattern::Bind(name) => {
-                self.var_to_reg.insert(name.clone(), src_reg);
+                let final_reg = if is_mut && self.cell_vars.contains(name) {
+                    let cell = self.alloc_register()?;
+                    self.emit(OpCode::Alloc(cell, 1));
+                    self.emit(OpCode::St(src_reg, cell, 0));
+                    self.cell_bindings.insert(name.clone());
+                    cell
+                } else {
+                    src_reg
+                };
+                self.var_to_reg.insert(name.clone(), final_reg);
                 self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
                 if let Some(t) = value_ty {
                     self.var_types.insert(name.clone(), t.clone());
@@ -147,7 +166,7 @@ impl Compiler {
                     let off = crate::compiler::codegen::scaffold::to_u16(i, "destructure offset")?;
                     self.emit(OpCode::Ld(dest, src_reg, off));
                     let sub_ty = elem_tys.get(i).and_then(|t| t.as_ref());
-                    self.compile_destructure(sub, dest, sub_ty)?;
+                    self.compile_destructure_mut(sub, dest, sub_ty, is_mut)?;
                 }
                 if rest_idx.is_some() {
                     for (j, sub) in tail.iter().enumerate() {
@@ -156,7 +175,7 @@ impl Compiler {
                         let off = crate::compiler::codegen::scaffold::to_u16(actual_idx, "destructure offset")?;
                         self.emit(OpCode::Ld(dest, src_reg, off));
                         let sub_ty = elem_tys.get(actual_idx).and_then(|t| t.as_ref());
-                        self.compile_destructure(sub, dest, sub_ty)?;
+                        self.compile_destructure_mut(sub, dest, sub_ty, is_mut)?;
                     }
                 } else if total != elem_tys.len() && value_ty.is_some() {
                     return Err(format!(
@@ -173,7 +192,7 @@ impl Compiler {
                     let dest = self.alloc_register()?;
                     let off = crate::compiler::codegen::scaffold::to_u16(i, "destructure offset")?;
                     self.emit(OpCode::Ld(dest, src_reg, off));
-                    self.compile_destructure(sub, dest, None)?;
+                    self.compile_destructure_mut(sub, dest, None, is_mut)?;
                 }
                 if rest_idx.is_some() && !tail.is_empty() {
                     return Err("array destructure with trailing pattern after `..` requires runtime length; not yet supported".into());
@@ -198,11 +217,27 @@ impl Compiler {
                     };
                     let dest = self.alloc_register()?;
                     self.emit(OpCode::Ld(dest, src_reg, off));
+                    let eff_mut = is_mut || fp.is_mut;
                     if let Some(sub) = &fp.pattern {
-                        self.compile_destructure(sub, dest, None)?;
+                        self.compile_destructure_mut(sub, dest, None, eff_mut)?;
                     } else {
-                        self.var_to_reg.insert(fp.name.clone(), dest);
+                        let final_dest = if eff_mut && self.cell_vars.contains(&fp.name) {
+                            let cell = self.alloc_register()?;
+                            self.emit(OpCode::Alloc(cell, 1));
+                            self.emit(OpCode::St(dest, cell, 0));
+                            self.cell_bindings.insert(fp.name.clone());
+                            cell
+                        } else {
+                            dest
+                        };
+                        self.var_to_reg.insert(fp.name.clone(), final_dest);
                         self.var_bound_at_region.insert(fp.name.clone(), self.compiler_region_depth);
+                        if let Some(t) = layout.as_ref().and_then(|l| {
+                            let idx = l.fields.iter().position(|n| n == &fp.name)?;
+                            l.field_types.get(idx).cloned()
+                        }) {
+                            self.var_types.insert(fp.name.clone(), t);
+                        }
                     }
                 }
                 Ok(())
@@ -211,28 +246,37 @@ impl Compiler {
         }
     }
 
-    // Rewind next_reg but keep regs in long-lived structures.
     pub(in crate::compiler) fn reclaim_temp_regs_above(&mut self, mark: u16) {
+        // Build a set of registers that must NOT be dropped: live variables,
+        // loop result regs, handler table regs, env captures, module table.
+        let mut protected = std::collections::HashSet::<u16>::new();
         let mut protect = mark;
         for reg in self.var_to_reg.values() {
+            protected.insert(reg.0 as u16);
             protect = protect.max(reg.0 as u16 + 1);
         }
         for reg in &self.handler_table_stack {
+            protected.insert(reg.0 as u16);
             protect = protect.max(reg.0 as u16 + 1);
         }
         for ctx in &self.loop_stack {
+            protected.insert(ctx.result_reg.0 as u16);
             protect = protect.max(ctx.result_reg.0 as u16 + 1);
         }
         for envs in &self.arm_env_stack {
             for reg in envs.values() {
+                protected.insert(reg.0 as u16);
                 protect = protect.max(reg.0 as u16 + 1);
             }
         }
         if let Some(r) = self.module_table_reg {
+            protected.insert(r.0 as u16);
             protect = protect.max(r.0 as u16 + 1);
         }
         let high = self.snapshot_register_high_water();
-        for r in protect..high {
+        // Scan below the highest live-variable register.
+        for r in mark..high {
+            if protected.contains(&r) { continue; }
             if self.reg_holds_handle.get(r as usize).copied().unwrap_or(false) {
                 self.emit(OpCode::Drop(Register(r as u8)));
             }
@@ -249,7 +293,10 @@ impl Compiler {
             ast::Stmt::Let { pattern, value, ty, is_mut, .. } => {
                 let inferred_ty = ty.clone().or_else(|| self.infer_expr_type(value));
                 if let ast::Pattern::Bind(name) = &pattern.node {
+                    let is_closure_rhs = matches!(&value.node, ast::Expr::Closure { .. });
+                    self.closure_as_value_ok = is_closure_rhs;
                     let src_reg = self.compile_expr(value)?;
+                    self.closure_as_value_ok = false;
                     let bound_reg = if let ast::Expr::Identifier(src_name) = &value.node {
                         let dest = self.alloc_register()?;
                         let is_move = inferred_ty.as_ref().map(is_move_type).unwrap_or(false);
@@ -291,7 +338,7 @@ impl Compiler {
                     Ok(())
                 } else {
                     let src_reg = self.compile_expr(value)?;
-                    self.compile_destructure(pattern, src_reg, inferred_ty.as_ref())?;
+                    self.compile_destructure_mut(pattern, src_reg, inferred_ty.as_ref(), *is_mut)?;
                     if let Some(top) = self.block_locals_stack.last_mut() {
                         top.push(src_reg);
                     }
@@ -324,7 +371,9 @@ impl Compiler {
         let mark = self.snapshot_register_high_water();
         self.block_locals_stack.push(Vec::new());
         for stmt in &block.stmts {
+            let stmt_mark = self.snapshot_register_high_water();
             self.compile_stmt(stmt)?;
+            self.reclaim_temp_regs_above(stmt_mark);
         }
         let result = if let Some(ret) = &block.ret {
             self.compile_expr(ret)?

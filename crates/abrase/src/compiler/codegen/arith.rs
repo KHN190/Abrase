@@ -53,7 +53,6 @@ impl Compiler {
             ast::UnaryOp::Neg => {
                 if let ast::Expr::Literal(ast::Literal::Int(n)) = &right.node {
                     let v = -n;
-                    self.check_int32_literal(v)?;
                     let reg = self.alloc_register()?;
                     let idx = self.add_constant(Value::from_int(v))?;
                     self.emit(OpCode::PushConst(reg, idx));
@@ -61,7 +60,6 @@ impl Compiler {
                 }
                 if let ast::Expr::Literal(ast::Literal::Float(f)) = &right.node {
                     let v = -f;
-                    self.check_float32_literal(v)?;
                     let encoded = if self.int32_mode { Value::from_float_f32(v) } else { Value::from_float(v) };
                     let reg = self.alloc_register()?;
                     let idx = self.add_constant(encoded)?;
@@ -149,9 +147,32 @@ impl Compiler {
                         let arr_reg = self.compile_expr(base)?;
                         let idx_reg = self.compile_expr(index)?;
                         let val_reg = self.compile_expr(right)?;
-                        let tmp = self.alloc_register()?;
-                        self.emit(OpCode::Copy(tmp, val_reg));
-                        self.emit(OpCode::StIdx(tmp, arr_reg, idx_reg));
+                        // If the value is a heap type and the array outlives the current
+                        // region, the value must be forgotten from the region before
+                        // the store — otherwise region_pop will force_free a slot that
+                        // is still referenced by the (longer-lived) array.
+                        if self.compiler_region_depth > 0 {
+                            let val_ty = self.infer_expr_type(right);
+                            if val_ty.as_ref().map(super::data::type_is_unboxed).map(|u| !u).unwrap_or(false)
+                                && val_ty.as_ref().map(super::is_move_type).unwrap_or(false)
+                                && self.base_outlives_current_region(base)
+                            {
+                                if let Some(ty) = val_ty.as_ref() {
+                                    self.emit_region_forget_typed(val_reg, ty)?;
+                                } else {
+                                    self.emit_region_forget(val_reg)?;
+                                }
+                            }
+                        }
+                        let want_move = self.arg_should_move(right);
+                        let store_src = if want_move {
+                            val_reg
+                        } else {
+                            let tmp = self.alloc_register()?;
+                            self.emit(OpCode::Copy(tmp, val_reg));
+                            tmp
+                        };
+                        self.emit(OpCode::StIdx(store_src, arr_reg, idx_reg));
                         Ok(val_reg)
                     }
                     ast::Expr::Unary { op: ast::UnaryOp::Deref, right: target } => {
@@ -188,6 +209,14 @@ impl Compiler {
                             let old = self.alloc_register()?;
                             self.emit(OpCode::Ld(old, base_reg, offset));
                             self.emit(OpCode::Drop(old));
+                            // Same region-escape check as for Index assignment.
+                            if self.compiler_region_depth > 0 && self.base_outlives_current_region(base) {
+                                if let Some(ty) = field_ty.as_ref() {
+                                    self.emit_region_forget_typed(val_reg, ty)?;
+                                } else {
+                                    self.emit_region_forget(val_reg)?;
+                                }
+                            }
                         }
                         let want_move = self.arg_should_move(right);
                         self.emit_store_field(val_reg, want_move, base_reg, offset)?;
@@ -284,6 +313,28 @@ impl Compiler {
                 self.emit(instr);
                 Ok(dr)
             }
+        }
+    }
+}
+
+impl Compiler {
+    /// Returns true if the expression refers to a container (array, record)
+    /// whose lifetime exceeds the current compiler region depth.
+    /// Used to decide whether a heap value stored into the container must be
+    /// forgotten from the region to avoid force-free on region pop.
+    pub(in crate::compiler) fn base_outlives_current_region(
+        &self,
+        base: &ast::Spanned<ast::Expr>,
+    ) -> bool {
+        match &base.node {
+            ast::Expr::Identifier(name) => {
+                if self.resolve_static_offset(name).is_some() { return true; }
+                let bound = self.var_bound_at_region.get(name).copied().unwrap_or(0);
+                bound < self.compiler_region_depth
+            }
+            ast::Expr::Index { base: inner, .. } => self.base_outlives_current_region(inner),
+            ast::Expr::FieldAccess { base: inner, .. } => self.base_outlives_current_region(inner),
+            _ => false,
         }
     }
 }

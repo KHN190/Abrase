@@ -10,6 +10,8 @@ impl Checker {
         args: &[Spanned<ast::Expr>],
         span: ast::Span,
     ) -> Type {
+                let exn_prop = self.exn_prop;
+                self.exn_prop = false;
                 self.context_stack.push(format!("In function call"));
 
                 // `Shared(x)` must be inside a region
@@ -61,8 +63,15 @@ impl Checker {
                                         arg.span,
                                     );
                                 }
+                                // A `&T` arg borrowing a region-local escapes when
+                                // control transfers to the (outer) handler. wiki 05.
+                                if let Some((root, esc_span)) = self.check_escape_past(arg, 1, false) {
+                                    self.report_error(
+                                        format!("borrow '{}' cannot escape via effect op '{}' (a `&T` carried into an operation outlives its region once control reaches the handler)", root, op_key),
+                                        esc_span,
+                                    );
+                                }
                             }
-                            self.check_borrow_barrier(&op_key, span);
                             self.add_required_effect(crate::ty::Effect::UserEffect(eff_name.clone()));
                             self.context_stack.pop();
                             return ret;
@@ -188,17 +197,44 @@ impl Checker {
                                 return sub_self(&sig_ret);
                             }
                             Ok(None) => {
-                                let is_record_with_field = matches!(
-                                    self.type_registry.get(&rname),
-                                    Some(ast::TypeBody::Record(fs)) if fs.iter().any(|f| &f.name == field)
-                                );
-                                if !is_record_with_field {
-                                    self.report_error(
-                                        format!("No method '{}' for type '{}'", field, rname),
-                                        span,
-                                    );
-                                    self.context_stack.pop();
-                                    return Type::Unknown;
+                                let field_ty = match self.type_registry.get(&rname) {
+                                    Some(ast::TypeBody::Record(fs)) =>
+                                        fs.iter().find(|f| &f.name == field).map(|f| f.ty.clone()),
+                                    _ => None,
+                                };
+                                match field_ty {
+                                    None => {
+                                        self.report_error(
+                                            format!("No method '{}' for type '{}'", field, rname),
+                                            span,
+                                        );
+                                        self.context_stack.pop();
+                                        return Type::Unknown;
+                                    }
+                                    Some(ft) => {
+                                        // Record field holding a function value: `b.f(args)`
+                                        // calls the field. Check args against its fn type.
+                                        if let ast::Type::Function { params, ret, .. } = ft {
+                                            let ps: Vec<Type> = params.iter().map(|p| self.convert_type(p)).collect();
+                                            if args.len() != ps.len() {
+                                                self.report_error(
+                                                    format!("Field '{}.{}' expects {} argument(s), got {}",
+                                                        rname, field, ps.len(), args.len()),
+                                                    span);
+                                            }
+                                            for (i, arg) in args.iter().enumerate() {
+                                                let at = self.infer_expr(arg);
+                                                if i < ps.len() && at != ps[i]
+                                                    && at != Type::Unknown && ps[i] != Type::Unknown {
+                                                    self.report_error(
+                                                        format!("Argument {} type mismatch: expected {:?}, got {:?}",
+                                                            i, ps[i], at), arg.span);
+                                                }
+                                            }
+                                            self.context_stack.pop();
+                                            return self.convert_type(&ret);
+                                        }
+                                    }
                                 }
                             }
                             Err(traits) => {
@@ -242,7 +278,13 @@ impl Checker {
                         // (either Type::Generic, or Type::Named(n) where n is a generic param of the callee).
                         let is_param_generic = matches!(param_ty, Type::Generic { .. })
                             || matches!(param_ty, Type::Named(n) if callee_generic_vars.contains(n));
-                        if !is_param_generic && arg_ty != param_ty && *arg_ty != Type::Unknown && *param_ty != Type::Unknown {
+                        if fn_type_has_unknown(arg_ty) && fn_type_is_concrete(param_ty) {
+                            self.report_error(
+                                format!("Argument {}: cannot infer closure type from context; \
+                                         annotate the closure, e.g. `|x: Int| -> Int ...`", i),
+                                args[i].span,
+                            );
+                        } else if !is_param_generic && arg_ty != param_ty && *arg_ty != Type::Unknown && *param_ty != Type::Unknown {
                             self.report_error(
                                 format!("Argument {} type mismatch: expected {:?}, got {:?}", i, param_ty, arg_ty),
                                 args[i].span
@@ -250,16 +292,16 @@ impl Checker {
                         }
                     }
 
-                    // Borrow barrier: effect calls are suspension points, reject live outer-region borrows.
-                    if !effects.is_empty() {
-                        let op_name = match &callee.node {
-                            ast::Expr::Identifier(n) => n.clone(),
-                            ast::Expr::FieldAccess { field, .. } => field.clone(),
-                            _ => "<call>".into(),
-                        };
-                        self.check_borrow_barrier(&op_name, span);
+                    if effects.iter().any(|e| matches!(e, crate::ty::Effect::Exn(_))) {
+                        self.result_value_spans.insert(span);
+                        if !exn_prop {
+                            self.report_error(
+                                "fallible call must be consumed with `?` (or matched / handled); \
+                                 its error cannot be silently used as a value".into(),
+                                span,
+                            );
+                        }
                     }
-
                     for effect in &effects {
                         self.add_required_effect(effect.clone());
                     }
@@ -386,4 +428,14 @@ impl Checker {
                 self.context_stack.pop();
                 result
     }
+}
+
+fn fn_type_has_unknown(ty: &Type) -> bool {
+    matches!(ty, Type::Function { params, ret, .. }
+        if params.iter().any(|p| *p == Type::Unknown) || **ret == Type::Unknown)
+}
+
+fn fn_type_is_concrete(ty: &Type) -> bool {
+    matches!(ty, Type::Function { params, ret, .. }
+        if params.iter().all(|p| *p != Type::Unknown) && **ret != Type::Unknown)
 }
