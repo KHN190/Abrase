@@ -1080,9 +1080,27 @@ pub(super) fn lint_dead_code(decls: &[ast::Decl], checker: &mut super::Checker) 
         }
     }
 
+    // Idents referenced by static/const initializers are roots: those exprs run
+    // at load, not from any fn body the BFS walks.
+    let mut init_roots: HashSet<String> = HashSet::new();
+    for decl in decls {
+        match decl {
+            ast::Decl::Static { value, .. } | ast::Decl::Const { value, .. } => {
+                collect_idents_expr(value, &mut init_roots);
+            }
+            _ => {}
+        }
+    }
+
     // BFS from live roots: main + pub fns + synthetic fns
     let mut live: HashSet<String> = HashSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
+
+    for name in &init_roots {
+        if fn_refs.contains_key(name) && live.insert(name.clone()) {
+            queue.push_back(name.clone());
+        }
+    }
 
     for name in fn_info.keys() {
         let (is_pub, _) = fn_info[name];

@@ -15,7 +15,7 @@ impl Compiler {
         match op {
             ast::UnaryOp::Ref | ast::UnaryOp::RefMut => {
                 let inner_ty = self.infer_expr_type(right);
-                let cell_typed = inner_ty.as_ref().map(is_move_type).unwrap_or(false);
+                let cell_typed = inner_ty.as_ref().map(|t| !super::data::type_is_unboxed(t)).unwrap_or(false);
                 let src = self.compile_expr(right)?;
                 let dest = self.alloc_register()?;
                 if cell_typed {
@@ -32,7 +32,7 @@ impl Compiler {
                 let inner_ty = self.infer_expr_type(right);
                 let inner_is_cell = matches!(
                     inner_ty.as_ref(),
-                    Some(ast::Type::Reference { inner, .. }) if is_move_type(inner)
+                    Some(ast::Type::Reference { inner, .. }) if !super::data::type_is_unboxed(inner)
                 );
                 let pointee_unboxed = match inner_ty.as_ref() {
                     Some(ast::Type::Reference { inner, .. }) => super::data::type_is_unboxed(inner),

@@ -52,9 +52,11 @@ impl Checker {
         if index_ty != Type::Int && index_ty != Type::Unknown {
             self.report_error("Index must be Int".into(), index.span);
         }
-        let result = match base_ty {
-            Type::Generic { ref name, ref args } if name == "Array" => args.get(0).cloned().unwrap_or(Type::Unknown),
-            Type::Tuple(ref elems) => if elems.is_empty() { Type::Unknown } else { elems[0].clone() },
+        let mut deref = &base_ty;
+        while let Type::Reference { inner, .. } = deref { deref = inner; }
+        let result = match deref {
+            Type::Generic { name, args } if name == "Array" => args.get(0).cloned().unwrap_or(Type::Unknown),
+            Type::Tuple(elems) => if elems.is_empty() { Type::Unknown } else { elems[0].clone() },
             Type::Unknown => Type::Unknown,
             _ => self.report_error("Can only index arrays or tuples".into(), base.span),
         };
