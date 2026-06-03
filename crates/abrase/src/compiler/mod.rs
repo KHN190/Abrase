@@ -92,7 +92,7 @@ pub struct Compiler {
     pub(super) current_span: ast::Span,
     pub(super) compiler_region_depth: usize,
     pub(super) fn_compiler_depth_baseline: usize,
-    pub(super) block_locals_stack: Vec<Vec<Register>>,
+    pub(super) block_locals_stack: Vec<Vec<(Register, bool)>>,
     pub(super) fn_block_baseline: usize,
     pub(super) handler_table_stack: Vec<Register>,
     pub(super) fn_handler_baseline: usize,
@@ -103,6 +103,7 @@ pub struct Compiler {
     pub(super) remaining_uses: HashMap<String, usize>,
     pub(super) int32_mode: bool,
     pub(super) no_built_in: bool,
+    pub(super) drop_elision: bool,
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
@@ -179,12 +180,19 @@ impl Compiler {
             remaining_uses: HashMap::new(),
             int32_mode: false,
             no_built_in: false,
+            drop_elision: true,
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
             typeck_expr_types: HashMap::new(),
             result_tail_spans: std::collections::HashSet::new(),
         }
+    }
+
+    // A block-local needs a scope-exit Drop iff it may hold a handle. Scalars
+    // (type_is_unboxed) never do; unknown type is conservatively a handle.
+    pub(super) fn binding_is_handle(&self, ty: Option<&ast::Type>) -> bool {
+        ty.map(|t| !codegen::data::type_is_unboxed(t)).unwrap_or(true)
     }
 
     pub(super) fn consume_use(&mut self, name: &str) -> bool {
@@ -214,6 +222,11 @@ impl Compiler {
 
     pub fn with_int32_mode(mut self, on: bool) -> Self {
         self.int32_mode = on;
+        self
+    }
+
+    pub fn with_drop_elision(mut self, on: bool) -> Self {
+        self.drop_elision = on;
         self
     }
 
@@ -742,8 +755,9 @@ impl Compiler {
                         continue;
                     }
                 };
+                let is_h = self.binding_is_handle(Some(ty));
                 if let Some(top) = self.block_locals_stack.last_mut() {
-                    top.push(reg);
+                    top.push((reg, is_h));
                 }
                 match &pattern.node {
                     ast::Pattern::Bind(name) => {

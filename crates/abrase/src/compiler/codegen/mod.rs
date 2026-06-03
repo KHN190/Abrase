@@ -324,6 +324,7 @@ impl Compiler {
                     };
                     self.var_to_reg.insert(name.clone(), final_reg);
                     self.var_bound_at_region.insert(name.clone(), self.compiler_region_depth);
+                    let is_h = self.binding_is_handle(inferred_ty.as_ref());
                     if let Some(t) = inferred_ty {
                         self.var_types.insert(name.clone(), t);
                     }
@@ -333,14 +334,15 @@ impl Compiler {
                         }
                     }
                     if let Some(top) = self.block_locals_stack.last_mut() {
-                        top.push(final_reg);
+                        top.push((final_reg, is_h));
                     }
                     Ok(())
                 } else {
                     let src_reg = self.compile_expr(value)?;
                     self.compile_destructure_mut(pattern, src_reg, inferred_ty.as_ref(), *is_mut)?;
+                    let is_h = self.binding_is_handle(inferred_ty.as_ref());
                     if let Some(top) = self.block_locals_stack.last_mut() {
-                        top.push(src_reg);
+                        top.push((src_reg, is_h));
                     }
                     Ok(())
                 }

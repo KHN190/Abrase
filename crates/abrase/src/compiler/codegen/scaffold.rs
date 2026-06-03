@@ -323,9 +323,18 @@ impl Compiler {
         let total = self.block_locals_stack.len();
         let start = total.saturating_sub(n_blocks);
         for layer_idx in (start..total).rev() {
-            let regs: Vec<Register> = self.block_locals_stack[layer_idx].clone();
-            for reg in regs {
+            let regs: Vec<(Register, bool)> = self.block_locals_stack[layer_idx].clone();
+            for (reg, is_handle) in regs {
                 if Some(reg) == skip { continue; }
+                // a block-local proven scalar at push time needs no Drop.
+                if self.drop_elision && !is_handle {
+                    debug_assert!(
+                        !self.reg_holds_handle.get(reg.0 as usize).copied().unwrap_or(false),
+                        "type-lie: eliding Drop of r{} in fn {} but global tag says handle \
+                         (a synthetic handle binding was declared with a scalar type)",
+                        reg.0, self.current_fn_name);
+                    continue;
+                }
                 self.emit(OpCode::Drop(reg));
             }
         }

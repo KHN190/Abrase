@@ -98,7 +98,8 @@ impl ClosureLowering {
         let Some(decl) = self.user_fns.get(name).cloned() else { return };
         let mut params: Vec<Param> = vec![Param::Named {
             pattern: Spanned { node: Pattern::Bind("__env".into()), span: Span::new(0, 0) },
-            ty: Type::Named("Int".into()),
+            // env is a heap cell (handle), not Int.
+            ty: Type::Named("__cont".into()),
         }];
         let mut call_args: Vec<Spanned<Expr>> = Vec::new();
         for p in &decl.params {
@@ -163,7 +164,6 @@ impl ClosureLowering {
 
                 let mut inner_env = env.shadow_with_params(params);
                 self.walk_expr(body, &mut inner_env);
-                // Collect free variables of this closure
                 let mut frees: Vec<String> = Vec::new();
                 let mut seen: HashSet<String> = HashSet::new();
                 collect_free_vars(body, &param_names(params), &mut seen, &mut frees);
@@ -183,7 +183,8 @@ impl ClosureLowering {
                 let mut lifted_params: Vec<Param> = Vec::new();
                 lifted_params.push(Param::Named {
                     pattern: Spanned { node: Pattern::Bind("__env".into()), span: expr.span },
-                    ty: Type::Named("Int".into()),
+                    // env is a heap cell (handle), not Int.
+                    ty: Type::Named("__cont".into()),
                 });
                 for cp in params {
                     let pty = cp.ty.clone().unwrap_or(Type::Named("Unknown".into()));
@@ -287,7 +288,6 @@ impl ClosureLowering {
     }
 }
 
-// Bookkeeping for tracking which names are in scope at a given point.
 struct ParamEnv {
     scopes: Vec<HashMap<String, Type>>,
 }

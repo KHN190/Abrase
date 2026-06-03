@@ -129,6 +129,47 @@ fn main() -> Int {
 }
 "#;
 
+// Guards for handle-tag tightening (ownership lowering #1): clearing the
+// pessimistic handle tag on Call/Ld/LdIdx results is only sound when the result
+// is actually scalar. These pin both directions — a handle result must still be
+// dropped (heap=0), a scalar result must still compute correctly.
+#[test]
+fn call_returning_handle_is_dropped() {
+    // Call dest holds an Array handle → must be dropped at scope end.
+    let src = "fn mk() -> Array<Int> { [1, 2, 3] }\nfn main() -> Int { let a = mk(); a[0] }";
+    let (v, vm) = run_src_full(src).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(1));
+    assert_eq!(vm.heap_live_count(), 0, "array returned from call leaked");
+}
+
+#[test]
+fn ldidx_of_handle_element_is_dropped() {
+    // xs[1] (LdIdx on Array<R>) yields a record handle → must be dropped.
+    let src = "type R = { n: Int }\nfn main() -> Int { let xs = [R { n: 5 }, R { n: 6 }]; let r = xs[1]; r.n }";
+    let (v, vm) = run_src_full(src).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(6));
+    assert_eq!(vm.heap_live_count(), 0, "handle array element leaked");
+}
+
+#[test]
+fn record_field_handle_is_dropped() {
+    // r.a (Ld of a handle-typed field) → must be dropped.
+    let src = "type R = { a: Array<Int> }\nfn main() -> Int { let r = R { a: [5, 6] }; r.a[1] }";
+    let (v, vm) = run_src_full(src).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(6));
+    assert_eq!(vm.heap_live_count(), 0, "record handle field leaked");
+}
+
+#[test]
+fn scalar_call_and_index_results_compute_and_no_leak() {
+    // The perf target: id() returns Int (Call dest scalar), xs[0] is Int (LdIdx
+    // scalar). Clearing their tags must keep value correct and heap flat.
+    let src = "fn id(x: Int) -> Int { x }\nfn main() -> Int { let xs = [7, 8]; id(xs[0]) }";
+    let (v, vm) = run_src_full(src).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(7));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
 #[test]
 fn div_mod_by_power_of_two_signed_semantics() {
     let cases: &[(&str, i64)] = &[
