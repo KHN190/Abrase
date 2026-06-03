@@ -66,6 +66,14 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
 
     reg.register("halt",        halt_native());
     reg.register("abort",       abort_native());
+
+    // Frame-yield intrinsic: do_call intercepts it before the body runs, so this
+    // registration only makes the name resolvable like any other runtime native.
+    reg.register("__frame_present", frame_present_native());
+}
+
+fn frame_present_native() -> NativeFn {
+    Rc::new(|_ctx, _args| Err("__frame_present must be intercepted as a frame yield".into()))
 }
 
 #[inline]

@@ -305,7 +305,8 @@ impl VirtualMachine {
         self.resolved_natives.reserve(module.functions.len());
         for chunk in &module.functions {
             let entry = match chunk {
-                Chunk::Native(n) => self.natives.get(&n.name).cloned(),
+                Chunk::Native(n) => Some(self.natives.get(&n.name).cloned()
+                    .ok_or_else(|| format!("unresolved import: {}", n.name))?),
                 Chunk::Bytecode(_) => None,
             };
             self.resolved_natives.push(entry);
