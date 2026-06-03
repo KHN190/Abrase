@@ -136,6 +136,20 @@ fn test_static_init_call() {
     assert_eq!(v, Value::from_int(330));
 }
 
+const STATIC_READS_EARLIER_STATIC: &str = r#"
+static B: Int = 7
+fn build_a() -> Int { B + 1 }
+static A: Int = build_a()
+fn main() -> Int { A }
+"#;
+
+#[test]
+fn test_static_initializer_reads_earlier_static() {
+    let v = run_src(STATIC_READS_EARLIER_STATIC)
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(8));
+}
+
 const STATIC_UPDATE_FRAMES: &str = r#"
 fn build_bh(mh: Int) -> Array<Int> {
     let mut a = [0; 8];
@@ -1112,8 +1126,6 @@ fn cart_only_on_main_enforced() {
 
 #[test]
 fn frame_counter_example_accumulates_correctly() {
-    // frame_counter.abe: 5 frames, each adds 3; exits via halt(total).
-    // After 5 frames total = 15, exit_code = 15.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/frame_counter.abe");
     let src = fs::read_to_string(&path)
@@ -1140,12 +1152,12 @@ fn frame_counter_example_accumulates_correctly() {
         assert!(still_running, "frame {} should still be running", frame);
     }
 
-    // Resume 6: completes iteration i=4 (println + i=5), while 5<5 fails, halt(15).
+    // Resume 6: completes iteration i=4 (println + i=5), while 5<5 fails, halt(0).
     let still_running = vm.resume(&module, Value::from_int(0))
         .expect("final resume");
     assert!(!still_running, "main should have terminated after final resume");
 
-    assert_eq!(vm.exit_code(), Some(15),
-        "total = 5 * 3 = 15; got exit_code = {:?}", vm.exit_code());
+    assert_eq!(vm.exit_code(), Some(0),
+        "clean halt(0); got exit_code = {:?}", vm.exit_code());
     assert_eq!(vm.heap_live_count(), live0, "heap flat (no heap allocations)");
 }

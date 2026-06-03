@@ -240,11 +240,31 @@ impl VirtualMachine {
         let const_live = self.string_const_handles.iter()
             .filter(|(s, g)| self.heap.is_live(*s, *g))
             .count();
-        let module_live = if self.module_table_is_handle && self.module_table_raw != polka::HANDLE_NONE {
-            let (s, g) = crate::memory::handle_parts(self.module_table_raw);
-            if self.heap.is_live(s, g) { 1 } else { 0 }
-        } else { 0 };
+        let mut rt_owned: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+        if self.module_table_is_handle && self.module_table_raw != polka::HANDLE_NONE {
+            let root = crate::memory::handle_parts(self.module_table_raw);
+            self.collect_reachable(root.0, root.1, &mut rt_owned);
+        }
+        let module_live = rt_owned.iter().filter(|(s, g)| self.heap.is_live(*s, *g)).count();
         total.saturating_sub(const_live).saturating_sub(module_live)
+    }
+
+    fn collect_reachable(&self, slot: u32, generation: u32, visited: &mut std::collections::HashSet<(u32, u32)>) {
+        if !visited.insert((slot, generation)) { return; }
+        if !self.heap.is_live(slot, generation) { return; }
+        let Ok(data) = self.heap.cell_data(slot, generation) else { return; };
+        let Ok(mask) = self.heap.cell_mask(slot, generation) else { return; };
+        let n = data.len();
+        let data: Vec<u64> = data.to_vec();
+        for i in 0..n {
+            if crate::memory::mask_bit(mask, i) {
+                let child_raw = data[i];
+                if child_raw != polka::HANDLE_NONE {
+                    let (cs, cg) = crate::memory::handle_parts(child_raw);
+                    self.collect_reachable(cs, cg, visited);
+                }
+            }
+        }
     }
 
 

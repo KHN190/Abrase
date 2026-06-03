@@ -1,5 +1,6 @@
 use polka::{BytecodeChunk, Chunk, Module, OpCode, Register};
 use myriad::loader::load;
+use myriad::VirtualMachine;
 
 fn bc(reg_count: usize, param_count: usize) -> Chunk {
     Chunk::Bytecode(BytecodeChunk {
@@ -69,4 +70,40 @@ fn load_ignores_native_chunk_reg_count() {
         exports: vec![],
     };
     assert!(load(m).is_ok());
+}
+
+#[test]
+fn load_rejects_register_operand_over_frame_budget() {
+    // op references r200, past the FRAME_REGS (128) physical window.
+    let m = Module {
+        functions: vec![Chunk::Bytecode(BytecodeChunk {
+            code: vec![OpCode::Copy(Register(200), Register(0)), OpCode::Ret(Register(0))],
+            reg_count: polka::FRAME_REGS, param_count: 0,
+            ..BytecodeChunk::default()
+        })],
+        entry: 0,
+        flags: 0,
+        exports: vec![],
+    };
+    let err = match load(m) { Ok(_) => panic!("expected error"), Err(e) => e };
+    assert!(err.contains("r200") && err.contains("frame budget"), "got: {}", err);
+}
+
+#[test]
+fn run_rejects_unregistered_native() {
+    use polka::NativeChunk;
+    let m = Module {
+        functions: vec![
+            bc(1, 0),
+            Chunk::Native(NativeChunk { name: "synth_play".into(), param_count: 1 }),
+        ],
+        entry: 0,
+        flags: 0,
+        exports: vec![],
+    };
+    let err = match VirtualMachine::new().run_module(&m) {
+        Ok(_) => panic!("expected unresolved-import error"),
+        Err(e) => e,
+    };
+    assert!(err.contains("unresolved import: synth_play"), "got: {}", err);
 }

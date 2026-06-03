@@ -495,6 +495,23 @@ fn main() -> Int {{ sum_mul({n}) }}
     (src, expected)
 }
 
+fn gen_static_init_call(rng: &mut Rng) -> (String, i64) {
+    let mh  = rng.range(1, 40);
+    let idx = rng.range(0, 8);
+    let expected = idx * mh;
+    let src = format!(r#"
+fn build(mh: Int) -> Array<Int> {{
+  let mut a = [0; 8];
+  let mut y = 0;
+  while y < 8 {{ a[y] = y * mh; y = y + 1 }};
+  a
+}}
+static BH: Array<Int> = build({mh})
+fn main() -> Int {{ BH[{idx}] }}
+"#);
+    (src, expected)
+}
+
 fn gen_multi_module_variant(rng: &mut Rng) -> (String, String, i64) {
     let present_val = rng.range(1, 30);
     let default_val = rng.range(1, 20);
@@ -767,6 +784,7 @@ const SINGLE_GENS: &[(&str, Gen)] = &[
     ("char_ops",            gen_char_ops),
     ("tuple_destructure",   gen_tuple_destructure),
     ("recursion_static",    gen_recursion_static),
+    ("static_init_call",    gen_static_init_call),
     ("array_ops",           gen_array_ops),
     ("bitwise",             gen_bitwise),
     ("region_escape",       gen_region_escape),

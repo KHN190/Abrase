@@ -57,6 +57,33 @@ fn static_initializer_type_mismatch_errors() {
 }
 
 #[test]
+fn static_initialized_by_fn_call_is_accepted() {
+    assert_clean(
+        "fn build() -> Array<Int> { [1, 2, 3] }\n\
+         static BH: Array<Int> = build();\n\
+         fn main() -> Int { BH[0] }\n",
+    );
+}
+
+#[test]
+fn const_initialized_by_fn_call_is_rejected() {
+    let src = "fn seed() -> Int { 7 }\n\
+               const C: Int = seed();\n\
+               fn main() -> Int { C }\n";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "parse errors: {:?}", p.errors);
+    let mut c = Compiler::new().with_source(src.into());
+    let r = c.compile_module(&ast);
+    assert!(r.is_err(), "const = fn call must fail to compile");
+    assert!(
+        c.errors.iter().any(|e| e.message.contains("compile-time constant")),
+        "expected compile-time-constant error, got: {:?}",
+        c.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn cart_main_compiles_with_frame_loop() {
     let src = r#"
 @cart fn main() -> <frame> Unit {

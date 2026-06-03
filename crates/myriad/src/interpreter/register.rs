@@ -305,7 +305,8 @@ impl VirtualMachine {
         self.resolved_natives.reserve(module.functions.len());
         for chunk in &module.functions {
             let entry = match chunk {
-                Chunk::Native(n) => self.natives.get(&n.name).cloned(),
+                Chunk::Native(n) => Some(self.natives.get(&n.name).cloned()
+                    .ok_or_else(|| format!("unresolved import: {}", n.name))?),
                 Chunk::Bytecode(_) => None,
             };
             self.resolved_natives.push(entry);
@@ -350,6 +351,23 @@ pub(crate) fn split_port(port_val: i64) -> Result<(u8, u8), String> {
     Ok((device_id, port))
 }
 
+pub(crate) fn max_reg(op: &polka::OpCode) -> Option<u8> {
+    use polka::OpCode::*;
+    let m3 = |a: &Register, b: &Register, c: &Register| a.0.max(b.0).max(c.0);
+    let m2 = |a: &Register, b: &Register| a.0.max(b.0);
+    match op {
+        Add(a,b,c)|Sub(a,b,c)|Mul(a,b,c)|Div(a,b,c)|Mod(a,b,c)
+        |FAdd(a,b,c)|FSub(a,b,c)|FMul(a,b,c)|FDiv(a,b,c)|FLt(a,b,c)|FEq(a,b,c)
+        |Eq(a,b,c)|Neq(a,b,c)|Lt(a,b,c)|Gt(a,b,c)|Lte(a,b,c)|Gte(a,b,c)
+        |And(a,b,c)|Or(a,b,c)|Xor(a,b,c)|Shl(a,b,c)|Shr(a,b,c)
+        |LdIdx(a,b,c)|StIdx(a,b,c)|Raise(a,b,c) => Some(m3(a,b,c)),
+        Neg(a,b)|FNeg(a,b)|CallReg(a,b)|Copy(a,b)|Move(a,b)|Dei(a,b)|Deo(a,b)|Resume(a,b)
+        |Ld(a,b,_)|St(a,b,_)|AddImm(a,b,_)|SubImm(a,b,_) => Some(m2(a,b)),
+        Ret(a)|Drop(a)|Call(a,_)|PushConst(a,_)|Alloc(a,_)|Handle(a,_)|Jz(a,_)|Jnz(a,_) => Some(a.0),
+        Jmp(_) => None,
+    }
+}
+
 pub(crate) fn validate_module_register_budget(module: &Module) -> Result<(), String> {
     for (i, chunk) in module.functions.iter().enumerate() {
         if let Chunk::Bytecode(b) = chunk {
@@ -364,6 +382,20 @@ pub(crate) fn validate_module_register_budget(module: &Module) -> Result<(), Str
                     "module load: fn {} has param_count {} > reg_count {}",
                     i, b.param_count, b.reg_count
                 ));
+            }
+            // Memory-safety bound is the physical frame window (FRAME_REGS), not
+            // reg_count: ensure_registers reserves FRAME_REGS+slack per frame, so any
+            // r < FRAME_REGS is in-bounds. (r in [reg_count, FRAME_REGS) only clobbers
+            // a not-yet-pushed callee frame — cart-correctness, not a memory hole.)
+            for (pc, op) in b.code.iter().enumerate() {
+                if let Some(r) = max_reg(op) {
+                    if (r as usize) >= FRAME_REGS {
+                        return Err(format!(
+                            "module load: fn {} op {} references r{} >= frame budget {}",
+                            i, pc, r, FRAME_REGS
+                        ));
+                    }
+                }
             }
         }
     }

@@ -132,6 +132,12 @@ fn pub_type_no_dead_warn() {
 }
 
 #[test]
+fn function_used_in_static_initializer_no_dead_warn() {
+    let src = "fn build() -> Int { 5 } static T: Int = build(); fn main() -> Int { T }";
+    assert!(no_warnings(src), "fn used in static initializer must not warn: {:?}", warnings_for(src));
+}
+
+#[test]
 fn unused_mut_warns() {
     let src = "fn main() -> Int { let mut x = 5; x }";
     assert!(has_warning(src, "unused_mut"), "never-reassigned mut must warn");

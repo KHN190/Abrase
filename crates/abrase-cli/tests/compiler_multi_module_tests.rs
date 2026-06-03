@@ -194,8 +194,8 @@ fn for_loop_handle_static_value_correct() {
 fn for_loop_handle_static_no_extra_leak() {
     let (v, live) = run_src_with_heap(FOR_HANDLE_STATIC).unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(18));
-    // 1 live = ARR array cell (static; intentional). No loop-iteration leaks.
-    assert_eq!(live, 1, "only the static ARR cell must remain live: {live}");
+    // Statics are excluded from the leak count (reachable from module table). No loop-iteration leaks.
+    assert_eq!(live, 0, "statics excluded from leak count; no extra cell may leak: {live}");
 }
 
 // ── single-module: for loop + record static ───────────────────────────────────
@@ -220,8 +220,8 @@ fn for_loop_reads_record_static_correctly() {
 fn for_loop_record_static_no_extra_leak() {
     let (v, live) = run_src_with_heap(RECORD_STATIC_FOR).unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(21));
-    // 1 live = ORIGIN record cell (static; intentional).
-    assert_eq!(live, 1, "only the static ORIGIN cell must remain live: {live}");
+    // Static ORIGIN record is excluded from the leak count.
+    assert_eq!(live, 0, "statics excluded from leak count; no extra cell may leak: {live}");
 }
 
 const RECORD_ARRAY_STATIC_FOR: &str = r#"
@@ -244,8 +244,8 @@ fn for_loop_reads_record_array_static() {
 fn for_loop_record_array_static_no_extra_leak() {
     let (v, live) = run_src_with_heap(RECORD_ARRAY_STATIC_FOR).unwrap_or_else(|e| panic!("\n{}", e));
     assert_eq!(v, Value::from_int(10));
-    // 3 live = PAIRS outer Array + 2 Pair records (all static; intentional).
-    assert_eq!(live, 3, "only the 3 static cells (array + 2 pairs) must remain live: {live}");
+    // PAIRS array + its 2 Pair records are all static, all excluded from the leak count.
+    assert_eq!(live, 0, "statics excluded from leak count; no extra cell may leak: {live}");
 }
 
 // ── multi-module: cross-file static (primitive) ───────────────────────────────
@@ -287,8 +287,8 @@ fn cross_module_handle_static_no_extra_leak() {
         run_files(&dir.join("main.abe"))
     });
     assert_eq!(v, Value::from_int(60));
-    // 1 live = ARR array cell (static; intentional).
-    assert_eq!(live, 1, "only static ARR must remain live: {live}");
+    // Static ARR is excluded from the leak count.
+    assert_eq!(live, 0, "statics excluded from leak count; no extra cell may leak: {live}");
 }
 
 #[test]
@@ -323,8 +323,8 @@ fn cross_module_record_static_read() {
         run_files(&dir.join("main.abe"))
     });
     assert_eq!(v, Value::from_int(13));
-    // 1 live = ORIGIN record (static; intentional).
-    assert_eq!(live, 1, "only static ORIGIN must remain live: {live}");
+    // Static ORIGIN record is excluded from the leak count.
+    assert_eq!(live, 0, "statics excluded from leak count; no extra cell may leak: {live}");
 }
 
 #[test]
@@ -341,8 +341,8 @@ fn cross_module_record_static_in_for_loop() {
         run_files(&dir.join("main.abe"))
     });
     assert_eq!(v, Value::from_int(20));
-    // 1 live = ORIGIN record (static; intentional).
-    assert_eq!(live, 1, "only static ORIGIN must remain live: {live}");
+    // Static ORIGIN record is excluded from the leak count.
+    assert_eq!(live, 0, "statics excluded from leak count; no extra cell may leak: {live}");
 }
 
 #[test]

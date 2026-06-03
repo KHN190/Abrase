@@ -26,6 +26,7 @@ struct Gen {
     fuel: u32,
     has_record: bool,
     has_static: bool,
+    has_array_static: bool,
     has_variant: bool,
     has_effect: bool,
     has_recursive_fn: bool,
@@ -36,7 +37,7 @@ impl Gen {
         Self {
             rng: Rng::new(seed), next_var: 0, next_fn: 0,
             out: String::new(), helpers: String::new(), fuel: 250,
-            has_record: false, has_static: false,
+            has_record: false, has_static: false, has_array_static: false,
             has_variant: false,
             has_effect: false, has_recursive_fn: false,
         }
@@ -70,7 +71,6 @@ impl Gen {
             self.helpers.push_str(&format!("static S: Int = {};\n", v));
             self.has_static = true;
         }
-        // Optional effect + helper.
         if self.rng.pick(3) == 0 {
             self.helpers.push_str(
                 "effect Tick { op go() -> Unit }\n\
@@ -81,7 +81,6 @@ impl Gen {
             );
             self.has_effect = true;
         }
-        // Optional recursive fn.
         if self.rng.pick(3) == 0 {
             self.helpers.push_str(
                 "fn countdown(n: Int) -> Int {\n\
@@ -151,9 +150,14 @@ impl Gen {
                     self.push(&format!("  let {}: Int = {} {} {};\n", name, a, op, b));
                     ints.push(name);
                 }
-                5 if self.has_static => {
+                5 if self.has_static || self.has_array_static => {
                     let name = self.fresh();
-                    self.push(&format!("  let {}: Int = S;\n", name));
+                    if self.has_array_static && (!self.has_static || self.rng.pick(2) == 0) {
+                        let idx = self.rng.pick(8);
+                        self.push(&format!("  let {}: Int = BH[{}];\n", name, idx));
+                    } else {
+                        self.push(&format!("  let {}: Int = S;\n", name));
+                    }
                     ints.push(name);
                 }
                 // ── Shared (region-only) ──────────────────────────────────
@@ -461,11 +465,6 @@ fn try_run(src: &str, step_cap: u64, expected_live: usize) -> Outcome {
     try_run_checked(src, step_cap, expected_live, false)
 }
 
-// heap_check=true turns on the per-op tag sweep: after every instruction every
-// handle-tagged register and cell slot must point to a live cell. A UAF / stale
-// handle surfaces as a RunErr at the op that created the dangling tag, not as a
-// downstream crash. This is the net that lets us refactor codegen/VM (perf) and
-// still catch any rc/region/tag regression on a valid program.
 fn try_run_checked(src: &str, step_cap: u64, expected_live: usize, heap_check: bool) -> Outcome {
     let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let ast = p.parse_program();
