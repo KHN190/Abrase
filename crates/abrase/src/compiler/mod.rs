@@ -886,6 +886,18 @@ impl Compiler {
             Err(m) => bail!(ast::Span::new(0, 0), m),
         };
         self.emit(OpCode::Alloc(table, table_size));
+        let port_reg = match self.alloc_register() {
+            Ok(r) => r,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        let port_val = ((crate::bytecode::MODULE_ID as i64) << 8)
+            | (crate::bytecode::MODULE_PORT_TABLE as i64);
+        let port_idx = match self.add_constant(Value::from_int(port_val)) {
+            Ok(i) => i,
+            Err(m) => bail!(ast::Span::new(0, 0), m),
+        };
+        self.emit(OpCode::PushConst(port_reg, port_idx));
+        self.emit(OpCode::Deo(table, port_reg));
         let saved_init_module = std::mem::take(&mut self.current_fn_module);
         for (i, (mod_path, value)) in static_values.iter().enumerate() {
             let off = i as u16;
@@ -899,19 +911,6 @@ impl Compiler {
             self.restore_register_high_water(mark);
         }
         self.current_fn_module = saved_init_module;
-        // Publish: Deo(table -> MODULE_ID:MODULE_PORT_TABLE).
-        let port_reg = match self.alloc_register() {
-            Ok(r) => r,
-            Err(m) => bail!(ast::Span::new(0, 0), m),
-        };
-        let port_val = ((crate::bytecode::MODULE_ID as i64) << 8)
-            | (crate::bytecode::MODULE_PORT_TABLE as i64);
-        let port_idx = match self.add_constant(Value::from_int(port_val)) {
-            Ok(i) => i,
-            Err(m) => bail!(ast::Span::new(0, 0), m),
-        };
-        self.emit(OpCode::PushConst(port_reg, port_idx));
-        self.emit(OpCode::Deo(table, port_reg));
         // Return Unit (a non-handle scalar; the result is discarded).
         let unit = match self.alloc_register() {
             Ok(r) => r,

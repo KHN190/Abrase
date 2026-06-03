@@ -136,6 +136,20 @@ fn test_static_init_call() {
     assert_eq!(v, Value::from_int(330));
 }
 
+const STATIC_READS_EARLIER_STATIC: &str = r#"
+static B: Int = 7
+fn build_a() -> Int { B + 1 }
+static A: Int = build_a()
+fn main() -> Int { A }
+"#;
+
+#[test]
+fn test_static_initializer_reads_earlier_static() {
+    let v = run_src(STATIC_READS_EARLIER_STATIC)
+        .unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(8));
+}
+
 const STATIC_UPDATE_FRAMES: &str = r#"
 fn build_bh(mh: Int) -> Array<Int> {
     let mut a = [0; 8];
