@@ -159,9 +159,28 @@ fn gen_mixed_fallible_plain_if_tail(r: &mut Rng) -> String {
     )
 }
 
+fn gen_mut_borrow_scalar_var(r: &mut Rng) -> String {
+    let v = r.range(1, 99);
+    format!(
+        "fn bump(p: &mut Int) -> Unit {{ }}\n\
+         fn main() -> Int {{ let mut x = {v}; bump(&mut x); x }}"
+    )
+}
+
+fn gen_mut_borrow_scalar_field(r: &mut Rng) -> String {
+    let v = r.range(1, 99);
+    format!(
+        "type W = {{ n: Int }}\n\
+         fn bump(p: &mut Int) -> Unit {{ }}\n\
+         fn main() -> Int {{ let mut w = W {{ n: {v} }}; bump(&mut w.n); w.n }}"
+    )
+}
+
 const ILLEGAL_GENS: &[(&str, fn(&mut Rng) -> String)] = &[
     ("fallible_no_question",      gen_fallible_call_without_question),
     ("mixed_fallible_if_tail",    gen_mixed_fallible_plain_if_tail),
+    ("mut_borrow_scalar_var",     gen_mut_borrow_scalar_var),
+    ("mut_borrow_scalar_field",   gen_mut_borrow_scalar_field),
     ("shared_escape",            gen_shared_escape),
     ("closure_captures_shared",  gen_closure_captures_shared),
     ("break_outside_loop",       gen_break_outside_loop),
@@ -224,6 +243,32 @@ fn f(c: Bool) -> <exn<Int>> Int { if c { inner() } else { 7 } }
 fn main() -> Int { handle f(true) { return v => v, exn _ => 0 } }
 "#;
     assert!(is_rejected(src), "mixed fallible/plain `if` branches in a fallible tail must be rejected");
+}
+
+#[test]
+fn rejection_mut_borrow_of_scalar() {
+    let var = r#"
+fn bump(p: &mut Int) -> Unit { }
+fn main() -> Int { let mut x = 1; bump(&mut x); x }
+"#;
+    let field = r#"
+type W = { n: Int }
+fn bump(p: &mut Int) -> Unit { }
+fn main() -> Int { let mut w = W { n: 1 }; bump(&mut w.n); w.n }
+"#;
+    assert!(is_rejected(var), "`&mut` of a scalar variable must be rejected (no stable address)");
+    assert!(is_rejected(field), "`&mut` of a scalar field must be rejected (no stable address)");
+}
+
+#[test]
+fn rejection_mut_borrow_field_through_immutable_binding() {
+    let src = r#"
+type S = { n: Int }
+type W = { s: S }
+fn bump(s: &mut S) -> Unit { s.n = s.n + 1 }
+fn main() -> Int { let w = W { s: S { n: 0 } }; bump(&mut w.s); w.s.n }
+"#;
+    assert!(is_rejected(src), "`&mut` projection through an immutable binding must be rejected");
 }
 
 #[test]

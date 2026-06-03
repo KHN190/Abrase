@@ -219,6 +219,27 @@ fn main() -> Int { handle body(true) { return v => v, E.tick _ => resume(7) } }
     assert_eq!(vm.heap_live_count(), 0);
 }
 
+// `&mut` of a record-typed place (field / through a `&mut` param) aliases the
+// field's cell, so a write through the borrow persists in the base.
+#[test]
+fn mut_borrow_of_record_field_writes_through() {
+    let source = r#"
+type S = { n: Int }
+type W = { s: S }
+fn bump(s: &mut S) -> Unit { s.n = s.n + 1 }
+fn via(w: &mut W) -> Unit { bump(&mut w.s) }
+fn main() -> Int {
+  let mut w = W { s: S { n: 41 } };
+  via(&mut w);
+  bump(&mut w.s);
+  w.s.n
+}
+"#;
+    let (v, vm) = run_src_full(source).unwrap_or_else(|e| panic!("{}", e));
+    assert_eq!(v, Value::from_int(43));
+    assert_eq!(vm.heap_live_count(), 0);
+}
+
 #[test]
 fn throw_unwind_reclaims_owned_value_live_at_throw() {
     let source = r#"
@@ -1050,10 +1071,6 @@ fn cart_main_admits_runtime_provided_effects() {
 
 #[test]
 fn cart_main_admits_host_registered_graphics_capability() {
-    // The compute core does not provide Graphics; a graphics-capable host adds it
-    // by registering a draw native whose effect is <Graphics>. Then @cart main may
-    // declare and leak Graphics. Proves capabilities are derived dynamically from
-    // registered natives, not a hardcoded whitelist.
     use abrase::ast::EffectItem;
     use abrase::ty::Type as TyType;
     let src = r#"

@@ -701,7 +701,27 @@ fn main() -> Int {{
 
 type Gen = fn(&mut Rng) -> (String, i64);
 type MMGen = fn(&mut Rng) -> (String, String, i64);
+fn gen_mut_borrow_field_writethrough(rng: &mut Rng) -> (String, i64) {
+    let n = rng.range(0, 50);
+    let k = rng.range(1, 6);
+    let expected = n + k;
+    let src = format!(r#"
+type S = {{ n: Int }}
+type W = {{ s: S }}
+fn bump(s: &mut S) -> Unit {{ s.n = s.n + 1 }}
+fn via(w: &mut W) -> Unit {{ bump(&mut w.s) }}
+fn main() -> Int {{
+  let mut w = W {{ s: S {{ n: {n} }} }};
+  let mut i = 0;
+  while i < {k} {{ via(&mut w); i = i + 1 }}
+  w.s.n
+}}
+"#);
+    (src, expected)
+}
+
 const SINGLE_GENS: &[(&str, Gen)] = &[
+    ("mut_borrow_field_writethrough", gen_mut_borrow_field_writethrough),
     ("int_arith",           gen_int_arith),
     ("float_arith",         gen_float_arith),
     ("int_match",           gen_int_match),
