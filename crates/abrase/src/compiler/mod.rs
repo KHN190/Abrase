@@ -194,7 +194,7 @@ impl Compiler {
             copy_coalesce: true,
             copy_prop: true,
             typed_ld: true,
-            tail_resume: false,
+            tail_resume: true,
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),

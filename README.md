@@ -56,7 +56,7 @@ fn main() -> Int {
 
 ## Benchmarks
 
-Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x faster.
+Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x faster. See [`Wiki / Optimizations`](./wiki/12-Optimizations.md).
 
 Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine).
 
