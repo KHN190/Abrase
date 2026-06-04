@@ -10,6 +10,8 @@ pub mod debug;
 pub mod liveness;
 pub mod licm;
 pub mod builtins;
+pub mod inline;
+pub mod dataflow;
 
 use crate::ast;
 use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module};
@@ -104,6 +106,7 @@ pub struct Compiler {
     pub(super) int32_mode: bool,
     pub(super) no_built_in: bool,
     pub(super) drop_elision: bool,
+    pub(super) inline: bool,
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
@@ -181,6 +184,7 @@ impl Compiler {
             int32_mode: false,
             no_built_in: false,
             drop_elision: true,
+            inline: false,
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
@@ -227,6 +231,11 @@ impl Compiler {
 
     pub fn with_drop_elision(mut self, on: bool) -> Self {
         self.drop_elision = on;
+        self
+    }
+
+    pub fn with_inline(mut self, on: bool) -> Self {
+        self.inline = on;
         self
     }
 
@@ -373,6 +382,7 @@ impl Compiler {
         self.run_typeck(ast)?;
         let decls_with_impls = self.run_impl_lift(ast)?;
         let owned = self.run_mono(decls_with_impls)?;
+        let owned = if self.inline { inline::inline_leaf_fns(owned) } else { owned };
         let decls_with_closures = self.run_closure_lift(&owned);
         let handler_synthetic_fns = self.run_handler_lift(&decls_with_closures);
         let ast: &[ast::Decl] = &decls_with_closures;

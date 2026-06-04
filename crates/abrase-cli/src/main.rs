@@ -139,6 +139,7 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
         .with_debug(codegen_debug)
         .with_int32_mode(int32)
         .with_drop_elision(!std::env::var("ABRASE_NO_ELISION").is_ok())
+        .with_inline(std::env::var("ABRASE_INLINE").is_ok())
         .with_no_built_in(no_built_in);
     let module = match compiler.compile_module(ast) {
         Ok(m) => m,
@@ -316,7 +317,8 @@ fn explain_chain(
     println!("\n=== bytecode ===");
     let origins = fn_origins(program);
     let mut compiler = Compiler::new().with_source(source.to_string())
-        .with_drop_elision(!std::env::var("ABRASE_NO_ELISION").is_ok());
+        .with_drop_elision(!std::env::var("ABRASE_NO_ELISION").is_ok())
+        .with_inline(std::env::var("ABRASE_INLINE").is_ok());
     let module = match compiler.compile_module(ast) {
         Ok(m) => m,
         Err(errs) => {
