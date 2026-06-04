@@ -9,7 +9,6 @@
 
 use crate::bytecode::{OpCode, Register};
 
-// Registers are 0..FRAME_REGS (128) → a u128 bitset.
 type RegSet = u128;
 
 #[inline]
@@ -110,12 +109,8 @@ pub fn is_last_use(live_out: &[RegSet], pc: usize, r: Register) -> bool {
     (live_out[pc] & bit(r)) == 0
 }
 
-// ── copy coalescing ──────────────────────────────────────────────────────────
-// Fuse `producer(dest=s); Copy(d, s)` into `producer(dest=d)` when s is dead
-// after the Copy and the Copy is not a branch target (so the producer is its
-// only predecessor). Deleting the Copy shifts pcs, so every Jmp/Jz/Jnz offset
-// is recomputed against the old→new index map. Runs to fixpoint (chains fuse
-// over successive rounds). Returns the number of fused copies.
+// ── copy coalescing: fuse `producer(dest=s); Copy(d,s)` → `producer(dest=d)`
+// when s dies at the Copy and the Copy isn't a branch target; offsets remapped.
 
 fn set_dest(op: &mut OpCode, d: Register) -> bool {
     use OpCode::*;
@@ -128,8 +123,6 @@ fn set_dest(op: &mut OpCode, d: Register) -> bool {
         | PushConst(x,_) | Copy(x,_) | Move(x,_)
         | Ld(x,_,_) | LdIdx(x,_,_) | Alloc(x,_)
         | Call(x,_) | CallReg(x,_) => { *x = d; true }
-        // Raise/Resume/Handle/Dei: dest is entangled with runtime machinery —
-        // never redirect.
         _ => false,
     }
 }
@@ -153,10 +146,7 @@ fn branch_targets(code: &[OpCode]) -> Vec<bool> {
     t
 }
 
-// `reg_count`: the caller's register-window size. Copies whose dest is an
-// arg-staging slot (>= reg_count, written by finalize_arg_patches into the
-// callee window) are never fused — that region is ABI-special, and a Call
-// producer redirected there trips do_call's dest-window check.
+// Dests >= reg_count are arg-staging slots (callee-window ABI) — never fused.
 pub fn coalesce_copies(code: &mut Vec<OpCode>, reg_count: usize) -> usize {
     use OpCode::*;
     let mut fused = 0usize;
@@ -193,5 +183,125 @@ pub fn coalesce_copies(code: &mut Vec<OpCode>, reg_count: usize) -> usize {
         }
         code.remove(k);
         fused += 1;
+    }
+}
+
+// ── copy propagation: after scalar Copy(d,s), pure reads of d become s; dead
+// copies deleted. Handle regs untouched (rc); maps die at targets/redef/takes.
+
+fn may_handle_regs(code: &[OpCode], handle_param_mask: u128) -> u128 {
+    use OpCode::*;
+    let mut m = handle_param_mask;
+    loop {
+        let prev = m;
+        for op in code {
+            match op {
+                Ld(d,_,_) | LdIdx(d,_,_) | Alloc(d,_) | Call(d,_) | CallReg(d,_)
+                | Dei(d,_) | Resume(d,_) | Handle(d,_) | Raise(d,_,_) => m |= bit(*d),
+                Copy(d,s) | Move(d,s) if (m & bit(*s)) != 0 => m |= bit(*d),
+                _ => {}
+            }
+        }
+        if m == prev { return m; }
+    }
+}
+
+// Pure reads only — takes/Drop would destroy the live root if re-targeted.
+// Exception: Move with f(s)==d = round-trip collapse → deletable self-move.
+fn map_sources(op: &mut OpCode, f: impl Fn(Register) -> Register) {
+    use OpCode::*;
+    match op {
+        Add(_,a,b) | Sub(_,a,b) | Mul(_,a,b) | Div(_,a,b) | Mod(_,a,b)
+        | FAdd(_,a,b) | FSub(_,a,b) | FMul(_,a,b) | FDiv(_,a,b) | FLt(_,a,b) | FEq(_,a,b)
+        | Eq(_,a,b) | Neq(_,a,b) | Lt(_,a,b) | Gt(_,a,b) | Lte(_,a,b) | Gte(_,a,b)
+        | And(_,a,b) | Or(_,a,b) | Xor(_,a,b) | Shl(_,a,b) | Shr(_,a,b) => { *a = f(*a); *b = f(*b); }
+        LdIdx(_,a,b) => { *a = f(*a); *b = f(*b); }
+        Neg(_,a) | FNeg(_,a) | Copy(_,a) | AddImm(_,a,_) | SubImm(_,a,_)
+        | Ld(_,a,_) => *a = f(*a),
+        Move(d,s) => { if f(*s) == *d { *s = f(*s); } }
+        Jz(s,_) | Jnz(s,_) => *s = f(*s),
+        _ => {}
+    }
+}
+
+// Delete `dead` (sorted, deduped) indices from code, remapping branch offsets.
+fn delete_ops(code: &mut Vec<OpCode>, dead: &[usize]) {
+    use OpCode::*;
+    if dead.is_empty() { return; }
+    let shift = |x: usize| x - dead.iter().take_while(|&&k| k < x).count();
+    for j in 0..code.len() {
+        if dead.binary_search(&j).is_ok() { continue; }
+        let off = match &code[j] { Jmp(o) | Jz(_, o) | Jnz(_, o) => *o, _ => continue };
+        let old_t = (j as isize + 1 + off as isize) as usize;
+        let new_off = (shift(old_t) as isize) - (shift(j) as isize + 1);
+        let new_off = i16::try_from(new_off).expect("delete_ops: offset shrank, must fit");
+        match &mut code[j] {
+            Jmp(o) | Jz(_, o) | Jnz(_, o) => *o = new_off,
+            _ => unreachable!(),
+        }
+    }
+    for &k in dead.iter().rev() { code.remove(k); }
+}
+
+// Registers read-and-nulled by this op; any mapping involving them goes stale.
+fn op_takes(op: &OpCode, out: &mut Vec<Register>) {
+    use OpCode::*;
+    match op {
+        Move(_, s) | St(s, _, _) | StIdx(s, _, _) | Drop(s) | Ret(s)
+        | Resume(_, s) | Deo(s, _) | Handle(s, _) => out.push(*s),
+        Raise(_, k, a) => { out.push(*k); out.push(*a); }
+        _ => {}
+    }
+}
+
+pub fn propagate_copies(code: &mut Vec<OpCode>, reg_count: usize, handle_param_mask: u128) -> usize {
+    use OpCode::*;
+    let mut deleted = 0usize;
+    let mut takes: Vec<Register> = Vec::new();
+    loop {
+        let tainted = may_handle_regs(code, handle_param_mask);
+        let targets = branch_targets(code);
+        let mut root: [Option<Register>; 128] = [None; 128];
+        let mut changed = false;
+        for i in 0..code.len() {
+            if targets[i] { root = [None; 128]; }
+            match &code[i] {
+                Raise(..) | Resume(..) | Handle(..) => { root = [None; 128]; }
+                _ => {}
+            }
+            let before = code[i].clone();
+            map_sources(&mut code[i], |r| root[r.0 as usize].unwrap_or(r));
+            if code[i] != before { changed = true; }
+            takes.clear();
+            op_takes(&code[i], &mut takes);
+            for t in &takes {
+                root[t.0 as usize] = None;
+                for slot in root.iter_mut() {
+                    if *slot == Some(*t) { *slot = None; }
+                }
+            }
+            if let Some(d) = op_dest(&code[i]) {
+                for slot in root.iter_mut() {
+                    if *slot == Some(d) { *slot = None; }
+                }
+                root[d.0 as usize] = None;
+                if let Copy(dd, ss) = code[i] {
+                    let clean = (tainted & (bit(dd) | bit(ss))) == 0
+                        && (dd.0 as usize) < reg_count && (ss.0 as usize) < reg_count;
+                    if clean && dd != ss { root[dd.0 as usize] = Some(ss); }
+                }
+            }
+        }
+        let lo = live_out(code);
+        let mut dead: Vec<usize> = Vec::new();
+        for (i, op) in code.iter().enumerate() {
+            let (Copy(d, s) | Move(d, s)) = *op else { continue };
+            if (tainted & (bit(d) | bit(s))) != 0 { continue; }
+            if (d.0 as usize) >= reg_count || (s.0 as usize) >= reg_count { continue; }
+            if d == s || (lo[i] & bit(d)) == 0 { dead.push(i); }
+        }
+        if dead.is_empty() && !changed { return deleted; }
+        deleted += dead.len();
+        delete_ops(code, &dead);
     }
 }

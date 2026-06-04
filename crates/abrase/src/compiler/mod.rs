@@ -108,6 +108,7 @@ pub struct Compiler {
     pub(super) drop_elision: bool,
     pub(super) inline: bool,
     pub(super) copy_coalesce: bool,
+    pub(super) copy_prop: bool,
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
@@ -187,6 +188,7 @@ impl Compiler {
             drop_elision: true,
             inline: true,
             copy_coalesce: true,
+            copy_prop: false,
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
@@ -243,6 +245,11 @@ impl Compiler {
 
     pub fn with_copy_coalesce(mut self, on: bool) -> Self {
         self.copy_coalesce = on;
+        self
+    }
+
+    pub fn with_copy_prop(mut self, on: bool) -> Self {
+        self.copy_prop = on;
         self
     }
 
@@ -759,6 +766,7 @@ impl Compiler {
         // Params layer ensures param regs are Dropped on exit (prevents handle leaks).
         self.block_locals_stack.push(Vec::new());
 
+        let mut handle_param_mask: u128 = 0;
         for param in &fn_decl.params {
             if let ast::Param::Named { pattern, ty } = param {
                 let reg = match self.alloc_register() {
@@ -773,6 +781,7 @@ impl Compiler {
                     }
                 };
                 let is_h = self.binding_is_handle(Some(ty));
+                if is_h { handle_param_mask |= 1u128 << reg.0; }
                 if let Some(top) = self.block_locals_stack.last_mut() {
                     top.push((reg, is_h));
                 }
@@ -845,6 +854,7 @@ impl Compiler {
 
         self.peephole_copy_drop();
         if self.copy_coalesce { dataflow::coalesce_copies(&mut self.code, self.max_reg as usize); }
+        if self.copy_prop { dataflow::propagate_copies(&mut self.code, self.max_reg as usize, handle_param_mask); }
 
         let reg_count = self.max_reg as usize;
         let taken_constants = std::mem::take(&mut self.constants);

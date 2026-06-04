@@ -408,3 +408,292 @@ fn report_register_reuse_ceiling() {
         }
     }
 }
+
+#[test]
+#[ignore = "measurement probe: run with -- --ignored --nocapture"]
+fn report_cmd_elimination_ceiling() {
+    use abrase::bytecode::{Chunk, OpCode};
+    use abrase::compiler::Compiler;
+    use abrase::lexer::Lexer;
+    use abrase::parser::Parser;
+
+    fn handle_producing_dest(op: &OpCode) -> Option<abrase::bytecode::Register> {
+        use OpCode::*;
+        match op {
+            Ld(d,_,_) | LdIdx(d,_,_) | Alloc(d,_) | Call(d,_) | CallReg(d,_)
+            | Dei(d,_) | Resume(d,_) | Handle(d,_) | Raise(d,_,_) => Some(*d),
+            _ => None,
+        }
+    }
+
+    for name in ["nqueens", "mandelbrot", "ackermann", "merge_sort", "coin_change", "stress_dispatch"] {
+        let path = format!("{}/../../examples/{}.abe", env!("CARGO_MANIFEST_DIR"), name);
+        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
+        let ast = p.parse_program();
+        let mut c = Compiler::new().with_source(src);
+        let Ok(module) = c.compile_module(&ast) else { continue };
+        let (mut abi_mv, mut noop_drop, mut dead_src_copy, mut real_cmd, mut total) =
+            (0usize, 0usize, 0usize, 0usize, 0usize);
+        for ch in &module.functions {
+            let Chunk::Bytecode(bc) = ch else { continue };
+            if bc.code.is_empty() { continue; }
+            let lo = live_out(&bc.code);
+            let mut may_handle = vec![false; 256];
+            for op in &bc.code {
+                if let Some(d) = handle_producing_dest(op) {
+                    if (d.0 as usize) < 256 { may_handle[d.0 as usize] = true; }
+                }
+            }
+            for (pc, op) in bc.code.iter().enumerate() {
+                total += 1;
+                match op {
+                    OpCode::Move(d, _) | OpCode::Copy(d, _) if (d.0 as usize) >= bc.reg_count => abi_mv += 1,
+                    OpCode::Drop(r) if !may_handle[r.0 as usize] => noop_drop += 1,
+                    OpCode::Copy(_, s) | OpCode::Move(_, s) if !live_after(&lo, pc, s.0) => dead_src_copy += 1,
+                    OpCode::Copy(..) | OpCode::Move(..) | OpCode::Drop(..) => real_cmd += 1,
+                    _ => { total -= 1; }
+                }
+            }
+        }
+        println!("{:<16} cmd_static={:<4} abi_staging={:<4} noop_drop={:<4} dead_src_cm={:<4} rest={}",
+            name, total, abi_mv, noop_drop, dead_src_copy, real_cmd);
+    }
+}
+
+// forward copy propagation (propagate_copies)
+// Scalar-only: regs that may hold handles (handle-producing dests, handle params,
+// or transitively copied from one) are never rewritten or deleted.
+
+use abrase::compiler::dataflow::propagate_copies;
+
+#[test]
+fn propagates_operand_staging_copy_and_deletes_it() {
+    // r2 = copy r0; r3 = r2 > r1  =>  r3 = r0 > r1
+    let mut code = vec![
+        Copy(R(2), R(0)),
+        Gt(R(3), R(2), R(1)),
+        Ret(R(3)),
+    ];
+    let n = propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, vec![Gt(R(3), R(0), R(1)), Ret(R(3))]);
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn roundtrip_copy_chain_collapses_to_nothing() {
+    // r2 = copy r0; ...; r0 = move r2 with r0 untouched between => both vanish
+    let mut code = vec![
+        Copy(R(2), R(0)),
+        Add(R(3), R(1), R(1)),
+        Move(R(0), R(2)),
+        Ret(R(0)),
+    ];
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, vec![Add(R(3), R(1), R(1)), Ret(R(0))]);
+}
+
+#[test]
+fn source_redefinition_blocks_propagation() {
+    // r2 = copy r0; r0 = const; r3 = r2 + r2 — r2 must NOT become r0
+    let mut code = vec![
+        Copy(R(2), R(0)),
+        PushConst(R(0), 0),
+        Add(R(3), R(2), R(2)),
+        Ret(R(3)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, orig);
+}
+
+#[test]
+fn dest_redefinition_ends_mapping() {
+    // r2 = copy r0; r2 = const; r3 = r2 + r2 — uses of the NEW r2 stay r2,
+    // and the now-dead Copy is deleted.
+    let mut code = vec![
+        Copy(R(2), R(0)),
+        PushConst(R(2), 0),
+        Add(R(3), R(2), R(2)),
+        Ret(R(3)),
+    ];
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, vec![PushConst(R(2), 0), Add(R(3), R(2), R(2)), Ret(R(3))]);
+}
+
+#[test]
+fn branch_target_clears_mappings() {
+    // The Add is a branch target: a path exists where the Copy never ran.
+    let mut code = vec![
+        Jz(R(1), 1),
+        Copy(R(2), R(0)),
+        Add(R(3), R(2), R(2)),
+        Ret(R(3)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, orig);
+}
+
+#[test]
+fn handle_regs_are_never_touched() {
+    // r4 = Ld(...) is handle-producing; copies of it must survive untouched,
+    // and a handle param (bit 0 set) blocks propagation from r0 too.
+    let mut code = vec![
+        Ld(R(4), R(1), 0),
+        Copy(R(2), R(4)),
+        Copy(R(3), R(0)),
+        St(R(2), R(5), 0),
+        St(R(3), R(5), 1),
+        Ret(R(5)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 128, 0b1); // param r0 may hold a handle
+    assert_eq!(code, orig);
+}
+
+#[test]
+fn transitive_handleness_blocks_chain() {
+    // r2 copies a handle reg; r3 copies r2 — r3 is transitively handle-tainted.
+    let mut code = vec![
+        Ld(R(2), R(0), 0),
+        Copy(R(3), R(2)),
+        Copy(R(4), R(3)),
+        Ret(R(4)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 128, 0b1);
+    assert_eq!(code, orig);
+}
+
+#[test]
+fn live_dest_keeps_copy_but_uses_still_propagate() {
+    // r2 stays live past the rewritten use (Drop counts as a use) — Copy kept.
+    let mut code = vec![
+        Copy(R(2), R(0)),
+        Gt(R(3), R(2), R(1)),
+        Drop(R(2)),
+        Ret(R(3)),
+    ];
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, vec![
+        Copy(R(2), R(0)),
+        Gt(R(3), R(0), R(1)),
+        Drop(R(2)),
+        Ret(R(3)),
+    ]);
+}
+
+#[test]
+fn deletion_remaps_branch_offsets() {
+    // Back-edge targets the Copy itself (whole loop body in one block), so the
+    // mapping is re-established every iteration; deleting the Copy shifts the
+    // loop body and the back-jump must follow.
+    let mut code = vec![
+        PushConst(R(1), 0),
+        Copy(R(2), R(0)),
+        Gt(R(3), R(2), R(1)),
+        Jz(R(3), 1),
+        Jmp(-4),
+        Ret(R(1)),
+    ];
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, vec![
+        PushConst(R(1), 0),
+        Gt(R(3), R(0), R(1)),
+        Jz(R(3), 1),
+        Jmp(-3),
+        Ret(R(1)),
+    ]);
+}
+
+#[test]
+fn cross_block_propagation_is_refused() {
+    // Back-edge lands AFTER the Copy: on the looping path the Copy did not
+    // re-run, so block-local propagation must refuse the rewrite.
+    let mut code = vec![
+        PushConst(R(1), 0),
+        Copy(R(2), R(0)),
+        Gt(R(3), R(2), R(1)),
+        Jz(R(3), 1),
+        Jmp(-3),
+        Ret(R(1)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, orig);
+}
+
+#[test]
+fn destructive_readers_are_never_retargeted() {
+    // St/Ret take() their source (nulling the register) — rewriting them to the
+    // root would destroy a still-live value. They must keep reading the copy.
+    let mut code = vec![
+        Copy(R(2), R(0)),
+        St(R(2), R(1), 0),
+        Add(R(3), R(0), R(0)),
+        Ret(R(3)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 128, 0b10);
+    assert_eq!(code, orig);
+}
+
+#[test]
+fn move_never_establishes_a_mapping() {
+    // Move takes its source (nulls the register) — mapping d→s after Move(d,s)
+    // would redirect later reads of d to a nulled register.
+    let mut code = vec![
+        Move(R(2), R(0)),
+        Add(R(3), R(2), R(2)),
+        Ret(R(3)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, orig);
+}
+
+#[test]
+fn destructive_read_of_root_kills_mapping() {
+    // After Copy(r2, r0), Move(r4, r0) nulls r0 — the r2→r0 mapping is stale
+    // and the Add must keep reading r2.
+    let mut code = vec![
+        Copy(R(2), R(0)),
+        Move(R(4), R(0)),
+        Add(R(3), R(2), R(2)),
+        St(R(3), R(5), 0),
+        Drop(R(2)),
+        Ret(R(4)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, orig);
+}
+
+#[test]
+fn arg_staging_slots_are_never_touched() {
+    // dest/src >= reg_count is callee-window ABI staging — no mapping, no deletion.
+    let mut code = vec![
+        Copy(R(11), R(0)),
+        Call(R(1), 7),
+        Ret(R(1)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 11, 0);
+    assert_eq!(code, orig);
+}
+
+#[test]
+fn suspension_ops_clear_mappings() {
+    // Raise suspends the frame; mappings must not survive across it.
+    let mut code = vec![
+        Copy(R(2), R(0)),
+        Raise(R(3), R(4), R(5)),
+        Add(R(6), R(2), R(2)),
+        Drop(R(2)),
+        Ret(R(6)),
+    ];
+    let orig = code.clone();
+    propagate_copies(&mut code, 128, 0);
+    assert_eq!(code, orig);
+}

@@ -141,6 +141,7 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
         .with_drop_elision(!std::env::var("ABRASE_NO_ELISION").is_ok())
         .with_inline(!std::env::var("ABRASE_NO_INLINE").is_ok())
         .with_copy_coalesce(!std::env::var("ABRASE_NO_COALESCE").is_ok())
+        .with_copy_prop(std::env::var("ABRASE_COPY_PROP").is_ok())
         .with_no_built_in(no_built_in);
     let module = match compiler.compile_module(ast) {
         Ok(m) => m,
@@ -320,7 +321,8 @@ fn explain_chain(
     let mut compiler = Compiler::new().with_source(source.to_string())
         .with_drop_elision(!std::env::var("ABRASE_NO_ELISION").is_ok())
         .with_inline(!std::env::var("ABRASE_NO_INLINE").is_ok())
-        .with_copy_coalesce(!std::env::var("ABRASE_NO_COALESCE").is_ok());
+        .with_copy_coalesce(!std::env::var("ABRASE_NO_COALESCE").is_ok())
+        .with_copy_prop(std::env::var("ABRASE_COPY_PROP").is_ok());
     let module = match compiler.compile_module(ast) {
         Ok(m) => m,
         Err(errs) => {
