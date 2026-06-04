@@ -377,3 +377,34 @@ fn coalesce_never_fuses_into_arg_staging_slot() {
     let mut code = code0.clone();
     assert_eq!(coalesce_copies(&mut code, 64), 1);
 }
+
+#[test]
+#[ignore = "measurement probe: run with -- --ignored --nocapture"]
+fn report_register_reuse_ceiling() {
+    use abrase::bytecode::Chunk;
+    use abrase::compiler::Compiler;
+    use abrase::lexer::Lexer;
+    use abrase::parser::Parser;
+
+    for name in ["nqueens", "mandelbrot", "ackermann", "merge_sort", "coin_change", "stress_dispatch", "primes_gen"] {
+        let path = format!("{}/../../examples/{}.abe", env!("CARGO_MANIFEST_DIR"), name);
+        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
+        let ast = p.parse_program();
+        let mut c = Compiler::new().with_source(src);
+        let Ok(module) = c.compile_module(&ast) else { continue };
+        println!("== {}", name);
+        for (fid, ch) in module.functions.iter().enumerate() {
+            if let Chunk::Bytecode(bc) = ch {
+                if bc.code.is_empty() { continue; }
+                let lo = live_out(&bc.code);
+                let max_live = lo.iter().map(|w| w.count_ones() as usize).max().unwrap_or(0);
+                let max_live = max_live.max(bc.param_count);
+                if bc.reg_count > 2 {
+                    println!("  fn#{:<3} reg_count={:<3} max_live={:<3} slack={}",
+                        fid, bc.reg_count, max_live, bc.reg_count.saturating_sub(max_live));
+                }
+            }
+        }
+    }
+}
