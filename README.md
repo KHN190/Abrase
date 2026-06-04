@@ -7,14 +7,14 @@
 
 <img src="./abrase.png" alt="Abrase" width="100" align="right">
 
-Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language made for LLM & efficiency. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
+Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime. The interpreter can be added to any Rust application and compile to Rust (the latter is WIP).
 
 It features:
 
 * Strong typed
 * Algebraic effects
 * Region memory lifecycle design - no GC, leak free
-* Myriad runtime — computation core, or OS embedded
+* Myriad runtime — computation core
 * Linter & Debugger
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
