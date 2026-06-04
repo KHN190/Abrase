@@ -254,12 +254,15 @@ fn op_takes(op: &OpCode, out: &mut Vec<Register>) {
     }
 }
 
-pub fn propagate_copies(code: &mut Vec<OpCode>, reg_count: usize, handle_param_mask: u128) -> usize {
+// `taint_hint`: compiler's emission-time over-approximation of handle regs
+// (ever_handle | params). Final taint = shape-inference ∩ hint — both
+// over-approximate, so the intersection still does.
+pub fn propagate_copies(code: &mut Vec<OpCode>, reg_count: usize, handle_param_mask: u128, taint_hint: u128) -> usize {
     use OpCode::*;
     let mut deleted = 0usize;
     let mut takes: Vec<Register> = Vec::new();
     loop {
-        let tainted = may_handle_regs(code, handle_param_mask);
+        let tainted = may_handle_regs(code, handle_param_mask) & (taint_hint | handle_param_mask);
         let targets = branch_targets(code);
         let mut root: [Option<Register>; 128] = [None; 128];
         let mut changed = false;

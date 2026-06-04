@@ -381,7 +381,7 @@ fn propagates_operand_staging_copy_and_deletes_it() {
         Gt(R(3), R(2), R(1)),
         Ret(R(3)),
     ];
-    let n = propagate_copies(&mut code, 128, 0);
+    let n = propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, vec![Gt(R(3), R(0), R(1)), Ret(R(3))]);
     assert_eq!(n, 1);
 }
@@ -395,7 +395,7 @@ fn roundtrip_copy_chain_collapses_to_nothing() {
         Move(R(0), R(2)),
         Ret(R(0)),
     ];
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, vec![Add(R(3), R(1), R(1)), Ret(R(0))]);
 }
 
@@ -409,7 +409,7 @@ fn source_redefinition_blocks_propagation() {
         Ret(R(3)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, orig);
 }
 
@@ -423,7 +423,7 @@ fn dest_redefinition_ends_mapping() {
         Add(R(3), R(2), R(2)),
         Ret(R(3)),
     ];
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, vec![PushConst(R(2), 0), Add(R(3), R(2), R(2)), Ret(R(3))]);
 }
 
@@ -437,7 +437,7 @@ fn branch_target_clears_mappings() {
         Ret(R(3)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, orig);
 }
 
@@ -454,7 +454,7 @@ fn handle_regs_are_never_touched() {
         Ret(R(5)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0b1); // param r0 may hold a handle
+    propagate_copies(&mut code, 128, 0b1, u128::MAX); // param r0 may hold a handle
     assert_eq!(code, orig);
 }
 
@@ -468,7 +468,7 @@ fn transitive_handleness_blocks_chain() {
         Ret(R(4)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0b1);
+    propagate_copies(&mut code, 128, 0b1, u128::MAX);
     assert_eq!(code, orig);
 }
 
@@ -481,7 +481,7 @@ fn live_dest_keeps_copy_but_uses_still_propagate() {
         Drop(R(2)),
         Ret(R(3)),
     ];
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, vec![
         Copy(R(2), R(0)),
         Gt(R(3), R(0), R(1)),
@@ -503,7 +503,7 @@ fn deletion_remaps_branch_offsets() {
         Jmp(-4),
         Ret(R(1)),
     ];
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, vec![
         PushConst(R(1), 0),
         Gt(R(3), R(0), R(1)),
@@ -526,7 +526,7 @@ fn cross_block_propagation_is_refused() {
         Ret(R(1)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, orig);
 }
 
@@ -541,7 +541,7 @@ fn destructive_readers_are_never_retargeted() {
         Ret(R(3)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0b10);
+    propagate_copies(&mut code, 128, 0b10, u128::MAX);
     assert_eq!(code, orig);
 }
 
@@ -555,7 +555,7 @@ fn move_never_establishes_a_mapping() {
         Ret(R(3)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, orig);
 }
 
@@ -572,7 +572,7 @@ fn destructive_read_of_root_kills_mapping() {
         Ret(R(4)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, orig);
 }
 
@@ -585,7 +585,7 @@ fn arg_staging_slots_are_never_touched() {
         Ret(R(1)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 11, 0);
+    propagate_copies(&mut code, 11, 0, u128::MAX);
     assert_eq!(code, orig);
 }
 
@@ -600,6 +600,6 @@ fn suspension_ops_clear_mappings() {
         Ret(R(6)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0);
+    propagate_copies(&mut code, 128, 0, u128::MAX);
     assert_eq!(code, orig);
 }

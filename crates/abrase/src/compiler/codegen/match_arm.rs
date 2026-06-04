@@ -257,6 +257,7 @@ impl Compiler {
     ) -> Result<(), String> {
         let tag_reg = self.alloc_register()?;
         self.emit(OpCode::Ld(tag_reg, scrutinee_reg, 0));
+        if self.typed_ld { self.set_reg_handle(tag_reg, false); }
         let expected = self.alloc_register()?;
         let ti = self.add_constant(Value::from_int(expected_tag as i64))?;
         self.emit(OpCode::PushConst(expected, ti));
@@ -292,6 +293,7 @@ impl Compiler {
 
         let tag_reg = self.alloc_register()?;
         self.emit(OpCode::Ld(tag_reg, scrutinee_reg, 0));
+        if self.typed_ld { self.set_reg_handle(tag_reg, false); }
         let expected_tag = self.alloc_register()?;
         let ti = self.add_constant(Value::from_int(info.tag as i64))?;
         self.emit(OpCode::PushConst(expected_tag, ti));
@@ -306,11 +308,12 @@ impl Compiler {
                 let r = self.alloc_register()?;
                 let offset = super::scaffold::to_u16(i + 1, "Variant pattern arg offset")?;
                 self.emit(OpCode::Ld(r, scrutinee_reg, offset));
-                self.var_to_reg.insert(n.clone(), r);
-                bound_regs.push(r);
                 if let Some(ft) = info.field_types.get(i) {
+                    if self.typed_ld && super::data::type_is_unboxed(ft) { self.set_reg_handle(r, false); }
                     self.var_types.insert(n.clone(), ft.clone());
                 }
+                self.var_to_reg.insert(n.clone(), r);
+                bound_regs.push(r);
             }
         }
 
@@ -352,6 +355,11 @@ impl Compiler {
                     let r = self.alloc_register()?;
                     let offset = super::scaffold::to_u16(idx, "Record pattern field offset")?;
                     self.emit(OpCode::Ld(r, scrutinee_reg, offset));
+                    if self.typed_ld {
+                        if let Some(ft) = field_order.field_types.get(idx) {
+                            if super::data::type_is_unboxed(ft) { self.set_reg_handle(r, false); }
+                        }
+                    }
                     self.var_to_reg.insert(n, r);
                     bound_regs.push(r);
                 }

@@ -51,6 +51,7 @@ pub struct Compiler {
     pub(super) max_reg: u16,
     pub(super) module_table_reg: Option<Register>,
     pub(super) reg_holds_handle: Vec<bool>,
+    pub(super) ever_handle_mask: u128,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
     pub(super) var_bound_at_region: HashMap<String, usize>,
@@ -109,6 +110,7 @@ pub struct Compiler {
     pub(super) inline: bool,
     pub(super) copy_coalesce: bool,
     pub(super) copy_prop: bool,
+    pub(super) typed_ld: bool,
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
@@ -127,6 +129,7 @@ impl Compiler {
             max_reg: 0,
             module_table_reg: None,
             reg_holds_handle: Vec::new(),
+            ever_handle_mask: 0,
             var_to_reg: HashMap::new(),
             var_types: HashMap::new(),
             var_bound_at_region: HashMap::new(),
@@ -189,6 +192,7 @@ impl Compiler {
             inline: true,
             copy_coalesce: true,
             copy_prop: true,
+            typed_ld: true,
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
@@ -250,6 +254,11 @@ impl Compiler {
 
     pub fn with_copy_prop(mut self, on: bool) -> Self {
         self.copy_prop = on;
+        self
+    }
+
+    pub fn with_typed_ld(mut self, on: bool) -> Self {
+        self.typed_ld = on;
         self
     }
 
@@ -715,6 +724,7 @@ impl Compiler {
         let saved_next_reg = self.next_reg;
         let saved_max_reg = self.max_reg;
         let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
+        let saved_ever_handle = std::mem::replace(&mut self.ever_handle_mask, 0);
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
         let saved_var_bound_at_region = std::mem::take(&mut self.var_bound_at_region);
@@ -854,7 +864,10 @@ impl Compiler {
 
         self.peephole_copy_drop();
         if self.copy_coalesce { dataflow::coalesce_copies(&mut self.code, self.max_reg as usize); }
-        if self.copy_prop { dataflow::propagate_copies(&mut self.code, self.max_reg as usize, handle_param_mask); }
+        if self.copy_prop {
+            let hint = self.ever_handle_mask | handle_param_mask;
+            dataflow::propagate_copies(&mut self.code, self.max_reg as usize, handle_param_mask, hint);
+        }
 
         let reg_count = self.max_reg as usize;
         let taken_constants = std::mem::take(&mut self.constants);
@@ -875,6 +888,7 @@ impl Compiler {
         self.next_reg = saved_next_reg;
         self.max_reg = saved_max_reg;
         self.reg_holds_handle = saved_reg_holds_handle;
+        self.ever_handle_mask = saved_ever_handle;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
         self.var_bound_at_region = saved_var_bound_at_region;
@@ -909,6 +923,7 @@ impl Compiler {
         let saved_next_reg = self.next_reg;
         let saved_max_reg = self.max_reg;
         let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
+        let saved_ever_handle = std::mem::replace(&mut self.ever_handle_mask, 0);
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
         let saved_fn_name = std::mem::take(&mut self.current_fn_name);
@@ -988,6 +1003,7 @@ impl Compiler {
         self.next_reg = saved_next_reg;
         self.max_reg = saved_max_reg;
         self.reg_holds_handle = saved_reg_holds_handle;
+        self.ever_handle_mask = saved_ever_handle;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
         self.current_fn_name = saved_fn_name;

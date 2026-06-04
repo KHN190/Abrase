@@ -300,11 +300,16 @@ impl Compiler {
         }
         let base_ty = self.infer_expr_type(base);
         let base_reg = self.compile_expr(base)?;
-        if let Some(ast::Type::Tuple(_)) = base_ty {
+        if let Some(ast::Type::Tuple(ts)) = &base_ty {
             let idx: u16 = field.parse()
                 .map_err(|_| format!("Tuple field must be a non-negative integer, got '{}'", field))?;
             let dest = self.alloc_register()?;
             self.emit(OpCode::Ld(dest, base_reg, idx));
+            if self.typed_ld {
+                if let Some(t) = ts.get(idx as usize) {
+                    if type_is_unboxed(t) { self.set_reg_handle(dest, false); }
+                }
+            }
             return Ok(dest);
         }
         fn unwrap_named(t: ast::Type) -> Option<String> {
@@ -320,8 +325,10 @@ impl Compiler {
             .ok_or_else(|| format!("Unknown record type: {}", type_name))?;
         let idx = layout.offset_of(field)
             .ok_or_else(|| format!("No field '{}' in {}", field, type_name))?;
+        let field_scalar = layout.field_types.get(idx as usize).map(type_is_unboxed).unwrap_or(false);
         let dest = self.alloc_register()?;
         self.emit(OpCode::Ld(dest, base_reg, idx));
+        if self.typed_ld && field_scalar { self.set_reg_handle(dest, false); }
         // Drop the base cell if it was a temporary (not a direct variable binding).
         // Named variables are kept alive by their scope; only anonymous sub-expressions
         // allocate a cell that nobody else owns after the field is extracted.
@@ -353,10 +360,21 @@ impl Compiler {
         base: &ast::Spanned<ast::Expr>,
         index: &ast::Spanned<ast::Expr>,
     ) -> Result<Register, String> {
+        let elem_scalar = {
+            fn elem_of(t: &ast::Type) -> Option<&ast::Type> {
+                match t {
+                    ast::Type::Generic { name, args } if name == "Array" && args.len() == 1 => Some(&args[0]),
+                    ast::Type::Reference { inner, .. } => elem_of(inner),
+                    _ => None,
+                }
+            }
+            self.infer_expr_type(base).as_ref().and_then(elem_of).map(type_is_unboxed).unwrap_or(false)
+        };
         let base_reg = self.compile_expr(base)?;
         let idx_reg = self.compile_expr(index)?;
         let dest = self.alloc_register()?;
         self.emit(OpCode::LdIdx(dest, base_reg, idx_reg));
+        if self.typed_ld && elem_scalar { self.set_reg_handle(dest, false); }
         if !matches!(base.node, ast::Expr::Identifier(_)) {
             self.emit(OpCode::Drop(base_reg));
         }

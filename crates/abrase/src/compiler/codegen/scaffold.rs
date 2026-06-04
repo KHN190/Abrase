@@ -104,6 +104,7 @@ impl Compiler {
             self.reg_holds_handle.resize(i + 1, false);
         }
         self.reg_holds_handle[i] = holds;
+        if holds && i < 128 { self.ever_handle_mask |= 1u128 << i; }
     }
 
     pub(in crate::compiler) fn set_reg_handle(&mut self, reg: Register, holds: bool) {
@@ -112,6 +113,7 @@ impl Compiler {
             self.reg_holds_handle.resize(i + 1, false);
         }
         self.reg_holds_handle[i] = holds;
+        if holds && i < 128 { self.ever_handle_mask |= 1u128 << i; }
     }
 
     pub(in crate::compiler) fn try_redirect_last_dest(&mut self, old: Register, new: Register) -> bool {
@@ -167,6 +169,7 @@ impl Compiler {
         let new_i = new.0 as usize;
         if new_i >= self.reg_holds_handle.len() { self.reg_holds_handle.resize(new_i + 1, false); }
         self.reg_holds_handle[new_i] = true;
+        if new_i < 128 { self.ever_handle_mask |= 1u128 << new_i; }
         true
     }
 
