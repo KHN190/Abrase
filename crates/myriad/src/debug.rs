@@ -5,6 +5,10 @@ pub enum DebugEvent<'a> {
         func: usize,
         pc: usize,
         op: &'a OpCode,
+        base_reg: usize,
+        // The current fn's register window and which of those regs hold handles.
+        window: &'a [u64],
+        handle_mask: u128,
     },
     HandlePush {
         effect_id: u16,
@@ -40,7 +44,7 @@ pub fn render_fn_label(idx: usize, names: &[String]) -> String {
 pub fn stderr_sink() -> DebugSink {
     Box::new(|event, names| {
         match event {
-            DebugEvent::Trace { func, pc, op } => {
+            DebugEvent::Trace { func, pc, op, .. } => {
                 eprintln!("[{}:{}] {:?}", render_fn_label(*func, names), pc, op);
             }
             DebugEvent::HandlePush {

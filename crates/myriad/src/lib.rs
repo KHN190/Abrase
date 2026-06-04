@@ -16,7 +16,7 @@ pub use devices::{Device, DeviceTable};
 pub use memory::Heap;
 pub use region::RegionTable;
 pub use builtins::{NativeCtx, NativeFn, NativeRegistry};
-pub use debug::{DebugEvent, DebugSink};
+pub use debug::{render_fn_label, DebugEvent, DebugSink};
 pub use host::Host;
 
 use frame::Frame;

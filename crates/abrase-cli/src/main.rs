@@ -29,6 +29,7 @@ debug flags (run / load):
     --handlers   handler push / resume / pop events              (stderr)
     --leak       dump every live heap cell after exit            (stderr)
     --debug      alias for --trace --handlers
+    BREAK_AT=<fn>:<pc>  env var: dump the register window at that op (host-side breakpoint)
 
 compile flags (run / disasm / export):
     --root <dir> set module root (import paths resolve from here; default: entry file's dir)
@@ -163,6 +164,9 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
         .with_trace_frames(handlers)
         .with_fn_names(fn_names)
         .with_static_names(static_names);
+    if let Ok(spec) = std::env::var("BREAK_AT") {
+        vm = vm.with_debug_sink(break_at_sink(spec));
+    }
 
     Host::default().install_into(&mut vm);
 
@@ -589,4 +593,35 @@ fn cmd_load(pk_path: &str, trace: bool, handlers: bool, leak: bool) -> ExitCode 
         }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
     }
+}
+
+// BREAK_AT=<fn-name|#id>:<pc> — on the matching trace event, dump the fn's
+// register window with handle annotations. The VM only emits events; all
+// breakpoint logic lives host-side.
+fn break_at_sink(spec: String) -> myriad::DebugSink {
+    let (fn_part, pc_part) = match spec.rsplit_once(':') {
+        Some(p) => p,
+        None => {
+            eprintln!("BREAK_AT: expected <fn>:<pc>, got '{}'", spec);
+            return Box::new(|_, _| {});
+        }
+    };
+    let want_pc: usize = pc_part.parse().unwrap_or(usize::MAX);
+    let fn_part = fn_part.to_string();
+    Box::new(move |event, names| {
+        if let myriad::DebugEvent::Trace { func, pc, op, base_reg, window, handle_mask } = event {
+            if *pc != want_pc { return; }
+            let matched = fn_part.strip_prefix('#')
+                .map(|id| id.parse::<usize>() == Ok(*func))
+                .unwrap_or_else(|| names.get(*func).map_or(false, |n| n == &fn_part));
+            if !matched { return; }
+            eprintln!("[break {}:{}] {:?} (base r{})",
+                myriad::render_fn_label(*func, names), pc, op, base_reg);
+            for (i, raw) in window.iter().enumerate() {
+                let is_h = i < 128 && (handle_mask & (1u128 << i)) != 0;
+                if *raw == polka::HANDLE_NONE && !is_h { continue; }
+                eprintln!("    r{:<3} = {:#018x}{}", i, raw, if is_h { "  (handle)" } else { "" });
+            }
+        }
+    })
 }

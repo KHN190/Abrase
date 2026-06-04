@@ -208,10 +208,22 @@ impl VirtualMachine {
                 let opcode_pc = self.pc;
                 let opcode = unsafe { bc.code.get_unchecked(opcode_pc) };
                 if TRACE {
-                    let event = DebugEvent::Trace {
-                        func: self.current_func, pc: opcode_pc, op: opcode,
-                    };
-                    self.emit_debug(&event);
+                    // take() the sink so the event may borrow self.registers.
+                    if let Some(mut sink) = self.debug_sink.take() {
+                        let base = self.base_reg;
+                        let rc = bc.reg_count.min(128);
+                        let end = (base + rc).min(self.registers.len());
+                        let mut handle_mask: u128 = 0;
+                        for i in 0..end.saturating_sub(base) {
+                            if self.reg_mask_bit(base + i) { handle_mask |= 1u128 << i; }
+                        }
+                        let event = DebugEvent::Trace {
+                            func: self.current_func, pc: opcode_pc, op: opcode,
+                            base_reg: base, window: &self.registers[base..end], handle_mask,
+                        };
+                        sink(&event, &self.fn_names);
+                        self.debug_sink = Some(sink);
+                    }
                 }
                 if PROF {
                     let name = Self::op_name(opcode);
