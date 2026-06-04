@@ -107,6 +107,7 @@ pub struct Compiler {
     pub(super) no_built_in: bool,
     pub(super) drop_elision: bool,
     pub(super) inline: bool,
+    pub(super) copy_coalesce: bool,
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
@@ -184,7 +185,8 @@ impl Compiler {
             int32_mode: false,
             no_built_in: false,
             drop_elision: true,
-            inline: false,
+            inline: true,
+            copy_coalesce: true,
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
@@ -236,6 +238,11 @@ impl Compiler {
 
     pub fn with_inline(mut self, on: bool) -> Self {
         self.inline = on;
+        self
+    }
+
+    pub fn with_copy_coalesce(mut self, on: bool) -> Self {
+        self.copy_coalesce = on;
         self
     }
 
@@ -837,6 +844,7 @@ impl Compiler {
         }
 
         self.peephole_copy_drop();
+        if self.copy_coalesce { dataflow::coalesce_copies(&mut self.code, self.max_reg as usize); }
 
         let reg_count = self.max_reg as usize;
         let taken_constants = std::mem::take(&mut self.constants);

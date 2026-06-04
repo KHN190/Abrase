@@ -10,7 +10,7 @@ fn compile(src: &str) -> Module {
     let ast = parser.parse_program();
     assert!(parser.errors.is_empty(), "{}", parser.pretty_print_errors());
     let mut compiler = Compiler::new().with_source(src.to_string())
-        .with_inline(std::env::var("ABRASE_INLINE").is_ok());
+        .with_inline(!std::env::var("ABRASE_NO_INLINE").is_ok());
     compiler.compile_module(&ast)
         .unwrap_or_else(|_| panic!("{}", compiler.pretty_print_errors()))
 }

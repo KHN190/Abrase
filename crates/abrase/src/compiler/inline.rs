@@ -1,29 +1,42 @@
 // Leaf-fn inlining (AST→AST, pre-codegen). Replaces a call to a small, pure,
-// non-recursive, binding-free leaf fn with `{ let p_i = arg_i; <body> }`, where
-// the body's param identifiers are renamed to fresh names. Codegen then handles
-// the inlined block like any other. Conservative gates keep it sound without a
-// full alpha-renamer: the body introduces no bindings, so renaming params is
-// unambiguous.
+// non-recursive, binding-free leaf fn with `{ let p_i = arg_i; <body> }`. 
 
 use crate::ast::*;
 use std::collections::HashMap;
 
 const MAX_BODY_NODES: usize = 24;
 
+// Identifiers resolve relative to their module (fns, statics, consts, types)
 pub fn inline_leaf_fns(decls: Vec<Decl>) -> Vec<Decl> {
-    let inlinable: HashMap<String, FnDecl> = decls.iter()
-        .filter_map(|d| match d {
-            Decl::Fn(f) if is_inlinable(f) => Some((f.name.clone(), f.clone())),
-            _ => None,
-        })
-        .collect();
-    if inlinable.is_empty() { return decls; }
+    let mut maps: HashMap<Vec<String>, HashMap<String, FnDecl>> = HashMap::new();
+    let mut stack: Vec<Vec<String>> = Vec::new();
+    for d in &decls {
+        match d {
+            Decl::ModEnter(p) => stack.push(p.clone()),
+            Decl::ModExit => { stack.pop(); }
+            Decl::Fn(f) if is_inlinable(f) => {
+                let module = stack.last().cloned().unwrap_or_default();
+                maps.entry(module).or_default().insert(f.name.clone(), f.clone());
+            }
+            _ => {}
+        }
+    }
+    if maps.is_empty() { return decls; }
 
     let mut counter = 0usize;
     let mut out = decls;
+    let mut stack: Vec<Vec<String>> = Vec::new();
     for d in &mut out {
-        if let Decl::Fn(f) = d {
-            inline_block(&mut f.body, &inlinable, &mut counter);
+        match d {
+            Decl::ModEnter(p) => stack.push(p.clone()),
+            Decl::ModExit => { stack.pop(); }
+            Decl::Fn(f) => {
+                let module = stack.last().cloned().unwrap_or_default();
+                if let Some(inl) = maps.get(&module) {
+                    inline_block(&mut f.body, inl, &mut counter);
+                }
+            }
+            _ => {}
         }
     }
     out
@@ -56,6 +69,8 @@ fn check_expr(e: &Spanned<Expr>, self_name: &str, ok: &mut bool, nodes: &mut usi
     *nodes += 1;
     if !*ok { return; }
     match &e.node {
+        Expr::Literal(Literal::StringInterp(parts)) =>
+            *nodes += parts.iter().filter(|p| matches!(p, StringPart::Interp(_))).count(),
         Expr::Literal(_) | Expr::Continue | Expr::Error => {}
         Expr::Identifier(n) => { if n == self_name { *ok = false; } }
         Expr::Binary { left, right, .. } => { check_expr(left, self_name, ok, nodes); check_expr(right, self_name, ok, nodes); }
@@ -174,6 +189,11 @@ fn rename_block(b: &mut Block, m: &HashMap<String, String>) {
 fn rename_expr(e: &mut Spanned<Expr>, m: &HashMap<String, String>) {
     match &mut e.node {
         Expr::Identifier(n) => { if let Some(f) = m.get(n) { *n = f.clone(); } }
+        Expr::Literal(Literal::StringInterp(parts)) => for p in parts {
+            if let StringPart::Interp(path) = p {
+                if let Some(f) = path.first_mut().and_then(|h| m.get(h).cloned()) { path[0] = f; }
+            }
+        },
         Expr::Binary { left, right, .. } => { rename_expr(left, m); rename_expr(right, m); }
         Expr::Unary { right, .. } | Expr::Paren(right) | Expr::Throw(right) | Expr::Question(right) => rename_expr(right, m),
         Expr::Call { callee, args } => { rename_expr(callee, m); for a in args { rename_expr(a, m); } }

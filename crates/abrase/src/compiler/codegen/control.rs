@@ -54,6 +54,7 @@ impl Compiler {
         };
         let _ = alt_reg;
         self.reclaim_temp_regs_above(arm_mark);
+        self.module_table_reg = pre_if_table_reg;
 
         let end_addr = self.code.len();
         self.patch_jmp_at(jmp_idx, end_addr)?;

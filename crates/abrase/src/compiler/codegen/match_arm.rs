@@ -135,6 +135,7 @@ impl Compiler {
             self.reclaim_temp_regs_above(arm_mark);
             if terminal { break; }
         }
+        self.module_table_reg = pre_match_table_reg;
 
         let end_addr = self.code.len();
         for &jmp_idx in &exit_jumps {
