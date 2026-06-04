@@ -188,7 +188,7 @@ impl Compiler {
             drop_elision: true,
             inline: true,
             copy_coalesce: true,
-            copy_prop: false,
+            copy_prop: true,
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
