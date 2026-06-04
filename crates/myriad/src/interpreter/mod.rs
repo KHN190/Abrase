@@ -24,11 +24,18 @@ impl VirtualMachine {
 
     pub fn run_module(&mut self, module: &Module) -> Result<Value, String> {
         let r = self.run_module_inner(module);
-        r.map_err(|e| format!(
-            "[{}:{}] {}",
-            super::debug::render_fn_label(self.current_func, &self.fn_names),
-            self.failing_pc, e,
-        ))
+        r.map_err(|e| {
+            let line = match module.functions.get(self.current_func) {
+                Some(polka::Chunk::Bytecode(bc)) => bc.lines.get(self.failing_pc).copied().unwrap_or(0),
+                _ => 0,
+            };
+            let at = if line > 0 { format!(" @{}", line) } else { String::new() };
+            format!(
+                "[{}:{}{}] {}",
+                super::debug::render_fn_label(self.current_func, &self.fn_names),
+                self.failing_pc, at, e,
+            )
+        })
     }
 
     pub fn call_export(
@@ -222,6 +229,8 @@ impl VirtualMachine {
                         let event = DebugEvent::Trace {
                             func: self.current_func, pc: opcode_pc, op: opcode,
                             base_reg: base, window: &self.registers[base..end], handle_mask,
+                            line: bc.lines.get(opcode_pc).copied().unwrap_or(0),
+                            file: &bc.src_file,
                         };
                         sink(&event, &self.fn_names);
                         self.debug_sink = Some(sink);

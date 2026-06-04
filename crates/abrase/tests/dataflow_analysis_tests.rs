@@ -206,7 +206,7 @@ use abrase::compiler::dataflow::coalesce_copies;
 fn coalesce_basic_pair() {
     // PushConst r7; Copy r1<-r7; Ret r1  →  PushConst r1; Ret r1
     let mut code = vec![PushConst(R(7), 0), Copy(R(1), R(7)), Ret(R(1))];
-    assert_eq!(coalesce_copies(&mut code, 128), 1);
+    assert_eq!(coalesce_copies(&mut code, 128, &mut Vec::new()), 1);
     assert_eq!(code, vec![PushConst(R(1), 0), Ret(R(1))]);
 }
 
@@ -214,7 +214,7 @@ fn coalesce_basic_pair() {
 fn coalesce_skips_when_source_still_read() {
     // r7 read again after the Copy → must NOT fuse.
     let mut code = vec![Add(R(7), R(1), R(2)), Copy(R(3), R(7)), Ret(R(7))];
-    assert_eq!(coalesce_copies(&mut code, 128), 0);
+    assert_eq!(coalesce_copies(&mut code, 128, &mut Vec::new()), 0);
 }
 
 #[test]
@@ -227,7 +227,7 @@ fn coalesce_skips_branch_targeted_copy() {
         Ret(R(2)),
     ];
     let mut code = code0.clone();
-    assert_eq!(coalesce_copies(&mut code, 128), 0);
+    assert_eq!(coalesce_copies(&mut code, 128, &mut Vec::new()), 0);
     assert_eq!(code, code0, "untouched");
 }
 
@@ -241,7 +241,7 @@ fn coalesce_fixes_branch_offsets_across_deletion() {
         Ret(R(1)),
         Ret(R(0)),
     ];
-    assert_eq!(coalesce_copies(&mut code, 128), 1);
+    assert_eq!(coalesce_copies(&mut code, 128, &mut Vec::new()), 1);
     assert_eq!(code, vec![
         Jz(R(0), 2),          // target = 0+1+2 = 3 (Ret r0, shifted)
         PushConst(R(1), 0),
@@ -258,7 +258,7 @@ fn coalesce_chains_to_fixpoint() {
         Copy(R(1), R(6)),
         Ret(R(1)),
     ];
-    assert_eq!(coalesce_copies(&mut code, 128), 2);
+    assert_eq!(coalesce_copies(&mut code, 128, &mut Vec::new()), 2);
     assert_eq!(code, vec![PushConst(R(1), 0), Ret(R(1))]);
 }
 
@@ -266,7 +266,7 @@ fn coalesce_chains_to_fixpoint() {
 fn coalesce_never_redirects_raise_or_resume() {
     let code0 = vec![Raise(R(7), R(1), R(2)), Copy(R(3), R(7)), Ret(R(3))];
     let mut code = code0.clone();
-    assert_eq!(coalesce_copies(&mut code, 128), 0);
+    assert_eq!(coalesce_copies(&mut code, 128, &mut Vec::new()), 0);
     assert_eq!(code, code0);
 }
 
@@ -277,11 +277,11 @@ fn coalesce_never_fuses_into_arg_staging_slot() {
     // fuzz_coalesce_equivalence. Must stay untouched.
     let code0 = vec![Call(R(3), 0), Copy(R(11), R(3)), Call(R(4), 1), Ret(R(4))];
     let mut code = code0.clone();
-    assert_eq!(coalesce_copies(&mut code, 11), 0, "reg_count=11 → r11 is an arg slot");
+    assert_eq!(coalesce_copies(&mut code, 11, &mut Vec::new()), 0, "reg_count=11 → r11 is an arg slot");
     assert_eq!(code, code0);
     // With a window that covers r11, the same pair fuses fine.
     let mut code = code0.clone();
-    assert_eq!(coalesce_copies(&mut code, 64), 1);
+    assert_eq!(coalesce_copies(&mut code, 64, &mut Vec::new()), 1);
 }
 
 #[test]
@@ -330,7 +330,7 @@ fn propagates_operand_staging_copy_and_deletes_it() {
         Gt(R(3), R(2), R(1)),
         Ret(R(3)),
     ];
-    let n = propagate_copies(&mut code, 128, 0, u128::MAX);
+    let n = propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, vec![Gt(R(3), R(0), R(1)), Ret(R(3))]);
     assert_eq!(n, 1);
 }
@@ -344,7 +344,7 @@ fn roundtrip_copy_chain_collapses_to_nothing() {
         Move(R(0), R(2)),
         Ret(R(0)),
     ];
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, vec![Add(R(3), R(1), R(1)), Ret(R(0))]);
 }
 
@@ -358,7 +358,7 @@ fn source_redefinition_blocks_propagation() {
         Ret(R(3)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, orig);
 }
 
@@ -372,7 +372,7 @@ fn dest_redefinition_ends_mapping() {
         Add(R(3), R(2), R(2)),
         Ret(R(3)),
     ];
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, vec![PushConst(R(2), 0), Add(R(3), R(2), R(2)), Ret(R(3))]);
 }
 
@@ -386,7 +386,7 @@ fn branch_target_clears_mappings() {
         Ret(R(3)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, orig);
 }
 
@@ -403,7 +403,7 @@ fn handle_regs_are_never_touched() {
         Ret(R(5)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0b1, u128::MAX); // param r0 may hold a handle
+    propagate_copies(&mut code, 128, 0b1, u128::MAX, &mut Vec::new()); // param r0 may hold a handle
     assert_eq!(code, orig);
 }
 
@@ -417,7 +417,7 @@ fn transitive_handleness_blocks_chain() {
         Ret(R(4)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0b1, u128::MAX);
+    propagate_copies(&mut code, 128, 0b1, u128::MAX, &mut Vec::new());
     assert_eq!(code, orig);
 }
 
@@ -430,7 +430,7 @@ fn live_dest_keeps_copy_but_uses_still_propagate() {
         Drop(R(2)),
         Ret(R(3)),
     ];
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, vec![
         Copy(R(2), R(0)),
         Gt(R(3), R(0), R(1)),
@@ -452,7 +452,7 @@ fn deletion_remaps_branch_offsets() {
         Jmp(-4),
         Ret(R(1)),
     ];
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, vec![
         PushConst(R(1), 0),
         Gt(R(3), R(0), R(1)),
@@ -475,7 +475,7 @@ fn cross_block_propagation_is_refused() {
         Ret(R(1)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, orig);
 }
 
@@ -490,7 +490,7 @@ fn destructive_readers_are_never_retargeted() {
         Ret(R(3)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0b10, u128::MAX);
+    propagate_copies(&mut code, 128, 0b10, u128::MAX, &mut Vec::new());
     assert_eq!(code, orig);
 }
 
@@ -504,7 +504,7 @@ fn move_never_establishes_a_mapping() {
         Ret(R(3)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, orig);
 }
 
@@ -521,7 +521,7 @@ fn destructive_read_of_root_kills_mapping() {
         Ret(R(4)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, orig);
 }
 
@@ -534,7 +534,7 @@ fn arg_staging_slots_are_never_touched() {
         Ret(R(1)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 11, 0, u128::MAX);
+    propagate_copies(&mut code, 11, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, orig);
 }
 
@@ -549,6 +549,6 @@ fn suspension_ops_clear_mappings() {
         Ret(R(6)),
     ];
     let orig = code.clone();
-    propagate_copies(&mut code, 128, 0, u128::MAX);
+    propagate_copies(&mut code, 128, 0, u128::MAX, &mut Vec::new());
     assert_eq!(code, orig);
 }

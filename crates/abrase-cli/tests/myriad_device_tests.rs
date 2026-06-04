@@ -8,6 +8,8 @@ fn module_with(code: Vec<OpCode>, constants: Vec<Value>, reg_count: usize) -> Mo
     let raw: Vec<u64> = constants.iter().map(|v| v.raw()).collect();
     Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
             code, constants: raw,
             const_mask: Vec::new(),
             reg_count, param_count: 0,

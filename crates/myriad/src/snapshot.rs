@@ -350,6 +350,8 @@ mod snapshot_tests {
         let v = vm();
         let module = Module {
             functions: vec![Chunk::Bytecode(BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
                 code: Vec::new(),
                 constants: Vec::new(),
                 const_mask: Vec::new(),

@@ -29,7 +29,7 @@ debug flags (run / load):
     --handlers   handler push / resume / pop events              (stderr)
     --leak       dump every live heap cell after exit            (stderr)
     --debug      alias for --trace --handlers
-    BREAK_AT=<fn>:<pc>  env var: dump the register window at that op (host-side breakpoint)
+    BREAK_AT=<fn>:<pc> | <file.abe>:<line>  env var: dump register window there (host-side breakpoint)
     TRACE_FN=<fn>[,<fn>]  env var: limit --trace/--debug to these functions
 
 compile flags (run / disasm / export):
@@ -147,13 +147,14 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
         .with_typed_ld(!std::env::var("ABRASE_NO_TYPED_LD").is_ok())
         .with_tail_resume(!std::env::var("ABRASE_NO_TAIL_RESUME").is_ok())
         .with_no_built_in(no_built_in);
-    let module = match compiler.compile_module(ast) {
+    let mut module = match compiler.compile_module(ast) {
         Ok(m) => m,
         Err(errs) => {
             eprint!("{}", program.render_errors(&errs));
             return ExitCode::from(1);
         }
     };
+    attach_src_files(&mut module, &compiler.fn_names(), &fn_origins(program));
     if !compiler.warnings.is_empty() {
         print_warnings(program, &compiler.warnings);
     }
@@ -562,10 +563,11 @@ fn cmd_export(src_path: &str, out_path: &str, int32: bool, no_built_in: bool) ->
         .with_source(source.clone())
         .with_int32_mode(int32)
         .with_no_built_in(no_built_in);
-    let module = match compiler.compile_module(ast) {
+    let mut module = match compiler.compile_module(ast) {
         Ok(m) => m,
         Err(errs) => { eprint!("{}", program.render_errors(&errs)); return ExitCode::from(1); }
     };
+    attach_src_files(&mut module, &compiler.fn_names(), &fn_origins(&program));
     let bytes = match polka::cartridge::write_pk(&module) {
         Ok(b) => b,
         Err(e) => { eprintln!("export: {}", e); return ExitCode::from(2); }
@@ -596,6 +598,9 @@ fn cmd_load(pk_path: &str, trace: bool, handlers: bool, leak: bool) -> ExitCode 
     let mut vm = VirtualMachine::new()
         .with_debug(trace)
         .with_trace_frames(handlers);
+    if let Ok(spec) = std::env::var("BREAK_AT") {
+        vm = vm.with_debug_sink(break_at_sink(spec));
+    }
     Host::default().install_into(&mut vm);
     match vm.run_module(&module) {
         Ok(v) => {
@@ -610,22 +615,28 @@ fn cmd_load(pk_path: &str, trace: bool, handlers: bool, leak: bool) -> ExitCode 
 // BREAK_AT=<fn-name|#id>:<pc> — on the matching trace event, dump the fn's
 // register window with handle annotations. The VM only emits events; all
 // breakpoint logic lives host-side.
+// BREAK_AT=<fn|#id>:<pc> or <file.abe>:<line>.
 fn break_at_sink(spec: String) -> myriad::DebugSink {
-    let (fn_part, pc_part) = match spec.rsplit_once(':') {
+    let (fn_part, pos_part) = match spec.rsplit_once(':') {
         Some(p) => p,
         None => {
-            eprintln!("BREAK_AT: expected <fn>:<pc>, got '{}'", spec);
+            eprintln!("BREAK_AT: expected <fn>:<pc> or <file>:<line>, got '{}'", spec);
             return Box::new(|_, _| {});
         }
     };
-    let want_pc: usize = pc_part.parse().unwrap_or(usize::MAX);
+    let want_pos: usize = pos_part.parse().unwrap_or(usize::MAX);
+    let file_mode = fn_part.contains('.');
     let fn_part = fn_part.to_string();
     Box::new(move |event, names| {
-        if let myriad::DebugEvent::Trace { func, pc, op, base_reg, window, handle_mask } = event {
-            if *pc != want_pc { return; }
-            let matched = fn_part.strip_prefix('#')
-                .map(|id| id.parse::<usize>() == Ok(*func))
-                .unwrap_or_else(|| names.get(*func).map_or(false, |n| n == &fn_part));
+        if let myriad::DebugEvent::Trace { func, pc, op, base_reg, window, handle_mask, line, file } = event {
+            let matched = if file_mode {
+                *line as usize == want_pos && *file == fn_part
+            } else {
+                *pc == want_pos
+                    && fn_part.strip_prefix('#')
+                        .map(|id| id.parse::<usize>() == Ok(*func))
+                        .unwrap_or_else(|| names.get(*func).map_or(false, |n| n == &fn_part))
+            };
             if !matched { return; }
             eprintln!("[break {}:{}] {:?} (base r{})",
                 myriad::render_fn_label(*func, names), pc, op, base_reg);
@@ -636,4 +647,17 @@ fn break_at_sink(spec: String) -> myriad::DebugSink {
             }
         }
     })
+}
+
+// Fill BytecodeChunk.src_file from the loader's fn→file map (compiler stays
+// filesystem-agnostic; file knowledge lives host-side).
+fn attach_src_files(module: &mut polka::Module, names: &[String],
+                    origins: &std::collections::HashMap<String, String>) {
+    for (i, chunk) in module.functions.iter_mut().enumerate() {
+        if let polka::Chunk::Bytecode(b) = chunk {
+            if let Some(f) = names.get(i).and_then(|n| origins.get(n)) {
+                b.src_file = f.clone();
+            }
+        }
+    }
 }

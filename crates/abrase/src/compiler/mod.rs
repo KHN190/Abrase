@@ -52,6 +52,7 @@ pub struct Compiler {
     pub(super) module_table_reg: Option<Register>,
     pub(super) reg_holds_handle: Vec<bool>,
     pub(super) ever_handle_mask: u128,
+    pub(super) line_info: Vec<u32>,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
     pub(super) var_bound_at_region: HashMap<String, usize>,
@@ -131,6 +132,7 @@ impl Compiler {
             module_table_reg: None,
             reg_holds_handle: Vec::new(),
             ever_handle_mask: 0,
+            line_info: Vec::new(),
             var_to_reg: HashMap::new(),
             var_types: HashMap::new(),
             var_bound_at_region: HashMap::new(),
@@ -393,12 +395,14 @@ impl Compiler {
             }
         }
         Ok(Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: self.code.clone(),
             constants: self.constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&self.const_mask_bits),
             string_constants: self.string_constants.clone(),
             reg_count: self.max_reg as usize,
             param_count: 0,
+            lines: vec![],
         }))
     }
 
@@ -725,6 +729,7 @@ impl Compiler {
 
     fn compile_fn(&mut self, fn_decl: &ast::FnDecl) -> Result<Chunk, Vec<Error>> {
         let saved_code = std::mem::take(&mut self.code);
+        let saved_line_info = std::mem::take(&mut self.line_info);
         let saved_constants = std::mem::take(&mut self.constants);
         let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let saved_string_constants = std::mem::take(&mut self.string_constants);
@@ -870,17 +875,19 @@ impl Compiler {
         }
 
         self.peephole_copy_drop();
-        if self.copy_coalesce { dataflow::coalesce_copies(&mut self.code, self.max_reg as usize); }
+        if self.copy_coalesce { dataflow::coalesce_copies(&mut self.code, self.max_reg as usize, &mut self.line_info); }
         if self.copy_prop {
             let hint = self.ever_handle_mask | handle_param_mask;
-            dataflow::propagate_copies(&mut self.code, self.max_reg as usize, handle_param_mask, hint);
+            dataflow::propagate_copies(&mut self.code, self.max_reg as usize, handle_param_mask, hint, &mut self.line_info);
         }
 
         let reg_count = self.max_reg as usize;
         let taken_constants = std::mem::take(&mut self.constants);
         let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: std::mem::take(&mut self.code),
+            lines: std::mem::take(&mut self.line_info),
             constants: taken_constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&taken_mask_bits),
             string_constants: std::mem::take(&mut self.string_constants),
@@ -889,6 +896,7 @@ impl Compiler {
         });
 
         self.code = saved_code;
+        self.line_info = saved_line_info;
         self.constants = saved_constants;
         self.const_mask_bits = saved_const_mask_bits;
         self.string_constants = saved_string_constants;
@@ -924,6 +932,7 @@ impl Compiler {
         static_values: &[(Vec<String>, ast::Spanned<ast::Expr>)],
     ) -> Result<Chunk, Vec<Error>> {
         let saved_code = std::mem::take(&mut self.code);
+        let saved_line_info = std::mem::take(&mut self.line_info);
         let saved_constants = std::mem::take(&mut self.constants);
         let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let saved_string_constants = std::mem::take(&mut self.string_constants);
@@ -995,7 +1004,9 @@ impl Compiler {
         let taken_constants = std::mem::take(&mut self.constants);
         let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: std::mem::take(&mut self.code),
+            lines: std::mem::take(&mut self.line_info),
             constants: taken_constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&taken_mask_bits),
             string_constants: std::mem::take(&mut self.string_constants),
@@ -1004,6 +1015,7 @@ impl Compiler {
         });
 
         self.code = saved_code;
+        self.line_info = saved_line_info;
         self.constants = saved_constants;
         self.const_mask_bits = saved_const_mask_bits;
         self.string_constants = saved_string_constants;

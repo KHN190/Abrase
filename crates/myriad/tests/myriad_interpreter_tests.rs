@@ -14,6 +14,8 @@ fn raw_constants(consts: Vec<Value>) -> Vec<u64> {
 fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
     let reg_count = 64;
     VirtualMachine::new().run(&Chunk::Bytecode(BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: ops,
         constants: raw_constants(constants),
         const_mask: Vec::new(),
@@ -28,6 +30,8 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
         .into_iter()
         .map(|(code, constants, reg_count, param_count)| {
             Chunk::Bytecode(BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
                 code,
                 constants: raw_constants(constants),
                 const_mask: Vec::new(),
@@ -832,6 +836,8 @@ fn test_heap_ld_rejects_stale_generation() {
 #[test]
 fn test_call_dispatches_to_native_chunk() {
     let caller = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::PushConst(r(1), 1),
@@ -869,6 +875,8 @@ fn test_call_dispatches_to_native_chunk() {
 #[test]
 fn test_native_chunk_propagates_error() {
     let caller = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::Copy(r(2), r(0)),
@@ -958,6 +966,8 @@ fn test_jz_not_taken_skips_validation() {
 #[test]
 fn test_module_load_rejects_oversize_reg_count() {
     let bad = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(r(0))],
         constants: vec![],
         const_mask: Vec::new(),
@@ -981,6 +991,8 @@ fn test_module_load_rejects_oversize_reg_count() {
 #[test]
 fn test_module_load_rejects_param_count_exceeds_reg_count() {
     let bad = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(r(0))],
         constants: vec![],
         const_mask: Vec::new(),
@@ -1001,6 +1013,8 @@ fn test_module_load_rejects_param_count_exceeds_reg_count() {
 #[test]
 fn test_module_load_accepts_exact_frame_budget() {
     let chunk = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::Ret(r(0)),
@@ -1037,6 +1051,8 @@ fn test_jmp_past_end_traps() {
 #[test]
 fn test_call_reg_out_of_range_fn_id_traps() {
     let caller = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![
             OpCode::PushConst(r(1), 0),
             OpCode::CallReg(r(2), r(1)),
@@ -1062,6 +1078,8 @@ fn test_call_reg_out_of_range_fn_id_traps() {
 #[test]
 fn test_call_reg_unknown_fn_id_traps() {
     let caller = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![
             OpCode::PushConst(r(1), 0),
             OpCode::CallReg(r(2), r(1)),
@@ -1265,6 +1283,8 @@ fn test_stidx_negative_index_traps() {
 #[test]
 fn call_export_sum_two_ints() {
     let sum = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![
             OpCode::Add(r(2), r(0), r(1)),
             OpCode::Ret(r(2)),
@@ -1276,6 +1296,8 @@ fn call_export_sum_two_ints() {
         string_constants: Vec::new(),
     };
     let dummy = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(r(0))],
         constants: Vec::new(),
         const_mask: Vec::new(),
@@ -1296,6 +1318,8 @@ fn call_export_sum_two_ints() {
 #[test]
 fn call_export_unknown_name() {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(r(0))],
         reg_count: 1,
         ..BytecodeChunk::default()
@@ -1314,6 +1338,8 @@ fn call_export_unknown_name() {
 #[test]
 fn call_export_arity_mismatch() {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(r(0))],
         reg_count: 2,
         param_count: 1,
@@ -1332,6 +1358,8 @@ fn call_export_arity_mismatch() {
 
 fn ident_module() -> Module {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(r(0))],
         constants: Vec::new(),
         const_mask: Vec::new(),
@@ -1383,6 +1411,8 @@ fn reset_wipes_state() {
 #[test]
 fn run_module_then_call_export_preserves_module_state() {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::Ret(r(0)),

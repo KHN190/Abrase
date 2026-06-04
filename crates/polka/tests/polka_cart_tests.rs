@@ -13,6 +13,7 @@ fn empty_module_roundtrip() {
 #[test]
 fn single_bytecode_fn_roundtrip() {
     let bc = BytecodeChunk {
+        src_file: String::new(),
         code: vec![
             OpCode::PushConst(Register(0), 0),
             OpCode::Ret(Register(0)),
@@ -22,6 +23,7 @@ fn single_bytecode_fn_roundtrip() {
         string_constants: vec![],
         reg_count: 1,
         param_count: 0,
+            lines: vec![],
     };
     let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
@@ -39,12 +41,14 @@ fn single_bytecode_fn_roundtrip() {
 fn native_then_bytecode_roundtrip() {
     let n = NativeChunk { name: "print".into(), param_count: 1 };
     let bc = BytecodeChunk {
+        src_file: String::new(),
         code: vec![OpCode::Ret(Register(0))],
         constants: vec![],
         const_mask: vec![],
         string_constants: vec!["hi".into()],
         reg_count: 1,
         param_count: 0,
+            lines: vec![],
     };
     let m = Module {
         functions: vec![Chunk::Native(n), Chunk::Bytecode(bc)],
@@ -68,12 +72,14 @@ fn native_then_bytecode_roundtrip() {
 #[test]
 fn const_mask_roundtrip() {
     let bc = BytecodeChunk {
+        src_file: String::new(),
         code: vec![OpCode::Ret(Register(0))],
         constants: vec![0u64, 1u64, 2u64, 3u64],
         const_mask: vec![0b1010u64],
         string_constants: vec![],
         reg_count: 1,
         param_count: 0,
+            lines: vec![],
     };
     let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
@@ -95,12 +101,14 @@ fn bad_magic_is_not_a_cartridge() {
 fn good_minimal_module() -> Module {
     Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: vec![OpCode::Ret(Register(0))],
             constants: vec![],
             const_mask: vec![],
             string_constants: vec![],
             reg_count: 1,
             param_count: 0,
+            lines: vec![],
         })],
         entry: 0,
         flags: 0,
@@ -199,6 +207,8 @@ fn bad_opcode_in_code() {
 #[test]
 fn ld_offset_over_255_rejected() {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ld(Register(0), Register(1), 256)],
         reg_count: 2,
         ..BytecodeChunk::default()
@@ -213,6 +223,8 @@ fn ld_offset_over_255_rejected() {
 #[test]
 fn st_offset_over_255_rejected() {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::St(Register(0), Register(1), 1000)],
         reg_count: 2,
         ..BytecodeChunk::default()
@@ -251,6 +263,8 @@ fn header_is_12_bytes_then_fn_count() {
 fn entry_fn_id_nonzero_roundtrip() {
     let n = NativeChunk { name: "abort".into(), param_count: 1 };
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(Register(0))],
         reg_count: 1,
         ..BytecodeChunk::default()
@@ -336,12 +350,14 @@ fn all_46_opcodes_roundtrip() {
 
     // 1024 reg_count is bigger than needed but exercises u16 reg_count when serialized.
     let bc = BytecodeChunk {
+        src_file: String::new(),
         code: code.clone(),
         constants: vec![0u64; 0xABCE],     // exercises u16 const_count near upper end
         const_mask: vec![0u64; (0xABCE + 63) / 64],
         string_constants: vec!["hello".into(), "".into(), "中文 🚀".into()],
         reg_count: 64,
         param_count: 0,
+            lines: vec![],
     };
     let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
     let bytes = write_pk(&m).unwrap();
@@ -356,6 +372,8 @@ fn all_46_opcodes_roundtrip() {
 #[test]
 fn negative_jump_immediate_signed() {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Jmp(i16::MIN), OpCode::Jmp(i16::MAX), OpCode::Ret(Register(0))],
         reg_count: 1,
         ..BytecodeChunk::default()
@@ -371,6 +389,8 @@ fn negative_jump_immediate_signed() {
 #[test]
 fn addimm_signed_imm8() {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![
             OpCode::AddImm(Register(0), Register(1),  127),
             OpCode::AddImm(Register(0), Register(1), -128),
@@ -392,6 +412,8 @@ fn addimm_signed_imm8() {
 #[test]
 fn empty_string_in_pool() {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(Register(0))],
         string_constants: vec!["".into(), "x".into(), "".into()],
         reg_count: 1,
@@ -409,6 +431,8 @@ fn many_functions() {
     let mut fns: Vec<Chunk> = Vec::new();
     for i in 0..32u32 {
         fns.push(Chunk::Bytecode(BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
             code: vec![
                 OpCode::PushConst(Register(0), 0),
                 OpCode::Ret(Register(0)),
@@ -458,6 +482,8 @@ fn encode_error_display_names_the_culprit() {
 #[test]
 fn exports_roundtrip() {
     let bc = BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(Register(0))],
         reg_count: 1,
         ..BytecodeChunk::default()
@@ -486,4 +512,93 @@ fn empty_exports_roundtrip() {
     let bytes = write_pk(&m).unwrap();
     let back = read_pk(&bytes).unwrap();
     assert!(back.exports.is_empty());
+}
+
+// ── debug-lines section compatibility ────────────────────────────────────────
+
+fn mini_module() -> Module {
+    Module {
+        functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+            code: vec![OpCode::PushConst(Register(0), 0), OpCode::Ret(Register(0))],
+            constants: vec![7],
+            const_mask: vec![0],
+            string_constants: vec![],
+            reg_count: 1,
+            param_count: 0,
+            lines: vec![1, 2],
+        })],
+        entry: 0,
+        flags: 0,
+        exports: vec![],
+    }
+}
+
+fn strip_trailing_debug(bytes: &[u8]) -> Vec<u8> {
+    // DBG1 magic marks section start; cut from there = old-format cart.
+    let magic = 0x3147_4244u32.to_le_bytes();
+    let pos = bytes.windows(4).position(|w| w == magic).expect("no DBG1 section");
+    bytes[..pos].to_vec()
+}
+
+#[test]
+fn old_cart_without_debug_section_loads_with_empty_lines() {
+    let bytes = write_pk(&mini_module()).unwrap();
+    let old = strip_trailing_debug(&bytes);
+    let m = read_pk(&old).expect("old-format cart must load");
+    let Chunk::Bytecode(bc) = &m.functions[0] else { panic!() };
+    assert!(bc.lines.is_empty());
+    assert_eq!(bc.code.len(), 2);
+}
+
+#[test]
+fn unknown_trailing_bytes_do_not_block_load() {
+    // Equivalent of "new cart on old runtime": reader tolerates foreign tail.
+    let mut old = strip_trailing_debug(&write_pk(&mini_module()).unwrap());
+    old.extend_from_slice(b"FUTURE-SECTION-GARBAGE");
+    let m = read_pk(&old).expect("unknown trailing must not block");
+    assert_eq!(m.functions.len(), 1);
+}
+
+#[test]
+fn corrupt_debug_section_degrades_to_no_lines_not_error() {
+    let bytes = write_pk(&mini_module()).unwrap();
+    // Truncate mid-section: magic present, table cut short.
+    let magic = 0x3147_4244u32.to_le_bytes();
+    let pos = bytes.windows(4).position(|w| w == magic).unwrap();
+    let truncated = bytes[..pos + 6].to_vec();
+    let m = read_pk(&truncated).expect("corrupt debug info must not block execution");
+    let Chunk::Bytecode(bc) = &m.functions[0] else { panic!() };
+    assert!(bc.lines.is_empty(), "corrupt section must degrade to stripped");
+}
+
+#[test]
+fn src_file_roundtrips_via_debug_section() {
+    let mut m = mini_module();
+    if let Chunk::Bytecode(b) = &mut m.functions[0] { b.src_file = "surf.abe".into(); }
+    let bytes = write_pk(&m).unwrap();
+    let back = read_pk(&bytes).unwrap();
+    let Chunk::Bytecode(b) = &back.functions[0] else { panic!() };
+    assert_eq!(b.src_file, "surf.abe");
+    assert_eq!(b.lines, vec![1, 2]);
+}
+
+#[test]
+fn src_file_pool_deduplicates() {
+    let mut m = mini_module();
+    let Chunk::Bytecode(proto) = m.functions[0].clone() else { panic!() };
+    let mut second = proto.clone();
+    second.src_file = "same.abe".into();
+    if let Chunk::Bytecode(b) = &mut m.functions[0] { b.src_file = "same.abe".into(); }
+    m.functions.push(Chunk::Bytecode(second));
+    let bytes = write_pk(&m).unwrap();
+    // "same.abe" appears once in the encoded pool.
+    let needle = b"same.abe";
+    let count = bytes.windows(needle.len()).filter(|w| w == needle).count();
+    assert_eq!(count, 1, "file pool must deduplicate");
+    let back = read_pk(&bytes).unwrap();
+    for f in &back.functions {
+        let Chunk::Bytecode(b) = f else { panic!() };
+        assert_eq!(b.src_file, "same.abe");
+    }
 }

@@ -147,7 +147,7 @@ fn branch_targets(code: &[OpCode]) -> Vec<bool> {
 }
 
 // Dests >= reg_count are arg-staging slots (callee-window ABI) — never fused.
-pub fn coalesce_copies(code: &mut Vec<OpCode>, reg_count: usize) -> usize {
+pub fn coalesce_copies(code: &mut Vec<OpCode>, reg_count: usize, lines: &mut Vec<u32>) -> usize {
     use OpCode::*;
     let mut fused = 0usize;
     loop {
@@ -181,6 +181,7 @@ pub fn coalesce_copies(code: &mut Vec<OpCode>, reg_count: usize) -> usize {
                 _ => unreachable!(),
             }
         }
+        if lines.len() == code.len() { lines.remove(k); }
         code.remove(k);
         fused += 1;
     }
@@ -225,7 +226,7 @@ fn map_sources(op: &mut OpCode, f: impl Fn(Register) -> Register) {
 }
 
 // Delete `dead` (sorted, deduped) indices from code, remapping branch offsets.
-fn delete_ops(code: &mut Vec<OpCode>, dead: &[usize]) {
+fn delete_ops(code: &mut Vec<OpCode>, dead: &[usize], lines: &mut Vec<u32>) {
     use OpCode::*;
     if dead.is_empty() { return; }
     let shift = |x: usize| x - dead.iter().take_while(|&&k| k < x).count();
@@ -240,7 +241,11 @@ fn delete_ops(code: &mut Vec<OpCode>, dead: &[usize]) {
             _ => unreachable!(),
         }
     }
-    for &k in dead.iter().rev() { code.remove(k); }
+    let aligned = lines.len() == code.len();
+    for &k in dead.iter().rev() {
+        if aligned { lines.remove(k); }
+        code.remove(k);
+    }
 }
 
 // Registers read-and-nulled by this op; any mapping involving them goes stale.
@@ -257,7 +262,7 @@ fn op_takes(op: &OpCode, out: &mut Vec<Register>) {
 // `taint_hint`: compiler's emission-time over-approximation of handle regs
 // (ever_handle | params). Final taint = shape-inference ∩ hint — both
 // over-approximate, so the intersection still does.
-pub fn propagate_copies(code: &mut Vec<OpCode>, reg_count: usize, handle_param_mask: u128, taint_hint: u128) -> usize {
+pub fn propagate_copies(code: &mut Vec<OpCode>, reg_count: usize, handle_param_mask: u128, taint_hint: u128, lines: &mut Vec<u32>) -> usize {
     use OpCode::*;
     let mut deleted = 0usize;
     let mut takes: Vec<Register> = Vec::new();
@@ -305,6 +310,6 @@ pub fn propagate_copies(code: &mut Vec<OpCode>, reg_count: usize, handle_param_m
         }
         if dead.is_empty() && !changed { return deleted; }
         deleted += dead.len();
-        delete_ops(code, &dead);
+        delete_ops(code, &dead, lines);
     }
 }

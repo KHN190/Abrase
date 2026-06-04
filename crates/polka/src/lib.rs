@@ -107,6 +107,10 @@ pub struct BytecodeChunk {
     pub string_constants: Vec<String>,
     pub reg_count: usize,
     pub param_count: usize,
+    // Debug info: source line per op (parallel to code). Empty = stripped.
+    pub lines: Vec<u32>,
+    // Debug info: source file of this fn. Empty = unknown/stripped.
+    pub src_file: String,
 }
 
 impl BytecodeChunk {

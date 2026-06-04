@@ -54,10 +54,12 @@ fn run_bytecode(code: Vec<OpCode>, constants: Vec<u64>, reg_count: usize) -> Res
     vm.install_device(SYSTEM_ID, Box::new(SystemDevice::new()));
     let module = Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code, constants,
             const_mask: Vec::new(),
             string_constants: Vec::new(),
             reg_count, param_count: 0,
+            lines: vec![],
         })],
         entry: 0,
         flags: 0,

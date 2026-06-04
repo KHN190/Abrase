@@ -71,6 +71,7 @@ impl Compiler {
 
     pub(in crate::compiler) fn emit(&mut self, op: OpCode) {
         self.track_dest_handle_bit(&op);
+        self.line_info.push(self.current_span.line as u32);
         self.code.push(op);
     }
 
