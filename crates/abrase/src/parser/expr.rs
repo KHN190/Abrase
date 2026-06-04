@@ -218,7 +218,8 @@ impl<'a> Parser<'a> {
             if self.current_token == Token::RBracket { break; }
             items.push(self.parse_expr(Precedence::Lowest));
         }
-        if self.current_token == Token::RBracket {
+        let last_bt = items.last().map(|i| is_block_terminated(&i.node)).unwrap_or(false);
+        if last_bt && self.current_token == Token::RBracket {
             // already there (last item was block-terminated)
         } else if !self.expect_peek(Token::RBracket) {
             self.report_error("Expected ']' in array literal".into(), self.current_span);
