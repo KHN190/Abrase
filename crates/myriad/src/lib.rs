@@ -53,6 +53,7 @@ pub struct VirtualMachine {
     pub(crate) region_table: RegionTable,
     pub(crate) natives: NativeRegistry,
     pub(crate) debug_sink: Option<DebugSink>,
+    pub(crate) trace_filter: Option<Vec<bool>>,
     pub(crate) trace_frames: bool,
     pub(crate) fn_names: Vec<String>,
     pub(crate) failing_pc: usize,
@@ -144,6 +145,7 @@ impl VirtualMachine {
             region_table: RegionTable::new(),
             natives,
             debug_sink: None,
+            trace_filter: None,
             trace_frames: false,
             fn_names: Vec::new(),
             failing_pc: 0,
@@ -195,6 +197,12 @@ impl VirtualMachine {
 
     pub fn with_trace_frames(mut self, on: bool) -> Self {
         self.trace_frames = on;
+        self
+    }
+
+    // fn_id-indexed bitset; out-of-range fn ids are silenced. None = trace all.
+    pub fn with_trace_filter(mut self, bits: Vec<bool>) -> Self {
+        self.trace_filter = Some(bits);
         self
     }
 
@@ -470,5 +478,36 @@ mod region_tests {
         v.region_record_alloc(slot, gen_);
         assert_eq!(v.heap_live_count(), 1);
         assert!(v.region_pop().is_err());
+    }
+}
+
+impl VirtualMachine {
+    // Structural heap dump for debuggers/hosts. No runtime types: cells render
+    // as [v0, v1, …], scalars as decimal, HANDLE_NONE as "none". Read-only;
+    // stale handles render as an error string (gen check), never panic.
+    pub fn render_value(&self, raw: u64, is_handle: bool, depth: usize) -> String {
+        if !is_handle { return (raw as i64).to_string(); }
+        if raw == polka::HANDLE_NONE { return "none".into(); }
+        if depth == 0 { return "…".into(); }
+        let (slot, g) = Self::decode_handle(raw);
+        let len = match self.heap.size(slot, g) {
+            Ok(n) => n,
+            Err(_) => return format!("<stale {:#x}>", raw),
+        };
+        let mut out = String::from("[");
+        for off in 0..len {
+            if off > 0 { out.push_str(", "); }
+            match self.heap.ld(slot, g, off) {
+                Ok((v, h)) => out.push_str(&self.render_value(v, h, depth - 1)),
+                Err(_) => { out.push_str("<err>"); }
+            }
+        }
+        out.push(']');
+        out
+    }
+
+    // Test helper: release one rc on a handle (e.g. a value returned by main).
+    pub fn drop_result_for_test(&mut self, raw: u64) {
+        let _ = self.heap.rc_dec_handle(raw);
     }
 }

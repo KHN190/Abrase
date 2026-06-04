@@ -208,8 +208,10 @@ impl VirtualMachine {
                 let opcode_pc = self.pc;
                 let opcode = unsafe { bc.code.get_unchecked(opcode_pc) };
                 if TRACE {
+                    let pass = self.trace_filter.as_ref()
+                        .map_or(true, |f| f.get(self.current_func).copied().unwrap_or(false));
                     // take() the sink so the event may borrow self.registers.
-                    if let Some(mut sink) = self.debug_sink.take() {
+                    if pass { if let Some(mut sink) = self.debug_sink.take() {
                         let base = self.base_reg;
                         let rc = bc.reg_count.min(128);
                         let end = (base + rc).min(self.registers.len());
@@ -223,7 +225,7 @@ impl VirtualMachine {
                         };
                         sink(&event, &self.fn_names);
                         self.debug_sink = Some(sink);
-                    }
+                    } }
                 }
                 if PROF {
                     let name = Self::op_name(opcode);

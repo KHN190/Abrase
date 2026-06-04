@@ -30,6 +30,7 @@ debug flags (run / load):
     --leak       dump every live heap cell after exit            (stderr)
     --debug      alias for --trace --handlers
     BREAK_AT=<fn>:<pc>  env var: dump the register window at that op (host-side breakpoint)
+    TRACE_FN=<fn>[,<fn>]  env var: limit --trace/--debug to these functions
 
 compile flags (run / disasm / export):
     --root <dir> set module root (import paths resolve from here; default: entry file's dir)
@@ -166,6 +167,17 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
         .with_static_names(static_names);
     if let Ok(spec) = std::env::var("BREAK_AT") {
         vm = vm.with_debug_sink(break_at_sink(spec));
+    }
+    if let Ok(spec) = std::env::var("TRACE_FN") {
+        let names = compiler.fn_names();
+        let mut bits = vec![false; names.len()];
+        for want in spec.split(',') {
+            match names.iter().position(|n| n == want.trim()) {
+                Some(i) => bits[i] = true,
+                None => eprintln!("TRACE_FN: unknown fn '{}'", want.trim()),
+            }
+        }
+        vm = vm.with_trace_filter(bits);
     }
 
     Host::default().install_into(&mut vm);

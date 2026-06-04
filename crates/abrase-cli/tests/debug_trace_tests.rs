@@ -105,3 +105,146 @@ fn sink_does_not_change_results() {
     assert_eq!(v_traced.as_int(), v_plain.as_int());
     assert_eq!(vm.heap_live_count(), 0);
 }
+
+// ── trace fn filter ──────────────────────────────────────────────────────────
+// VM-side bitset (fn_id-indexed): only matching fns emit Trace events. Filter
+// checked BEFORE event construction (skips window/mask building).
+
+const TWO_FNS: &str = r#"
+fn helper(x: Int) -> Int { if x <= 0 { 0 } else { x + helper(x - 1) } }
+fn main() -> Int {
+  let a = helper(3);
+  a + 1
+}
+"#;
+
+fn traced_funcs(src: &str, filter: Option<&[&str]>) -> Vec<usize> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty());
+    let mut c = Compiler::new().with_source(src.to_string());
+    let module = c.compile_module(&ast).unwrap();
+    let names = c.fn_names();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let s2 = seen.clone();
+    let mut vm = VirtualMachine::new()
+        .with_fn_names(names.clone())
+        .with_debug_sink(Box::new(move |ev, _| {
+            if let DebugEvent::Trace { func, .. } = ev { s2.borrow_mut().push(*func); }
+        }));
+    if let Some(fns) = filter {
+        let mut bits = vec![false; names.len()];
+        for f in fns {
+            let i = names.iter().position(|n| n == f).expect("fn not found");
+            bits[i] = true;
+        }
+        vm = vm.with_trace_filter(bits);
+    }
+    vm.run_module(&module).expect("run failed");
+    let out = seen.borrow().clone();
+    out
+}
+
+#[test]
+fn filter_passes_only_matching_fns() {
+    let src = TWO_FNS;
+    let all = traced_funcs(src, None);
+    let only_helper = traced_funcs(src, Some(&["helper"]));
+    assert!(!only_helper.is_empty(), "helper events missing");
+    let helper_id = only_helper[0];
+    assert!(only_helper.iter().all(|f| *f == helper_id), "non-helper events leaked");
+    assert!(all.iter().any(|f| *f != helper_id), "baseline should contain main too");
+    // Filtered helper events == unfiltered helper events (filter loses nothing).
+    assert_eq!(only_helper.len(), all.iter().filter(|f| **f == helper_id).count());
+}
+
+#[test]
+fn no_filter_behavior_unchanged() {
+    let all = traced_funcs(TWO_FNS, None);
+    let module = {
+        let mut p = Parser::new(Lexer::new(TWO_FNS)).with_source(TWO_FNS.to_string());
+        let ast = p.parse_program();
+        let mut c = Compiler::new().with_source(TWO_FNS.to_string());
+        c.compile_module(&ast).unwrap()
+    };
+    let mut vm = VirtualMachine::new();
+    vm.run_module(&module).expect("run failed");
+    assert_eq!(all.len() as u64, vm.steps(), "unfiltered trace must fire per step");
+}
+
+#[test]
+fn empty_filter_silences_everything() {
+    let module = {
+        let mut p = Parser::new(Lexer::new(TWO_FNS)).with_source(TWO_FNS.to_string());
+        let ast = p.parse_program();
+        let mut c = Compiler::new().with_source(TWO_FNS.to_string());
+        c.compile_module(&ast).unwrap()
+    };
+    let count = Rc::new(RefCell::new(0u64));
+    let c2 = count.clone();
+    let mut vm = VirtualMachine::new()
+        .with_debug_sink(Box::new(move |ev, _| {
+            if matches!(ev, DebugEvent::Trace { .. }) { *c2.borrow_mut() += 1; }
+        }))
+        .with_trace_filter(vec![]);
+    let v = vm.run_module(&module).expect("run failed");
+    assert_eq!(v.as_int(), 7);
+    assert_eq!(*count.borrow(), 0, "empty filter must silence all trace events");
+}
+
+// ── render_value: handle → structural heap dump ─────────────────────────────
+// No runtime types: cells render as [v0, v1, …] (record/array same shape),
+// scalars as decimal, HANDLE_NONE as "none", depth cap as "…".
+
+fn run_keep_vm(src: &str) -> (Value, VirtualMachine) {
+    let module = compile(src);
+    let mut vm = VirtualMachine::new();
+    let v = vm.run_module(&module).expect("run failed");
+    (v, vm)
+}
+
+#[test]
+fn renders_scalar_as_decimal() {
+    let (v, vm) = run_keep_vm("fn main() -> Int { 42 }");
+    assert_eq!(vm.render_value(v.raw(), false, 8), "42");
+}
+
+#[test]
+fn renders_flat_array() {
+    let (v, vm) = run_keep_vm("fn main() -> Array<Int> { [10, 20, 30] }");
+    assert_eq!(vm.render_value(v.raw(), true, 8), "[10, 20, 30]");
+}
+
+#[test]
+fn renders_nested_record_structurally() {
+    let src = r#"
+type P = { x: Int, y: P2 }
+type P2 = { a: Int, b: Int }
+fn main() -> P { P { x: 12, y: P2 { a: 5, b: 6 } } }
+"#;
+    let (v, vm) = run_keep_vm(src);
+    assert_eq!(vm.render_value(v.raw(), true, 8), "[12, [5, 6]]");
+}
+
+#[test]
+fn depth_cap_truncates() {
+    let (v, vm) = run_keep_vm("fn main() -> Array<Array<Array<Int>>> { [[[1]]] }");
+    assert_eq!(vm.render_value(v.raw(), true, 2), "[[…]]");
+}
+
+#[test]
+fn handle_none_renders_as_none() {
+    let (_, vm) = run_keep_vm("fn main() -> Int { 0 }");
+    assert_eq!(vm.render_value(polka::HANDLE_NONE, true, 8), "none");
+}
+
+#[test]
+fn stale_handle_renders_error_not_panic() {
+    let (v, mut vm) = run_keep_vm("fn main() -> Array<Int> { [1] }");
+    // Free the cell, then render the stale handle: must not panic.
+    let rendered_live = vm.render_value(v.raw(), true, 8);
+    assert_eq!(rendered_live, "[1]");
+    vm.drop_result_for_test(v.raw());
+    let rendered = vm.render_value(v.raw(), true, 8);
+    assert!(rendered.contains("stale") || rendered.contains("dead"), "got: {}", rendered);
+}
