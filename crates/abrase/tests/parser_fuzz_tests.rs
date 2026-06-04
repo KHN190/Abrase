@@ -351,3 +351,67 @@ fn parser_fuzz_resume_index_block_args() {
         panic!("parser_fuzz_resume_index_block_args: {}/400 failed to parse", bad.len());
     }
 }
+
+fn gen_list_expr(r: &mut Rng, depth: usize) -> String {
+    if depth == 0 {
+        return match r.pick(4) {
+            0 => "1".into(),
+            1 => "x".into(),
+            2 => "\"s\"".into(),
+            _ => "2 + 3".into(),
+        };
+    }
+    let inner = |r: &mut Rng| gen_list_expr(r, depth - 1);
+    let trailing = |r: &mut Rng| if r.pick(3) == 0 { "," } else { "" };
+    match r.pick(8) {
+        0 => { // array, 0..3 elems
+            let n = r.pick(4);
+            let items: Vec<String> = (0..n).map(|_| inner(r)).collect();
+            if items.is_empty() { "[]".into() }
+            else { format!("[{}{}]", items.join(", "), trailing(r)) }
+        }
+        1 => { // nested-first array: [[..], ..]
+            format!("[{}, {}]", inner(r), inner(r))
+        }
+        2 => { // tuple
+            format!("({}, {}{})", inner(r), inner(r), trailing(r))
+        }
+        3 => { // call args
+            let n = r.pick(3);
+            let items: Vec<String> = (0..n).map(|_| inner(r)).collect();
+            format!("f({}{})", items.join(", "), if items.is_empty() { "" } else { trailing(r) })
+        }
+        4 => { // index chain
+            format!("{}[{}]", if r.pick(2) == 0 { "m".to_string() } else { format!("[{}]", inner(r)) }, inner(r))
+        }
+        5 => { // block-terminated element in list
+            format!("[if x > 0 {{ {} }} else {{ {} }}, {}]", inner(r), inner(r), inner(r))
+        }
+        6 => { // record literal
+            format!("R {{ a: {}, b: {} }}", inner(r), inner(r))
+        }
+        _ => { // paren + binary of lists
+            format!("({} + {})", inner(r), inner(r))
+        }
+    }
+}
+
+#[test]
+fn list_close_shapes_are_all_accepted() {
+    let mut failures = String::new();
+    let mut count = 0u32;
+    for seed in 0..4000u64 {
+        let mut r = Rng::new(seed);
+        let expr = gen_list_expr(&mut r, 1 + (seed % 3) as usize);
+        let src = format!("fn main() -> Int {{ let q = {}; 0 }}", expr);
+        let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
+        let _ = p.parse_program();
+        if !p.errors.is_empty() {
+            count += 1;
+            if failures.len() < 3000 {
+                failures.push_str(&format!("--- seed={}\n{}\n{}\n", seed, src, p.pretty_print_errors()));
+            }
+        }
+    }
+    assert_eq!(count, 0, "{} valid list shapes rejected:\n{}", count, failures);
+}
