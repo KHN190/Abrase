@@ -315,57 +315,6 @@ fn report_register_reuse_ceiling() {
     }
 }
 
-#[test]
-#[ignore = "measurement probe: run with -- --ignored --nocapture"]
-fn report_cmd_elimination_ceiling() {
-    use abrase::bytecode::{Chunk, OpCode};
-    use abrase::compiler::Compiler;
-    use abrase::lexer::Lexer;
-    use abrase::parser::Parser;
-
-    fn handle_producing_dest(op: &OpCode) -> Option<abrase::bytecode::Register> {
-        use OpCode::*;
-        match op {
-            Ld(d,_,_) | LdIdx(d,_,_) | Alloc(d,_) | Call(d,_) | CallReg(d,_)
-            | Dei(d,_) | Resume(d,_) | Handle(d,_) | Raise(d,_,_) => Some(*d),
-            _ => None,
-        }
-    }
-
-    for name in ["nqueens", "mandelbrot", "ackermann", "merge_sort", "coin_change", "stress_dispatch"] {
-        let path = format!("{}/../../examples/{}.abe", env!("CARGO_MANIFEST_DIR"), name);
-        let Ok(src) = std::fs::read_to_string(&path) else { continue };
-        let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
-        let ast = p.parse_program();
-        let mut c = Compiler::new().with_source(src);
-        let Ok(module) = c.compile_module(&ast) else { continue };
-        let (mut abi_mv, mut noop_drop, mut dead_src_copy, mut real_cmd, mut total) =
-            (0usize, 0usize, 0usize, 0usize, 0usize);
-        for ch in &module.functions {
-            let Chunk::Bytecode(bc) = ch else { continue };
-            if bc.code.is_empty() { continue; }
-            let lo = live_out(&bc.code);
-            let mut may_handle = vec![false; 256];
-            for op in &bc.code {
-                if let Some(d) = handle_producing_dest(op) {
-                    if (d.0 as usize) < 256 { may_handle[d.0 as usize] = true; }
-                }
-            }
-            for (pc, op) in bc.code.iter().enumerate() {
-                total += 1;
-                match op {
-                    OpCode::Move(d, _) | OpCode::Copy(d, _) if (d.0 as usize) >= bc.reg_count => abi_mv += 1,
-                    OpCode::Drop(r) if !may_handle[r.0 as usize] => noop_drop += 1,
-                    OpCode::Copy(_, s) | OpCode::Move(_, s) if !live_after(&lo, pc, s.0) => dead_src_copy += 1,
-                    OpCode::Copy(..) | OpCode::Move(..) | OpCode::Drop(..) => real_cmd += 1,
-                    _ => { total -= 1; }
-                }
-            }
-        }
-        println!("{:<16} cmd_static={:<4} abi_staging={:<4} noop_drop={:<4} dead_src_cm={:<4} rest={}",
-            name, total, abi_mv, noop_drop, dead_src_copy, real_cmd);
-    }
-}
 
 // forward copy propagation (propagate_copies)
 // Scalar-only: regs that may hold handles (handle-producing dests, handle params,
