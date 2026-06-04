@@ -281,6 +281,10 @@ impl Compiler {
                 };
                 let op_id = self.op_ids.get(&key).copied().unwrap_or(0);
                 let fn_id = *self.func_map.get(&arm_name).unwrap_or(&0);
+                let tail = self.tail_resume
+                    && self.arm_resume_counts.get(&arm_name).copied().unwrap_or(0) <= 1
+                    && self.arm_resume_in_tail.get(&arm_name).copied().unwrap_or(false);
+                let fn_id = if tail { fn_id as u64 | crate::bytecode::DISPATCH_TAIL_FLAG } else { fn_id as u64 };
                 let fn_id_reg = self.alloc_register()?;
                 let fn_id_idx = self.add_constant(crate::bytecode::Value::from_int(fn_id as i64))?;
                 self.emit(OpCode::PushConst(fn_id_reg, fn_id_idx));

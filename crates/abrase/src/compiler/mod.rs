@@ -111,6 +111,7 @@ pub struct Compiler {
     pub(super) copy_coalesce: bool,
     pub(super) copy_prop: bool,
     pub(super) typed_ld: bool,
+    pub(super) tail_resume: bool,
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
@@ -193,6 +194,7 @@ impl Compiler {
             copy_coalesce: true,
             copy_prop: true,
             typed_ld: true,
+            tail_resume: false,
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
@@ -259,6 +261,11 @@ impl Compiler {
 
     pub fn with_typed_ld(mut self, on: bool) -> Self {
         self.typed_ld = on;
+        self
+    }
+
+    pub fn with_tail_resume(mut self, on: bool) -> Self {
+        self.tail_resume = on;
         self
     }
 
