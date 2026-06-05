@@ -1,34 +1,35 @@
 <p align="center">
-  <a href="https://khn190.github.io/abrase/"><img src="./assets/banner.svg" alt="Abrase" width="720"></a>
+  <a href="https://khn190.github.io/abrase/"><img src="./banner.svg" alt="Abrase" width="720"></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/dependencies-zero-2b2620?labelColor=f4efe2" alt="zero dependencies">
-  <img src="https://img.shields.io/badge/memory-no_GC%2C_leak_free-2b2620?labelColor=f4efe2" alt="no GC, leak free">
-  <img src="https://img.shields.io/badge/rustc-1.85+-2b2620?labelColor=f4efe2" alt="rustc 1.85+">
-  <a href="https://khn190.github.io/abrase/"><img src="https://img.shields.io/badge/playground-wasm-d97757?labelColor=f4efe2" alt="playground"></a>
+  <img src="https://img.shields.io/badge/dependencies-zero-black" alt="zero dependencies">
+  <img src="https://img.shields.io/badge/memory-no_GC%2C_leak_free-black" alt="no GC, leak free">
+  <img src="https://img.shields.io/badge/rustc-1.85+-black" alt="rustc 1.85+">
+  <a href="https://khn190.github.io/abrase/"><img src="https://img.shields.io/badge/playground-wasm-black" alt="playground"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="MIT"></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/KHN190/Abrase/actions/workflows/ci.yml"><img src="https://github.com/KHN190/Abrase/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://codecov.io/gh/KHN190/Abrase"><img src="https://codecov.io/gh/KHN190/Abrase/branch/dev/graph/badge.svg" alt="codecov"></a>
   <a href="https://crates.io/crates/abrase-cli"><img src="https://img.shields.io/crates/v/abrase-cli.svg?label=abrase-cli" alt="crates.io"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
 </p>
 
-Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime. The interpreter can be added to any Rust application and compile to Rust (the latter is WIP).
+Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
 
 It features:
 
 * Strong typed
 * Algebraic effects
 * Region memory lifecycle design - no GC, leak free
-* Myriad runtime — computation core
 * Linter & Debugger
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
-Try it now in your [browser](https://khn190.github.io/abrase/).
+Try it now in [browser](https://khn190.github.io/abrase/).
+
+> _Transpile to Rust is WIP._
 
 ## Installation
 
