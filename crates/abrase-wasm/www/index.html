@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Abrase Language | Playground</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg?v=3">
+<link rel="alternate icon" type="image/png" href="favicon.png?v=3">
+<style>
+  :root {
+    --bg: #faf9f5;
+    --panel: #f2f0e9;
+    --border: #e5e2d9;
+    --ink: #3d3929;
+    --muted: #8a857a;
+    --accent: #d97757;
+    --accent-dark: #c05f3f;
+    --kw: #9d4edd;
+    --ty: #b07d2b;
+    --str: #5e8d54;
+    --num: #a96f2e;
+    --cmt: #a9a496;
+    --fx: #d97757;
+    --serif: "Charter", "Iowan Old Style", Georgia, serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: var(--mono);
+    margin: 0; background: var(--bg); color: var(--ink);
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    padding: 0.7rem 1.25rem; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 1rem;
+  }
+  header h1 { font: 600 1.15rem var(--serif); margin: 0; letter-spacing: 0.01em; }
+  header .links { margin-left: auto; font-size: 0.8rem; }
+  header .links a { color: var(--accent-dark); text-decoration: none; margin-left: 1.25rem; }
+  header .links a:hover { text-decoration: underline; }
+  main { flex: 1; display: flex; min-height: 0; }
+
+  nav { width: 11rem; border-right: 1px solid var(--border); background: var(--panel); overflow-y: auto; padding-top: 0.5rem; }
+  nav button {
+    display: block; width: 100%; padding: 0.45rem 0.75rem;
+    border: none; border-left: 3px solid transparent;
+    background: none; font: inherit; font-size: 0.8rem; text-align: left;
+    cursor: pointer; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transition: color 0.15s, background 0.15s;
+  }
+  nav button:hover { color: var(--ink); }
+  nav button.active {
+    background: var(--bg); color: var(--ink); font-weight: bold;
+    border-left-color: var(--accent);
+  }
+
+  .editor { flex: 1; position: relative; min-width: 0; }
+  .editor pre, .editor textarea {
+    position: absolute; inset: 0; margin: 0; padding: 1rem 1.25rem;
+    font: 13px/1.6 var(--mono);
+    white-space: pre; overflow: auto; tab-size: 4;
+  }
+  .editor pre { pointer-events: none; color: var(--ink); }
+  .editor textarea {
+    resize: none; border: none; outline: none;
+    background: transparent; color: transparent; caret-color: var(--ink);
+  }
+
+  .panel { border-top: 1px solid var(--border); }
+  .toolbar { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 1.25rem; }
+  .toolbar button {
+    font: inherit; font-size: 0.8rem; padding: 0.3rem 1.1rem; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--bg); color: var(--ink);
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .toolbar button:hover:not(:disabled) { border-color: var(--accent); }
+  .toolbar button:disabled { opacity: 0.35; cursor: default; }
+  #run {
+    background: var(--accent); border-color: var(--accent); color: #fff; font-weight: bold;
+  }
+  #run:hover:not(:disabled) { background: var(--accent-dark); border-color: var(--accent-dark); }
+  #time { color: var(--muted); font-size: 0.8rem; margin-left: 0.4rem; }
+  .hint { margin-left: auto; color: #b8b3a6; font-size: 0.72rem; }
+  #out {
+    margin: 0; padding: 0.85rem 1.25rem; height: 8rem; overflow: auto;
+    background: var(--panel); white-space: pre-wrap; font-size: 13px; line-height: 1.55;
+    border-top: 1px solid var(--border);
+  }
+  #out.err { color: #ab2b2b; }
+
+  footer {
+    border-top: 1px solid var(--border); padding: 0.45rem 1.25rem;
+    font-size: 0.72rem; color: var(--muted); display: flex; gap: 1.25rem;
+  }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--accent-dark); }
+
+  .tok-kw { color: var(--kw); }
+  .tok-ty { color: var(--ty); }
+  .tok-str { color: var(--str); }
+  .tok-num { color: var(--num); }
+  .tok-cmt { color: var(--cmt); font-style: italic; }
+  .tok-fx { color: var(--fx); font-weight: bold; }
+</style>
+</head>
+<body>
+<header>
+  <img src="favicon.svg" alt="" width="22" height="22" style="align-self:center;border-radius:5px">
+  <h1>Abrase</h1>
+  <div class="links">
+    <a href="https://github.com/KHN190/Abrase" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://github.com/KHN190/Abrase/wiki" target="_blank" rel="noopener">learn more?</a>
+  </div>
+</header>
+<main>
+  <nav id="tabs"></nav>
+  <div class="editor">
+    <pre aria-hidden="true"><code id="hl"></code></pre>
+    <textarea id="src" spellcheck="false"></textarea>
+  </div>
+</main>
+<div class="panel">
+  <div class="toolbar">
+    <button id="run">Run</button>
+    <button id="checkBtn">Check</button>
+    <button id="stop" disabled>Stop</button>
+    <span id="time"></span>
+    <span class="hint">^R run · ^S stop · double-click tab to rename</span>
+  </div>
+  <pre id="out"></pre>
+</div>
+<footer>
+  <span>Abrase <span id="version"></span> — a rust-like language with algebraic effects · MIT License</span>
+  <a href="https://github.com/KHN190/Abrase" target="_blank" rel="noopener">source</a>
+  <a href="https://github.com/KHN190/Abrase/tree/main/wiki" target="_blank" rel="noopener">wiki</a>
+</footer>
+
+<script type="module">
+const MAX_TABS = 8;
+
+const tabsEl = document.getElementById("tabs");
+const srcEl = document.getElementById("src");
+const hlEl = document.getElementById("hl");
+const outEl = document.getElementById("out");
+const timeEl = document.getElementById("time");
+const runBtn = document.getElementById("run");
+const checkBtn = document.getElementById("checkBtn");
+const stopBtn = document.getElementById("stop");
+
+const tabs = [];
+let active = 0;
+let worker = null;
+let running = false;
+
+const KEYWORDS = new Set([
+  "fn", "let", "mut", "if", "else", "while", "loop", "for", "in", "match",
+  "handle", "resume", "return", "throw", "effect", "op", "trait", "impl",
+  "where", "type", "static", "const", "pub", "import", "break", "continue",
+  "region", "halt", "true", "false",
+]);
+
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function highlight(src) {
+  const re = /(\/\/[^\n]*)|("(?:[^"\\]|\\.)*"?)|('(?:[^'\\]|\\.)'?)|(@\w+)|(\b\d[\d_]*(?:\.\d+)?\b)|(\b[A-Za-z_]\w*\b)/g;
+  let html = "";
+  let last = 0;
+  for (let m; (m = re.exec(src)); ) {
+    html += esc(src.slice(last, m.index));
+    last = re.lastIndex;
+    const t = m[0];
+    if (m[1]) html += `<span class="tok-cmt">${esc(t)}</span>`;
+    else if (m[2] || m[3]) html += `<span class="tok-str">${esc(t)}</span>`;
+    else if (m[4]) html += `<span class="tok-fx">${esc(t)}</span>`;
+    else if (m[5]) html += `<span class="tok-num">${esc(t)}</span>`;
+    else if (KEYWORDS.has(t)) html += `<span class="tok-kw">${esc(t)}</span>`;
+    else if (/^[A-Z]/.test(t)) html += `<span class="tok-ty">${esc(t)}</span>`;
+    else html += esc(t);
+  }
+  html += esc(src.slice(last));
+  return html + "\n";
+}
+
+function render() {
+  hlEl.innerHTML = highlight(srcEl.value);
+}
+
+function renderTabs() {
+  tabsEl.innerHTML = "";
+  tabs.forEach((tab, i) => {
+    const b = document.createElement("button");
+    b.textContent = tab.name;
+    if (i === active) b.classList.add("active");
+    b.onclick = () => switchTab(i);
+    b.ondblclick = () => {
+      const input = document.createElement("input");
+      input.value = tab.name;
+      input.style.cssText = "width:100%;font:inherit;border:none;outline:1px solid var(--fx);padding:0;background:var(--bg)";
+      b.textContent = "";
+      b.appendChild(input);
+      input.focus();
+      input.select();
+      const commit = () => {
+        const name = input.value.trim();
+        if (name) tab.name = name;
+        renderTabs();
+      };
+      input.onblur = commit;
+      input.onkeydown = (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") input.blur();
+        else if (e.key === "Escape") {
+          input.onblur = null;
+          renderTabs();
+        }
+      };
+    };
+    b.title = "double-click to rename";
+    tabsEl.appendChild(b);
+  });
+}
+
+function switchTab(i) {
+  if (i === active) return;
+  tabs[active].source = srcEl.value;
+  active = i;
+  srcEl.value = tabs[i].source;
+  outEl.textContent = "";
+  outEl.classList.remove("err");
+  timeEl.textContent = "";
+  render();
+  [...tabsEl.children].forEach((b, j) => b.classList.toggle("active", j === active));
+}
+
+function fmtMs(ms) {
+  return ms < 1000 ? ms.toFixed(1) + " ms" : (ms / 1000).toFixed(2) + " s";
+}
+
+function setRunning(on) {
+  running = on;
+  runBtn.disabled = on;
+  checkBtn.disabled = on;
+  stopBtn.disabled = !on;
+}
+
+function show(r, ms, label) {
+  outEl.classList.toggle("err", !r.ok);
+  let text = "";
+  if (r.warnings) text += r.warnings + "\n";
+  if (r.stdout) text += r.stdout;
+  if (r.stderr) text += r.stderr;
+  if (r.ok) text += r.value ? "=> " + r.value : "ok";
+  else text += r.error;
+  outEl.textContent = text;
+  timeEl.textContent = `${label}: ${fmtMs(ms)}`;
+}
+
+function spawnWorker() {
+  return new Promise((resolve) => {
+    const w = new Worker("./worker.js", { type: "module" });
+    w.onmessage = (e) => {
+      if (e.data.type === "ready") resolve(w);
+      else if (e.data.type === "result") {
+        setRunning(false);
+        show(e.data.result, e.data.ms, e.data.action);
+      }
+    };
+    worker = w;
+  });
+}
+
+function exec(action) {
+  if (running || !worker) return;
+  tabs[active].source = srcEl.value;
+  setRunning(true);
+  outEl.classList.remove("err");
+  outEl.textContent = "running…";
+  timeEl.textContent = "";
+  worker.postMessage({ action, source: srcEl.value });
+}
+
+async function stop() {
+  if (!running || !worker) return;
+  worker.terminate();
+  worker = null;
+  setRunning(false);
+  outEl.classList.add("err");
+  outEl.textContent = "stopped.";
+  timeEl.textContent = "";
+  await spawnWorker();
+}
+
+srcEl.addEventListener("input", render);
+srcEl.addEventListener("scroll", () => {
+  hlEl.parentElement.scrollTop = srcEl.scrollTop;
+  hlEl.parentElement.scrollLeft = srcEl.scrollLeft;
+});
+srcEl.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const { selectionStart: s, selectionEnd: epos } = srcEl;
+    srcEl.setRangeText("  ", s, epos, "end");
+    render();
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (!e.ctrlKey || e.metaKey) return;
+  if (e.key === "r") {
+    e.preventDefault();
+    exec("run");
+  } else if (e.key === "s") {
+    e.preventDefault();
+    stop();
+  }
+});
+
+runBtn.onclick = () => exec("run");
+checkBtn.onclick = () => exec("check");
+stopBtn.onclick = stop;
+
+const w = new Worker("./worker.js", { type: "module" });
+await new Promise((resolve) => {
+  w.onmessage = (e) => {
+    if (e.data.type === "ready") {
+      document.getElementById("version").textContent = "v" + e.data.version;
+      const names = e.data.examples;
+      for (let i = 0; i < MAX_TABS; i++) {
+        if (i < names.length) tabs.push({ name: names[i].name, source: names[i].source });
+        else tabs.push({ name: "untitled-" + (i - names.length + 1), source: "" });
+      }
+      resolve();
+    } else if (e.data.type === "result") {
+      setRunning(false);
+      show(e.data.result, e.data.ms, e.data.action);
+    }
+  };
+});
+worker = w;
+
+srcEl.value = tabs[0].source;
+render();
+renderTabs();
+</script>
+</body>
+</html>

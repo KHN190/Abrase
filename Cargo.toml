@@ -4,7 +4,8 @@ members = [
 	"crates/abrase",
 	"crates/polka",
 	"crates/myriad",
-	"crates/abrase-cli"
+	"crates/abrase-cli",
+	"crates/abrase-wasm"
 ]
 
 [workspace.package]
