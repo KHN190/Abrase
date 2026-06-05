@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/dependencies-zero-black" alt="zero dependencies">
-  <img src="https://img.shields.io/badge/memory-no_GC%2C_leak_free-black" alt="no GC, leak free">
+  <img src="https://img.shields.io/badge/memory-no_GC%2C_leak_free-black" alt="leak free">
   <img src="https://img.shields.io/badge/rustc-1.85+-black" alt="rustc 1.85+">
   <a href="https://khn190.github.io/abrase/"><img src="https://img.shields.io/badge/playground-wasm-black" alt="playground"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="MIT"></a>
