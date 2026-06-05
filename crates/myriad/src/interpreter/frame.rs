@@ -101,7 +101,7 @@ impl VirtualMachine {
         let effect_id = ((key_raw >> 8) & 0xFFFF) as u16;
         let op_id = (key_raw & 0xFF) as usize;
 
-        let (arm_fn_id, env) = self.resolve_dispatch_for(effect_id, op_id);
+        let (arm_fn_id, tail_arm, env) = self.resolve_dispatch_for(effect_id, op_id);
         if arm_fn_id == polka::DISPATCH_NO_MATCH {
             return Err(format!("raise: unhandled effect {:#04x} op {}", effect_id, op_id));
         }
@@ -127,17 +127,8 @@ impl VirtualMachine {
         }
         let nargs = arm_param_count - 2;
 
-        let mut init_mask = vec![0u64; (crate::cont_slot::SIZE + 63) / 64];
-        init_mask[0] = crate::cont_slot::INIT_MASK_WORD0;
-        let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(crate::cont_slot::SIZE, &init_mask)?;
-        self.region_record_alloc(cell_slot, cell_gen);
-        self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_PC, (self.pc - 1) as u64, false)?;
-        self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_BASE, self.base_reg as u64, false)?;
-        self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_FUNC, self.current_func as u64, false)?;
-        self.heap.st(cell_slot, cell_gen, crate::cont_slot::ALIVE, 1, false)?;
-
         // Op args are MOVED into the operation: take them out of the caller
-        // window before snapshotting so the suspended frame doesn't retain them
+        // window (before snapshotting, in the suspension path).
         let args_base_abs = self.base_reg + args_base.to_usize();
         let mut moved_args: Vec<(u64, bool)> = Vec::with_capacity(nargs);
         for i in 0..nargs {
@@ -148,18 +139,31 @@ impl VirtualMachine {
             if is_handle { self.write_abs(src_abs, HANDLE_NONE, false); }
         }
 
-        let snapshot = self.snapshot_registers(self.base_reg, caller_reg_count)?;
-        self.write_snapshot_into_cell(cell_slot, cell_gen, snapshot)?;
-
-        if let Some(handler_frame) = self.handlers.last_mut() {
-            handler_frame.cells_allocated.push((cell_slot, cell_gen));
-            handler_frame.cell_slot = cell_slot;
-            handler_frame.cell_gen = cell_gen;
-        }
-        self.heap.st(cell_slot, cell_gen, crate::cont_slot::DISPATCH_FN_ID, arm_fn_id as u64, false)?;
         let (env_raw, env_is_handle) = env.unwrap_or((HANDLE_NONE, false));
-        if env_is_handle { self.rc_inc_handle(env_raw)?; }
-        self.heap.st(cell_slot, cell_gen, crate::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
+        // Tail-resumptive arm (compiled to end in Ret): plain call, the cont
+        // cell and register snapshot would never be read — skip them entirely.
+        if !tail_arm {
+            let mut init_mask = vec![0u64; (crate::cont_slot::SIZE + 63) / 64];
+            init_mask[0] = crate::cont_slot::INIT_MASK_WORD0;
+            let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(crate::cont_slot::SIZE, &init_mask)?;
+            self.region_record_alloc(cell_slot, cell_gen);
+            self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_PC, (self.pc - 1) as u64, false)?;
+            self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_BASE, self.base_reg as u64, false)?;
+            self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_FUNC, self.current_func as u64, false)?;
+            self.heap.st(cell_slot, cell_gen, crate::cont_slot::ALIVE, 1, false)?;
+
+            let snapshot = self.snapshot_registers(self.base_reg, caller_reg_count)?;
+            self.write_snapshot_into_cell(cell_slot, cell_gen, snapshot)?;
+
+            if let Some(handler_frame) = self.handlers.last_mut() {
+                handler_frame.cells_allocated.push((cell_slot, cell_gen));
+                handler_frame.cell_slot = cell_slot;
+                handler_frame.cell_gen = cell_gen;
+            }
+            self.heap.st(cell_slot, cell_gen, crate::cont_slot::DISPATCH_FN_ID, arm_fn_id as u64, false)?;
+            if env_is_handle { self.rc_inc_handle(env_raw)?; }
+            self.heap.st(cell_slot, cell_gen, crate::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
+        }
 
         let new_base = self.base_reg + caller_reg_count;
         let window = arm_reg_count.max(polka::FRAME_REGS);
@@ -196,20 +200,21 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(super) fn resolve_dispatch_for(&self, effect_id: u16, op_id: usize) -> (u16, Option<(u64, bool)>) {
+    pub(super) fn resolve_dispatch_for(&self, effect_id: u16, op_id: usize) -> (u16, bool, Option<(u64, bool)>) {
         for h in self.handlers.iter().rev() {
             if h.effect_id != effect_id { continue; }
             if let Some(slot) = h.dispatch_table_slot {
                 if let Ok((raw, _)) = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2) {
-                    let n = raw as i64;
-                    if (0..=0xFFFF).contains(&n) && (n as u16) != polka::DISPATCH_NO_MATCH {
+                    let tail = (raw & polka::DISPATCH_TAIL_FLAG) != 0;
+                    let n = raw & 0xFFFF;
+                    if raw & !(polka::DISPATCH_TAIL_FLAG | 0xFFFF) == 0 && (n as u16) != polka::DISPATCH_NO_MATCH {
                         let env = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2 + 1).ok();
-                        return (n as u16, env);
+                        return (n as u16, tail, env);
                     }
                 }
             }
         }
-        (polka::DISPATCH_NO_MATCH, None)
+        (polka::DISPATCH_NO_MATCH, false, None)
     }
 
     #[cold]

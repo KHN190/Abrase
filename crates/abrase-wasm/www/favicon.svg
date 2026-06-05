@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <filter id="ink" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="2.2"/>
+    </filter>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="2" seed="3" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.4 0.4 0.4 0 0" result="a"/>
+      <feComposite in="a" in2="SourceGraphic" operator="in"/>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="10" fill="#f4efe2"/>
+  <rect width="64" height="64" rx="10" fill="#8a7d5c" opacity="0.18" filter="url(#grain)"/>
+  <text x="27" y="50" text-anchor="middle"
+        font-family="Georgia, 'Times New Roman', 'Nimbus Roman', serif"
+        font-size="48" fill="#2b2620"
+        filter="url(#ink)">A</text>
+  <text x="45" y="34" text-anchor="middle"
+        font-family="Georgia, 'Times New Roman', 'Nimbus Roman', serif"
+        font-size="30" fill="#2b2620"
+        filter="url(#ink)">*</text>
+</svg>

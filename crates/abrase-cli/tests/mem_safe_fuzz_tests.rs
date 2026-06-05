@@ -489,6 +489,239 @@ fn try_run_checked(src: &str, step_cap: u64, expected_live: usize, heap_check: b
     Outcome::Ok
 }
 
+// Compile+run with drop-elision forced on or off. Err collapses all failure
+// kinds (parse/compile/hang/runtime) — used only to compare on-vs-off agreement.
+fn run_elision(src: &str, step_cap: u64, elide: bool) -> Result<(i64, usize), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err("parse".into()); }
+    let mut c = Compiler::new().with_drop_elision(elide);
+    let module = c.compile_module(&ast).map_err(|_| "compile".to_string())?;
+    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
+    let v = vm.run_module(&module).map_err(|e| e)?;
+    Ok((v.as_int(), vm.heap_live_count()))
+}
+
+// Empirical proof that drop-elision is a sound transform: across random programs
+// (closures, effects, handlers, statics, records) it changes neither the result
+// value nor the live-cell count vs no-elision. This is how we "prove" the handle
+// tag reliable enough to elide — oracle + fuzz, not a static borrow proof.
+#[test]
+fn fuzz_drop_elision_equivalence() {
+    let mut diverged = 0u32;
+    let mut report = String::new();
+    for seed in 0..ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let off = run_elision(&src, STEP_CAP, false);
+        let on  = run_elision(&src, STEP_CAP, true);
+        match (&off, &on) {
+            (Ok((vo, lo)), Ok((ve, le))) if vo == ve && lo == le => {}
+            (Err(_), Err(_)) => {}
+            _ => {
+                diverged += 1;
+                if report.len() < 4000 {
+                    report.push_str(&format!("--- seed={} off={:?} on={:?} ---\n{}\n", seed, off, on, src));
+                }
+            }
+        }
+    }
+    assert_eq!(diverged, 0, "drop-elision diverged on {} program(s):\n{}", diverged, report);
+}
+
+fn run_inline(src: &str, step_cap: u64, inline: bool) -> Result<(i64, usize), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err("parse".into()); }
+    let mut c = Compiler::new().with_inline(inline);
+    let module = c.compile_module(&ast).map_err(|_| "compile".to_string())?;
+    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
+    let v = vm.run_module(&module).map_err(|e| e)?;
+    Ok((v.as_int(), vm.heap_live_count()))
+}
+
+#[test]
+fn fuzz_inline_equivalence() {
+    let mut diverged = 0u32;
+    let mut report = String::new();
+    for seed in 0..ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let off = run_inline(&src, STEP_CAP, false);
+        let on  = run_inline(&src, STEP_CAP, true);
+        match (&off, &on) {
+            (Ok((vo, lo)), Ok((ve, le))) if vo == ve && lo == le => {}
+            (Err(_), Err(_)) => {}
+            _ => {
+                diverged += 1;
+                if report.len() < 4000 {
+                    report.push_str(&format!("--- seed={} off={:?} on={:?} ---\n{}\n", seed, off, on, src));
+                }
+            }
+        }
+    }
+    assert_eq!(diverged, 0, "inline diverged on {} program(s):\n{}", diverged, report);
+}
+
+// Focused: a small pure leaf fn (abs_diff shape) must inline and compute right.
+#[test]
+fn inline_leaf_preserves_value() {
+    let src = "fn ad(a: Int, b: Int) -> Int { if a > b { a - b } else { b - a } }\n\
+               fn main() -> Int { ad(3, 10) + ad(10, 3) }";
+    let on = run_inline(src, STEP_CAP, true).expect("inline run");
+    let off = run_inline(src, STEP_CAP, false).expect("noinline run");
+    assert_eq!(on.0, 14, "value");
+    assert_eq!(on, off, "inline must match no-inline (value, heap)");
+    assert_eq!(on.1, 0, "no leak");
+}
+
+fn run_coalesce(src: &str, step_cap: u64, on: bool) -> Result<(i64, usize), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err("parse".into()); }
+    let mut c = Compiler::new().with_copy_coalesce(on);
+    let module = c.compile_module(&ast).map_err(|_| "compile".to_string())?;
+    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
+    let v = vm.run_module(&module).map_err(|e| e)?;
+    Ok((v.as_int(), vm.heap_live_count()))
+}
+
+fn run_tail_resume(src: &str, step_cap: u64, on: bool) -> Result<(i64, usize), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err("parse".into()); }
+    let mut c = Compiler::new().with_tail_resume(on);
+    let module = c.compile_module(&ast).map_err(|_| "compile".to_string())?;
+    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
+    let v = vm.run_module(&module).map_err(|e| e)?;
+    Ok((v.as_int(), vm.heap_live_count()))
+}
+
+// Empirical proof that the tail-resumptive raise fast path (no cont cell, no
+// register snapshot) is value- and leak-preserving.
+#[test]
+fn fuzz_tail_resume_equivalence() {
+    let mut diverged = 0u32;
+    let mut report = String::new();
+    for seed in 0..ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let off = run_tail_resume(&src, STEP_CAP, false);
+        let on  = run_tail_resume(&src, STEP_CAP, true);
+        match (&off, &on) {
+            (Ok((vo, lo)), Ok((ve, le))) if vo == ve && lo == le => {}
+            (Err(_), Err(_)) => {}
+            _ => {
+                diverged += 1;
+                if report.len() < 4000 {
+                    report.push_str(&format!("--- seed={} off={:?} on={:?} ---\n{}\n", seed, off, on, src));
+                }
+            }
+        }
+    }
+    assert_eq!(diverged, 0, "tail-resume equivalence diverged on {} program(s):\n{}", diverged, report);
+}
+
+fn run_typed_ld(src: &str, step_cap: u64, on: bool) -> Result<(i64, usize), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err("parse".into()); }
+    let mut c = Compiler::new().with_typed_ld(on);
+    let module = c.compile_module(&ast).map_err(|_| "compile".to_string())?;
+    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
+    let v = vm.run_module(&module).map_err(|e| e)?;
+    Ok((v.as_int(), vm.heap_live_count()))
+}
+
+// Empirical proof that typed-Ld drop elaboration (scalar field/elem/tag loads
+// emit no cleanup Drop) is value- and leak-preserving.
+#[test]
+fn fuzz_typed_ld_equivalence() {
+    let mut diverged = 0u32;
+    let mut report = String::new();
+    for seed in 0..ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let off = run_typed_ld(&src, STEP_CAP, false);
+        let on  = run_typed_ld(&src, STEP_CAP, true);
+        match (&off, &on) {
+            (Ok((vo, lo)), Ok((ve, le))) if vo == ve && lo == le => {}
+            (Err(_), Err(_)) => {}
+            _ => {
+                diverged += 1;
+                if report.len() < 4000 {
+                    report.push_str(&format!("--- seed={} off={:?} on={:?} ---\n{}\n", seed, off, on, src));
+                }
+            }
+        }
+    }
+    assert_eq!(diverged, 0, "typed-ld equivalence diverged on {} program(s):\n{}", diverged, report);
+}
+
+fn run_copy_prop(src: &str, step_cap: u64, on: bool) -> Result<(i64, usize), String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let ast = p.parse_program();
+    if !p.errors.is_empty() { return Err("parse".into()); }
+    let mut c = Compiler::new().with_copy_prop(on);
+    let module = c.compile_module(&ast).map_err(|_| "compile".to_string())?;
+    let mut vm = VirtualMachine::new().with_step_cap(step_cap);
+    let v = vm.run_module(&module).map_err(|e| e)?;
+    Ok((v.as_int(), vm.heap_live_count()))
+}
+
+// Empirical proof that forward copy propagation (scalar-only rewriting plus
+// dead-copy deletion with offset remap) is value- and leak-preserving.
+#[test]
+fn fuzz_copy_prop_equivalence() {
+    let mut diverged = 0u32;
+    let mut report = String::new();
+    for seed in 0..ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let off = run_copy_prop(&src, STEP_CAP, false);
+        let on  = run_copy_prop(&src, STEP_CAP, true);
+        match (&off, &on) {
+            (Ok((vo, lo)), Ok((ve, le))) if vo == ve && lo == le => {}
+            (Err(_), Err(_)) => {}
+            _ => {
+                diverged += 1;
+                if report.len() < 4000 {
+                    report.push_str(&format!("--- seed={} off={:?} on={:?} ---
+{}
+", seed, off, on, src));
+                }
+            }
+        }
+    }
+    assert_eq!(diverged, 0, "copy-prop equivalence diverged on {} program(s):
+{}", diverged, report);
+}
+
+// Empirical proof that copy-coalescing (incl. its branch-offset rewriting) is
+// value- and leak-preserving across random programs with branches/loops/effects.
+#[test]
+fn fuzz_coalesce_equivalence() {
+    let mut diverged = 0u32;
+    let mut report = String::new();
+    for seed in 0..ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let off = run_coalesce(&src, STEP_CAP, false);
+        let on  = run_coalesce(&src, STEP_CAP, true);
+        match (&off, &on) {
+            (Ok((vo, lo)), Ok((ve, le))) if vo == ve && lo == le => {}
+            (Err(_), Err(_)) => {}
+            _ => {
+                diverged += 1;
+                if report.len() < 4000 {
+                    report.push_str(&format!("--- seed={} off={:?} on={:?} ---\n{}\n", seed, off, on, src));
+                }
+            }
+        }
+    }
+    assert_eq!(diverged, 0, "copy-coalescing diverged on {} program(s):\n{}", diverged, report);
+}
+
 const ITER: u64 = 2_000;
 const STEP_CAP: u64 = 1_000_000;
 const EXAMPLES_PER_BUCKET: usize = 3;
@@ -554,10 +787,6 @@ fn fuzz_no_leak_no_panic() {
     );
 }
 
-// UAF / stale-handle net. Same generated programs, run with the per-op tag sweep
-// on. A dangling handle tag (use-after-free precursor) is reported by the VM at
-// the creating op and surfaces here as a RunErr. Fewer iterations because the
-// sweep is O(regs+cells) per instruction.
 const UAF_ITER: u64 = 1_000;
 
 #[test]

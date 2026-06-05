@@ -371,11 +371,11 @@ impl HandleLowering {
         let mut params: Vec<Param> = Vec::new();
         params.push(Param::Named {
             pattern: Spanned { node: Pattern::Bind("__env".into()), span: body.span },
-            ty: Type::Named("Int".into()),
+            ty: Type::Named("__cont".into()),
         });
         params.push(Param::Named {
             pattern: Spanned { node: Pattern::Bind("__return_env".into()), span: body.span },
-            ty: Type::Named("Int".into()),
+            ty: Type::Named("__cont".into()),
         });
         if let Some(p) = pat {
             let ty = pat_ty.unwrap_or(Type::Named("Int".into()));

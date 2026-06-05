@@ -124,6 +124,7 @@ mod tests {
     fn test_region_pop_force_frees_alloc_inside() {
         let mut vm = VirtualMachine::new();
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: vec![
                 OpCode::PushConst(r(0), 0),
                 OpCode::PushConst(r(1), 1),
@@ -144,6 +145,7 @@ mod tests {
             string_constants: vec![],
             reg_count: 8,
             param_count: 0,
+            lines: vec![],
         });
         let result = vm.run(&chunk).expect("region push/pop should not error");
         assert_eq!(result, Value::from_int(99));
@@ -154,6 +156,7 @@ mod tests {
     fn test_region_pop_frees_multiple_allocs() {
         let mut vm = VirtualMachine::new();
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: vec![
                 OpCode::PushConst(r(0), 0),
                 OpCode::PushConst(r(1), 1),
@@ -176,6 +179,7 @@ mod tests {
             string_constants: vec![],
             reg_count: 8,
             param_count: 0,
+            lines: vec![],
         });
         vm.run(&chunk).unwrap();
         assert_eq!(vm.heap_live_count(), 0, "all allocs in region must be freed");
@@ -185,6 +189,7 @@ mod tests {
     fn test_alloc_outside_region_is_not_force_freed() {
         let mut vm = VirtualMachine::new();
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: vec![
                 OpCode::Alloc(r(0), 2),
                 OpCode::PushConst(r(1), 0),
@@ -195,6 +200,7 @@ mod tests {
             string_constants: vec![],
             reg_count: 4,
             param_count: 0,
+            lines: vec![],
         });
         vm.run(&chunk).unwrap();
         assert_eq!(vm.heap_live_count(), 1, "alloc outside region survives end of execution");
@@ -204,6 +210,7 @@ mod tests {
     fn test_nested_regions_pop_inner_only() {
         let mut vm = VirtualMachine::new();
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: vec![
                 OpCode::PushConst(r(0), 0),
                 OpCode::PushConst(r(1), 1),
@@ -226,6 +233,7 @@ mod tests {
             string_constants: vec![],
             reg_count: 8,
             param_count: 0,
+            lines: vec![],
         });
         vm.run(&chunk).unwrap();
         assert_eq!(vm.region_depth(), 1, "outer region remains after inner pop");
@@ -236,6 +244,7 @@ mod tests {
     fn test_region_pop_without_push_errors() {
         let mut vm = VirtualMachine::new();
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: vec![
                 OpCode::PushConst(r(0), 0),
                 OpCode::PushConst(r(1), 1),
@@ -250,6 +259,7 @@ mod tests {
             string_constants: vec![],
             reg_count: 4,
             param_count: 0,
+            lines: vec![],
         });
         let err = vm.run(&chunk).expect_err("region pop with empty stack must error");
         assert!(err.contains("no active region"), "got error: {}", err);
@@ -261,6 +271,7 @@ mod tests {
         let start = i64::MIN + 5;
         let mut vm = VirtualMachine::new();
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: vec![
                 OpCode::PushConst(r(0), 0),
                 OpCode::SubImm(r(1), r(0), 5),
@@ -271,6 +282,7 @@ mod tests {
             string_constants: vec![],
             reg_count: 2,
             param_count: 0,
+            lines: vec![],
         });
         let result = vm.run(&chunk).expect("vm should not panic on i64 underflow");
         let expected = start.wrapping_sub(5);

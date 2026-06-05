@@ -459,6 +459,28 @@ fn match_all_arms_read_static_correctly() {
 }
 
 #[test]
+fn static_read_after_if_merge_does_not_trust_branch_table_cache() {
+    let src = r#"
+static A: Int = 10
+static B: Int = 20
+fn main() -> Int { let a = if true { A } else { B }; a + A }
+"#;
+    let v = run_src(src).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(20));
+}
+
+#[test]
+fn static_read_after_match_merge_does_not_trust_arm_table_cache() {
+    let src = r#"
+static A: Int = 10
+static B: Int = 20
+fn main() -> Int { let a = match 0 { 0 => A, _ => B }; a + B }
+"#;
+    let v = run_src(src).unwrap_or_else(|e| panic!("\n{}", e));
+    assert_eq!(v, Value::from_int(30));
+}
+
+#[test]
 fn match_non_first_arm_reads_static_without_stale_register() {
     let src = r#"
 static A: Int = 10

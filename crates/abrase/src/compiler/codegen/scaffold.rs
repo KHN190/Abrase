@@ -71,6 +71,7 @@ impl Compiler {
 
     pub(in crate::compiler) fn emit(&mut self, op: OpCode) {
         self.track_dest_handle_bit(&op);
+        self.line_info.push(self.current_span.line as u32);
         self.code.push(op);
     }
 
@@ -104,6 +105,7 @@ impl Compiler {
             self.reg_holds_handle.resize(i + 1, false);
         }
         self.reg_holds_handle[i] = holds;
+        if holds && i < 128 { self.ever_handle_mask |= 1u128 << i; }
     }
 
     pub(in crate::compiler) fn set_reg_handle(&mut self, reg: Register, holds: bool) {
@@ -112,6 +114,7 @@ impl Compiler {
             self.reg_holds_handle.resize(i + 1, false);
         }
         self.reg_holds_handle[i] = holds;
+        if holds && i < 128 { self.ever_handle_mask |= 1u128 << i; }
     }
 
     pub(in crate::compiler) fn try_redirect_last_dest(&mut self, old: Register, new: Register) -> bool {
@@ -167,6 +170,7 @@ impl Compiler {
         let new_i = new.0 as usize;
         if new_i >= self.reg_holds_handle.len() { self.reg_holds_handle.resize(new_i + 1, false); }
         self.reg_holds_handle[new_i] = true;
+        if new_i < 128 { self.ever_handle_mask |= 1u128 << new_i; }
         true
     }
 
@@ -323,9 +327,11 @@ impl Compiler {
         let total = self.block_locals_stack.len();
         let start = total.saturating_sub(n_blocks);
         for layer_idx in (start..total).rev() {
-            let regs: Vec<Register> = self.block_locals_stack[layer_idx].clone();
-            for reg in regs {
+            let regs: Vec<(Register, bool)> = self.block_locals_stack[layer_idx].clone();
+            for (reg, is_handle) in regs {
                 if Some(reg) == skip { continue; }
+                // a block-local proven scalar at push time needs no Drop.
+                if self.drop_elision && !is_handle { continue; }
                 self.emit(OpCode::Drop(reg));
             }
         }

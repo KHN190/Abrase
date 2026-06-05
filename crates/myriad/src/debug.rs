@@ -5,6 +5,14 @@ pub enum DebugEvent<'a> {
         func: usize,
         pc: usize,
         op: &'a OpCode,
+        base_reg: usize,
+        // The current fn's register window and which of those regs hold handles.
+        window: &'a [u64],
+        handle_mask: u128,
+        // Source line of this op (0 = no debug info).
+        line: u32,
+        // Source file of this fn ("" = unknown).
+        file: &'a str,
     },
     HandlePush {
         effect_id: u16,
@@ -40,8 +48,12 @@ pub fn render_fn_label(idx: usize, names: &[String]) -> String {
 pub fn stderr_sink() -> DebugSink {
     Box::new(|event, names| {
         match event {
-            DebugEvent::Trace { func, pc, op } => {
-                eprintln!("[{}:{}] {:?}", render_fn_label(*func, names), pc, op);
+            DebugEvent::Trace { func, pc, op, line, .. } => {
+                if *line > 0 {
+                    eprintln!("[{}:{} @{}] {:?}", render_fn_label(*func, names), pc, line, op);
+                } else {
+                    eprintln!("[{}:{}] {:?}", render_fn_label(*func, names), pc, op);
+                }
             }
             DebugEvent::HandlePush {
                 effect_id, cell_slot, cell_gen, suspend_pc, suspend_base, dest, depth,

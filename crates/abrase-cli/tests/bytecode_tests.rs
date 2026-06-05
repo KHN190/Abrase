@@ -25,6 +25,8 @@ fn test_register_max() {
 #[test]
 fn test_chunk_construction() {
     let chunk = bc(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![
             OpCode::PushConst(Register(0), 0),
             OpCode::Ret(Register(0)),
@@ -43,6 +45,8 @@ fn test_chunk_construction() {
 #[test]
 fn test_chunk_empty() {
     let chunk = bc(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![],
         constants: vec![],
         const_mask: Vec::new(),
@@ -95,6 +99,8 @@ fn test_call_opcode() {
 #[test]
 fn test_chunk_reg_count() {
     let chunk = bc(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![OpCode::PushConst(Register(0), 0)],
         constants: vec![Value::from_int(10).raw()],
         const_mask: Vec::new(),
@@ -181,6 +187,8 @@ fn test_stidx_opcode() {
 #[test]
 fn test_memory_opcodes_in_chunk() {
     let chunk = bc(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![
             OpCode::PushConst(Register(0), 0),
             OpCode::Alloc(Register(1), 16),

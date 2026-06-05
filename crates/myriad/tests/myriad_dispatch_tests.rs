@@ -10,6 +10,8 @@ fn raw_constants(consts: Vec<Value>) -> Vec<u64> {
 
 fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
     VirtualMachine::new().run(&Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: ops,
         constants: raw_constants(constants),
         const_mask: Vec::new(),
@@ -34,6 +36,8 @@ fn dispatch_port_pop() -> i64 {
 #[test]
 fn test_call_reg_dispatches_to_bytecode() {
     let callee = BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![
             OpCode::PushConst(r(1), 0),
             OpCode::Add(r(0), r(0), r(1)),
@@ -45,6 +49,8 @@ fn test_call_reg_dispatches_to_bytecode() {
         param_count: 1, string_constants: Vec::new(),
     };
     let caller = BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::PushConst(r(1), 1),
@@ -74,6 +80,8 @@ fn test_call_reg_dispatches_to_native() {
         name: "test_double".into(),
     };
     let caller = BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::PushConst(r(1), 1),
@@ -106,6 +114,8 @@ fn test_handle_records_dispatch_table() {
     let mut vm = VirtualMachine::new();
     let module = Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
             code: vec![
                 OpCode::Alloc(r(0), 1),
                 OpCode::PushConst(r(1), 0),
@@ -139,6 +149,8 @@ fn test_dispatch_no_match_returns_sentinel() {
     let mut vm = VirtualMachine::new();
     let module = Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
             code: vec![
                 OpCode::PushConst(r(0), 0),
                 OpCode::PushConst(r(1), 1),
@@ -167,6 +179,8 @@ fn test_pop_handler_clears_frame_and_cell() {
     let mut vm = VirtualMachine::new();
     let module = Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
             code: vec![
                 OpCode::Alloc(r(0), 1),
                 OpCode::Handle(r(0), 5),
@@ -213,6 +227,8 @@ fn test_nested_handlers_innermost_wins() {
     let mut vm = VirtualMachine::new();
     let module = Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
             code: vec![
                 OpCode::Alloc(r(0), 1),
                 OpCode::PushConst(r(1), 0),

@@ -9,7 +9,8 @@ fn compile(src: &str) -> Module {
     let mut parser = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let ast = parser.parse_program();
     assert!(parser.errors.is_empty(), "{}", parser.pretty_print_errors());
-    let mut compiler = Compiler::new().with_source(src.to_string());
+    let mut compiler = Compiler::new().with_source(src.to_string())
+        .with_inline(!std::env::var("ABRASE_NO_INLINE").is_ok());
     compiler.compile_module(&ast)
         .unwrap_or_else(|_| panic!("{}", compiler.pretty_print_errors()))
 }
@@ -112,6 +113,16 @@ fn main() -> Float {
 }
 "#;
 
+const LEAF_CALLS: &str = r#"
+fn sq(x: Int) -> Int { x * x }
+fn main() -> Int {
+  let mut acc = 0;
+  let mut i = 0;
+  while i < 100000 { acc = acc + sq(i); i = i + 1 };
+  acc
+}
+"#;
+
 struct Prog { name: &'static str, src: &'static str }
 
 fn bench_vm(c: &mut Criterion) {
@@ -123,6 +134,7 @@ fn bench_vm(c: &mut Criterion) {
         Prog { name: "effects",       src: EFFECTS        },
         Prog { name: "records",       src: RECORDS        },
         Prog { name: "float_arith",   src: FLOAT_ARITH    },
+        Prog { name: "leaf_calls",    src: LEAF_CALLS     },
     ];
 
     let mut group = c.benchmark_group("vm_run");

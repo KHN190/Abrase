@@ -16,7 +16,7 @@ pub use devices::{Device, DeviceTable};
 pub use memory::Heap;
 pub use region::RegionTable;
 pub use builtins::{NativeCtx, NativeFn, NativeRegistry};
-pub use debug::{DebugEvent, DebugSink};
+pub use debug::{render_fn_label, DebugEvent, DebugSink};
 pub use host::Host;
 
 use frame::Frame;
@@ -53,6 +53,7 @@ pub struct VirtualMachine {
     pub(crate) region_table: RegionTable,
     pub(crate) natives: NativeRegistry,
     pub(crate) debug_sink: Option<DebugSink>,
+    pub(crate) trace_filter: Option<Vec<bool>>,
     pub(crate) trace_frames: bool,
     pub(crate) fn_names: Vec<String>,
     pub(crate) failing_pc: usize,
@@ -65,6 +66,10 @@ pub struct VirtualMachine {
     pub(crate) static_names: Vec<String>,
     pub(crate) trace_static_filter: Option<String>,
     pub(crate) heap_check: bool,
+    pub(crate) profile: bool,
+    pub(crate) prof_ops: std::collections::HashMap<&'static str, u64>,
+    pub(crate) prof_fns: std::collections::HashMap<usize, u64>,
+    pub(crate) prof_fn_ops: std::collections::HashMap<usize, std::collections::HashMap<&'static str, u64>>,
     pub(crate) yielded: bool,
     pub(crate) yield_dest_abs: usize,
 }
@@ -140,6 +145,7 @@ impl VirtualMachine {
             region_table: RegionTable::new(),
             natives,
             debug_sink: None,
+            trace_filter: None,
             trace_frames: false,
             fn_names: Vec::new(),
             failing_pc: 0,
@@ -153,6 +159,10 @@ impl VirtualMachine {
             trace_static_filter: std::env::var("TRACE_STATIC").ok()
                 .filter(|s| !s.is_empty()),
             heap_check: std::env::var("ABRASE_HEAP_CHECK").is_ok(),
+            profile: std::env::var("PROFILE").is_ok(),
+            prof_ops: std::collections::HashMap::new(),
+            prof_fns: std::collections::HashMap::new(),
+            prof_fn_ops: std::collections::HashMap::new(),
             yielded: false,
             yield_dest_abs: 0,
         }
@@ -190,6 +200,12 @@ impl VirtualMachine {
         self
     }
 
+    // fn_id-indexed bitset; out-of-range fn ids are silenced. None = trace all.
+    pub fn with_trace_filter(mut self, bits: Vec<bool>) -> Self {
+        self.trace_filter = Some(bits);
+        self
+    }
+
     pub fn with_debug_sink(mut self, sink: DebugSink) -> Self {
         self.debug_sink = Some(sink);
         self
@@ -203,6 +219,51 @@ impl VirtualMachine {
     pub(crate) fn emit_debug(&mut self, event: &DebugEvent) {
         if let Some(sink) = &mut self.debug_sink {
             sink(event, &self.fn_names);
+        }
+    }
+
+    // Dump the opcode + per-fn execution histogram to stderr (PROFILE=1). Op
+    // counts are pacing-independent: they reflect work per run, not wall time.
+    pub fn print_profile(&self) {
+        if !self.profile { return; }
+        let mut ops: Vec<_> = self.prof_ops.iter().collect();
+        ops.sort_by(|a, b| b.1.cmp(a.1));
+        let total: u64 = self.prof_ops.values().sum();
+        eprintln!("[profile] {} ops executed", total);
+        for (name, n) in ops {
+            eprintln!("  {:>12} {:>6.1}%  {}", n, *n as f64 * 100.0 / total.max(1) as f64, name);
+        }
+        let mut fns: Vec<_> = self.prof_fns.iter().collect();
+        fns.sort_by(|a, b| b.1.cmp(a.1));
+        eprintln!("[profile] per-fn opcode breakdown (top 15 fns):");
+        for (fid, n) in fns.into_iter().take(15) {
+            eprintln!("  {:>12} {} ({:.1}%)", n,
+                debug::render_fn_label(*fid, &self.fn_names),
+                *n as f64 * 100.0 / total.max(1) as f64);
+            if let Some(ops) = self.prof_fn_ops.get(fid) {
+                let mut fo: Vec<_> = ops.iter().collect();
+                fo.sort_by(|a, b| b.1.cmp(a.1));
+                let line: Vec<String> = fo.into_iter().take(8)
+                    .map(|(name, c)| format!("{} {:.0}%", name, *c as f64 * 100.0 / (*n).max(1) as f64))
+                    .collect();
+                eprintln!("               {}", line.join("  "));
+            }
+        }
+    }
+
+    pub(crate) fn op_name(op: &polka::OpCode) -> &'static str {
+        use polka::OpCode::*;
+        match op {
+            Add(..) => "Add", Sub(..) => "Sub", Mul(..) => "Mul", Div(..) => "Div", Mod(..) => "Mod",
+            Neg(..) => "Neg", FAdd(..) => "FAdd", FSub(..) => "FSub", FMul(..) => "FMul", FDiv(..) => "FDiv",
+            FNeg(..) => "FNeg", FLt(..) => "FLt", FEq(..) => "FEq",
+            Eq(..) => "Eq", Neq(..) => "Neq", Lt(..) => "Lt", Gt(..) => "Gt", Lte(..) => "Lte", Gte(..) => "Gte",
+            And(..) => "And", Or(..) => "Or", Xor(..) => "Xor", Shl(..) => "Shl", Shr(..) => "Shr",
+            Jmp(..) => "Jmp", Jz(..) => "Jz", Jnz(..) => "Jnz", Call(..) => "Call", CallReg(..) => "CallReg",
+            Ret(..) => "Ret", PushConst(..) => "PushConst", Copy(..) => "Copy", Move(..) => "Move",
+            Ld(..) => "Ld", St(..) => "St", LdIdx(..) => "LdIdx", StIdx(..) => "StIdx",
+            AddImm(..) => "AddImm", SubImm(..) => "SubImm", Alloc(..) => "Alloc", Drop(..) => "Drop",
+            Dei(..) => "Dei", Deo(..) => "Deo", Handle(..) => "Handle", Resume(..) => "Resume", Raise(..) => "Raise",
         }
     }
 
@@ -417,5 +478,36 @@ mod region_tests {
         v.region_record_alloc(slot, gen_);
         assert_eq!(v.heap_live_count(), 1);
         assert!(v.region_pop().is_err());
+    }
+}
+
+impl VirtualMachine {
+    // Structural heap dump for debuggers/hosts. No runtime types: cells render
+    // as [v0, v1, …], scalars as decimal, HANDLE_NONE as "none". Read-only;
+    // stale handles render as an error string (gen check), never panic.
+    pub fn render_value(&self, raw: u64, is_handle: bool, depth: usize) -> String {
+        if !is_handle { return (raw as i64).to_string(); }
+        if raw == polka::HANDLE_NONE { return "none".into(); }
+        if depth == 0 { return "…".into(); }
+        let (slot, g) = Self::decode_handle(raw);
+        let len = match self.heap.size(slot, g) {
+            Ok(n) => n,
+            Err(_) => return format!("<stale {:#x}>", raw),
+        };
+        let mut out = String::from("[");
+        for off in 0..len {
+            if off > 0 { out.push_str(", "); }
+            match self.heap.ld(slot, g, off) {
+                Ok((v, h)) => out.push_str(&self.render_value(v, h, depth - 1)),
+                Err(_) => { out.push_str("<err>"); }
+            }
+        }
+        out.push(']');
+        out
+    }
+
+    // Test helper: release one rc on a handle (e.g. a value returned by main).
+    pub fn drop_result_for_test(&mut self, raw: u64) {
+        let _ = self.heap.rc_dec_handle(raw);
     }
 }

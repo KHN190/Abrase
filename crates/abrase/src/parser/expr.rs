@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::lexer::Token;
 use super::core::Parser;
 use super::precedence::Precedence;
-use super::helpers::is_block_terminated;
+use super::helpers::{is_block_terminated, rightmost_block_terminated};
 
 impl<'a> Parser<'a> {
     pub fn parse_expr(&mut self, precedence: Precedence) -> Spanned<Expr> {
@@ -208,18 +208,22 @@ impl<'a> Parser<'a> {
             };
         }
         let mut items = vec![first];
+        let mut trailing_comma = false;
         loop {
+            if self.current_token == Token::RBracket
+                && items.last().map(|i| is_block_terminated(&i.node)).unwrap_or(false) { break; }
             if self.current_token == Token::Comma {
                 self.next_token();
             } else if self.peek_token == Token::Comma {
                 self.next_token();
                 self.next_token();
             } else { break; }
-            if self.current_token == Token::RBracket { break; }
+            if self.current_token == Token::RBracket { trailing_comma = true; break; }
             items.push(self.parse_expr(Precedence::Lowest));
         }
-        if self.current_token == Token::RBracket {
-            // already there (last item was block-terminated)
+        let last_bt = items.last().map(|i| is_block_terminated(&i.node)).unwrap_or(false);
+        if (trailing_comma || last_bt) && self.current_token == Token::RBracket {
+            // already there
         } else if !self.expect_peek(Token::RBracket) {
             self.report_error("Expected ']' in array literal".into(), self.current_span);
         }
@@ -469,19 +473,34 @@ impl<'a> Parser<'a> {
         }
         if self.peek_token == Token::Comma {
             let mut elems = vec![first];
-            while self.peek_token == Token::Comma {
-                self.next_token();
-                if self.peek_token == Token::RParen { break; }
-                self.next_token();
+            let mut trailing_comma = false;
+            loop {
+                // An element whose parse consumed past its end (record/if/…)
+                // leaves current on OUR ')': the tuple is closed.
+                if self.current_token == Token::RParen
+                    && elems.last().map(|e| is_block_terminated(&e.node)).unwrap_or(false) { break; }
+                if self.current_token == Token::Comma {
+                    self.next_token();
+                } else if self.peek_token == Token::Comma {
+                    self.next_token();
+                    self.next_token();
+                } else { break; }
+                if self.current_token == Token::RParen { trailing_comma = true; break; }
                 elems.push(self.parse_expr(Precedence::Lowest));
             }
-            if !self.expect_peek(Token::RParen) {
+            let last_bt = elems.last().map(|e| is_block_terminated(&e.node)).unwrap_or(false);
+            if (trailing_comma || last_bt) && self.current_token == Token::RParen {
+                // already there (trailing comma or block-terminated last element)
+            } else if !self.expect_peek(Token::RParen) {
                 self.report_error("Expected ')' in tuple expression".into(), self.current_span);
                 return Spanned { node: Expr::Error, span };
             }
             return Spanned { node: Expr::Tuple(elems), span };
         }
-        if !self.expect_peek(Token::RParen) {
+        if rightmost_block_terminated(&first.node) && self.current_token == Token::RParen {
+            // parse of the rightmost subexpression consumed past it; we already
+            // sit on our ')'.
+        } else if !self.expect_peek(Token::RParen) {
             self.report_error("Expected ')' in parenthesized expression".into(), self.current_span);
             return Spanned { node: Expr::Error, span };
         }
@@ -720,22 +739,23 @@ impl<'a> Parser<'a> {
         }
 
         self.next_token();
-        let last_block = loop {
+        let at_close = loop {
             let arg = self.parse_expr(Precedence::Lowest);
-            let is_block = is_block_terminated(&arg.node);
+            // The arg's parse may have consumed past its end (record/if/binary
+            // with such a right arm): we already sit on our ')'.
+            let past_end = rightmost_block_terminated(&arg.node);
             args.push(arg);
+            if past_end && self.current_token == Token::RParen { break true; }
             if self.current_token == Token::Comma {
                 self.next_token();
-            } else if is_block && self.current_token == Token::RParen {
-                break is_block;
             } else if self.peek_token == Token::Comma {
                 self.next_token();
                 self.next_token();
-            } else { break is_block; }
-            if self.current_token == Token::RParen { break is_block; }
+            } else { break false; }
+            if self.current_token == Token::RParen { break true; } // trailing comma
         };
 
-        if !(last_block && self.current_token == Token::RParen) {
+        if !at_close {
             self.expect_peek(Token::RParen);
         }
         Spanned { node: Expr::Call { callee: Box::new(callee), args }, span }

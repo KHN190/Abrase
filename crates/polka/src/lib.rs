@@ -15,6 +15,10 @@ pub const DISPATCH_PORT_ENV: u8 = 0x02;
 pub const DISPATCH_PORT_RETURN_FN: u8 = 0x03;
 pub const DISPATCH_PORT_RETURN_ENV: u8 = 0x04;
 pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
+// Dispatch-table fn_id entries may carry this bit: the arm is tail-resumptive
+// (compiled to end in Ret), so raise may call it plainly — no cont cell, no
+// register snapshot.
+pub const DISPATCH_TAIL_FLAG: u64 = 1 << 16;
 
 pub const REGION_ID: u8 = 0xE1;
 pub const REGION_PORT_PUSH: u8 = 0x00;
@@ -103,6 +107,10 @@ pub struct BytecodeChunk {
     pub string_constants: Vec<String>,
     pub reg_count: usize,
     pub param_count: usize,
+    // Debug info: source line per op (parallel to code). Empty = stripped.
+    pub lines: Vec<u32>,
+    // Debug info: source file of this fn. Empty = unknown/stripped.
+    pub src_file: String,
 }
 
 impl BytecodeChunk {

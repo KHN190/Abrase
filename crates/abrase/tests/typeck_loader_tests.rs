@@ -28,7 +28,8 @@ fn typeck_errors(rel: &str) -> Vec<String> {
 
 fn compile(rel: &str) -> (Compiler, Result<abrase::bytecode::Module, Vec<abrase::error::Error>>) {
     let program = loader::load_program(&fixture(rel)).unwrap();
-    let mut c = Compiler::new().with_source(program.entry_source.clone());
+    let mut c = Compiler::new().with_source(program.entry_source.clone())
+        .with_inline(false);
     let r = c.compile_module(&program.decls);
     (c, r)
 }

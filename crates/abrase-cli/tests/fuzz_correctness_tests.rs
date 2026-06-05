@@ -78,6 +78,20 @@ fn gen_int_arith(rng: &mut Rng) -> (String, i64) {
     (src, expected)
 }
 
+fn gen_mod_pow2(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(-5000, 5000);
+    let k = rng.pick(13);
+    let d = 1i64 << k;
+    (format!("fn main() -> Int {{ ({a}) % {d} }}"), a % d)
+}
+
+fn gen_div_pow2(rng: &mut Rng) -> (String, i64) {
+    let a = rng.range(-5000, 5000);
+    let k = rng.pick(13);
+    let d = 1i64 << k;
+    (format!("fn main() -> Int {{ ({a}) / {d} }}"), a / d)
+}
+
 fn gen_float_arith(rng: &mut Rng) -> (String, i64) {
     let a = rng.range(1, 20);
     let b = rng.range(1, 20);
@@ -758,6 +772,8 @@ const SINGLE_GENS: &[(&str, Gen)] = &[
     ("mut_borrow_field_writethrough", gen_mut_borrow_field_writethrough),
     ("sequential_mut_borrows",        gen_sequential_mut_borrows),
     ("int_arith",           gen_int_arith),
+    ("mod_pow2",            gen_mod_pow2),
+    ("div_pow2",            gen_div_pow2),
     ("float_arith",         gen_float_arith),
     ("int_match",           gen_int_match),
     ("range_match",         gen_range_match),

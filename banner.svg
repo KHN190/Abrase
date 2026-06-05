@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 220">
+  <defs>
+    <filter id="ink" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="2.4"/>
+    </filter>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="2" seed="3" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.4 0.4 0.4 0 0" result="a"/>
+      <feComposite in="a" in2="SourceGraphic" operator="in"/>
+    </filter>
+  </defs>
+  <rect width="880" height="220" rx="14" fill="#f4efe2"/>
+  <rect width="880" height="220" rx="14" fill="#8a7d5c" opacity="0.16" filter="url(#grain)"/>
+
+  <rect x="46" y="36" width="110" height="110" fill="#2b2620" opacity="0.07"/>
+  <rect x="78" y="68" width="110" height="110" fill="#2b2620" opacity="0.11"/>
+  <rect x="110" y="100" width="110" height="110" fill="#2b2620" opacity="0.16"/>
+  <rect x="700" y="-30" width="120" height="120" fill="#2b2620" opacity="0.07"/>
+  <rect x="744" y="14" width="120" height="120" fill="#2b2620" opacity="0.11"/>
+
+  <circle cx="206" cy="62" r="11" fill="#d97757" opacity="0.85"/>
+  <circle cx="688" cy="168" r="16" fill="#d97757" opacity="0.6"/>
+  <circle cx="780" cy="186" r="8" fill="#d97757" opacity="0.8"/>
+  <circle cx="64" cy="184" r="7" fill="#d97757" opacity="0.7"/>
+
+  <text x="440" y="116" text-anchor="middle"
+        font-family="Georgia, 'Times New Roman', 'Nimbus Roman', serif"
+        font-size="84" fill="#2b2620" filter="url(#ink)">Abrase<tspan font-size="50" dy="-31">*</tspan></text>
+  <text x="440" y="166" text-anchor="middle"
+        font-family="Georgia, 'Times New Roman', 'Nimbus Roman', serif"
+        font-style="italic" font-size="19" fill="#6f664f"
+        filter="url(#ink)">rust-style · algebraic-effect · memory-safe · efficiency</text>
+</svg>

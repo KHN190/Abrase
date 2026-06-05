@@ -4,6 +4,8 @@ use myriad::VirtualMachine;
 
 fn bc(reg_count: usize, param_count: usize) -> Chunk {
     Chunk::Bytecode(BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
         code: vec![OpCode::Ret(Register(0))],
         reg_count, param_count,
         ..BytecodeChunk::default()
@@ -77,6 +79,8 @@ fn load_rejects_register_operand_over_frame_budget() {
     // op references r200, past the FRAME_REGS (128) physical window.
     let m = Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        lines: vec![],
+        src_file: String::new(),
             code: vec![OpCode::Copy(Register(200), Register(0)), OpCode::Ret(Register(0))],
             reg_count: polka::FRAME_REGS, param_count: 0,
             ..BytecodeChunk::default()

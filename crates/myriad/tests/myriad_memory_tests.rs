@@ -9,6 +9,8 @@ fn raw_constants(consts: Vec<Value>) -> Vec<u64> {
 
 fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
     VirtualMachine::new().run(&Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: ops,
         constants: raw_constants(constants),
         const_mask: Vec::new(),
@@ -22,6 +24,8 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
     let n = functions.len();
     let chunks: Vec<Chunk> = functions.into_iter().map(|(code, constants, reg_count, param_count)| {
         Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
             code,
             constants: raw_constants(constants),
             const_mask: Vec::new(),
@@ -73,6 +77,8 @@ fn oom_alloc_loop_returns_err_not_panic() {
     let mut code: Vec<OpCode> = (0..200).map(|_| OpCode::Alloc(Register(0), 0xFFFF)).collect();
     code.push(OpCode::Ret(Register(0)));
     let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code,
         constants: Vec::new(),
         const_mask: Vec::new(),
@@ -101,6 +107,8 @@ fn oom_freed_cells_refund_budget() {
         OpCode::Ret(Register(2)),
     ];
     let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code,
         constants: raw_constants(vec![Value::from_int(200), Value::from_int(0)]),
         const_mask: Vec::new(),
@@ -117,6 +125,8 @@ fn oom_freed_cells_refund_budget() {
 fn test_handle_allocates_cell_and_resume_frees_it() {
     let mut vm = VirtualMachine::new();
     let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::Handle(r(1), 0),
@@ -138,6 +148,8 @@ fn test_handle_allocates_cell_and_resume_frees_it() {
 fn test_handle_without_dispatch_allocates_no_cell() {
     let mut vm = VirtualMachine::new();
     let install = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![
             OpCode::Handle(r(1), 0),
             OpCode::Ret(r(0)),
@@ -160,6 +172,8 @@ fn test_dispatch_lookup_allocates_cont_and_snapshot() {
     );
     let mut vm = VirtualMachine::new();
     let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
         code: vec![
             OpCode::PushConst(r(0), 0),
             OpCode::PushConst(r(2), 1),
@@ -283,6 +297,8 @@ fn test_drop_reclaims_heap_via_rc_dec() {
     let mut vm = VirtualMachine::new();
     let module = Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
             code: vec![
                 OpCode::Alloc(r(0), 4),
                 OpCode::Alloc(r(1), 4),
@@ -312,6 +328,8 @@ fn test_handle_after_free_is_rejected_via_generation() {
     let mut vm = VirtualMachine::new();
     let module = Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
+        lines: vec![],
             code: vec![
                 OpCode::Alloc(r(0), 1),
                 OpCode::Copy(r(1), r(0)),

@@ -10,6 +10,8 @@ pub mod debug;
 pub mod liveness;
 pub mod licm;
 pub mod builtins;
+pub mod inline;
+pub mod dataflow;
 
 use crate::ast;
 use crate::bytecode::{BytecodeChunk, Chunk, OpCode, Register, Module};
@@ -49,6 +51,8 @@ pub struct Compiler {
     pub(super) max_reg: u16,
     pub(super) module_table_reg: Option<Register>,
     pub(super) reg_holds_handle: Vec<bool>,
+    pub(super) ever_handle_mask: u128,
+    pub(super) line_info: Vec<u32>,
     pub(super) var_to_reg: HashMap<String, Register>,
     pub(super) var_types: HashMap<String, ast::Type>,
     pub(super) var_bound_at_region: HashMap<String, usize>,
@@ -92,7 +96,7 @@ pub struct Compiler {
     pub(super) current_span: ast::Span,
     pub(super) compiler_region_depth: usize,
     pub(super) fn_compiler_depth_baseline: usize,
-    pub(super) block_locals_stack: Vec<Vec<Register>>,
+    pub(super) block_locals_stack: Vec<Vec<(Register, bool)>>,
     pub(super) fn_block_baseline: usize,
     pub(super) handler_table_stack: Vec<Register>,
     pub(super) fn_handler_baseline: usize,
@@ -103,6 +107,12 @@ pub struct Compiler {
     pub(super) remaining_uses: HashMap<String, usize>,
     pub(super) int32_mode: bool,
     pub(super) no_built_in: bool,
+    pub(super) drop_elision: bool,
+    pub(super) inline: bool,
+    pub(super) copy_coalesce: bool,
+    pub(super) copy_prop: bool,
+    pub(super) typed_ld: bool,
+    pub(super) tail_resume: bool,
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
@@ -121,6 +131,8 @@ impl Compiler {
             max_reg: 0,
             module_table_reg: None,
             reg_holds_handle: Vec::new(),
+            ever_handle_mask: 0,
+            line_info: Vec::new(),
             var_to_reg: HashMap::new(),
             var_types: HashMap::new(),
             var_bound_at_region: HashMap::new(),
@@ -179,12 +191,24 @@ impl Compiler {
             remaining_uses: HashMap::new(),
             int32_mode: false,
             no_built_in: false,
+            drop_elision: true,
+            inline: true,
+            copy_coalesce: true,
+            copy_prop: true,
+            typed_ld: true,
+            tail_resume: true,
             const_values: HashMap::new(),
             static_offsets: HashMap::new(),
             static_types: HashMap::new(),
             typeck_expr_types: HashMap::new(),
             result_tail_spans: std::collections::HashSet::new(),
         }
+    }
+
+    // A block-local needs a scope-exit Drop iff it may hold a handle. Scalars
+    // (type_is_unboxed) never do; unknown type is conservatively a handle.
+    pub(super) fn binding_is_handle(&self, ty: Option<&ast::Type>) -> bool {
+        ty.map(|t| !codegen::data::type_is_unboxed(t)).unwrap_or(true)
     }
 
     pub(super) fn consume_use(&mut self, name: &str) -> bool {
@@ -214,6 +238,36 @@ impl Compiler {
 
     pub fn with_int32_mode(mut self, on: bool) -> Self {
         self.int32_mode = on;
+        self
+    }
+
+    pub fn with_drop_elision(mut self, on: bool) -> Self {
+        self.drop_elision = on;
+        self
+    }
+
+    pub fn with_inline(mut self, on: bool) -> Self {
+        self.inline = on;
+        self
+    }
+
+    pub fn with_copy_coalesce(mut self, on: bool) -> Self {
+        self.copy_coalesce = on;
+        self
+    }
+
+    pub fn with_copy_prop(mut self, on: bool) -> Self {
+        self.copy_prop = on;
+        self
+    }
+
+    pub fn with_typed_ld(mut self, on: bool) -> Self {
+        self.typed_ld = on;
+        self
+    }
+
+    pub fn with_tail_resume(mut self, on: bool) -> Self {
+        self.tail_resume = on;
         self
     }
 
@@ -341,12 +395,14 @@ impl Compiler {
             }
         }
         Ok(Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: self.code.clone(),
             constants: self.constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&self.const_mask_bits),
             string_constants: self.string_constants.clone(),
             reg_count: self.max_reg as usize,
             param_count: 0,
+            lines: vec![],
         }))
     }
 
@@ -360,6 +416,7 @@ impl Compiler {
         self.run_typeck(ast)?;
         let decls_with_impls = self.run_impl_lift(ast)?;
         let owned = self.run_mono(decls_with_impls)?;
+        let owned = if self.inline { inline::inline_leaf_fns(owned) } else { owned };
         let decls_with_closures = self.run_closure_lift(&owned);
         let handler_synthetic_fns = self.run_handler_lift(&decls_with_closures);
         let ast: &[ast::Decl] = &decls_with_closures;
@@ -672,12 +729,14 @@ impl Compiler {
 
     fn compile_fn(&mut self, fn_decl: &ast::FnDecl) -> Result<Chunk, Vec<Error>> {
         let saved_code = std::mem::take(&mut self.code);
+        let saved_line_info = std::mem::take(&mut self.line_info);
         let saved_constants = std::mem::take(&mut self.constants);
         let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let saved_string_constants = std::mem::take(&mut self.string_constants);
         let saved_next_reg = self.next_reg;
         let saved_max_reg = self.max_reg;
         let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
+        let saved_ever_handle = std::mem::replace(&mut self.ever_handle_mask, 0);
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
         let saved_var_bound_at_region = std::mem::take(&mut self.var_bound_at_region);
@@ -729,6 +788,7 @@ impl Compiler {
         // Params layer ensures param regs are Dropped on exit (prevents handle leaks).
         self.block_locals_stack.push(Vec::new());
 
+        let mut handle_param_mask: u128 = 0;
         for param in &fn_decl.params {
             if let ast::Param::Named { pattern, ty } = param {
                 let reg = match self.alloc_register() {
@@ -742,8 +802,10 @@ impl Compiler {
                         continue;
                     }
                 };
+                let is_h = self.binding_is_handle(Some(ty));
+                if is_h { handle_param_mask |= 1u128 << reg.0; }
                 if let Some(top) = self.block_locals_stack.last_mut() {
-                    top.push(reg);
+                    top.push((reg, is_h));
                 }
                 match &pattern.node {
                     ast::Pattern::Bind(name) => {
@@ -813,12 +875,19 @@ impl Compiler {
         }
 
         self.peephole_copy_drop();
+        if self.copy_coalesce { dataflow::coalesce_copies(&mut self.code, self.max_reg as usize, &mut self.line_info); }
+        if self.copy_prop {
+            let hint = self.ever_handle_mask | handle_param_mask;
+            dataflow::propagate_copies(&mut self.code, self.max_reg as usize, handle_param_mask, hint, &mut self.line_info);
+        }
 
         let reg_count = self.max_reg as usize;
         let taken_constants = std::mem::take(&mut self.constants);
         let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: std::mem::take(&mut self.code),
+            lines: std::mem::take(&mut self.line_info),
             constants: taken_constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&taken_mask_bits),
             string_constants: std::mem::take(&mut self.string_constants),
@@ -827,12 +896,14 @@ impl Compiler {
         });
 
         self.code = saved_code;
+        self.line_info = saved_line_info;
         self.constants = saved_constants;
         self.const_mask_bits = saved_const_mask_bits;
         self.string_constants = saved_string_constants;
         self.next_reg = saved_next_reg;
         self.max_reg = saved_max_reg;
         self.reg_holds_handle = saved_reg_holds_handle;
+        self.ever_handle_mask = saved_ever_handle;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
         self.var_bound_at_region = saved_var_bound_at_region;
@@ -861,12 +932,14 @@ impl Compiler {
         static_values: &[(Vec<String>, ast::Spanned<ast::Expr>)],
     ) -> Result<Chunk, Vec<Error>> {
         let saved_code = std::mem::take(&mut self.code);
+        let saved_line_info = std::mem::take(&mut self.line_info);
         let saved_constants = std::mem::take(&mut self.constants);
         let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let saved_string_constants = std::mem::take(&mut self.string_constants);
         let saved_next_reg = self.next_reg;
         let saved_max_reg = self.max_reg;
         let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
+        let saved_ever_handle = std::mem::replace(&mut self.ever_handle_mask, 0);
         let saved_var_to_reg = std::mem::take(&mut self.var_to_reg);
         let saved_var_types = std::mem::take(&mut self.var_types);
         let saved_fn_name = std::mem::take(&mut self.current_fn_name);
@@ -931,7 +1004,9 @@ impl Compiler {
         let taken_constants = std::mem::take(&mut self.constants);
         let taken_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let chunk = Chunk::Bytecode(BytecodeChunk {
+        src_file: String::new(),
             code: std::mem::take(&mut self.code),
+            lines: std::mem::take(&mut self.line_info),
             constants: taken_constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&taken_mask_bits),
             string_constants: std::mem::take(&mut self.string_constants),
@@ -940,12 +1015,14 @@ impl Compiler {
         });
 
         self.code = saved_code;
+        self.line_info = saved_line_info;
         self.constants = saved_constants;
         self.const_mask_bits = saved_const_mask_bits;
         self.string_constants = saved_string_constants;
         self.next_reg = saved_next_reg;
         self.max_reg = saved_max_reg;
         self.reg_holds_handle = saved_reg_holds_handle;
+        self.ever_handle_mask = saved_ever_handle;
         self.var_to_reg = saved_var_to_reg;
         self.var_types = saved_var_types;
         self.current_fn_name = saved_fn_name;

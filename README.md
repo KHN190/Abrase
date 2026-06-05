@@ -1,23 +1,35 @@
-# Abrase
+<p align="center">
+  <a href="https://khn190.github.io/abrase/"><img src="./banner.svg" alt="Abrase" width="720"></a>
+</p>
 
-[![CI](https://github.com/KHN190/Abrase/actions/workflows/ci.yml/badge.svg)](https://github.com/KHN190/Abrase/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/KHN190/Abrase/branch/dev/graph/badge.svg)](https://codecov.io/gh/KHN190/Abrase)
-[![crates.io](https://img.shields.io/crates/v/abrase-cli.svg?label=abrase-cli)](https://crates.io/crates/abrase-cli)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <img src="https://img.shields.io/badge/dependencies-zero-black" alt="zero dependencies">
+  <img src="https://img.shields.io/badge/memory-no_GC%2C_leak_free-black" alt="leak free">
+  <img src="https://img.shields.io/badge/rustc-1.85+-black" alt="rustc 1.85+">
+  <a href="https://khn190.github.io/abrase/"><img src="https://img.shields.io/badge/playground-wasm-black" alt="playground"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="MIT"></a>
+</p>
 
-<img src="./abrase.png" alt="Abrase" width="100" align="right">
+<p align="center">
+  <a href="https://github.com/KHN190/Abrase/actions/workflows/ci.yml"><img src="https://github.com/KHN190/Abrase/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/KHN190/Abrase"><img src="https://codecov.io/gh/KHN190/Abrase/branch/dev/graph/badge.svg" alt="codecov"></a>
+  <a href="https://crates.io/crates/abrase-cli"><img src="https://img.shields.io/crates/v/abrase-cli.svg?label=abrase-cli" alt="crates.io"></a>
+</p>
 
-Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language made for LLM & efficiency. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
+Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
 
 It features:
 
 * Strong typed
 * Algebraic effects
 * Region memory lifecycle design - no GC, leak free
-* Myriad runtime — computation core, or OS embedded
 * Linter & Debugger
 
 It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
+
+Try it now in [browser](https://khn190.github.io/abrase/).
+
+> _Transpile to Rust is WIP._
 
 ## Installation
 
@@ -56,17 +68,14 @@ fn main() -> Int {
 
 ## Benchmarks
 
-Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x faster.
+Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x faster. See [`Wiki / Optimizations`](./wiki/12-Optimizations.md).
 
-* _See `wiki/12-Optimizations.md`._
-* _Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine)_.
+Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine).
 
 ## Polka — bytecode design
 
-* 46 opcodes, 4 bytes each.
-* 64 registers per frame, 64-bit each.
-* Untagged `u64` values; type is implied by the opcode and a per-frame handle mask.
-* Effect / region machinery via reserved port encodings (`0xE0` / `0xE1`); user-visible I/O via four core devices (System, Console) and imports.
+* 46 opcodes, 4 bytes each. Data & opcode are aligned.
+* 128 registers per frame.
 
 See [`Wiki / Bytecode Spec`](./wiki/Appendix-Bytecode-Spec.md).
 
