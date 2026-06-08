@@ -237,3 +237,8 @@ pub fn run_source(src: &str) -> Result<Value, String> {
     let ast = parse_source(src);
     compile_module_and_run(&ast)
 }
+
+pub fn run_source_with_heap(src: &str) -> Result<(Value, usize), String> {
+    let ast = parse_source(src);
+    compile_module_and_run_with_heap(&ast)
+}

@@ -2,10 +2,19 @@
 // compile, run, assert heap_live_count == 0 and main returns expected Int.
 // 0 deps, no fixtures. Seeded LCG, deterministic per-seed.
 
+use abrase::bytecode::{Chunk, OpCode};
 use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use myriad::VirtualMachine;
+
+// No forward Jmp may be immediately followed by a Drop: arm cleanup must precede
+// the exit Jmp, never be skipped by it. Returns offending pc.
+fn drop_skipped_by_forward_jmp(ops: &[OpCode]) -> Option<usize> {
+    ops.windows(2).position(|w| {
+        matches!(w[0], OpCode::Jmp(n) if n > 0) && matches!(w[1], OpCode::Drop(_))
+    })
+}
 
 struct Rng(u64);
 impl Rng {
@@ -237,6 +246,23 @@ impl Gen {
                     self.push(&format!(
                         "  let {}: Int = ({a}.to_f() + {b}.to_f()).to_i();\n",
                         name, a=a, b=b
+                    ));
+                    ints.push(name);
+                }
+                // array static borrowed inside a match arm body (rc_inc temp)
+                17 if self.has_array_static => {
+                    let name = self.fresh();
+                    let k = self.rng.pick(4) as i64;
+                    let i = self.rng.pick(8);
+                    let j = self.rng.pick(8);
+                    let arm = match self.rng.pick(3) {
+                        0 => format!("1 => BH[{i}] + BH[{j}]", i=i, j=j),
+                        1 => format!("0..=2 => BH[{i}] + BH[{j}]", i=i, j=j),
+                        _ => format!("n if n > 0 => BH[{i}] + BH[{j}]", i=i, j=j),
+                    };
+                    self.push(&format!(
+                        "  let {}: Int = match {} {{ {}, _ => 0 }};\n",
+                        name, k, arm
                     ));
                     ints.push(name);
                 }
@@ -784,6 +810,33 @@ fn fuzz_no_leak_no_panic() {
         st.hung == 0 && st.leaked == 0 && st.wrong_val == 0 && st.run_err == 0,
         "fuzz found bugs: hung={} leaked={} wrong_val={} run_err={} (see stderr report)",
         st.hung, st.leaked, st.wrong_val, st.run_err
+    );
+}
+
+#[test]
+fn fuzz_no_arm_cleanup_skipped_by_exit_jmp() {
+    let mut bad: Vec<(u64, usize, String)> = Vec::new();
+    for seed in 0..ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
+        let ast = p.parse_program();
+        if !p.errors.is_empty() { continue; }
+        let mut compiler = Compiler::new();
+        let Ok(module) = compiler.compile_module(&ast) else { continue };
+        for chunk in &module.functions {
+            if let Chunk::Bytecode(bc) = chunk {
+                if let Some(pc) = drop_skipped_by_forward_jmp(&bc.code) {
+                    bad.push((seed, pc, src.clone()));
+                    break;
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "arm cleanup Drop skipped by forward Jmp in {} program(s); first: seed={} pc={}\n{}",
+        bad.len(), bad[0].0, bad[0].1, bad[0].2
     );
 }
 
