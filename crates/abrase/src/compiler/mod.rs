@@ -829,6 +829,22 @@ impl Compiler {
             return Err(self.errors.clone());
         }
 
+        // Load the module static-table base once at entry so no skipped-Dei
+        // on a short-circuit path.
+        if self.block_uses_static(&fn_decl.body) {
+            match self.load_module_table() {
+                Ok(t) => {
+                    if let Some(top) = self.block_locals_stack.last_mut() {
+                        top.push((t, true));
+                    }
+                }
+                Err(msg) => {
+                    self.errors.push(Error::new(ErrorCode::CodegenError, self.current_span, msg));
+                    return Err(self.errors.clone());
+                }
+            }
+        }
+
         let param_count = fn_decl.params.iter().filter(|p| matches!(p, ast::Param::Named { .. })).count();
 
         let tail_already_result = fn_decl.body.ret.as_ref().map_or(false, |r| {

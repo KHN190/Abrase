@@ -294,6 +294,18 @@ impl VirtualMachine {
         }
     }
 
+    // Refcount of the module static-table root. heap_live_count() hides table
+    // leaks (the cell is module-reachable, so always subtracted); this exposes
+    // the raw rc so tests can assert per-call Dei/Drop balance on it.
+    pub fn module_table_rc(&self) -> Option<u32> {
+        if self.module_table_is_handle && self.module_table_raw != polka::HANDLE_NONE {
+            let (s, g) = crate::memory::handle_parts(self.module_table_raw);
+            self.heap.rc(s, g)
+        } else {
+            None
+        }
+    }
+
     // User-visible live count. Excludes module-lifetime cells owned by the
     // loader/runtime (not by user code): string constants and the module table.
     pub fn heap_live_count(&self) -> usize {

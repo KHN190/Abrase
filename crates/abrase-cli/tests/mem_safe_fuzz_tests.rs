@@ -266,6 +266,22 @@ impl Gen {
                     ));
                     ints.push(name);
                 }
+                // first static use inside a short-circuit, then an unconditional
+                // static use: the table-base Dei must dominate both.
+                18 if self.has_array_static => {
+                    let name = self.fresh();
+                    let i = self.rng.pick(8);
+                    let j = self.rng.pick(8);
+                    let g = self.rng.pick(200) as i64 - 100;
+                    let sc = if self.rng.pick(2) == 0 {
+                        format!("{} > 0 || BH[{}] > 0", g, i)
+                    } else {
+                        format!("{} > 0 && BH[{}] > 0", g, i)
+                    };
+                    self.push(&format!("  let _g{}: Bool = {};\n", name, sc));
+                    self.push(&format!("  let {}: Int = BH[{}];\n", name, j));
+                    ints.push(name);
+                }
                 // ── effect handler ────────────────────────────────────────
                 20 if self.has_effect && loop_depth < 1 => {
                     let n = self.rng.pick(8) + 1;
@@ -838,6 +854,34 @@ fn fuzz_no_arm_cleanup_skipped_by_exit_jmp() {
         "arm cleanup Drop skipped by forward Jmp in {} program(s); first: seed={} pc={}\n{}",
         bad.len(), bad[0].0, bad[0].1, bad[0].2
     );
+}
+
+// The module static-table Dei must dominate every static use. In generated
+// bytecode the only Dei is that table load, so it must precede the function's
+// first conditional branch — otherwise a skipped Dei leaves the table register
+// undefined on one path.
+#[test]
+fn fuzz_table_dei_dominates_branches() {
+    let mut bad: Vec<(u64, usize)> = Vec::new();
+    for seed in 0..ITER {
+        let mut g = Gen::new(seed);
+        let src = g.gen_program();
+        let mut p = Parser::new(Lexer::new(&src)).with_source(src.clone());
+        let ast = p.parse_program();
+        if !p.errors.is_empty() { continue; }
+        let mut compiler = Compiler::new();
+        let Ok(module) = compiler.compile_module(&ast) else { continue };
+        for chunk in &module.functions {
+            if let Chunk::Bytecode(bc) = chunk {
+                let dei = bc.code.iter().position(|o| matches!(o, OpCode::Dei(_, _)));
+                let br = bc.code.iter().position(|o| matches!(o, OpCode::Jz(_, _) | OpCode::Jnz(_, _)));
+                if let (Some(d), Some(b)) = (dei, br) {
+                    if d > b { bad.push((seed, d)); break; }
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "table Dei after a branch in {} program(s); first seed={}", bad.len(), bad[0].0);
 }
 
 const UAF_ITER: u64 = 1_000;

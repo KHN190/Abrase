@@ -321,6 +321,10 @@ impl Heap {
         self.cells.iter().filter(|c| c.is_some()).count()
     }
 
+    pub fn rc(&self, slot: u32, generation: u32) -> Option<u32> {
+        self.check(slot, generation, "rc").ok().map(|idx| self.rc[idx])
+    }
+
     // Debug: every live cell as (slot, generation, rc, data, is_handle-per-slot).
     // Used by the leak-localization dump; not on any hot path.
     pub fn live_cells(&self) -> Vec<(u32, u32, u32, Vec<u64>, Vec<bool>)> {
