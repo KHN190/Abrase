@@ -23,6 +23,7 @@ usage:
     abrase explain --expr '<snippet>'    same for inline code (auto-wrapped)
     abrase export  <file.abe> <out.pk>   compile and write a .pk cartridge
     abrase load    <file.pk>  [flags]    load and execute a .pk cartridge
+    abrase --version | -V                print version and exit
 
 debug flags (run / load):
     --trace      one line per opcode executed  →  [fn#id:pc] op  (stderr)
@@ -48,6 +49,7 @@ fn main() -> ExitCode {
     let mut int32 = false;
     let mut no_built_in = false;
     let mut leak = false;
+    let mut show_version = false;
     let mut inline_expr: Option<String> = None;
     let mut root_override: Option<std::path::PathBuf> = None;
     let codegen_debug = std::env::var("ABRASE_CODEGEN_DEBUG").map(|v| v == "1").unwrap_or(false);
@@ -62,10 +64,16 @@ fn main() -> ExitCode {
             "--int32"        => int32 = true,
             "--no-built-in" | "--no-builtin" => no_built_in = true,
             "--leak"         => leak = true,
+            "--version" | "-V" => show_version = true,
             "--expr"         => { inline_expr = raw_iter.next(); }
             "--root"         => { root_override = raw_iter.next().map(std::path::PathBuf::from); }
             _ => args.push(a),
         }
+    }
+
+    if show_version {
+        println!("abrase {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
     }
 
     if args.len() < 2 {

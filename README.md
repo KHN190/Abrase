@@ -43,6 +43,11 @@ abrase disasm examples/nqueens.abe
 
 Or download pre-compiled [GitHub Releases](https://github.com/KHN190/Abrase/releases).
 
+## Code Editor
+
+- [Sublime Text](https://github.com/KHN190/Abrase-sublime)
+- [VS Code](https://github.com/KHN190/Abrase-vscode)
+
 ## Language Overview
 
 ```rust
