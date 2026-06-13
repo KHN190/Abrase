@@ -1,5 +1,4 @@
-mod common;
-use common::*;
+use crate::common::*;
 use abrase::{compiler::Compiler, lexer::Lexer, parser::Parser};
 use polka_rustc::transpile_module;
 use myriad::VirtualMachine;

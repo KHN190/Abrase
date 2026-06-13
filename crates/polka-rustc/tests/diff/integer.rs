@@ -1,5 +1,4 @@
-mod common;
-use common::*;
+use crate::common::*;
 use polka::{OpCode, Register, Chunk};
 use myriad::{Value, VirtualMachine};
 

@@ -1,5 +1,4 @@
-mod common;
-use common::*;
+use crate::common::*;
 use polka::{Module, OpCode};
 use myriad::Value;
 

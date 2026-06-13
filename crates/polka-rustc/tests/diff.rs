@@ -1,0 +1,8 @@
+#[path = "diff/common.rs"] mod common;
+#[path = "diff/integer.rs"] mod integer;
+#[path = "diff/float.rs"] mod float;
+#[path = "diff/heap.rs"] mod heap;
+#[path = "diff/call.rs"] mod call;
+#[path = "diff/strconst.rs"] mod strconst;
+#[path = "diff/region.rs"] mod region;
+#[path = "diff/e2e.rs"] mod e2e;

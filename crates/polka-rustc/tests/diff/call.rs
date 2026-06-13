@@ -1,5 +1,4 @@
-mod common;
-use common::*;
+use crate::common::*;
 use polka::{Chunk, Module, OpCode};
 use polka_rustc::transpile_module;
 use myriad::Value;
