@@ -1,6 +1,8 @@
 use polka::{BytecodeChunk, Chunk, Module, OpCode, Register};
 use std::fmt::Write;
 
+mod embed;
+
 const STAGE_SLACK: usize = 32;
 
 struct Ctx<'a> {
@@ -403,6 +405,9 @@ fn emit_run_body(out: &mut String, module: &Module) {
 }
 
 pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
+    if embed::is_effectful(module) {
+        return embed::transpile_module(module);
+    }
     let mut out = String::new();
     let _ = writeln!(out, "#![allow(unused_mut, unused_variables, dead_code, unused_assignments, unused_parens)]");
     let _ = writeln!(out, "enum CartStep {{ Yield, Done(u64, bool) }}");

@@ -263,14 +263,16 @@ fn callreg_unknown_fn_id_errors_both_sides() {
 }
 
 #[test]
-fn effect_ops_unsupported() {
+fn effect_ops_transpile_via_embed() {
     use polka_rustc::transpile_program;
+    // Effect ops route to the A1 embed backend (VM-in-binary), so they transpile
+    // rather than erroring. End-to-end behavior is covered by tests/diff/effect.rs.
     for op in [
         OpCode::Handle(r(0), 0),
         OpCode::Resume(r(0), r(1)),
         OpCode::Raise(r(0), r(1), r(2)),
     ] {
         let bc = chunk(vec![op, OpCode::Ret(r(0))], vec![], 4);
-        assert!(transpile_program(&bc).is_err(), "effect/input op should be unsupported");
+        assert!(transpile_program(&bc).is_ok(), "effect op should transpile via embed backend");
     }
 }

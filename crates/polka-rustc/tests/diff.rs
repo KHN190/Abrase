@@ -7,3 +7,4 @@
 #[path = "diff/region.rs"] mod region;
 #[path = "diff/e2e.rs"] mod e2e;
 #[path = "diff/float_ref.rs"] mod float_ref;
+#[path = "diff/effect.rs"] mod effect;

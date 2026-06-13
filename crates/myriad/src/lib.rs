@@ -19,6 +19,7 @@ pub mod snapshot;
 pub mod aot;
 
 pub use polka::{Value, HANDLE_NONE};
+pub use polka::cartridge::read_pk;
 pub use value::{alloc_string, read_string};
 pub use devices::{Device, DeviceTable};
 pub use memory::Heap;
