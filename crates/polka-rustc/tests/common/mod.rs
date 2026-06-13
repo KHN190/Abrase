@@ -18,10 +18,17 @@ pub fn myriad_rlib() -> &'static str {
         let dir = std::path::Path::new(&deps);
         let probe = std::env::temp_dir().join(format!("polka_probe_{}.rs", std::process::id()));
         std::fs::write(&probe, "fn main() { let _ = myriad::Heap::new(); let _ = myriad::AotHost::new(); }").unwrap();
-        for entry in std::fs::read_dir(dir).expect("deps dir") {
-            let p = entry.unwrap().path();
-            let name = p.file_name().unwrap().to_string_lossy().to_string();
-            if !(name.starts_with("libmyriad-") && name.ends_with(".rlib")) { continue; }
+        let mut rlibs: Vec<std::path::PathBuf> = std::fs::read_dir(dir).expect("deps dir")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.file_name().map(|n| {
+                let n = n.to_string_lossy();
+                n.starts_with("libmyriad-") && n.ends_with(".rlib")
+            }).unwrap_or(false))
+            .collect();
+        // Newest first: the current build (only one with the full API) is almost
+        // always it, so we probe once instead of compiling against stale rlibs.
+        rlibs.sort_by_key(|p| std::cmp::Reverse(p.metadata().and_then(|m| m.modified()).ok()));
+        for p in rlibs {
             let bin = std::env::temp_dir().join(format!("polka_probe_{}.bin", std::process::id()));
             let ok = Command::new("rustc")
                 .args(["--edition", "2021"])
