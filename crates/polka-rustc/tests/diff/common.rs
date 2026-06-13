@@ -127,6 +127,8 @@ fn parse_status(s: &str) -> (Outcome, usize) {
     }
 }
 
+pub fn compile_run_raw(src: &str) -> String { rustc_build_run(src) }
+
 // Returns (outcome, live_cells). Program prints `OK <value> <live>` or `ERR <msg>`.
 pub fn compile_run_full(src: &str) -> (Outcome, usize) {
     let full = rustc_build_run(src);

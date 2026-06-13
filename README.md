@@ -25,11 +25,9 @@ It features:
 * Region memory lifecycle design - no GC, leak free
 * Linter & Debugger
 
-It can be added to **any Rust application**. See [wiki](https://github.com/KHN190/Abrase/wiki).
+It can be added to **any Rust application**, or *compile to Rust*. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
 Try it now in [browser](https://khn190.github.io/abrase/).
-
-> _Transpile to Rust is WIP._
 
 ## Installation
 
@@ -73,7 +71,7 @@ fn main() -> Int {
 
 ## Benchmarks
 
-Generally 1.3~2x better than CPython. On specific smaller tasks, could be ~10x faster. See [`Wiki / Optimizations`](./wiki/12-Optimizations.md).
+Generally 2.5x better than CPython. On specific smaller tasks, could be ~10x faster. See [`Wiki / Optimizations`](./wiki/12-Optimizations.md).
 
 Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine).
 

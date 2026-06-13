@@ -3,6 +3,24 @@ use abrase::{compiler::Compiler, lexer::Lexer, parser::Parser};
 use polka_rustc::transpile_module;
 use myriad::VirtualMachine;
 
+fn diff_module(module: &polka::Module, label: &str) {
+    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
+    myriad::Host::default().install_into(&mut vm);
+    let i = match vm.run_module(module) {
+        Ok(v) => Outcome::Ok(v.raw()),
+        Err(e) => Outcome::Err(e),
+    };
+    let i_live = vm.heap_live_count();
+
+    let tsrc = transpile_module(module)
+        .unwrap_or_else(|e| panic!("transpile unsupported for in-subset program: {:?}\n{}", e, label));
+    let (t, t_live) = compile_run_full(&tsrc);
+    compare(&i, &t);
+    if let Outcome::Ok(_) = i {
+        assert_eq!(i_live, t_live, "e2e heap live-count mismatch: interp={} transpiled={}\n{}", i_live, t_live, label);
+    }
+}
+
 fn e2e(src: &str) {
     let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
     let decls = p.parse_program();
@@ -11,22 +29,87 @@ fn e2e(src: &str) {
         panic!("compile errors: {}", errs.iter()
             .map(|e| format!("{:?}: {}", e.code, e.message)).collect::<Vec<_>>().join("\n"))
     });
+    diff_module(&module, src);
+}
 
-    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
-    myriad::Host::default().install_into(&mut vm);
-    let i = match vm.run_module(&module) {
-        Ok(v) => Outcome::Ok(v.raw()),
-        Err(e) => Outcome::Err(e),
-    };
-    let i_live = vm.heap_live_count();
-
-    let tsrc = transpile_module(&module)
-        .unwrap_or_else(|e| panic!("transpile unsupported for in-subset program: {:?}\n{}", e, src));
-    let (t, t_live) = compile_run_full(&tsrc);
-    compare(&i, &t);
-    if let Outcome::Ok(_) = i {
-        assert_eq!(i_live, t_live, "e2e heap live-count mismatch: interp={} transpiled={}\nsrc:\n{}", i_live, t_live, src);
+// Multi-module: abrase links all imported files into one flat Module before
+// transpile, so the transpiler never sees module boundaries.
+fn e2e_files(entry: &str, files: &[(&str, &str)]) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!("polka_e2e_{}_{}", std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, src) in files {
+        std::fs::write(dir.join(name), src).unwrap();
     }
+    let loaded = abrase::loader::load_program(&dir.join(entry))
+        .unwrap_or_else(|e| panic!("load error: {:?}", e));
+    let module = Compiler::new().with_source(loaded.entry_source.clone())
+        .compile_module(&loaded.decls)
+        .unwrap_or_else(|_| panic!("compile errors in multi-module program"));
+    diff_module(&module, entry);
+}
+
+// @cart: persistent main yields a frame via `frame.present()` and resumes mid-
+// loop. AOT lowers the entry fn to a resumable state machine; here we drive the
+// interpreter frame-by-frame and assert the transpiled binary prints the same.
+#[test]
+fn e2e_cart_frame_counter() {
+    let src = r#"
+@cart
+fn main() -> <frame> Unit {
+  let mut total = 0;
+  let mut i = 0;
+  while i < 3 {
+    total = total + 3;
+    frame.present();
+    println(i.to_s());
+    i = i + 1
+  };
+  println(total.to_s());
+  halt(0)
+}
+"#;
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
+    let decls = p.parse_program();
+    assert!(p.errors.is_empty(), "parse errors: {:?}", p.errors);
+    let module = Compiler::new().compile_module(&decls).unwrap_or_else(|errs| {
+        panic!("compile errors: {}", errs.iter().map(|e| format!("{:?}: {}", e.code, e.message)).collect::<Vec<_>>().join("\n"))
+    });
+
+    let console = myriad::devices::BufferConsole::new();
+    let (out, _) = console.handles();
+    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
+    myriad::Host::default().with_console(Box::new(console)).install_into(&mut vm);
+    vm.run_to_yield(&module).expect("run_to_yield");
+    while vm.resume(&module, myriad::Value::from_int(0)).expect("resume") {}
+    let interp_out = String::from_utf8(out.borrow().clone()).unwrap();
+
+    let tsrc = transpile_module(&module).expect("transpile @cart");
+    let full = compile_run_raw(&tsrc);
+    // Drop the trailing `OK <v> <live>` status line; the rest is program output.
+    let aot_out: String = full.lines().filter(|l| !l.starts_with("OK ") && !l.starts_with("ERR "))
+        .map(|l| format!("{}\n", l)).collect();
+
+    assert_eq!(interp_out, aot_out, "frame output mismatch:\ninterp={:?}\naot={:?}", interp_out, aot_out);
+}
+
+#[test]
+fn e2e_multi_module_call() {
+    e2e_files("main.abe", &[
+        ("lib.abe", "pub fn add(a: Int, b: Int) -> Int { a + b }\n"),
+        ("main.abe", "use lib::{ add }\nfn main() -> Int { add(20, 22) }\n"),
+    ]);
+}
+
+#[test]
+#[ignore = "AOT: cross-module static read emits Dei (module-table), out of current subset"]
+fn e2e_multi_module_static_and_fn() {
+    e2e_files("main.abe", &[
+        ("lib.abe", "pub static BASE: Int = 100\npub fn dbl(x: Int) -> Int { x * 2 }\n"),
+        ("main.abe", "use lib::{ BASE, dbl }\nfn main() -> Int { BASE + dbl(21) }\n"),
+    ]);
 }
 
 #[test]

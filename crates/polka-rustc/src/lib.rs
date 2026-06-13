@@ -8,7 +8,13 @@ struct Ctx<'a> {
     param_counts: &'a [usize],
     const_is_handle: &'a [bool],
     int32_safe: bool,
+    // When Some, this fn is a `@cart` coroutine: `nregs` is the local register
+    // window, `present_id` is the `__frame_present` native — a call to it yields.
+    cart: Option<CartCtx>,
 }
+
+#[derive(Clone, Copy)]
+struct CartCtx { present_id: usize, nregs: usize }
 
 #[derive(Debug)]
 pub enum TranspileError {
@@ -97,6 +103,17 @@ fn callreg_stmt(dest: Register, fid_reg: Register, next: isize, ctx: &Ctx) -> St
     )
 }
 
+// `frame.present()`: save the live register window + resume pc into the state
+// struct, hand a Unit result to the call's dest, and yield to the host driver.
+fn cart_yield(dest: Register, next: isize, nregs: usize) -> String {
+    let mut save = String::new();
+    for n in 0..nregs {
+        let _ = write!(save, "st.r{n} = r{n}; st.r{n}_h = r{n}_h; ", n = n);
+    }
+    format!("{} st.r{d} = 0; st.r{d}_h = false; st.pc = {}; return Ok(CartStep::Yield);",
+        save, next, d = dest.0)
+}
+
 fn op_stmt(i: usize, op: &OpCode, len: usize, ctx: &Ctx) -> Result<String, TranspileError> {
     let next = (i + 1) as isize;
     let s = match op {
@@ -170,9 +187,16 @@ fn op_stmt(i: usize, op: &OpCode, len: usize, ctx: &Ctx) -> Result<String, Trans
         OpCode::Jz(r, off) => format!("if {} == 0 {{ {} }} else {{ pc = {} }};", reg(*r), jump_to(i, *off, len), next),
         OpCode::Jnz(r, off) => format!("if {} != 0 {{ {} }} else {{ pc = {} }};", reg(*r), jump_to(i, *off, len), next),
 
-        OpCode::Call(dest, fn_id) => call_stmt(*dest, *fn_id as usize, next, ctx)?,
+        OpCode::Call(dest, fn_id) => match ctx.cart {
+            Some(cc) if *fn_id as usize == cc.present_id => cart_yield(*dest, next, cc.nregs),
+            _ => call_stmt(*dest, *fn_id as usize, next, ctx)?,
+        },
         OpCode::CallReg(dest, fid_reg) => callreg_stmt(*dest, *fid_reg, next, ctx),
-        OpCode::Ret(a) => format!("return Ok(({}, {}));", reg(*a), regh(*a)),
+        OpCode::Ret(a) => if ctx.cart.is_some() {
+            format!("return Ok(CartStep::Done({}, {}));", reg(*a), regh(*a))
+        } else {
+            format!("return Ok(({}, {}));", reg(*a), regh(*a))
+        },
 
         OpCode::Deo(src, port_reg) => format!(
             "{{ let __pv = {pv} as i64; let __dev = ((__pv >> 8) & 0xFF) as u8; let __port = (__pv & 0xFF) as u8; \
@@ -206,29 +230,44 @@ fn st_stmt(src: Register, b: Register, off: String, next: isize) -> String {
     )
 }
 
-fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_counts: &[usize], int32_safe: bool) -> Result<(), TranspileError> {
-    let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, rt: &mut myriad::RegionTable, cs: &[Vec<u64>], a: &[u64], ah: &[bool]) -> Result<(u64, bool), String> {{", idx);
+fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_counts: &[usize],
+                 int32_safe: bool, cart: Option<CartCtx>) -> Result<(), TranspileError> {
     let nregs = chunk.reg_count + STAGE_SLACK;
-    for n in 0..nregs {
-        if n < chunk.param_count {
-            let _ = writeln!(out, "    let mut r{}: u64 = a[{}]; let mut r{}_h: bool = ah[{}];", n, n, n, n);
-        } else {
-            let _ = writeln!(out, "    let mut r{}: u64 = 0; let mut r{}_h: bool = false;", n, n);
+    if cart.is_some() {
+        let _ = writeln!(out, "#[derive(Default)] struct St{} {{ {} pc: isize }}", idx,
+            (0..nregs).map(|n| format!("r{}: u64, r{}_h: bool,", n, n)).collect::<String>());
+        let _ = writeln!(out, "fn f{}_step(st: &mut St{}, h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, rt: &mut myriad::RegionTable, cs: &[Vec<u64>]) -> Result<CartStep, String> {{", idx, idx);
+        for n in 0..nregs {
+            let _ = writeln!(out, "    let mut r{}: u64 = st.r{}; let mut r{}_h: bool = st.r{}_h;", n, n, n, n);
         }
+        let _ = writeln!(out, "    let mut pc: isize = st.pc;");
+    } else {
+        let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, rt: &mut myriad::RegionTable, cs: &[Vec<u64>], a: &[u64], ah: &[bool]) -> Result<(u64, bool), String> {{", idx);
+        for n in 0..nregs {
+            if n < chunk.param_count {
+                let _ = writeln!(out, "    let mut r{}: u64 = a[{}]; let mut r{}_h: bool = ah[{}];", n, n, n, n);
+            } else {
+                let _ = writeln!(out, "    let mut r{}: u64 = 0; let mut r{}_h: bool = false;", n, n);
+            }
+        }
+        let _ = writeln!(out, "    let mut pc: isize = 0;");
     }
     for off in 0..chunk.constants.len() {
         let _ = writeln!(out, "    let c{}: u64 = cs[{}][{}];", off, idx, off);
     }
     let const_flags: Vec<bool> = (0..chunk.constants.len()).map(|i| chunk.const_is_handle(i as u16)).collect();
-    let ctx = Ctx { reg_count: chunk.reg_count, param_counts, const_is_handle: &const_flags, int32_safe };
-    let _ = writeln!(out, "    let mut pc: isize = 0;");
+    let ctx = Ctx { reg_count: chunk.reg_count, param_counts, const_is_handle: &const_flags, int32_safe, cart };
     let _ = writeln!(out, "    loop {{");
     let _ = writeln!(out, "        match pc {{");
     let len = chunk.code.len();
     for (i, op) in chunk.code.iter().enumerate() {
         let _ = writeln!(out, "            {} => {{ {} }}", i, op_stmt(i, op, len, &ctx)?);
     }
-    let _ = writeln!(out, "            _ => return Ok((r0, r0_h)),");
+    if cart.is_some() {
+        let _ = writeln!(out, "            _ => return Ok(CartStep::Done(r0, r0_h)),");
+    } else {
+        let _ = writeln!(out, "            _ => return Ok((r0, r0_h)),");
+    }
     let _ = writeln!(out, "        }}");
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}");
@@ -238,12 +277,27 @@ fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_coun
 /// Transpile a module to a standalone Rust program linking `myriad` for the
 /// heap/RC runtime. `main` prints `OK <value> <live_cells>` or `ERR <msg>` so
 /// the differential harness can compare both the result and heap leaks.
+// A `@cart` module: entry fn calls the `__frame_present` native. Returns the
+// present-native id + entry register window so the entry can yield/resume.
+fn cart_info(module: &Module) -> Option<CartCtx> {
+    let present_id = module.functions.iter()
+        .position(|c| matches!(c, Chunk::Native(n) if n.name == "__frame_present"))?;
+    if let Chunk::Bytecode(bc) = &module.functions[module.entry] {
+        if bc.code.iter().any(|op| matches!(op, OpCode::Call(_, f) if *f as usize == present_id)) {
+            return Some(CartCtx { present_id, nregs: bc.reg_count + STAGE_SLACK });
+        }
+    }
+    None
+}
+
 fn emit_fns(out: &mut String, module: &Module) -> Result<(), TranspileError> {
     let param_counts: Vec<usize> = module.functions.iter().map(|c| c.param_count()).collect();
     let int32_safe = (module.flags & polka::CART_FLAG_INT32_SAFE) != 0;
+    let cart = cart_info(module);
     for (idx, chunk) in module.functions.iter().enumerate() {
+        let fn_cart = if idx == module.entry { cart } else { None };
         match chunk {
-            Chunk::Bytecode(bc) => emit_function(out, idx, bc, &param_counts, int32_safe)?,
+            Chunk::Bytecode(bc) => emit_function(out, idx, bc, &param_counts, int32_safe, fn_cart)?,
             Chunk::Native(n) => {
                 let _ = writeln!(out,
                     "fn f{}(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ let args: Vec<myriad::Value> = a.iter().map(|&x| myriad::Value::from_raw(x)).collect(); host.call({:?}, h, &args) }}",
@@ -273,7 +327,15 @@ fn emit_run_body(out: &mut String, module: &Module) {
         let _ = writeln!(out, "        cs.push(v); }}");
     }
     let _ = writeln!(out, "    let mut rt = myriad::RegionTable::new();");
-    let _ = writeln!(out, "    let (v, _) = f{}(h, host, &mut rt, &cs, &[], &[])?;", module.entry);
+    if cart_info(module).is_some() {
+        let _ = writeln!(out, "    let mut st = St{}::default();", module.entry);
+        let _ = writeln!(out, "    let (v, _) = loop {{ match f{}_step(&mut st, h, host, &mut rt, &cs)? {{", module.entry);
+        let _ = writeln!(out, "        CartStep::Yield => {{ if host.halted() {{ break (0u64, false); }} }},");
+        let _ = writeln!(out, "        CartStep::Done(v, vh) => break (v, vh),");
+        let _ = writeln!(out, "    }} }};");
+    } else {
+        let _ = writeln!(out, "    let (v, _) = f{}(h, host, &mut rt, &cs, &[], &[])?;", module.entry);
+    }
     let _ = writeln!(out, "    let live = h.live_count() - __sc.iter().filter(|(s, g)| h.is_live(*s, *g)).count();");
     let _ = writeln!(out, "    Ok((v, live))");
 }
@@ -281,6 +343,7 @@ fn emit_run_body(out: &mut String, module: &Module) {
 pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
     let mut out = String::new();
     let _ = writeln!(out, "#![allow(unused_mut, unused_variables, dead_code, unused_assignments, unused_parens)]");
+    let _ = writeln!(out, "enum CartStep {{ Yield, Done(u64, bool) }}");
     emit_fns(&mut out, module)?;
     let _ = writeln!(out, "fn run(h: &mut myriad::Heap, host: &mut myriad::AotHost) -> Result<(u64, usize), String> {{");
     emit_run_body(&mut out, module);
