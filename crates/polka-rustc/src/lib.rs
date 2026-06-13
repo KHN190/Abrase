@@ -9,8 +9,6 @@ struct Ctx<'a> {
     is_native: &'a [bool],
     const_is_handle: &'a [bool],
     int32_safe: bool,
-    // When Some, this fn is a `@cart` coroutine: `nregs` is the local register
-    // window, `present_id` is the `__frame_present` native — a call to it yields.
     cart: Option<CartCtx>,
 }
 
@@ -36,6 +34,25 @@ fn reg(r: Register) -> String { format!("r{}", r.0) }
 fn regh(r: Register) -> String { format!("r{}_h", r.0) }
 
 fn target(i: usize, off: i16) -> isize { i as isize + 1 + off as isize }
+
+// Leaders = every pc the dispatch loop lands on: branch targets, branch
+// fallthrough, @cart yield-resume point.
+fn block_leaders(code: &[OpCode], present_id: Option<usize>) -> Vec<bool> {
+    let len = code.len();
+    let mut leader = vec![false; len];
+    if len > 0 { leader[0] = true; }
+    let mut mark = |t: isize| { if t >= 0 && (t as usize) < len { leader[t as usize] = true; } };
+    for (i, op) in code.iter().enumerate() {
+        match op {
+            OpCode::Jmp(off) => { mark(target(i, *off)); mark(i as isize + 1); }
+            OpCode::Jz(_, off) | OpCode::Jnz(_, off) => { mark(target(i, *off)); mark(i as isize + 1); }
+            OpCode::Ret(_) => mark(i as isize + 1),
+            OpCode::Call(_, fid) if Some(*fid as usize) == present_id => mark(i as isize + 1),
+            _ => {}
+        }
+    }
+    leader
+}
 
 fn jump_to(i: usize, off: i16, len: usize) -> String {
     let t = target(i, off);
@@ -290,8 +307,19 @@ fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_coun
     let _ = writeln!(out, "    loop {{");
     let _ = writeln!(out, "        match pc {{");
     let len = chunk.code.len();
-    for (i, op) in chunk.code.iter().enumerate() {
-        let _ = writeln!(out, "            {} => {{ {} }}", i, op_stmt(i, op, len, &ctx)?);
+    let leaders = block_leaders(&chunk.code, cart.map(|c| c.present_id));
+    let mut i = 0;
+    while i < len {
+        let mut body = String::new();
+        let mut j = i;
+        loop {
+            body.push_str(&op_stmt(j, &chunk.code[j], len, &ctx)?);
+            body.push(' ');
+            j += 1;
+            if j >= len || leaders[j] { break; }
+        }
+        let _ = writeln!(out, "            {} => {{ {} }}", i, body);
+        i = j;
     }
     if cart.is_some() {
         let _ = writeln!(out, "            _ => return Ok(CartStep::Done(r0, r0_h)),");
@@ -304,9 +332,6 @@ fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_coun
     Ok(())
 }
 
-/// Transpile a module to a standalone Rust program linking `myriad` for the
-/// heap/RC runtime. `main` prints `OK <value> <live_cells>` or `ERR <msg>` so
-/// the differential harness can compare both the result and heap leaks.
 // A `@cart` module: entry fn calls the `__frame_present` native. Returns the
 // present-native id + entry register window so the entry can yield/resume.
 fn cart_info(module: &Module) -> Option<CartCtx> {

@@ -6,6 +6,13 @@ use crate::compiler::Compiler;
 
 impl Compiler {
     pub(in crate::compiler) fn infer_expr_type(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Type> {
+        // `expr_types` is keyed by (module, span, discriminant), but Span is
+        // start-only (line,col): nested same-discriminant Binary nodes share a
+        // start col, so the outer comparison's Bool clobbers the inner arith's
+        // Float. Derive Binary types from operands instead (correct + collision-free).
+        if matches!(expr.node, ast::Expr::Binary { .. }) {
+            return self.infer_expr_type_fallback(expr);
+        }
         if expr.span != ast::Span::new(0, 0) {
             let key = (self.current_fn_module.clone(), expr.span, std::mem::discriminant(&expr.node));
             if let Some(ty) = self.typeck_expr_types.get(&key) {
