@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 pub struct Frame {
     pub func_id: usize,
     pub ip: usize,

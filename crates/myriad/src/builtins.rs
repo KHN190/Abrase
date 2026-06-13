@@ -2,8 +2,21 @@ use crate::{Heap, Value};
 use crate::devices::DeviceTable;
 use crate::devices::{console, CONSOLE_ID};
 use crate::value::{alloc_string, read_string};
-use std::collections::BTreeMap;
-use std::rc::Rc;
+use alloc::collections::BTreeMap;
+use alloc::rc::Rc;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+pub mod fmath {
+    pub fn sqrt(x: f64) -> f64 { libm::sqrt(x) }
+    pub fn sin(x: f64) -> f64 { libm::sin(x) }
+    pub fn cos(x: f64) -> f64 { libm::cos(x) }
+    pub fn floor(x: f64) -> f64 { libm::floor(x) }
+    pub fn ceil(x: f64) -> f64 { libm::ceil(x) }
+    pub fn abs(x: f64) -> f64 { libm::fabs(x) }
+    pub fn fmax(a: f64, b: f64) -> f64 { libm::fmax(a, b) }
+    pub fn fmin(a: f64, b: f64) -> f64 { libm::fmin(a, b) }
+}
 
 pub struct NativeCtx<'a> {
     pub heap: &'a mut Heap,
@@ -117,8 +130,8 @@ fn concat_native() -> NativeFn {
         dst[0] = total as u64;
         let dst_ptr = dst[1..].as_mut_ptr() as *mut u8;
         unsafe {
-            std::ptr::copy_nonoverlapping(a_src, dst_ptr, a_len);
-            std::ptr::copy_nonoverlapping(b_src, dst_ptr.add(a_len), b_len);
+            core::ptr::copy_nonoverlapping(a_src, dst_ptr, a_len);
+            core::ptr::copy_nonoverlapping(b_src, dst_ptr.add(a_len), b_len);
         }
 
         Ok(handle(Value::from_handle(slot, gen_)))
@@ -148,7 +161,7 @@ fn print_native() -> NativeFn {
             // Clamp stated length to actual cell payload capacity.
             let len = (d[0] as usize).min(d.len().saturating_sub(1) * 8);
             let ptr = d[1..].as_ptr() as *const u8;
-            unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+            unsafe { core::slice::from_raw_parts(ptr, len).to_vec() }
         };
         write_console(ctx.devices, ctx.heap, &bytes, "print")?;
         Ok(plain(Value::ZERO))
@@ -165,7 +178,7 @@ fn println_native() -> NativeFn {
             let d = ctx.heap.cell_data(slot, gen_)?;
             let len = (d[0] as usize).min(d.len().saturating_sub(1) * 8);
             let ptr = d[1..].as_ptr() as *const u8;
-            unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+            unsafe { core::slice::from_raw_parts(ptr, len).to_vec() }
         };
         write_console(ctx.devices, ctx.heap, &bytes, "println")?;
         write_console(ctx.devices, ctx.heap, b"\n", "println")?;
@@ -220,15 +233,15 @@ fn min_native() -> NativeFn {
 }
 
 fn float_abs_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().abs()))))
+    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::abs(args[0].as_float())))))
 }
 
 fn float_max_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().max(args[1].as_float())))))
+    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::fmax(args[0].as_float(), args[1].as_float())))))
 }
 
 fn float_min_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().min(args[1].as_float())))))
+    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::fmin(args[0].as_float(), args[1].as_float())))))
 }
 
 fn int_to_f_native() -> NativeFn {
@@ -318,13 +331,13 @@ fn unit_to_s_native() -> NativeFn {
 }
 
 fn ceil_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().ceil()))))
+    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::ceil(args[0].as_float())))))
 }
 
 fn flr_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().floor()))))
+    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::floor(args[0].as_float())))))
 }
 
-fn cos_native()  -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().cos())))) }
-fn sin_native()  -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().sin())))) }
-fn sqrt_native() -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_float().sqrt())))) }
+fn cos_native()  -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::cos(args[0].as_float()))))) }
+fn sin_native()  -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::sin(args[0].as_float()))))) }
+fn sqrt_native() -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::sqrt(args[0].as_float()))))) }

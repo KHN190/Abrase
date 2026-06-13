@@ -1,6 +1,7 @@
+use alloc::{boxed::Box, vec::Vec};
 use crate::{Device, VirtualMachine};
 use crate::devices::{
-    BufferConsole, Console, SystemDevice, StdoutConsole,
+    BufferConsole, Console, SystemDevice,
     CONSOLE_ID, SYSTEM_ID,
 };
 
@@ -15,7 +16,7 @@ impl Host {
     pub fn default() -> Self {
         Self {
             system: Some(SystemDevice::new()),
-            console: Some(Box::new(StdoutConsole)),
+            console: Some(Box::new(BufferConsole::new())),
             extra: Vec::new(),
         }
     }

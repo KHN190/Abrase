@@ -1,4 +1,5 @@
-use super::memory::Heap;
+use crate::memory::Heap;
+use alloc::{string::{String, ToString}, vec::Vec};
 
 pub struct RegionTable {
     stack: Vec<Vec<(u32, u32)>>,
@@ -40,6 +41,26 @@ impl RegionTable {
 
     pub fn clear(&mut self) {
         self.stack.clear();
+    }
+
+    pub fn deep_forget(&mut self, heap: &Heap, slot: u32, generation: u32) {
+        let mut visited = alloc::collections::BTreeSet::new();
+        self.deep_forget_inner(heap, slot, generation, &mut visited);
+    }
+
+    fn deep_forget_inner(&mut self, heap: &Heap, slot: u32, generation: u32,
+                         visited: &mut alloc::collections::BTreeSet<(u32, u32)>) {
+        if !visited.insert((slot, generation)) { return; }
+        if !self.forget(slot, generation) { return; }
+        let size = match heap.size(slot, generation) { Ok(n) => n, Err(_) => return };
+        for off in 0..size {
+            if let Ok((raw, is_handle)) = heap.ld(slot, generation, off) {
+                if is_handle && raw != polka::HANDLE_NONE {
+                    let (s, g) = polka::Value::from_raw(raw).as_handle();
+                    self.deep_forget_inner(heap, s, g, visited);
+                }
+            }
+        }
     }
 
     pub fn forget(&mut self, slot: u32, generation: u32) -> bool {

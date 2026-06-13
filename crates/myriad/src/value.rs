@@ -1,4 +1,5 @@
 use polka::Value;
+use alloc::{string::String, vec::Vec};
 use crate::memory::Heap;
 
 // String <-> heap cell ABI.
@@ -19,7 +20,7 @@ pub fn alloc_string(heap: &mut Heap, s: &str) -> Result<Value, String> {
     dst[0] = bytes.len() as u64;
     if !bytes.is_empty() {
         let dst_ptr = dst[1..].as_mut_ptr() as *mut u8;
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst_ptr, bytes.len()); }
+        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst_ptr, bytes.len()); }
     }
     Ok(Value::from_handle(slot, gen_))
 }

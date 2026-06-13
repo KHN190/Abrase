@@ -1,4 +1,9 @@
 // OpCode design frozen; type-agnostic bytecode, type from OpCode + masks.
+#![no_std]
+
+extern crate alloc;
+
+use alloc::{string::String, vec::Vec};
 
 pub mod value;
 pub mod cartridge;

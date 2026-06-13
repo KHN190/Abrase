@@ -1,8 +1,9 @@
+use alloc::{boxed::Box, string::String, vec::Vec};
 pub mod system;
 pub mod console;
 
 pub use system::{SystemDevice, SYSTEM_ID};
-pub use console::{Console, BufferConsole, StdoutConsole, CONSOLE_ID};
+pub use console::{Console, BufferConsole, CONSOLE_ID, SharedBuf};
 use polka::Value;
 use crate::memory::Heap;
 

@@ -4,6 +4,7 @@ members = [
 	"crates/abrase",
 	"crates/polka",
 	"crates/myriad",
+	"crates/polka-rustc",
 	"crates/abrase-cli",
 	"crates/abrase-wasm"
 ]

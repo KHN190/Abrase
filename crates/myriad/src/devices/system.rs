@@ -1,3 +1,4 @@
+use alloc::string::String;
 use crate::{Device, Value};
 use crate::memory::Heap;
 

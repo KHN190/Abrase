@@ -1,3 +1,4 @@
+use alloc::{boxed::Box, string::String};
 use polka::{OpCode, Value};
 
 pub enum DebugEvent<'a> {
@@ -43,34 +44,4 @@ pub fn render_fn_label(idx: usize, names: &[String]) -> String {
         Some(n) if !n.is_empty() => format!("{}#{}", n, idx),
         _ => format!("#{}", idx),
     }
-}
-
-pub fn stderr_sink() -> DebugSink {
-    Box::new(|event, names| {
-        match event {
-            DebugEvent::Trace { func, pc, op, line, .. } => {
-                if *line > 0 {
-                    eprintln!("[{}:{} @{}] {:?}", render_fn_label(*func, names), pc, line, op);
-                } else {
-                    eprintln!("[{}:{}] {:?}", render_fn_label(*func, names), pc, op);
-                }
-            }
-            DebugEvent::HandlePush {
-                effect_id, cell_slot, cell_gen, suspend_pc, suspend_base, dest, depth,
-            } => {
-                eprintln!(
-                    "  [handle] push effect_id={} cell=(slot {},gen {}) suspend_pc={} suspend_base={} dest=r{} depth={}",
-                    effect_id, cell_slot, cell_gen, suspend_pc, suspend_base, dest, depth
-                );
-            }
-            DebugEvent::Resume {
-                saved_pc, saved_base, cell_dest, val, handler_dest, alive, depth,
-            } => {
-                eprintln!(
-                    "  [resume] -> saved_pc={} saved_base={} cell_dest=r{} val={:?} handler_dest=r{} alive={:?} depth={}",
-                    saved_pc, saved_base, cell_dest, val, handler_dest, alive, depth
-                );
-            }
-        }
-    })
 }

@@ -22,6 +22,7 @@ doctest = false
 [dependencies]
 abrase = { path = "../abrase", version = "=0.1.2" }
 myriad = { package = "myriad-rs", path = "../myriad", version = "=0.1.2" }
+polka-rustc = { path = "../polka-rustc", version = "=0.1.2" }
 polka  = { package = "polka-rs", path = "../polka", version = "=0.1.2" }
 
 [dev-dependencies]
@@ -29,4 +30,8 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "throughput"
+harness = false
+
+[[bench]]
+name = "transpile"
 harness = false

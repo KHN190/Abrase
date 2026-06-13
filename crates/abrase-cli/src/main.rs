@@ -10,7 +10,8 @@ use abrase::lexer::Lexer;
 use abrase::loader;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use myriad::{Host, Value, VirtualMachine, read_string};
+use myriad::{Value, VirtualMachine, read_string};
+use abrase_cli::host::{install_std_devices, myriad_stderr_sink, eprintln_sink};
 
 const USAGE: &str = "\
 Abrase compiler & Myriad Runtime
@@ -19,6 +20,7 @@ usage:
     abrase run     <file.abe>  [flags]   compile and execute main()
     abrase check   <file.abe>            type-check only; no execution
     abrase disasm  <file.abe>  [flags]   compile and dump bytecode
+    abrase transpile <file.abe> [flags]  compile and emit standalone Rust (trusted-AOT) to stdout
     abrase explain <file.abe>            AST → typeck → bytecode chain
     abrase explain --expr '<snippet>'    same for inline code (auto-wrapped)
     abrase export  <file.abe> <out.pk>   compile and write a .pk cartridge
@@ -124,6 +126,7 @@ fn main() -> ExitCode {
         "check" => cmd_check(&program, int32, no_built_in),
         "parse" => cmd_parse(&program),
         "disasm" => cmd_disasm(&program, int32, no_built_in),
+        "transpile" => cmd_transpile(&program, int32, no_built_in),
         _ => {
             eprint!("{}", USAGE);
             ExitCode::from(64)
@@ -169,11 +172,13 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
     let fn_names = compiler.fn_names();
     let static_names = compiler.static_names_by_offset();
 
-    let mut vm = VirtualMachine::new()
-        .with_debug(trace)
-        .with_trace_frames(handlers)
-        .with_fn_names(fn_names)
-        .with_static_names(static_names);
+    let mut vm = apply_vm_diagnostics(
+        VirtualMachine::new()
+            .with_trace_frames(handlers)
+            .with_fn_names(fn_names)
+            .with_static_names(static_names),
+        trace,
+    );
     if let Ok(spec) = std::env::var("BREAK_AT") {
         vm = vm.with_debug_sink(break_at_sink(spec));
     }
@@ -189,7 +194,7 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
         vm = vm.with_trace_filter(bits);
     }
 
-    Host::default().install_into(&mut vm);
+    install_std_devices(&mut vm);
 
     let result = if is_cart_main(ast) {
         run_cart(&mut vm, &module)
@@ -200,16 +205,16 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
             ()
         })
     };
-    vm.print_profile();
+    eprint!("{}", vm.profile_report());
     match result {
         Ok(()) => {
             if let Some(code) = vm.exit_code() {
                 if trace { eprintln!("[heap] live={}", vm.heap_live_count()); }
-                if leak { vm.dump_live_slots(); }
+                if leak { eprint!("{}", vm.live_slots_report()); }
                 return ExitCode::from(code as u8);
             }
             if trace { eprintln!("[heap] live={}", vm.heap_live_count()); }
-            if leak { vm.dump_live_slots(); }
+            if leak { eprint!("{}", vm.live_slots_report()); }
             ExitCode::SUCCESS
         }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
@@ -462,6 +467,26 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
     ExitCode::SUCCESS
 }
 
+fn cmd_transpile(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -> ExitCode {
+    let ast = &program.decls;
+    let source = &program.entry_source;
+    let mut compiler = Compiler::new()
+        .with_source(source.clone())
+        .with_int32_mode(int32)
+        .with_no_built_in(no_built_in);
+    let module = match compiler.compile_module(ast) {
+        Ok(m) => m,
+        Err(errs) => {
+            eprint!("{}", program.render_errors(&errs));
+            return ExitCode::from(1);
+        }
+    };
+    match polka_rustc::transpile_module(&module) {
+        Ok(rust) => { print!("{}", rust); ExitCode::SUCCESS }
+        Err(e) => { eprintln!("transpile error: {}", e); ExitCode::from(1) }
+    }
+}
+
 // Annotate Deo/Dei against the device + port encoded in the port register's
 // most recent PushConst. port_val = (device_id << 8) | port.
 fn device_annotation(bc: &abrase::bytecode::BytecodeChunk, pc: usize) -> String {
@@ -603,17 +628,18 @@ fn cmd_load(pk_path: &str, trace: bool, handlers: bool, leak: bool) -> ExitCode 
             return ExitCode::from(65);
         }
     };
-    let mut vm = VirtualMachine::new()
-        .with_debug(trace)
-        .with_trace_frames(handlers);
+    let mut vm = apply_vm_diagnostics(
+        VirtualMachine::new().with_trace_frames(handlers),
+        trace,
+    );
     if let Ok(spec) = std::env::var("BREAK_AT") {
         vm = vm.with_debug_sink(break_at_sink(spec));
     }
-    Host::default().install_into(&mut vm);
+    install_std_devices(&mut vm);
     match vm.run_module(&module) {
         Ok(v) => {
             print_result(&vm, v);
-            if leak { vm.dump_live_slots(); }
+            if leak { eprint!("{}", vm.live_slots_report()); }
             ExitCode::SUCCESS
         }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
@@ -624,6 +650,27 @@ fn cmd_load(pk_path: &str, trace: bool, handlers: bool, leak: bool) -> ExitCode 
 // register window with handle annotations. The VM only emits events; all
 // breakpoint logic lives host-side.
 // BREAK_AT=<fn|#id>:<pc> or <file.abe>:<line>.
+// Read diagnostic env vars (TRACE_SLOT/TRACE_STATIC/PROFILE/ABRASE_HEAP_CHECK)
+// and wire the matching VM sinks. Env reading lives here, not in no_std myriad.
+fn apply_vm_diagnostics(mut vm: VirtualMachine, trace: bool) -> VirtualMachine {
+    if trace {
+        vm = vm.with_debug_sink(myriad_stderr_sink());
+    }
+    match std::env::var("TRACE_SLOT") {
+        Ok(s) if s == "*" => vm = vm.with_heap_trace(None, true, eprintln_sink),
+        Ok(s) => if let Ok(n) = s.parse::<u32>() {
+            vm = vm.with_heap_trace(Some(n), false, eprintln_sink);
+        },
+        Err(_) => {}
+    }
+    if let Ok(s) = std::env::var("TRACE_STATIC") {
+        if !s.is_empty() { vm = vm.with_trace_static(Some(s)); }
+    }
+    if std::env::var("PROFILE").is_ok() { vm = vm.with_profile(true); }
+    if std::env::var("ABRASE_HEAP_CHECK").is_ok() { vm = vm.with_heap_check(true); }
+    vm.with_trace_out(eprintln_sink)
+}
+
 fn break_at_sink(spec: String) -> myriad::DebugSink {
     let (fn_part, pos_part) = match spec.rsplit_once(':') {
         Some(p) => p,

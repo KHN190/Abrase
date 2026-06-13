@@ -1,3 +1,4 @@
+use alloc::{string::{String, ToString}, vec::Vec};
 use self::register::{bool_u64, validate_module_register_budget};
 use super::{VirtualMachine, Value};
 use super::debug::DebugEvent;
@@ -114,6 +115,7 @@ impl VirtualMachine {
         self.resolved_constants.clear();
         self.resolved_const_mask.clear();
         self.resolved_natives.clear();
+        self.resolved_aot.clear();
         self.halted = false;
         self.exit_code = None;
         self.pc = 0;
@@ -463,7 +465,9 @@ impl VirtualMachine {
             } else {
                 format!("int({}) / float({:.6})", raw as i64, f64::from_bits(raw))
             };
-            eprintln!("[TRACE_STATIC] {} slot={} off={} name={} val={}", op, slot, off, name, val);
+            if let Some(f) = self.trace_out {
+                f(&format!("[TRACE_STATIC] {} slot={} off={} name={} val={}", op, slot, off, name, val));
+            }
         }
     }
 

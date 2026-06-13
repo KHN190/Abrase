@@ -1,3 +1,4 @@
+use alloc::{string::String, vec, vec::Vec};
 use crate::{BytecodeChunk, Chunk, Export, Module, NativeChunk, OpCode, Register};
 
 pub const MAGIC: u32 = 0xECFF_00EC;
@@ -13,8 +14,8 @@ pub enum EncodeError {
     NameTooLong { length: usize },
 }
 
-impl std::fmt::Display for EncodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             EncodeError::OffsetTooLarge { value, op } =>
                 write!(f, "{} offset {} exceeds the 255-byte cartridge limit", op, value),
@@ -26,7 +27,7 @@ impl std::fmt::Display for EncodeError {
     }
 }
 
-impl std::error::Error for EncodeError {}
+impl core::error::Error for EncodeError {}
 
 #[derive(Debug)]
 pub enum LoadError {
@@ -43,8 +44,8 @@ pub enum Corruption {
     InvalidUtf8,
 }
 
-impl std::fmt::Display for LoadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             LoadError::NotACartridge =>
                 write!(f, "not a Polka cartridge (.pk file expected)"),
@@ -64,7 +65,7 @@ impl std::fmt::Display for LoadError {
     }
 }
 
-impl std::error::Error for LoadError {}
+impl core::error::Error for LoadError {}
 
 pub fn write_pk(module: &Module) -> Result<Vec<u8>, EncodeError> {
     let mut out = Vec::new();

@@ -1,3 +1,4 @@
+use alloc::{string::String, vec::Vec};
 use polka::{BytecodeChunk, Chunk, Register, Module, FRAME_REGS, HANDLE_NONE};
 use crate::frame::Frame;
 use crate::builtins::NativeCtx;
@@ -39,6 +40,25 @@ impl VirtualMachine {
             const MAX_NATIVE_ARGS: usize = 8;
             if param_count > MAX_NATIVE_ARGS {
                 return Err(format!("native call: param_count {} exceeds buffer size {}", param_count, MAX_NATIVE_ARGS));
+            }
+            if let Some(aot) = self.resolved_aot[fn_id].clone() {
+                let mut buf: [Value; MAX_NATIVE_ARGS] = [Value::ZERO; MAX_NATIVE_ARGS];
+                let mut tags: [bool; MAX_NATIVE_ARGS] = [false; MAX_NATIVE_ARGS];
+                for i in 0..param_count {
+                    buf[i] = Value::from_raw(self.read_abs_raw(new_base + i));
+                    tags[i] = self.reg_mask_bit(new_base + i);
+                }
+                let mut ctx = NativeCtx {
+                    heap: &mut self.heap, devices: &mut self.devices,
+                    halted: &mut self.halted, exit_code: &mut self.exit_code,
+                };
+                let (result, result_is_handle) = aot(&mut ctx, &buf[..param_count], &tags[..param_count])?;
+                for i in 0..param_count {
+                    self.set_reg_mask_bit(new_base + i, false);
+                    self.write_abs_raw(new_base + i, HANDLE_NONE);
+                }
+                self.write_abs(dest_abs, result.raw(), result_is_handle);
+                return Ok(());
             }
             let func = self.resolved_natives[fn_id].as_ref()
                 .ok_or_else(|| format!("native call: fn_id {} not resolved", fn_id))?
@@ -346,8 +366,8 @@ impl VirtualMachine {
         let (ra_fn, ra_env_raw, ra_env_is_handle) = {
             let h = self.handlers.last_mut().unwrap();
             let fn_id = h.pending_return_arm_fn.take().unwrap();
-            let env = std::mem::replace(&mut h.pending_return_arm_env, HANDLE_NONE);
-            let env_h = std::mem::replace(&mut h.pending_return_arm_env_is_handle, false);
+            let env = core::mem::replace(&mut h.pending_return_arm_env, HANDLE_NONE);
+            let env_h = core::mem::replace(&mut h.pending_return_arm_env_is_handle, false);
             (fn_id, env, env_h)
         };
 
