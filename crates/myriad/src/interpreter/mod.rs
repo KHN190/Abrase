@@ -115,6 +115,7 @@ impl VirtualMachine {
         self.resolved_constants.clear();
         self.resolved_const_mask.clear();
         self.resolved_natives.clear();
+        self.resolved_aot.clear();
         self.halted = false;
         self.exit_code = None;
         self.pc = 0;

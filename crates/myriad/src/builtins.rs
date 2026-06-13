@@ -7,7 +7,7 @@ use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-mod fmath {
+pub mod fmath {
     pub fn sqrt(x: f64) -> f64 { libm::sqrt(x) }
     pub fn sin(x: f64) -> f64 { libm::sin(x) }
     pub fn cos(x: f64) -> f64 { libm::cos(x) }

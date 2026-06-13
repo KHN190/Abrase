@@ -304,13 +304,19 @@ impl VirtualMachine {
         }
         self.resolved_natives.clear();
         self.resolved_natives.reserve(module.functions.len());
+        self.resolved_aot.clear();
+        self.resolved_aot.reserve(module.functions.len());
         for chunk in &module.functions {
-            let entry = match chunk {
-                Chunk::Native(n) => Some(self.natives.get(&n.name).cloned()
-                    .ok_or_else(|| format!("unresolved import: {}", n.name))?),
-                Chunk::Bytecode(_) => None,
+            let (entry, aot) = match chunk {
+                Chunk::Native(n) => match self.aot_fns.get(&n.name).cloned() {
+                    Some(f) => (None, Some(f)),
+                    None => (Some(self.natives.get(&n.name).cloned()
+                        .ok_or_else(|| format!("unresolved import: {}", n.name))?), None),
+                },
+                Chunk::Bytecode(_) => (None, None),
             };
             self.resolved_natives.push(entry);
+            self.resolved_aot.push(aot);
         }
         Ok(())
     }

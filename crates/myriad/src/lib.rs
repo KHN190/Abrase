@@ -31,6 +31,8 @@ pub use aot::{AotHost, AotNatives, reachable_live_count};
 
 use frame::Frame;
 
+pub type AotFn = alloc::rc::Rc<dyn for<'a> Fn(&mut NativeCtx<'a>, &[Value], &[bool]) -> Result<(Value, bool), String>>;
+
 pub fn run(module: polka::Module, host: Host) -> Result<i64, String> {
     let loaded = loader::load(module)?;
     let mut vm = VirtualMachine::new();
@@ -60,6 +62,8 @@ pub struct VirtualMachine {
     // Permanent heap handles for string constants; rc=1 module-lifetime.
     pub(crate) string_const_handles: Vec<(u32, u32)>,
     pub(crate) resolved_natives: Vec<Option<NativeFn>>,
+    pub(crate) aot_fns: alloc::collections::BTreeMap<alloc::string::String, AotFn>,
+    pub(crate) resolved_aot: Vec<Option<AotFn>>,
     pub(crate) region_table: RegionTable,
     pub(crate) natives: NativeRegistry,
     pub(crate) debug_sink: Option<DebugSink>,
@@ -154,6 +158,8 @@ impl VirtualMachine {
             resolved_const_mask: Vec::new(),
             string_const_handles: Vec::new(),
             resolved_natives: Vec::new(),
+            aot_fns: alloc::collections::BTreeMap::new(),
+            resolved_aot: Vec::new(),
             region_table: RegionTable::new(),
             natives,
             debug_sink: None,
@@ -423,6 +429,10 @@ impl VirtualMachine {
 
     pub fn register_native<S: Into<String>>(&mut self, name: S, func: NativeFn) {
         self.natives.register(name, func);
+    }
+
+    pub fn register_aot_fn<S: Into<String>>(&mut self, name: S, func: AotFn) {
+        self.aot_fns.insert(name.into(), func);
     }
 
     pub fn take_device(&mut self, id: u8) -> Option<Box<dyn Device>> {

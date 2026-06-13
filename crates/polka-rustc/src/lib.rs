@@ -2,6 +2,7 @@ use polka::{BytecodeChunk, Chunk, Module, OpCode, Register};
 use std::fmt::Write;
 
 mod embed;
+mod hybrid;
 
 const STAGE_SLACK: usize = 32;
 
@@ -279,6 +280,12 @@ fn st_stmt(src: Register, b: Register, off: String, next: isize) -> String {
     )
 }
 
+pub(crate) fn emit_pure_fn(out: &mut String, idx: usize, chunk: &BytecodeChunk,
+                           param_counts: &[usize], is_native: &[bool], int32_safe: bool)
+                           -> Result<(), TranspileError> {
+    emit_function(out, idx, chunk, param_counts, is_native, int32_safe, None)
+}
+
 fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_counts: &[usize],
                  is_native: &[bool], int32_safe: bool, cart: Option<CartCtx>) -> Result<(), TranspileError> {
     let nregs = chunk.reg_count + STAGE_SLACK;
@@ -406,7 +413,7 @@ fn emit_run_body(out: &mut String, module: &Module) {
 
 pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
     if embed::is_effectful(module) {
-        return embed::transpile_module(module);
+        return hybrid::transpile_module(module);
     }
     let mut out = String::new();
     let _ = writeln!(out, "#![allow(unused_mut, unused_variables, dead_code, unused_assignments, unused_parens)]");
