@@ -1,3 +1,4 @@
+use alloc::string::String;
 use polka::{Chunk, Module, HANDLE_NONE};
 use crate::memory::mask_bit;
 use crate::{cont_slot, VirtualMachine};
@@ -137,6 +138,7 @@ impl VirtualMachine {
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
     use crate::HandlerFrame;
     use polka::{BytecodeChunk, Chunk, Module};
 

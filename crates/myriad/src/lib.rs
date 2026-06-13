@@ -1,3 +1,10 @@
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
+
+use alloc::{boxed::Box, string::{String, ToString}, vec::Vec};
+
 pub mod value;
 pub mod frame;
 pub mod memory;
@@ -67,11 +74,13 @@ pub struct VirtualMachine {
     pub(crate) trace_static_filter: Option<String>,
     pub(crate) heap_check: bool,
     pub(crate) profile: bool,
-    pub(crate) prof_ops: std::collections::HashMap<&'static str, u64>,
-    pub(crate) prof_fns: std::collections::HashMap<usize, u64>,
-    pub(crate) prof_fn_ops: std::collections::HashMap<usize, std::collections::HashMap<&'static str, u64>>,
+    pub(crate) prof_ops: hashbrown::HashMap<&'static str, u64>,
+    pub(crate) prof_fns: hashbrown::HashMap<usize, u64>,
+    pub(crate) prof_fn_ops: hashbrown::HashMap<usize, hashbrown::HashMap<&'static str, u64>>,
     pub(crate) yielded: bool,
     pub(crate) yield_dest_abs: usize,
+    // Text-diagnostic sink for frame/static traces. None = silent (no_std default).
+    pub(crate) trace_out: Option<fn(&str)>,
 }
 
 pub struct HandlerFrame {
@@ -156,13 +165,13 @@ impl VirtualMachine {
             steps: 0,
             step_cap: u64::MAX,
             static_names: Vec::new(),
-            trace_static_filter: std::env::var("TRACE_STATIC").ok()
-                .filter(|s| !s.is_empty()),
-            heap_check: std::env::var("ABRASE_HEAP_CHECK").is_ok(),
-            profile: std::env::var("PROFILE").is_ok(),
-            prof_ops: std::collections::HashMap::new(),
-            prof_fns: std::collections::HashMap::new(),
-            prof_fn_ops: std::collections::HashMap::new(),
+            trace_static_filter: None,
+            heap_check: false,
+            profile: false,
+            trace_out: None,
+            prof_ops: hashbrown::HashMap::new(),
+            prof_fns: hashbrown::HashMap::new(),
+            prof_fn_ops: hashbrown::HashMap::new(),
             yielded: false,
             yield_dest_abs: 0,
         }
@@ -190,8 +199,26 @@ impl VirtualMachine {
 
     pub fn exit_code(&self) -> Option<i64> { self.exit_code }
 
-    pub fn with_debug(mut self, on: bool) -> Self {
-        self.debug_sink = if on { Some(debug::stderr_sink()) } else { None };
+    // Configure heap RC tracing (TRACE_SLOT). slot=None+all=true traces every
+    // cell; out is the text sink the host provides (e.g. an eprintln wrapper).
+    pub fn with_heap_trace(mut self, slot: Option<u32>, all: bool, out: fn(&str)) -> Self {
+        self.heap.set_trace(slot, all, out);
+        self
+    }
+
+    // Text sink for frame/static diagnostics (TRACE_STATIC, trace_frames).
+    pub fn with_trace_out(mut self, out: fn(&str)) -> Self {
+        self.trace_out = Some(out);
+        self
+    }
+
+    pub fn with_profile(mut self, on: bool) -> Self {
+        self.profile = on;
+        self
+    }
+
+    pub fn with_trace_static(mut self, filter: Option<String>) -> Self {
+        self.trace_static_filter = filter;
         self
     }
 
@@ -222,22 +249,25 @@ impl VirtualMachine {
         }
     }
 
-    // Dump the opcode + per-fn execution histogram to stderr (PROFILE=1). Op
-    // counts are pacing-independent: they reflect work per run, not wall time.
-    pub fn print_profile(&self) {
-        if !self.profile { return; }
+    // Opcode + per-fn execution histogram (PROFILE=1). Op counts are
+    // pacing-independent: work per run, not wall time. Returns "" when profiling
+    // is off; the host prints the report. Kept here so the VM owns the format.
+    pub fn profile_report(&self) -> String {
+        use core::fmt::Write;
+        let mut s = String::new();
+        if !self.profile { return s; }
         let mut ops: Vec<_> = self.prof_ops.iter().collect();
         ops.sort_by(|a, b| b.1.cmp(a.1));
         let total: u64 = self.prof_ops.values().sum();
-        eprintln!("[profile] {} ops executed", total);
+        let _ = writeln!(s, "[profile] {} ops executed", total);
         for (name, n) in ops {
-            eprintln!("  {:>12} {:>6.1}%  {}", n, *n as f64 * 100.0 / total.max(1) as f64, name);
+            let _ = writeln!(s, "  {:>12} {:>6.1}%  {}", n, *n as f64 * 100.0 / total.max(1) as f64, name);
         }
         let mut fns: Vec<_> = self.prof_fns.iter().collect();
         fns.sort_by(|a, b| b.1.cmp(a.1));
-        eprintln!("[profile] per-fn opcode breakdown (top 15 fns):");
+        let _ = writeln!(s, "[profile] per-fn opcode breakdown (top 15 fns):");
         for (fid, n) in fns.into_iter().take(15) {
-            eprintln!("  {:>12} {} ({:.1}%)", n,
+            let _ = writeln!(s, "  {:>12} {} ({:.1}%)", n,
                 debug::render_fn_label(*fid, &self.fn_names),
                 *n as f64 * 100.0 / total.max(1) as f64);
             if let Some(ops) = self.prof_fn_ops.get(fid) {
@@ -246,9 +276,10 @@ impl VirtualMachine {
                 let line: Vec<String> = fo.into_iter().take(8)
                     .map(|(name, c)| format!("{} {:.0}%", name, *c as f64 * 100.0 / (*n).max(1) as f64))
                     .collect();
-                eprintln!("               {}", line.join("  "));
+                let _ = writeln!(s, "               {}", line.join("  "));
             }
         }
+        s
     }
 
     pub(crate) fn op_name(op: &polka::OpCode) -> &'static str {
@@ -268,11 +299,13 @@ impl VirtualMachine {
     }
 
     #[inline]
-    pub(crate) fn trace_frame_event(&self, kind: &str, detail: std::fmt::Arguments<'_>) {
+    pub(crate) fn trace_frame_event(&self, kind: &str, detail: core::fmt::Arguments<'_>) {
         if !self.trace_frames { return; }
-        let bfi = self.handlers.last().and_then(|h| h.body_frame_index);
-        eprintln!("[{}] {} | frames={} handlers={} bfi={:?}",
-            kind, detail, self.frames.len(), self.handlers.len(), bfi);
+        if let Some(f) = self.trace_out {
+            let bfi = self.handlers.last().and_then(|h| h.body_frame_index);
+            f(&format!("[{}] {} | frames={} handlers={} bfi={:?}",
+                kind, detail, self.frames.len(), self.handlers.len(), bfi));
+        }
     }
 
     pub fn region_push(&mut self) {
@@ -313,7 +346,7 @@ impl VirtualMachine {
         let const_live = self.string_const_handles.iter()
             .filter(|(s, g)| self.heap.is_live(*s, *g))
             .count();
-        let mut rt_owned: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+        let mut rt_owned: hashbrown::HashSet<(u32, u32)> = hashbrown::HashSet::new();
         if self.module_table_is_handle && self.module_table_raw != polka::HANDLE_NONE {
             let root = crate::memory::handle_parts(self.module_table_raw);
             self.collect_reachable(root.0, root.1, &mut rt_owned);
@@ -322,7 +355,7 @@ impl VirtualMachine {
         total.saturating_sub(const_live).saturating_sub(module_live)
     }
 
-    fn collect_reachable(&self, slot: u32, generation: u32, visited: &mut std::collections::HashSet<(u32, u32)>) {
+    fn collect_reachable(&self, slot: u32, generation: u32, visited: &mut hashbrown::HashSet<(u32, u32)>) {
         if !visited.insert((slot, generation)) { return; }
         if !self.heap.is_live(slot, generation) { return; }
         let Ok(data) = self.heap.cell_data(slot, generation) else { return; };
@@ -341,10 +374,11 @@ impl VirtualMachine {
     }
 
 
-    // Debug: print every live heap cell
-    pub fn dump_live_slots(&self) {
-        let owned: std::collections::HashSet<(u32, u32)> = {
-            let mut s: std::collections::HashSet<(u32, u32)> =
+    // Debug: render every live heap cell. Host prints the returned report.
+    pub fn live_slots_report(&self) -> String {
+        use core::fmt::Write;
+        let owned: hashbrown::HashSet<(u32, u32)> = {
+            let mut s: hashbrown::HashSet<(u32, u32)> =
                 self.string_const_handles.iter().copied().collect();
             if self.module_table_is_handle && self.module_table_raw != polka::HANDLE_NONE {
                 s.insert(crate::memory::handle_parts(self.module_table_raw));
@@ -352,15 +386,17 @@ impl VirtualMachine {
             s
         };
         let cells = self.heap.live_cells();
-        eprintln!("[heap] {} live cell(s), {} user:", cells.len(), self.heap_live_count());
+        let mut out = String::new();
+        let _ = writeln!(out, "[heap] {} live cell(s), {} user:", cells.len(), self.heap_live_count());
         for (slot, gen_, rc, data, handles) in &cells {
             let tag = if owned.contains(&(*slot, *gen_)) { "rt  " } else { "USER" };
             let slots: Vec<String> = data.iter().zip(handles.iter()).map(|(v, h)| {
                 if *h { format!("h:{:#x}", v) } else { format!("{}", *v as i64) }
             }).collect();
             let note = self.closure_cell_label(data, handles);
-            eprintln!("  [{}] slot={} gen={} rc={} [{}]{}", tag, slot, gen_, rc, slots.join(", "), note);
+            let _ = writeln!(out, "  [{}] slot={} gen={} rc={} [{}]{}", tag, slot, gen_, rc, slots.join(", "), note);
         }
+        out
     }
 
     fn closure_cell_label(&self, data: &[u64], handles: &[bool]) -> String {

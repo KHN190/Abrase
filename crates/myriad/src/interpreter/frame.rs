@@ -1,3 +1,4 @@
+use alloc::{string::String, vec::Vec};
 use polka::{BytecodeChunk, Chunk, Register, Module, FRAME_REGS, HANDLE_NONE};
 use crate::frame::Frame;
 use crate::builtins::NativeCtx;
@@ -346,8 +347,8 @@ impl VirtualMachine {
         let (ra_fn, ra_env_raw, ra_env_is_handle) = {
             let h = self.handlers.last_mut().unwrap();
             let fn_id = h.pending_return_arm_fn.take().unwrap();
-            let env = std::mem::replace(&mut h.pending_return_arm_env, HANDLE_NONE);
-            let env_h = std::mem::replace(&mut h.pending_return_arm_env_is_handle, false);
+            let env = core::mem::replace(&mut h.pending_return_arm_env, HANDLE_NONE);
+            let env_h = core::mem::replace(&mut h.pending_return_arm_env_is_handle, false);
             (fn_id, env, env_h)
         };
 

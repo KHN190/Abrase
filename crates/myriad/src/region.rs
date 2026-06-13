@@ -1,4 +1,5 @@
-use super::memory::Heap;
+use crate::memory::Heap;
+use alloc::{string::{String, ToString}, vec::Vec};
 
 pub struct RegionTable {
     stack: Vec<Vec<(u32, u32)>>,

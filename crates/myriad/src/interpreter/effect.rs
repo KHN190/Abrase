@@ -1,3 +1,4 @@
+use alloc::string::{String, ToString};
 use polka::{Register, Module, HANDLE_NONE};
 use crate::memory::mask_bit;
 use crate::debug::DebugEvent;
@@ -120,7 +121,7 @@ impl VirtualMachine {
             (polka::REGION_ID, polka::REGION_PORT_FORGET) => {
                 if is_handle && raw != HANDLE_NONE {
                     let (slot, gen_) = Self::decode_handle(raw);
-                    let mut visited: std::collections::BTreeSet<(u32, u32)> = std::collections::BTreeSet::new();
+                    let mut visited: alloc::collections::BTreeSet<(u32, u32)> = alloc::collections::BTreeSet::new();
                     self.deep_forget(slot, gen_, &mut visited)?;
                 }
                 Ok(())
@@ -249,7 +250,7 @@ impl VirtualMachine {
         &mut self,
         slot: u32,
         generation: u32,
-        visited: &mut std::collections::BTreeSet<(u32, u32)>,
+        visited: &mut alloc::collections::BTreeSet<(u32, u32)>,
     ) -> Result<(), String> {
         if !visited.insert((slot, generation)) { return Ok(()); }
         if !self.region_table.forget(slot, generation) { return Ok(()); }

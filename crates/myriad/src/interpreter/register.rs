@@ -1,3 +1,4 @@
+use alloc::{string::{String, ToString}, vec::Vec};
 use polka::{BytecodeChunk, Chunk, Register, Module, FRAME_REGS, HANDLE_NONE};
 use crate::memory::mask_bit;
 use crate::value::alloc_string;

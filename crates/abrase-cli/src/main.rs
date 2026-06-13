@@ -10,7 +10,8 @@ use abrase::lexer::Lexer;
 use abrase::loader;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use myriad::{Host, Value, VirtualMachine, read_string};
+use myriad::{Value, VirtualMachine, read_string};
+use abrase_cli::host::{install_std_devices, myriad_stderr_sink, eprintln_sink};
 
 const USAGE: &str = "\
 Abrase compiler & Myriad Runtime
@@ -169,11 +170,13 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
     let fn_names = compiler.fn_names();
     let static_names = compiler.static_names_by_offset();
 
-    let mut vm = VirtualMachine::new()
-        .with_debug(trace)
-        .with_trace_frames(handlers)
-        .with_fn_names(fn_names)
-        .with_static_names(static_names);
+    let mut vm = apply_vm_diagnostics(
+        VirtualMachine::new()
+            .with_trace_frames(handlers)
+            .with_fn_names(fn_names)
+            .with_static_names(static_names),
+        trace,
+    );
     if let Ok(spec) = std::env::var("BREAK_AT") {
         vm = vm.with_debug_sink(break_at_sink(spec));
     }
@@ -189,7 +192,7 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
         vm = vm.with_trace_filter(bits);
     }
 
-    Host::default().install_into(&mut vm);
+    install_std_devices(&mut vm);
 
     let result = if is_cart_main(ast) {
         run_cart(&mut vm, &module)
@@ -200,16 +203,16 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
             ()
         })
     };
-    vm.print_profile();
+    eprint!("{}", vm.profile_report());
     match result {
         Ok(()) => {
             if let Some(code) = vm.exit_code() {
                 if trace { eprintln!("[heap] live={}", vm.heap_live_count()); }
-                if leak { vm.dump_live_slots(); }
+                if leak { eprint!("{}", vm.live_slots_report()); }
                 return ExitCode::from(code as u8);
             }
             if trace { eprintln!("[heap] live={}", vm.heap_live_count()); }
-            if leak { vm.dump_live_slots(); }
+            if leak { eprint!("{}", vm.live_slots_report()); }
             ExitCode::SUCCESS
         }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
@@ -603,17 +606,18 @@ fn cmd_load(pk_path: &str, trace: bool, handlers: bool, leak: bool) -> ExitCode 
             return ExitCode::from(65);
         }
     };
-    let mut vm = VirtualMachine::new()
-        .with_debug(trace)
-        .with_trace_frames(handlers);
+    let mut vm = apply_vm_diagnostics(
+        VirtualMachine::new().with_trace_frames(handlers),
+        trace,
+    );
     if let Ok(spec) = std::env::var("BREAK_AT") {
         vm = vm.with_debug_sink(break_at_sink(spec));
     }
-    Host::default().install_into(&mut vm);
+    install_std_devices(&mut vm);
     match vm.run_module(&module) {
         Ok(v) => {
             print_result(&vm, v);
-            if leak { vm.dump_live_slots(); }
+            if leak { eprint!("{}", vm.live_slots_report()); }
             ExitCode::SUCCESS
         }
         Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
@@ -624,6 +628,27 @@ fn cmd_load(pk_path: &str, trace: bool, handlers: bool, leak: bool) -> ExitCode 
 // register window with handle annotations. The VM only emits events; all
 // breakpoint logic lives host-side.
 // BREAK_AT=<fn|#id>:<pc> or <file.abe>:<line>.
+// Read diagnostic env vars (TRACE_SLOT/TRACE_STATIC/PROFILE/ABRASE_HEAP_CHECK)
+// and wire the matching VM sinks. Env reading lives here, not in no_std myriad.
+fn apply_vm_diagnostics(mut vm: VirtualMachine, trace: bool) -> VirtualMachine {
+    if trace {
+        vm = vm.with_debug_sink(myriad_stderr_sink());
+    }
+    match std::env::var("TRACE_SLOT") {
+        Ok(s) if s == "*" => vm = vm.with_heap_trace(None, true, eprintln_sink),
+        Ok(s) => if let Ok(n) = s.parse::<u32>() {
+            vm = vm.with_heap_trace(Some(n), false, eprintln_sink);
+        },
+        Err(_) => {}
+    }
+    if let Ok(s) = std::env::var("TRACE_STATIC") {
+        if !s.is_empty() { vm = vm.with_trace_static(Some(s)); }
+    }
+    if std::env::var("PROFILE").is_ok() { vm = vm.with_profile(true); }
+    if std::env::var("ABRASE_HEAP_CHECK").is_ok() { vm = vm.with_heap_check(true); }
+    vm.with_trace_out(eprintln_sink)
+}
+
 fn break_at_sink(spec: String) -> myriad::DebugSink {
     let (fn_part, pos_part) = match spec.rsplit_once(':') {
         Some(p) => p,
