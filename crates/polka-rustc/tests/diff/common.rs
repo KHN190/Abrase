@@ -12,7 +12,10 @@ pub fn r(n: u8) -> Register { Register(n) }
 pub fn myriad_rlib() -> &'static str {
     static RLIB: OnceLock<String> = OnceLock::new();
     RLIB.get_or_init(|| {
-        let deps = format!("{}/target/debug/deps", env!("CARGO_MANIFEST_DIR").trim_end_matches("/crates/polka-rustc"));
+        let deps = std::env::current_exe().ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("{}/target/debug/deps", env!("CARGO_MANIFEST_DIR").trim_end_matches("/crates/polka-rustc")));
         let dir = std::path::Path::new(&deps);
         let probe = std::env::temp_dir().join(format!("polka_probe_{}.rs", std::process::id()));
         std::fs::write(&probe, "fn main() { let _ = myriad::Heap::new(); let _ = myriad::AotHost::new(); }").unwrap();
