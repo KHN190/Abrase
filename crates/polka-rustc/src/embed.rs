@@ -27,7 +27,7 @@ pub(crate) fn transpile_module(module: &Module) -> Result<String, TranspileError
     let _ = writeln!(out, "    let module = myriad::read_pk(PK).expect(\"read_pk\");");
     let _ = writeln!(out, "    let console = myriad::devices::BufferConsole::new();");
     let _ = writeln!(out, "    let (cart_out, _) = console.handles();");
-    let _ = writeln!(out, "    let mut vm = myriad::VirtualMachine::new().with_step_cap(1_000_000);");
+    let _ = writeln!(out, "    let mut vm = myriad::VirtualMachine::new();");
     let _ = writeln!(out, "    myriad::Host::default().with_console(Box::new(console)).install_into(&mut vm);");
     let _ = writeln!(out, "    let r = vm.run_module(&module);");
     let _ = writeln!(out, "    let live = vm.heap_live_count();");
