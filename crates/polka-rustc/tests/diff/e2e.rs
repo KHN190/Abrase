@@ -32,8 +32,6 @@ fn e2e(src: &str) {
     diff_module(&module, src);
 }
 
-// Multi-module: abrase links all imported files into one flat Module before
-// transpile, so the transpiler never sees module boundaries.
 fn e2e_files(entry: &str, files: &[(&str, &str)]) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -104,7 +102,6 @@ fn e2e_multi_module_call() {
 }
 
 #[test]
-#[ignore = "AOT: cross-module static read emits Dei (module-table), out of current subset"]
 fn e2e_multi_module_static_and_fn() {
     e2e_files("main.abe", &[
         ("lib.abe", "pub static BASE: Int = 100\npub fn dbl(x: Int) -> Int { x * 2 }\n"),
@@ -173,6 +170,56 @@ fn e2e_float_arithmetic() {
 #[test]
 fn e2e_println_string_builtin() {
     e2e(r#"fn main() -> Int { println("hi from aot"); 7 }"#);
+}
+
+#[test]
+fn e2e_float_dataflow() {
+    e2e(r#"
+        fn scale(x: Float, k: Float) -> Float { x * k + x }
+        fn main() -> Float {
+            let a = 1.5;
+            let b = a * 2.0;
+            let c = scale(b, 0.5);
+            c - a
+        }
+    "#);
+}
+
+#[test]
+fn e2e_string_interp_concat_heap() {
+    e2e(r#"
+        fn main() -> Int {
+            let a = "foo";
+            let b = "bar";
+            let c = "{a}-{b}-{a}";
+            println(c);
+            0
+        }
+    "#);
+}
+
+#[test]
+fn e2e_string_concat_returned_handle() {
+    e2e(r#"
+        fn join(a: String, b: String) -> String { "{a}{b}" }
+        fn main() -> Int {
+            let s = join("hello", "world");
+            println(s);
+            7
+        }
+    "#);
+}
+
+#[test]
+fn e2e_int_to_s_native_heap() {
+    e2e(r#"
+        fn main() -> Int {
+            let n = 42;
+            let s = n.to_s();
+            println(s);
+            n
+        }
+    "#);
 }
 
 #[test]

@@ -39,8 +39,6 @@ fn recursive_factorial() {
     assert_same_module(vec![main, fact], 0);
 }
 
-// Leaf helper: param_count params (def from the start), random straight-line
-// body. No nested call, so no use-before-def across frames.
 fn random_leaf(rng: &mut Rng, nparams: usize) -> Chunk {
     let edge = [0i64, 1, -1, 2, i64::MAX, i64::MIN, 7];
     let nconst = 1 + rng.below(3);
@@ -120,6 +118,29 @@ fn unreferenced_native_fn_transpiles_via_stub() {
     let main = fn_chunk(vec![OpCode::PushConst(r(0), 0), OpCode::Ret(r(0))], vec![Value::from_int(1).raw()], 4, 0);
     let native = PChunk::Native(NativeChunk { name: "print".into(), param_count: 1 });
     assert_same_module(vec![main, native], 0);
+}
+
+#[test]
+fn callreg_to_native_releases_staged_handle_args() {
+    use polka::{Chunk as PChunk, NativeChunk};
+    let main = fn_chunk(
+        vec![
+            OpCode::Alloc(r(0), 1),
+            OpCode::Alloc(r(1), 1),
+            OpCode::Copy(r(8), r(0)),
+            OpCode::Copy(r(9), r(1)),
+            OpCode::PushConst(r(2), 0),
+            OpCode::CallReg(r(3), r(2)),
+            OpCode::Drop(r(0)),
+            OpCode::Drop(r(1)),
+            OpCode::Drop(r(3)),
+            OpCode::PushConst(r(4), 1),
+            OpCode::Ret(r(4)),
+        ],
+        vec![Value::from_int(1).raw(), Value::from_int(0).raw()], 8, 0,
+    );
+    let concat = PChunk::Native(NativeChunk { name: "__concat".into(), param_count: 2 });
+    assert_same_heap(vec![main, concat], 0);
 }
 
 #[test]
@@ -242,10 +263,9 @@ fn callreg_unknown_fn_id_errors_both_sides() {
 }
 
 #[test]
-fn effect_and_input_ops_unsupported() {
+fn effect_ops_unsupported() {
     use polka_rustc::transpile_program;
     for op in [
-        OpCode::Dei(r(1), r(0)),
         OpCode::Handle(r(0), 0),
         OpCode::Resume(r(0), r(1)),
         OpCode::Raise(r(0), r(1), r(2)),

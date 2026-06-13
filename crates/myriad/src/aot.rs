@@ -8,6 +8,29 @@ pub trait AotNatives {
     fn call(&mut self, name: &str, heap: &mut Heap, args: &[Value]) -> Result<(u64, bool), String>;
 }
 
+pub fn reachable_live_count(h: &Heap, root_raw: u64) -> usize {
+    use hashbrown::HashSet;
+    let mut seen: HashSet<(u32, u32)> = HashSet::new();
+    if root_raw != polka::HANDLE_NONE {
+        let (s, g) = Value::from_raw(root_raw).as_handle();
+        walk(h, s, g, &mut seen);
+    }
+    seen.iter().filter(|(s, g)| h.is_live(*s, *g)).count()
+}
+
+fn walk(h: &Heap, slot: u32, g: u32, seen: &mut hashbrown::HashSet<(u32, u32)>) {
+    if !seen.insert((slot, g)) || !h.is_live(slot, g) { return; }
+    let (Ok(data), Ok(mask)) = (h.cell_data(slot, g), h.cell_mask(slot, g)) else { return; };
+    let data: Vec<u64> = data.to_vec();
+    let mask: Vec<u64> = mask.to_vec();
+    for i in 0..data.len() {
+        if (mask[i / 64] >> (i % 64)) & 1 == 1 && data[i] != polka::HANDLE_NONE {
+            let (cs, cg) = Value::from_raw(data[i]).as_handle();
+            walk(h, cs, cg, seen);
+        }
+    }
+}
+
 pub struct AotHost {
     devices: DeviceTable,
     registry: NativeRegistry,

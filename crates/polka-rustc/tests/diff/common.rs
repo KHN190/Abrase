@@ -9,8 +9,6 @@ use std::sync::OnceLock;
 
 pub fn r(n: u8) -> Register { Register(n) }
 
-// Resolve a myriad rlib that links as `--extern myriad`. Several build variants
-// sit in target/debug/deps; probe-compile each until one links, then cache it.
 pub fn myriad_rlib() -> &'static str {
     static RLIB: OnceLock<String> = OnceLock::new();
     RLIB.get_or_init(|| {
@@ -25,8 +23,6 @@ pub fn myriad_rlib() -> &'static str {
                 n.starts_with("libmyriad-") && n.ends_with(".rlib")
             }).unwrap_or(false))
             .collect();
-        // Newest first: the current build (only one with the full API) is almost
-        // always it, so we probe once instead of compiling against stale rlibs.
         rlibs.sort_by_key(|p| std::cmp::Reverse(p.metadata().and_then(|m| m.modified()).ok()));
         for p in rlibs {
             let bin = std::env::temp_dir().join(format!("polka_probe_{}.bin", std::process::id()));
@@ -190,8 +186,6 @@ pub fn assert_same_flags(code: Vec<OpCode>, constants: Vec<u64>, reg_count: usiz
     compare(&i, &t);
 }
 
-// Heap differential: compares the return value AND the final live-cell count, so
-// an RC imbalance (leak or premature free) on either side is caught.
 pub fn assert_same_heap(functions: Vec<Chunk>, entry: usize) {
     let module = Module { functions, entry, flags: 0, exports: vec![] };
     let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
@@ -256,7 +250,6 @@ impl Rng {
     pub fn below(&mut self, n: usize) -> usize { (self.next() % n as u64) as usize }
 }
 
-// Shared integer-op generator (used by both the integer and call fuzzers).
 pub fn random_op(rng: &mut Rng, d: Register, a: Register, b: Register, nconst: usize) -> OpCode {
     match rng.below(21) {
         0 => OpCode::Add(d, a, b),

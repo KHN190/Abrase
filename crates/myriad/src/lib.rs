@@ -26,7 +26,7 @@ pub use region::RegionTable;
 pub use builtins::{NativeCtx, NativeFn, NativeRegistry};
 pub use debug::{render_fn_label, DebugEvent, DebugSink};
 pub use host::Host;
-pub use aot::{AotHost, AotNatives};
+pub use aot::{AotHost, AotNatives, reachable_live_count};
 
 use frame::Frame;
 
