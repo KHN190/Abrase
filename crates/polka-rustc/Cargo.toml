@@ -1,6 +1,6 @@
 [package]
-name = "polka-transpiler"
-description = "Transpiles Polka bytecode to standalone Rust source (trusted-tier AOT path)."
+name = "polka-rustc"
+description = "Compiles Polka bytecode to standalone Rust source (trusted-tier AOT backend)."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -10,10 +10,16 @@ repository.workspace   = true
 homepage.workspace     = true
 
 [lib]
+name = "polka_rustc"
 doctest = false
+
+[[bin]]
+name = "abrc"
+path = "src/bin/abrc.rs"
 
 [dependencies]
 polka = { package = "polka-rs", path = "../polka", version = "=0.1.2" }
 
 [dev-dependencies]
 myriad = { package = "myriad-rs", path = "../myriad", version = "=0.1.2" }
+abrase = { path = "../abrase", version = "=0.1.2" }

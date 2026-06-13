@@ -16,6 +16,7 @@ pub mod builtins;
 pub mod debug;
 pub mod host;
 pub mod snapshot;
+pub mod aot;
 
 pub use polka::{Value, HANDLE_NONE};
 pub use value::{alloc_string, read_string};
@@ -25,6 +26,7 @@ pub use region::RegionTable;
 pub use builtins::{NativeCtx, NativeFn, NativeRegistry};
 pub use debug::{render_fn_label, DebugEvent, DebugSink};
 pub use host::Host;
+pub use aot::{AotHost, AotNatives};
 
 use frame::Frame;
 

@@ -17,6 +17,7 @@ dependencies = [
  "criterion",
  "myriad-rs",
  "polka-rs",
+ "polka-rustc",
 ]
 
 [[package]]
@@ -391,9 +392,10 @@ name = "polka-rs"
 version = "0.1.2"
 
 [[package]]
-name = "polka-transpiler"
+name = "polka-rustc"
 version = "0.1.2"
 dependencies = [
+ "abrase",
  "myriad-rs",
  "polka-rs",
 ]

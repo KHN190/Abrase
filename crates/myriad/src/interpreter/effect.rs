@@ -250,22 +250,9 @@ impl VirtualMachine {
         &mut self,
         slot: u32,
         generation: u32,
-        visited: &mut alloc::collections::BTreeSet<(u32, u32)>,
+        _visited: &mut alloc::collections::BTreeSet<(u32, u32)>,
     ) -> Result<(), String> {
-        if !visited.insert((slot, generation)) { return Ok(()); }
-        if !self.region_table.forget(slot, generation) { return Ok(()); }
-        let size = match self.heap.size(slot, generation) {
-            Ok(n) => n,
-            Err(_) => return Ok(()),
-        };
-        for off in 0..size {
-            if let Ok((raw, is_handle)) = self.heap.ld(slot, generation, off) {
-                if is_handle && raw != HANDLE_NONE {
-                    let (s, g) = Self::decode_handle(raw);
-                    self.deep_forget(s, g, visited)?;
-                }
-            }
-        }
+        self.region_table.deep_forget(&self.heap, slot, generation);
         Ok(())
     }
 }

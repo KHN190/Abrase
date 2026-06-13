@@ -7,6 +7,7 @@ struct Ctx<'a> {
     reg_count: usize,
     param_counts: &'a [usize],
     const_is_handle: &'a [bool],
+    int32_safe: bool,
 }
 
 #[derive(Debug)]
@@ -62,9 +63,38 @@ fn call_stmt(dest: Register, fn_id: usize, next: isize, ctx: &Ctx) -> Result<Str
     let vals: Vec<String> = (0..k).map(|j| reg(Register((ctx.reg_count + j) as u8))).collect();
     let hs: Vec<String> = (0..k).map(|j| regh(Register((ctx.reg_count + j) as u8))).collect();
     Ok(format!(
-        "let (__rv, __rh) = f{}(h, &[{}], &[{}])?; {} = __rv; {} = __rh; pc = {};",
+        "let (__rv, __rh) = f{}(h, host, rt, cs, &[{}], &[{}])?; {} = __rv; {} = __rh; pc = {};",
         fn_id, vals.join(", "), hs.join(", "), reg(dest), regh(dest), next,
     ))
+}
+
+fn rf(r: Register, i32s: bool) -> String {
+    if i32s { format!("f32::from_bits({} as u32) as f64", reg(r)) }
+    else { format!("f64::from_bits({})", reg(r)) }
+}
+fn narrowf(expr: String, i32s: bool) -> String {
+    if i32s { format!("(({}) as f32).to_bits() as u64", expr) }
+    else { format!("({}).to_bits()", expr) }
+}
+fn fbin(d: Register, a: Register, b: Register, op: &str, next: isize, i32s: bool) -> String {
+    scalar(d, narrowf(format!("{} {} {}", rf(a, i32s), op, rf(b, i32s)), i32s), next)
+}
+fn fcmp(d: Register, a: Register, b: Register, op: &str, next: isize, i32s: bool) -> String {
+    scalar(d, format!("{{ let x = {}; let y = {}; if x.is_nan() || y.is_nan() {{ 0u64 }} else if x {} y {{ 1 }} else {{ 0 }} }}", rf(a, i32s), rf(b, i32s), op), next)
+}
+
+fn callreg_stmt(dest: Register, fid_reg: Register, next: isize, ctx: &Ctx) -> String {
+    let mut arms = String::new();
+    for (fid, k) in ctx.param_counts.iter().enumerate() {
+        let vals: Vec<String> = (0..*k).map(|j| reg(Register((ctx.reg_count + j) as u8))).collect();
+        let hs: Vec<String> = (0..*k).map(|j| regh(Register((ctx.reg_count + j) as u8))).collect();
+        let _ = write!(arms, "{} => {{ let (__rv, __rh) = f{}(h, host, rt, cs, &[{}], &[{}])?; {} = __rv; {} = __rh; }} ",
+            fid, fid, vals.join(", "), hs.join(", "), reg(dest), regh(dest));
+    }
+    format!(
+        "{{ let __fid = {} as i64; if !(0..=0xFFFF).contains(&__fid) {{ return Err(format!(\"call_reg: fn_id {{}} out of u16 range\", __fid)); }} match __fid {{ {} _ => return Err(format!(\"call: unknown fn_id {{}}\", __fid)) }} }} pc = {};",
+        reg(fid_reg), arms, next,
+    )
 }
 
 fn op_stmt(i: usize, op: &OpCode, len: usize, ctx: &Ctx) -> Result<String, TranspileError> {
@@ -110,7 +140,7 @@ fn op_stmt(i: usize, op: &OpCode, len: usize, ctx: &Ctx) -> Result<String, Trans
         ),
 
         OpCode::Alloc(d, size) => format!(
-            "{{ let (s, g) = h.try_alloc({}).map_err(|e| e)?; {} = myriad::Value::from_handle(s, g).raw(); {} = true; }} pc = {};",
+            "{{ let (s, g) = h.try_alloc({}).map_err(|e| e)?; rt.record_alloc(s, g); {} = myriad::Value::from_handle(s, g).raw(); {} = true; }} pc = {};",
             size, reg(*d), regh(*d), next,
         ),
         OpCode::Drop(reg_) => format!(
@@ -128,12 +158,34 @@ fn op_stmt(i: usize, op: &OpCode, len: usize, ctx: &Ctx) -> Result<String, Trans
             format!("{{ {} {} }}", pre, st_stmt(*src, *b, "__o as usize".to_string(), next))
         }
 
+        OpCode::FAdd(d, a, b) => fbin(*d, *a, *b, "+", next, ctx.int32_safe),
+        OpCode::FSub(d, a, b) => fbin(*d, *a, *b, "-", next, ctx.int32_safe),
+        OpCode::FMul(d, a, b) => fbin(*d, *a, *b, "*", next, ctx.int32_safe),
+        OpCode::FDiv(d, a, b) => fbin(*d, *a, *b, "/", next, ctx.int32_safe),
+        OpCode::FNeg(d, a) => scalar(*d, narrowf(format!("-({})", rf(*a, ctx.int32_safe)), ctx.int32_safe), next),
+        OpCode::FLt(d, a, b) => fcmp(*d, *a, *b, "<", next, ctx.int32_safe),
+        OpCode::FEq(d, a, b) => fcmp(*d, *a, *b, "==", next, ctx.int32_safe),
+
         OpCode::Jmp(off) => format!("{};", jump_to(i, *off, len)),
         OpCode::Jz(r, off) => format!("if {} == 0 {{ {} }} else {{ pc = {} }};", reg(*r), jump_to(i, *off, len), next),
         OpCode::Jnz(r, off) => format!("if {} != 0 {{ {} }} else {{ pc = {} }};", reg(*r), jump_to(i, *off, len), next),
 
         OpCode::Call(dest, fn_id) => call_stmt(*dest, *fn_id as usize, next, ctx)?,
+        OpCode::CallReg(dest, fid_reg) => callreg_stmt(*dest, *fid_reg, next, ctx),
         OpCode::Ret(a) => format!("return Ok(({}, {}));", reg(*a), regh(*a)),
+
+        OpCode::Deo(src, port_reg) => format!(
+            "{{ let __pv = {pv} as i64; let __dev = ((__pv >> 8) & 0xFF) as u8; let __port = (__pv & 0xFF) as u8; \
+             if __dev == {rid}u8 {{ match __port {{ \
+             {push}u8 => rt.push(), \
+             {pop}u8 => rt.pop_and_release(h)?, \
+             {forget}u8 => {{ if {sh} && {sr} != u64::MAX {{ let (s, g) = myriad::Value::from_raw({sr}).as_handle(); rt.deep_forget(h, s, g); }} }}, \
+             _ => return Err(format!(\"region: unknown port {{}}\", __port)) }} }} \
+             else {{ return Err(format!(\"deo: unsupported device {{}} in AOT\", __dev)); }} }} pc = {next};",
+            pv = reg(*port_reg), rid = polka::REGION_ID, push = polka::REGION_PORT_PUSH,
+            pop = polka::REGION_PORT_POP, forget = polka::REGION_PORT_FORGET,
+            sh = regh(*src), sr = reg(*src), next = next,
+        ),
 
         other => return Err(TranspileError::Unsupported(format!("{:?}", other))),
     };
@@ -154,8 +206,8 @@ fn st_stmt(src: Register, b: Register, off: String, next: isize) -> String {
     )
 }
 
-fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_counts: &[usize]) -> Result<(), TranspileError> {
-    let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, a: &[u64], ah: &[bool]) -> Result<(u64, bool), String> {{", idx);
+fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_counts: &[usize], int32_safe: bool) -> Result<(), TranspileError> {
+    let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, rt: &mut myriad::RegionTable, cs: &[Vec<u64>], a: &[u64], ah: &[bool]) -> Result<(u64, bool), String> {{", idx);
     let nregs = chunk.reg_count + STAGE_SLACK;
     for n in 0..nregs {
         if n < chunk.param_count {
@@ -164,11 +216,11 @@ fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_coun
             let _ = writeln!(out, "    let mut r{}: u64 = 0; let mut r{}_h: bool = false;", n, n);
         }
     }
-    for (off, c) in chunk.constants.iter().enumerate() {
-        let _ = writeln!(out, "    let c{}: u64 = {}u64;", off, c);
+    for off in 0..chunk.constants.len() {
+        let _ = writeln!(out, "    let c{}: u64 = cs[{}][{}];", off, idx, off);
     }
     let const_flags: Vec<bool> = (0..chunk.constants.len()).map(|i| chunk.const_is_handle(i as u16)).collect();
-    let ctx = Ctx { reg_count: chunk.reg_count, param_counts, const_is_handle: &const_flags };
+    let ctx = Ctx { reg_count: chunk.reg_count, param_counts, const_is_handle: &const_flags, int32_safe };
     let _ = writeln!(out, "    let mut pc: isize = 0;");
     let _ = writeln!(out, "    loop {{");
     let _ = writeln!(out, "        match pc {{");
@@ -186,22 +238,83 @@ fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_coun
 /// Transpile a module to a standalone Rust program linking `myriad` for the
 /// heap/RC runtime. `main` prints `OK <value> <live_cells>` or `ERR <msg>` so
 /// the differential harness can compare both the result and heap leaks.
-pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
+fn emit_fns(out: &mut String, module: &Module) -> Result<(), TranspileError> {
     let param_counts: Vec<usize> = module.functions.iter().map(|c| c.param_count()).collect();
-    let mut out = String::new();
-    let _ = writeln!(out, "#![allow(unused_mut, unused_variables, dead_code, unused_assignments, unused_parens)]");
+    let int32_safe = (module.flags & polka::CART_FLAG_INT32_SAFE) != 0;
     for (idx, chunk) in module.functions.iter().enumerate() {
         match chunk {
-            Chunk::Bytecode(bc) => emit_function(&mut out, idx, bc, &param_counts)?,
-            Chunk::Native(n) => return Err(TranspileError::Unsupported(format!("native fn {}", n.name))),
+            Chunk::Bytecode(bc) => emit_function(out, idx, bc, &param_counts, int32_safe)?,
+            Chunk::Native(n) => {
+                let _ = writeln!(out,
+                    "fn f{}(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ let args: Vec<myriad::Value> = a.iter().map(|&x| myriad::Value::from_raw(x)).collect(); host.call({:?}, h, &args) }}",
+                    idx, n.name);
+            }
         }
     }
+    Ok(())
+}
+
+fn emit_run_body(out: &mut String, module: &Module) {
+    let _ = writeln!(out, "    let mut cs: Vec<Vec<u64>> = Vec::new();");
+    let _ = writeln!(out, "    let mut __sc: Vec<(u32, u32)> = Vec::new();");
+    for chunk in module.functions.iter() {
+        let _ = writeln!(out, "    {{ let mut v: Vec<u64> = Vec::new();");
+        if let Chunk::Bytecode(bc) = chunk {
+            for (off, c) in bc.constants.iter().enumerate() {
+                if bc.const_is_handle(off as u16) {
+                    let sidx = *c as usize;
+                    let s = bc.string_constants.get(sidx).cloned().unwrap_or_default();
+                    let _ = writeln!(out, "        {{ let sv = myriad::alloc_string(h, {:?}).expect(\"string const\"); __sc.push(sv.as_handle()); v.push(sv.raw()); }}", s);
+                } else {
+                    let _ = writeln!(out, "        v.push({}u64);", c);
+                }
+            }
+        }
+        let _ = writeln!(out, "        cs.push(v); }}");
+    }
+    let _ = writeln!(out, "    let mut rt = myriad::RegionTable::new();");
+    let _ = writeln!(out, "    let (v, _) = f{}(h, host, &mut rt, &cs, &[], &[])?;", module.entry);
+    let _ = writeln!(out, "    let live = h.live_count() - __sc.iter().filter(|(s, g)| h.is_live(*s, *g)).count();");
+    let _ = writeln!(out, "    Ok((v, live))");
+}
+
+pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
+    let mut out = String::new();
+    let _ = writeln!(out, "#![allow(unused_mut, unused_variables, dead_code, unused_assignments, unused_parens)]");
+    emit_fns(&mut out, module)?;
+    let _ = writeln!(out, "fn run(h: &mut myriad::Heap, host: &mut myriad::AotHost) -> Result<(u64, usize), String> {{");
+    emit_run_body(&mut out, module);
+    let _ = writeln!(out, "}}");
     let _ = writeln!(out, "fn main() {{");
+    let _ = writeln!(out, "    use std::io::Write;");
     let _ = writeln!(out, "    let mut h = myriad::Heap::new();");
-    let _ = writeln!(out, "    match f{}(&mut h, &[], &[]) {{", module.entry);
-    let _ = writeln!(out, "        Ok((v, _)) => println!(\"OK {{}} {{}}\", v, h.live_count()),");
+    let _ = writeln!(out, "    let mut host = myriad::AotHost::new();");
+    let _ = writeln!(out, "    let r = run(&mut h, &mut host);");
+    let _ = writeln!(out, "    let _ = std::io::stdout().write_all(&host.take_stdout());");
+    let _ = writeln!(out, "    match r {{");
+    let _ = writeln!(out, "        Ok((v, live)) => println!(\"OK {{}} {{}}\", v, live),");
     let _ = writeln!(out, "        Err(e) => println!(\"ERR {{}}\", e),");
     let _ = writeln!(out, "    }}");
+    let _ = writeln!(out, "}}");
+    Ok(out)
+}
+
+pub fn transpile_batch(modules: &[&Module]) -> Result<String, TranspileError> {
+    let mut out = String::new();
+    let _ = writeln!(out, "#![allow(unused_mut, unused_variables, dead_code, unused_assignments, unused_parens)]");
+    for (i, m) in modules.iter().enumerate() {
+        let _ = writeln!(out, "mod p{} {{", i);
+        emit_fns(&mut out, m)?;
+        let _ = writeln!(out, "    pub fn run(h: &mut myriad::Heap, host: &mut myriad::AotHost) -> Result<(u64, usize), String> {{");
+        emit_run_body(&mut out, m);
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out, "}}");
+    }
+    let _ = writeln!(out, "fn main() {{");
+    for i in 0..modules.len() {
+        let _ = writeln!(out, "    {{ let mut h = myriad::Heap::new(); let mut host = myriad::AotHost::new();");
+        let _ = writeln!(out, "      match p{}::run(&mut h, &mut host) {{ Ok((v, live)) => println!(\"{} OK {{}} {{}}\", v, live), Err(e) => println!(\"{} ERR {{}}\", e) }} }}", i, i, i);
+    }
     let _ = writeln!(out, "}}");
     Ok(out)
 }
