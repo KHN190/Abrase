@@ -79,6 +79,24 @@ fn lib_emit_native_module_exposes_run_no_main() {
     assert!(!lib.contains("fn main"), "lib must not emit a main; host owns the entry");
 }
 
+#[test]
+fn lib_emit_cart_exposes_per_frame_step_api() {
+    let src = r#"
+        @cart
+        fn main() -> <frame> Unit {
+            let mut i = 0;
+            while i < 3 { frame.present(); i = i + 1 };
+            halt(0)
+        }
+    "#;
+    let module = module_of_src(src);
+    let lib = polka_rustc::transpile_module_lib(&module).expect("cart lib emit");
+    assert!(lib.contains("pub type CartState"), "host needs a stable cart-state type");
+    assert!(lib.contains("pub fn cart_setup("), "host needs setup to build consts + run module_init");
+    assert!(lib.contains("pub fn cart_step("), "host needs a per-frame step entry");
+    assert!(!lib.contains("fn main"), "lib must not emit a main; host drives the frame loop");
+}
+
 fn diff_hybrid(src: &str) {
     let module = module_of_src(src);
     let mut vm = VirtualMachine::new().with_step_cap(1_000_000);

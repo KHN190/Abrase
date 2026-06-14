@@ -9,13 +9,26 @@ use std::sync::OnceLock;
 
 pub fn r(n: u8) -> Register { Register(n) }
 
+pub fn rustflags() -> Vec<String> {
+    if let Ok(enc) = std::env::var("CARGO_ENCODED_RUSTFLAGS") {
+        if !enc.is_empty() { return enc.split('\u{1f}').map(|s| s.to_string()).collect(); }
+    }
+    std::env::var("RUSTFLAGS").ok().filter(|s| !s.is_empty())
+        .map(|s| s.split_whitespace().map(|t| t.to_string()).collect())
+        .unwrap_or_default()
+}
+
+pub fn deps_dir() -> String {
+    std::env::current_exe().ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_else(|| format!("{}/target/debug/deps", env!("CARGO_MANIFEST_DIR").trim_end_matches("/crates/polka-rustc")))
+}
+
 pub fn myriad_rlib() -> &'static str {
     static RLIB: OnceLock<String> = OnceLock::new();
     RLIB.get_or_init(|| {
-        let deps = std::env::current_exe().ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .map(|d| d.to_string_lossy().into_owned())
-            .unwrap_or_else(|| format!("{}/target/debug/deps", env!("CARGO_MANIFEST_DIR").trim_end_matches("/crates/polka-rustc")));
+        let deps = deps_dir();
         let dir = std::path::Path::new(&deps);
         let probe = std::env::temp_dir().join(format!("polka_probe_{}.rs", std::process::id()));
         std::fs::write(&probe, "fn main() { let _ = myriad::Heap::new(); let _ = myriad::AotHost::new(); }").unwrap();
@@ -31,6 +44,7 @@ pub fn myriad_rlib() -> &'static str {
             let bin = std::env::temp_dir().join(format!("polka_probe_{}.bin", std::process::id()));
             let ok = Command::new("rustc")
                 .args(["--edition", "2021"])
+                .args(rustflags())
                 .arg("--extern").arg(format!("myriad={}", p.display()))
                 .arg("-L").arg(&deps)
                 .arg(&probe).arg("-o").arg(&bin)
@@ -100,9 +114,10 @@ fn rustc_build_run(src: &str) -> String {
     let src_path = dir.join(format!("prog_{}.rs", id));
     let bin_path = dir.join(format!("prog_{}.bin", id));
     std::fs::write(&src_path, src).unwrap();
-    let deps = format!("{}/target/debug/deps", env!("CARGO_MANIFEST_DIR").trim_end_matches("/crates/polka-rustc"));
+    let deps = deps_dir();
     let status = Command::new("rustc")
         .args(["--edition", "2021"])
+        .args(rustflags())
         .arg("--extern").arg(format!("myriad={}", myriad_rlib()))
         .arg("-L").arg(&deps)
         .arg(&src_path).arg("-o").arg(&bin_path)
