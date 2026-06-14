@@ -29,6 +29,10 @@ It can be added to **any Rust application**, or *compile to Rust*. See [wiki](ht
 
 Try it now in [browser](https://khn190.github.io/abrase/).
 
+Try it now in [browser](https://khn190.github.io/abrase/).
+
+> _Transpile to Rust is WIP._
+
 ## Installation
 
 ```bash
