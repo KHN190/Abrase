@@ -1,7 +1,7 @@
 #![allow(dead_code, unused_imports)]
 
 use polka::{BytecodeChunk, Chunk, Module, OpCode, Register};
-use polka_rustc::{transpile_module, transpile_program, transpile_batch};
+use polka_rustc::{transpile_module, transpile_module_lib, transpile_program, transpile_batch};
 use myriad::VirtualMachine;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -150,6 +150,29 @@ pub fn compile_run_full(src: &str) -> (Outcome, usize) {
 }
 
 pub fn compile_run(src: &str) -> Outcome { compile_run_full(src).0 }
+
+// Drive the `--lib` emit the way a host does: read_pk(PK), build a VM, install
+// devices, register_aot, run_module. Mirrors the standalone main so the output
+// contract (`OK <v> <live>` / `ERR`) is identical, letting it diff vs interp.
+pub fn compile_run_lib_full(module: &Module) -> (Outcome, usize) {
+    let lib = transpile_module_lib(module).expect("transpile lib");
+    let driver = format!(
+        "{lib}\nfn main() {{\n\
+         use std::io::Write;\n\
+         let module = myriad::read_pk(PK).expect(\"read_pk\");\n\
+         let console = myriad::devices::BufferConsole::new();\n\
+         let (cart_out, _) = console.handles();\n\
+         let mut vm = myriad::VirtualMachine::new();\n\
+         myriad::Host::default().with_console(Box::new(console)).install_into(&mut vm);\n\
+         register_aot(&mut vm);\n\
+         let r = vm.run_module(&module);\n\
+         let live = vm.heap_live_count();\n\
+         let _ = std::io::stdout().write_all(&cart_out.borrow());\n\
+         match r {{ Ok(v) => println!(\"OK {{}} {{}}\", v.raw(), live), Err(e) => println!(\"ERR {{}}\", e) }}\n\
+         }}\n",
+        lib = lib);
+    parse_status(rustc_build_run(&driver).trim_end().lines().last().unwrap_or(""))
+}
 
 pub fn compile_run_batch(modules: &[&polka::Module]) -> Vec<(Outcome, usize)> {
     let src = polka_rustc::transpile_batch(modules).expect("transpile batch");

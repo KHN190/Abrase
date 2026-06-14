@@ -20,8 +20,9 @@ usage:
     abrase run     <file.abe>  [flags]   compile and execute main()
     abrase check   <file.abe>            type-check only; no execution
     abrase disasm  <file.abe>  [flags]   compile and dump bytecode
-    abrase transpile <file.abe> [flags]  compile and emit standalone Rust (trusted-AOT) to stdout
-                                         --lib: emit host-injectable items (pub PK + register_aot), no main
+    abrase transpile <file.abe> [flags]  compile the cart to Rust source (ahead-of-time)
+                                         default: a complete runnable program
+                                         --lib:   a cart module to embed and drive from your own host app
     abrase explain <file.abe>            AST → typeck → bytecode chain
     abrase explain --expr '<snippet>'    same for inline code (auto-wrapped)
     abrase export  <file.abe> <out.pk>   compile and write a .pk cartridge

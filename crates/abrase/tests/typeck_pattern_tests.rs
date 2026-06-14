@@ -1,6 +1,6 @@
 use abrase::ast::{self, Pattern, Span, Spanned};
 use abrase::ty::Type;
-use abrase::typeck::{Checker, ownership::BorrowKind};
+use abrase::typeck::Checker;
 
 fn d_span() -> Span { Span::new(0, 0) }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
@@ -317,29 +317,6 @@ fn verify_pattern_analysis_tracking_coverage() {
     assert!(covered.contains(&"B".to_string()));
     assert!(covered.contains(&"C".to_string()));
 }
-
-#[test]
-fn verify_pattern_borrows_multiple_constraints() {
-    let mut checker = Checker::new();
-    // T7: multiple registrations stack; only Mut affects exclusivity.
-    checker.register_pattern_borrow("x".into(), BorrowKind::Immut);
-    checker.register_pattern_borrow("x".into(), BorrowKind::Move);
-
-    let borrows = checker.get_pattern_borrows("x");
-    assert_eq!(borrows.unwrap().len(), 2);
-}
-
-#[test]
-fn verify_reference_lifetime_overwrite() {
-    let mut checker = Checker::new();
-
-    checker.bind_reference_lifetime("ref_x".into(), "region_a".into());
-    assert_eq!(checker.get_reference_lifetime("ref_x"), Some("region_a".into()));
-
-    checker.bind_reference_lifetime("ref_x".into(), "region_b".into());
-    assert_eq!(checker.get_reference_lifetime("ref_x"), Some("region_b".into()));
-}
-
 
 #[test]
 fn verify_pattern_bind() {

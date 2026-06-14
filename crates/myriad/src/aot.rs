@@ -79,3 +79,57 @@ impl AotNatives for AotHost {
     }
     fn halted(&self) -> bool { self.halted }
 }
+
+#[cfg(test)]
+mod aot_tests {
+    use super::*;
+    use crate::value::alloc_string;
+
+    #[test]
+    fn host_dispatches_native_and_errs_on_unknown() {
+        let mut host = AotHost::new();
+        let mut h = Heap::new();
+        let (v, is_handle) = host.call("__int_max", &mut h, &[Value::from_int(3), Value::from_int(7)]).unwrap();
+        assert_eq!(v as i64, 7);
+        assert!(!is_handle);
+        assert!(host.call("not_a_native", &mut h, &[]).is_err());
+    }
+
+    #[test]
+    fn host_halt_sets_exit_code_and_halted() {
+        let mut host = AotHost::new();
+        let mut h = Heap::new();
+        assert!(!host.halted());
+        host.call("halt", &mut h, &[Value::from_int(42)]).unwrap();
+        assert!(host.halted());
+        assert_eq!(host.exit_code(), Some(42));
+    }
+
+    #[test]
+    fn host_println_captures_stdout() {
+        let mut host = AotHost::new();
+        let mut h = Heap::new();
+        let s = alloc_string(&mut h, "hi").unwrap();
+        host.call("println", &mut h, &[s]).unwrap();
+        assert_eq!(host.take_stdout(), b"hi\n");
+    }
+
+    #[test]
+    fn reachable_live_count_walks_handle_graph() {
+        let mut h = Heap::new();
+        let (cs, cg) = h.try_alloc(1).unwrap();
+        let (ps, pg) = h.try_alloc(1).unwrap();
+        h.st(ps, pg, 0, Value::from_handle(cs, cg).raw(), true).unwrap();
+        assert_eq!(reachable_live_count(&h, Value::from_handle(ps, pg).raw()), 2);
+        assert_eq!(reachable_live_count(&h, polka::HANDLE_NONE), 0);
+    }
+
+    #[test]
+    fn aot_natives_halted_defaults_false() {
+        struct Bare;
+        impl AotNatives for Bare {
+            fn call(&mut self, _: &str, _: &mut Heap, _: &[Value]) -> Result<(u64, bool), String> { Ok((0, false)) }
+        }
+        assert!(!Bare.halted());
+    }
+}

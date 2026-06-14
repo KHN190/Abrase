@@ -79,6 +79,88 @@ fn lib_emit_pure_module_same_shape_pk_register_aot_no_main() {
     assert!(!lib.contains("fn main"), "lib must not emit a main; host owns the entry");
 }
 
+fn diff_lib(src: &str) {
+    let module = module_of_src(src);
+    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
+    myriad::Host::default().install_into(&mut vm);
+    let i = match vm.run_module(&module) {
+        Ok(v) => Outcome::Ok(v.raw()),
+        Err(e) => Outcome::Err(e),
+    };
+    let i_live = vm.heap_live_count();
+    let (t, t_live) = compile_run_lib_full(&module);
+    compare(&i, &t);
+    if let Outcome::Ok(_) = i {
+        assert_eq!(i_live, t_live, "lib live-count mismatch: interp={} transpiled={}", i_live, t_live);
+    }
+}
+
+#[test]
+fn lib_pure_module_host_driven_matches_interpreter() {
+    diff_lib(r#"
+        fn fib(n: Int) -> Int { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+        fn main() -> Int { fib(12) }
+    "#);
+}
+
+#[test]
+fn lib_effect_module_host_driven_matches_interpreter() {
+    diff_lib(r#"
+        effect E { op tick() -> Unit }
+        fn fib(n: Int) -> Int { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+        fn body() -> <E> Int { E.tick(); fib(12) }
+        fn main() -> Int {
+            handle body() {
+                return r  => r,
+                E.tick _  => resume(())
+            }
+        }
+    "#);
+}
+
+#[test]
+fn hybrid_all_inline_math_builtins_match_interpreter() {
+    let src = r#"
+        effect E { op tick() -> Unit }
+        fn calc(n: Int, acc: Float) -> Float {
+            if n <= 0 { acc } else {
+                let x = n.to_f();
+                let y = sqrt(x) + sin(x) + cos(x) + flr(x) + ceil(x);
+                let z = x.max(y).min(100.0).abs();
+                let m = n.max(3).min(99).abs();
+                let w = z + m.to_f() + (y.to_i()).to_f();
+                calc(n - 1, acc + w)
+            }
+        }
+        fn body() -> <E> Float { E.tick(); calc(8, 0.0) }
+        fn main() -> Float {
+            handle body() {
+                return r  => r,
+                E.tick _  => resume(())
+            }
+        }
+    "#;
+    let module = module_of_src(src);
+    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
+    myriad::Host::default().install_into(&mut vm);
+    let i = match vm.run_module(&module) {
+        Ok(v) => Outcome::Ok(v.raw()),
+        Err(e) => Outcome::Err(e),
+    };
+    let i_live = vm.heap_live_count();
+
+    let tsrc = transpile_module(&module).expect("transpile effect module");
+    for needle in ["fmath::sqrt", "fmath::sin", "fmath::cos", "fmath::floor", "fmath::ceil",
+                   "fmath::fmax", "fmath::fmin", "fmath::abs", ".max(", ".min(", "wrapping_abs"] {
+        assert!(tsrc.contains(needle), "inline math builtin missing: {}", needle);
+    }
+    let (t, t_live) = compile_run_full(&tsrc);
+    compare(&i, &t);
+    if let Outcome::Ok(_) = i {
+        assert_eq!(i_live, t_live, "inline-math live-count mismatch: interp={} transpiled={}", i_live, t_live);
+    }
+}
+
 fn diff_hybrid(src: &str) {
     let module = module_of_src(src);
     let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
