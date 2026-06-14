@@ -6,6 +6,7 @@ use crate::Value;
 
 pub trait AotNatives {
     fn call(&mut self, name: &str, heap: &mut Heap, args: &[Value]) -> Result<(u64, bool), String>;
+    fn halted(&self) -> bool { false }
 }
 
 pub fn reachable_live_count(h: &Heap, root_raw: u64) -> usize {
@@ -76,4 +77,5 @@ impl AotNatives for AotHost {
         let (v, h) = f(&mut ctx, args)?;
         Ok((v.raw(), h))
     }
+    fn halted(&self) -> bool { self.halted }
 }

@@ -415,13 +415,18 @@ pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
     if embed::is_effectful(module) {
         return hybrid::transpile_module(module);
     }
+    emit_native(module, false)
+}
+
+fn emit_native(module: &Module, lib: bool) -> Result<String, TranspileError> {
     let mut out = String::new();
     let _ = writeln!(out, "#![allow(unused_mut, unused_variables, dead_code, unused_assignments, unused_parens)]");
-    let _ = writeln!(out, "enum CartStep {{ Yield, Done(u64, bool) }}");
+    let _ = writeln!(out, "{}enum CartStep {{ Yield, Done(u64, bool) }}", if lib { "pub " } else { "" });
     emit_fns(&mut out, module)?;
-    let _ = writeln!(out, "fn run(h: &mut myriad::Heap, host: &mut myriad::AotHost) -> Result<(u64, usize), String> {{");
+    let _ = writeln!(out, "{}fn run(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives) -> Result<(u64, usize), String> {{", if lib { "pub " } else { "" });
     emit_run_body(&mut out, module);
     let _ = writeln!(out, "}}");
+    if lib { return Ok(out); }
     let _ = writeln!(out, "fn main() {{");
     let _ = writeln!(out, "    use std::io::Write;");
     let _ = writeln!(out, "    let mut h = myriad::Heap::new();");
@@ -434,6 +439,13 @@ pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}");
     Ok(out)
+}
+
+pub fn transpile_module_lib(module: &Module) -> Result<String, TranspileError> {
+    if embed::is_effectful(module) {
+        return hybrid::transpile_module_lib(module);
+    }
+    emit_native(module, true)
 }
 
 pub fn transpile_batch(modules: &[&Module]) -> Result<String, TranspileError> {

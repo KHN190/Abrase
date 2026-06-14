@@ -69,9 +69,18 @@ fn bridgeable_set(module: &Module) -> Vec<bool> {
 }
 
 pub(crate) fn transpile_module(module: &Module) -> Result<String, TranspileError> {
+    emit(module, false)
+}
+
+pub(crate) fn transpile_module_lib(module: &Module) -> Result<String, TranspileError> {
+    emit(module, true)
+}
+
+fn emit(module: &Module, lib: bool) -> Result<String, TranspileError> {
     let bridge = bridgeable_set(module);
     if !bridge.iter().any(|&b| b) {
-        return crate::embed::transpile_module(module);
+        return if lib { crate::embed::transpile_module_lib(module) }
+               else { crate::embed::transpile_module(module) };
     }
 
     let mut emb = clone_module(module);
@@ -131,7 +140,7 @@ pub(crate) fn transpile_module(module: &Module) -> Result<String, TranspileError
     }
     let _ = writeln!(out, "    cs }}");
 
-    let _ = writeln!(out, "fn register_aot(vm: &mut myriad::VirtualMachine) {{");
+    let _ = writeln!(out, "{}fn register_aot(vm: &mut myriad::VirtualMachine) {{", if lib { "pub " } else { "" });
     let _ = writeln!(out, "    let cs = __cs();");
     for (i, b) in bridge.iter().enumerate() {
         if *b {
@@ -144,9 +153,10 @@ pub(crate) fn transpile_module(module: &Module) -> Result<String, TranspileError
     }
     let _ = writeln!(out, "}}");
 
-    let _ = write!(out, "const PK: &[u8] = &[");
+    let _ = write!(out, "{}const PK: &[u8] = &[", if lib { "pub " } else { "" });
     for byte in &pk { let _ = write!(out, "{},", byte); }
     let _ = writeln!(out, "];");
+    if lib { return Ok(out); }
     let _ = writeln!(out, "fn main() {{");
     let _ = writeln!(out, "    use std::io::Write;");
     let _ = writeln!(out, "    let module = myriad::read_pk(PK).expect(\"read_pk\");");
