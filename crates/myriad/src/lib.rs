@@ -572,3 +572,74 @@ impl VirtualMachine {
         let _ = self.heap.rc_dec_handle(raw);
     }
 }
+
+#[cfg(test)]
+mod vm_api_tests {
+    use super::*;
+    use polka::{Module, Chunk, BytecodeChunk, OpCode, Register};
+
+    fn const_module(val: u64) -> Module {
+        Module {
+            functions: vec![Chunk::Bytecode(BytecodeChunk {
+                code: vec![OpCode::PushConst(Register(0), 0), OpCode::Ret(Register(0))],
+                constants: vec![val],
+                const_mask: Vec::new(),
+                string_constants: Vec::new(),
+                reg_count: 1,
+                param_count: 0,
+                lines: Vec::new(),
+                src_file: String::new(),
+            })],
+            entry: 0,
+            flags: 0,
+            exports: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn run_returns_entry_value_as_int() {
+        assert_eq!(run(const_module(42), Host::default()).unwrap(), 42);
+    }
+
+    #[test]
+    fn profile_and_step_counters_populate_after_run() {
+        let mut vm = VirtualMachine::new().with_profile(true);
+        let loaded = loader::load(const_module(7)).unwrap();
+        let v = vm.run_module(&loaded.module).unwrap();
+        assert_eq!(v.as_int(), 7);
+        assert!(vm.steps() > 0);
+        assert!(!vm.profile_report().is_empty());
+    }
+
+    #[test]
+    fn region_depth_tracks_push_pop() {
+        let mut vm = VirtualMachine::new();
+        assert_eq!(vm.region_depth(), 0);
+        vm.region_push();
+        assert_eq!(vm.region_depth(), 1);
+        vm.region_pop().unwrap();
+        assert_eq!(vm.region_depth(), 0);
+    }
+
+    #[test]
+    fn fresh_vm_not_halted_no_exit_code() {
+        let vm = VirtualMachine::new();
+        assert!(!vm.halted());
+        assert_eq!(vm.exit_code(), None);
+        assert_eq!(vm.module_table_rc(), None);
+    }
+
+    #[test]
+    fn render_value_formats_int_and_opaque_handle() {
+        let vm = VirtualMachine::new();
+        assert_eq!(vm.render_value(42, false, 0), "42");
+        assert_eq!(vm.render_value(polka::HANDLE_NONE, true, 4), "none");
+        assert_eq!(vm.render_value(0, true, 0), "…");
+    }
+
+    #[test]
+    fn take_device_absent_is_none() {
+        let mut vm = VirtualMachine::new();
+        assert!(vm.take_device(0x7e).is_none());
+    }
+}
