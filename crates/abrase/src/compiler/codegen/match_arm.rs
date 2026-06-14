@@ -13,6 +13,23 @@ impl Compiler {
         }
     }
 
+    // Reclaim MUST precede the exit Jmp, else the taken arm jumps over its Drops.
+    fn emit_arm_exit(
+        &mut self,
+        arm_mark: u16,
+        exit_jumps: &mut Vec<usize>,
+        branches: &[usize],
+    ) -> Result<(), String> {
+        self.reclaim_temp_regs_above(arm_mark);
+        exit_jumps.push(self.code.len());
+        self.emit(OpCode::Jmp(0));
+        let next_addr = self.code.len();
+        for &b in branches {
+            self.patch_jz_at(b, next_addr)?;
+        }
+        Ok(())
+    }
+
     pub(in crate::compiler) fn compile_match(
         &mut self,
         scrutinee: &ast::Spanned<ast::Expr>,
@@ -49,10 +66,7 @@ impl Compiler {
                         self.emit(OpCode::Jz(g, 0));
                         let body_reg = self.compile_expr(&arm.body)?;
                         self.emit(OpCode::Copy(result_reg, body_reg));
-                        exit_jumps.push(self.code.len());
-                        self.emit(OpCode::Jmp(0));
-                        let next_addr = self.code.len();
-                        self.patch_jz_at(jz_idx, next_addr)?;
+                        self.emit_arm_exit(arm_mark, &mut exit_jumps, &[jz_idx])?;
                         false
                     } else {
                         let body_reg = self.compile_expr(&arm.body)?;
@@ -62,7 +76,7 @@ impl Compiler {
                 }
                 ast::Pattern::Literal(lit) => {
                     self.compile_literal_arm(
-                        lit, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps,
+                        lit, &arm.body, scrutinee_reg, result_reg, arm_mark, &mut exit_jumps,
                         arm.guard.as_ref())?;
                     false
                 }
@@ -74,7 +88,7 @@ impl Compiler {
                                 name
                             ))?;
                         self.compile_variant_tag_arm(
-                            info.tag, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps,
+                            info.tag, &arm.body, scrutinee_reg, result_reg, arm_mark, &mut exit_jumps,
                             arm.guard.as_ref())?;
                         false
                     } else {
@@ -85,10 +99,7 @@ impl Compiler {
                             self.emit(OpCode::Jz(g, 0));
                             let body_reg = self.compile_expr(&arm.body)?;
                             self.emit(OpCode::Copy(result_reg, body_reg));
-                            exit_jumps.push(self.code.len());
-                            self.emit(OpCode::Jmp(0));
-                            let next_addr = self.code.len();
-                            self.patch_jz_at(jz_idx, next_addr)?;
+                            self.emit_arm_exit(arm_mark, &mut exit_jumps, &[jz_idx])?;
                             false
                         } else {
                             self.var_to_reg.insert(name.clone(), scrutinee_reg);
@@ -100,7 +111,7 @@ impl Compiler {
                 }
                 ast::Pattern::Variant { ty: vty, args } => {
                     self.compile_variant_pattern_arm(
-                        vty, args, &arm.body, scrutinee_reg, result_reg, &mut exit_jumps,
+                        vty, args, &arm.body, scrutinee_reg, result_reg, arm_mark, &mut exit_jumps,
                         arm.guard.as_ref())?;
                     false
                 }
@@ -108,7 +119,7 @@ impl Compiler {
                     if has_guard {
                         self.compile_record_pattern_arm_guarded(
                             rty, fields, &arm.body, scrutinee_reg, result_reg,
-                            arm.guard.as_ref(), &mut exit_jumps)?;
+                            arm.guard.as_ref(), arm_mark, &mut exit_jumps)?;
                         false
                     } else {
                         self.compile_record_pattern_arm(
@@ -119,7 +130,7 @@ impl Compiler {
                 ast::Pattern::Range { start, end, inclusive } => {
                     self.compile_range_arm(
                         start.as_ref(), end.as_ref(), *inclusive,
-                        &arm.body, scrutinee_reg, result_reg, &mut exit_jumps)?;
+                        &arm.body, scrutinee_reg, result_reg, arm_mark, &mut exit_jumps)?;
                     false
                 }
                 _ => return Err("Unsupported pattern in match".to_string()),
@@ -153,6 +164,7 @@ impl Compiler {
         body: &ast::Spanned<ast::Expr>,
         scrutinee_reg: Register,
         result_reg: Register,
+        arm_mark: u16,
         exit_jumps: &mut Vec<usize>,
     ) -> Result<(), String> {
         let mut cond_reg = None;
@@ -193,14 +205,8 @@ impl Compiler {
 
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
-        exit_jumps.push(self.code.len());
-        self.emit(OpCode::Jmp(0));
-
-        let next_addr = self.code.len();
-        if let Some(idx) = jz_idx {
-            self.patch_jz_at(idx, next_addr)?;
-        }
-        Ok(())
+        let branches: Vec<usize> = jz_idx.into_iter().collect();
+        self.emit_arm_exit(arm_mark, exit_jumps, &branches)
     }
 
     fn compile_literal_arm(
@@ -209,6 +215,7 @@ impl Compiler {
         body: &ast::Spanned<ast::Expr>,
         scrutinee_reg: Register,
         result_reg: Register,
+        arm_mark: u16,
         exit_jumps: &mut Vec<usize>,
         guard: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<(), String> {
@@ -237,13 +244,9 @@ impl Compiler {
         let guard_jz = self.compile_guard_check(guard)?;
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
-        exit_jumps.push(self.code.len());
-        self.emit(OpCode::Jmp(0));
-
-        let next_addr = self.code.len();
-        self.patch_jz_at(jz_idx, next_addr)?;
-        if let Some(idx) = guard_jz { self.patch_jz_at(idx, next_addr)?; }
-        Ok(())
+        let mut branches = vec![jz_idx];
+        branches.extend(guard_jz);
+        self.emit_arm_exit(arm_mark, exit_jumps, &branches)
     }
 
     fn compile_variant_tag_arm(
@@ -252,6 +255,7 @@ impl Compiler {
         body: &ast::Spanned<ast::Expr>,
         scrutinee_reg: Register,
         result_reg: Register,
+        arm_mark: u16,
         exit_jumps: &mut Vec<usize>,
         guard: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<(), String> {
@@ -268,12 +272,9 @@ impl Compiler {
         let guard_jz = self.compile_guard_check(guard)?;
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
-        exit_jumps.push(self.code.len());
-        self.emit(OpCode::Jmp(0));
-        let next_addr = self.code.len();
-        self.patch_jz_at(jz_idx, next_addr)?;
-        if let Some(idx) = guard_jz { self.patch_jz_at(idx, next_addr)?; }
-        Ok(())
+        let mut branches = vec![jz_idx];
+        branches.extend(guard_jz);
+        self.emit_arm_exit(arm_mark, exit_jumps, &branches)
     }
 
     fn compile_variant_pattern_arm(
@@ -283,6 +284,7 @@ impl Compiler {
         body: &ast::Spanned<ast::Expr>,
         scrutinee_reg: Register,
         result_reg: Register,
+        arm_mark: u16,
         exit_jumps: &mut Vec<usize>,
         guard: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<(), String> {
@@ -321,13 +323,9 @@ impl Compiler {
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
         self.drop_arm_bindings(&bound_regs);
-        exit_jumps.push(self.code.len());
-        self.emit(OpCode::Jmp(0));
-
-        let next_addr = self.code.len();
-        self.patch_jz_at(jz_idx, next_addr)?;
-        if let Some(idx) = guard_jz { self.patch_jz_at(idx, next_addr)?; }
-        Ok(())
+        let mut branches = vec![jz_idx];
+        branches.extend(guard_jz);
+        self.emit_arm_exit(arm_mark, exit_jumps, &branches)
     }
 
     fn compile_record_pattern_arm_guarded(
@@ -338,6 +336,7 @@ impl Compiler {
         scrutinee_reg: Register,
         result_reg: Register,
         guard: Option<&ast::Spanned<ast::Expr>>,
+        arm_mark: u16,
         exit_jumps: &mut Vec<usize>,
     ) -> Result<(), String> {
         let type_name = rty.last().cloned()
@@ -369,11 +368,8 @@ impl Compiler {
         let body_reg = self.compile_expr(body)?;
         self.emit(OpCode::Copy(result_reg, body_reg));
         self.drop_arm_bindings(&bound_regs);
-        exit_jumps.push(self.code.len());
-        self.emit(OpCode::Jmp(0));
-        let next_addr = self.code.len();
-        if let Some(idx) = guard_jz { self.patch_jz_at(idx, next_addr)?; }
-        Ok(())
+        let branches: Vec<usize> = guard_jz.into_iter().collect();
+        self.emit_arm_exit(arm_mark, exit_jumps, &branches)
     }
 
     fn compile_record_pattern_arm(

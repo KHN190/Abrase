@@ -122,8 +122,6 @@ pub struct Checker {
 
     // Region Escape Analysis & Advanced Borrow Checking
     region_stack: Vec<String>,
-    reference_lifetimes: HashMap<String, String>,
-    pattern_borrows: HashMap<String, Vec<ownership::BorrowKind>>,
     // true while type-checking the body of a non-return handler arm
     in_handler_arm: bool,
 
@@ -213,8 +211,6 @@ impl Checker {
             impl_method_fn: HashMap::new(),
             method_traits_by_type: HashMap::new(),
             region_stack: Vec::new(),
-            reference_lifetimes: HashMap::new(),
-            pattern_borrows: HashMap::new(),
             in_handler_arm: false,
             covered_patterns: Vec::new(),
             unreachable_patterns: Vec::new(),

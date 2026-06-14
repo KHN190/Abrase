@@ -1,5 +1,14 @@
 use polka::{HANDLE_NONE, HANDLE_SLOT_MAX};
-use std::collections::HashMap;
+use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
+use hashbrown::HashMap;
+
+// Route a trace line to the installed text sink, if any. No-op when unset
+// (the no_std default), so diagnostics cost nothing in production builds.
+macro_rules! htrace {
+    ($self:ident, $($arg:tt)*) => {
+        if let Some(f) = $self.trace_out { f(&format!($($arg)*)); }
+    };
+}
 
 #[inline(always)]
 pub fn handle_parts(raw: u64) -> (u32, u32) {
@@ -27,6 +36,7 @@ pub struct Heap {
     bytes_used: usize,
     trace_slot: Option<u32>,
     trace_all: bool,
+    trace_out: Option<fn(&str)>,
     pub trace_pc: usize,
     buffer_pool: HashMap<usize, Vec<Cell>>,
 }
@@ -58,11 +68,18 @@ impl Heap {
             generation: Vec::new(),
             free_list: Vec::new(),
             bytes_used: 0,
-            trace_slot: std::env::var("TRACE_SLOT").ok().and_then(|v| v.parse::<u32>().ok()),
-            trace_all: std::env::var("TRACE_SLOT").map(|v| v == "*").unwrap_or(false),
+            trace_slot: None,
+            trace_all: false,
+            trace_out: None,
             trace_pc: 0,
             buffer_pool: HashMap::new(),
         }
+    }
+
+    pub fn set_trace(&mut self, slot: Option<u32>, all: bool, out: fn(&str)) {
+        self.trace_slot = slot;
+        self.trace_all = all;
+        self.trace_out = Some(out);
     }
 
     pub fn bytes_used(&self) -> usize { self.bytes_used }
@@ -120,7 +137,7 @@ impl Heap {
             (h, 0)
         };
         if self.traced(h) {
-            eprintln!("[ALLOC] slot {} gen {} size {}", h, g, size);
+            htrace!(self, "[ALLOC] slot {} gen {} size {}", h, g, size);
         }
         Ok((h, g))
     }
@@ -235,7 +252,7 @@ impl Heap {
             .checked_add(1)
             .ok_or_else(|| format!("rc_inc: refcount overflow on slot {}", slot))?;
         if trace {
-            eprintln!("[RC_INC] pc {} slot {} gen {} -> rc {}", self.trace_pc, slot, generation, self.rc[idx]);
+            htrace!(self, "[RC_INC] pc {} slot {} gen {} -> rc {}", self.trace_pc, slot, generation, self.rc[idx]);
         }
         Ok(())
     }
@@ -246,7 +263,7 @@ impl Heap {
         if trace {
             let live_gen = self.generation.get(slot as usize).copied().unwrap_or(0);
             let is_live = self.cells.get(slot as usize).map(|c| c.is_some()).unwrap_or(false);
-            eprintln!("[RC_DEC] pc {} slot {} gen {} (live_gen {} live={})", self.trace_pc, slot, generation, live_gen, is_live);
+            htrace!(self, "[RC_DEC] pc {} slot {} gen {} (live_gen {} live={})", self.trace_pc, slot, generation, live_gen, is_live);
         }
         let idx = self.check(slot, generation, "rc_dec")?;
         if self.rc[idx] == 0 {
@@ -254,7 +271,7 @@ impl Heap {
         }
         self.rc[idx] -= 1;
         if trace {
-            eprintln!("[RC_DEC] slot {} -> rc {}", slot, self.rc[idx]);
+            htrace!(self, "[RC_DEC] slot {} -> rc {}", slot, self.rc[idx]);
         }
         if self.rc[idx] != 0 {
             return Ok(false);
@@ -264,7 +281,7 @@ impl Heap {
         self.bytes_used = self.bytes_used.saturating_sub(size * 8 + mask_words_for(size) * 8);
         self.free_list.push(slot);
         if trace {
-            eprintln!("[RC_DEC] slot {} FREED via rc_dec", slot);
+            htrace!(self, "[RC_DEC] slot {} FREED via rc_dec", slot);
         }
         for i in 0..size {
             if mask_bit(&cell.mask, i) {
@@ -286,15 +303,15 @@ impl Heap {
         let idx = slot as usize;
         if idx >= self.cells.len() { return Ok(()); }
         if self.cells[idx].is_none() {
-            if trace { eprintln!("[FORCE_FREE] slot {} gen {} -- already none", slot, generation); }
+            if trace { htrace!(self, "[FORCE_FREE] slot {} gen {} -- already none", slot, generation); }
             return Ok(());
         }
         if self.generation[idx] != generation {
-            if trace { eprintln!("[FORCE_FREE] slot {} gen {} -- generation mismatch (live {})", slot, generation, self.generation[idx]); }
+            if trace { htrace!(self, "[FORCE_FREE] slot {} gen {} -- generation mismatch (live {})", slot, generation, self.generation[idx]); }
             return Ok(());
         }
         if trace {
-            eprintln!("[FORCE_FREE] slot {} gen {} rc was {}", slot, generation, self.rc[idx]);
+            htrace!(self, "[FORCE_FREE] slot {} gen {} rc was {}", slot, generation, self.rc[idx]);
         }
         let cell = self.cells[idx].take().unwrap();
         let size = cell.data.len();
@@ -319,6 +336,10 @@ impl Heap {
 
     pub fn live_count(&self) -> usize {
         self.cells.iter().filter(|c| c.is_some()).count()
+    }
+
+    pub fn rc(&self, slot: u32, generation: u32) -> Option<u32> {
+        self.check(slot, generation, "rc").ok().map(|idx| self.rc[idx])
     }
 
     // Debug: every live cell as (slot, generation, rc, data, is_handle-per-slot).

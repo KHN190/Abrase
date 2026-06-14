@@ -138,7 +138,7 @@ impl Compiler {
         Ok(result_reg)
     }
 
-    fn block_uses_static(&self, b: &ast::Block) -> bool {
+    pub(in crate::compiler) fn block_uses_static(&self, b: &ast::Block) -> bool {
         b.stmts.iter().any(|s| self.stmt_uses_static(s))
             || b.ret.as_deref().map_or(false, |e| self.expr_uses_static(e))
     }

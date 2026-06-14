@@ -1,6 +1,6 @@
-use std::cell::RefCell;
-use std::io::{Read, Write};
-use std::rc::Rc;
+use core::cell::RefCell;
+use alloc::rc::Rc;
+use alloc::{boxed::Box, string::String, vec::Vec};
 use crate::{Device, Value};
 
 pub const CONSOLE_ID: u8 = 0x10;
@@ -103,39 +103,5 @@ impl Console for BufferConsole {
     }
     fn write_stderr_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
         self.err_buf.borrow_mut().extend_from_slice(bytes); Ok(())
-    }
-}
-
-pub struct StdoutConsole;
-
-impl Console for StdoutConsole {
-    fn read_byte(&mut self) -> Result<Option<u8>, String> {
-        let mut byte = [0u8];
-        match std::io::stdin().read(&mut byte) {
-            Ok(0) => Ok(None),
-            Ok(_) => Ok(Some(byte[0])),
-            Err(e) => Err(format!("console.stdin: {}", e)),
-        }
-    }
-    fn write_stdout(&mut self, byte: u8) -> Result<(), String> {
-        std::io::stdout().write_all(&[byte])
-            .map_err(|e| format!("console.stdout: {}", e))
-    }
-    fn write_stderr(&mut self, byte: u8) -> Result<(), String> {
-        std::io::stderr().write_all(&[byte])
-            .map_err(|e| format!("console.stderr: {}", e))
-    }
-    fn flush(&mut self) -> Result<(), String> {
-        std::io::stdout().flush().map_err(|e| format!("flush: {}", e))?;
-        std::io::stderr().flush().map_err(|e| format!("flush: {}", e))
-    }
-
-    fn write_stdout_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
-        std::io::stdout().write_all(bytes)
-            .map_err(|e| format!("console.stdout: {}", e))
-    }
-    fn write_stderr_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
-        std::io::stderr().write_all(bytes)
-            .map_err(|e| format!("console.stderr: {}", e))
     }
 }

@@ -237,3 +237,20 @@ pub fn run_source(src: &str) -> Result<Value, String> {
     let ast = parse_source(src);
     compile_module_and_run(&ast)
 }
+
+pub fn run_source_with_heap(src: &str) -> Result<(Value, usize), String> {
+    let ast = parse_source(src);
+    compile_module_and_run_with_heap(&ast)
+}
+
+pub fn run_source_table_rc(src: &str) -> Result<Option<u32>, String> {
+    let ast = parse_source(src);
+    let mut compiler = Compiler::new();
+    let module = compiler.compile_module(&ast).map_err(|errs| {
+        errs.iter().map(|e| format!("{:?}: {}", e.code, e.message))
+            .collect::<Vec<_>>().join("\n")
+    })?;
+    let mut vm = VirtualMachine::new();
+    vm.run_module(&module)?;
+    Ok(vm.module_table_rc())
+}

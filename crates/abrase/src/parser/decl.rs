@@ -450,6 +450,8 @@ impl<'a> Parser<'a> {
         self.next_token();
         let name = if let Token::Ident(n) = &self.current_token {
             n.clone()
+        } else if matches!(self.current_token, Token::Mut) {
+            return Err("static cannot be mutable; use a mutable cell behind a static handle instead".into());
         } else {
             return Err("Expected static name".into());
         };
