@@ -35,8 +35,27 @@ fn inline_native_math(name: &str) -> Option<&'static str> {
     })
 }
 
+fn inline_native_str(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "__int_to_s" => "let v = myriad::alloc_string(h, &(a[0] as i64).to_string())?; Ok((v.raw(), true))",
+        "__float_to_s" => "let v = myriad::alloc_string(h, &f64::from_bits(a[0]).to_string())?; Ok((v.raw(), true))",
+        "__bool_to_s" => "let v = myriad::alloc_string(h, &(a[0] != 0).to_string())?; Ok((v.raw(), true))",
+        "__unit_to_s" => "let v = myriad::alloc_string(h, \"()\")?; Ok((v.raw(), true))",
+        "__char_to_s" => "let c = char::from_u32(a[0] as u32).ok_or_else(|| \"__char_to_s: bad codepoint\".to_string())?; let v = myriad::alloc_string(h, &c.to_string())?; Ok((v.raw(), true))",
+        _ => return None,
+    })
+}
+
 fn math_native(module: &Module, id: usize) -> bool {
     matches!(&module.functions[id], Chunk::Native(n) if inline_native_math(&n.name).is_some())
+}
+
+fn str_native(module: &Module, id: usize) -> bool {
+    matches!(&module.functions[id], Chunk::Native(n) if inline_native_str(&n.name).is_some())
+}
+
+fn inlinable_native(module: &Module, id: usize) -> bool {
+    math_native(module, id) || str_native(module, id)
 }
 
 fn bridgeable_set(module: &Module) -> Vec<bool> {
@@ -59,7 +78,7 @@ fn bridgeable_set(module: &Module) -> Vec<bool> {
         for i in 0..module.functions.len() {
             if !ok[i] { continue; }
             if let Chunk::Bytecode(b) = &module.functions[i] {
-                let bad = b.code.iter().any(|op| matches!(op, OpCode::Call(_, t) if !ok[*t as usize] && !math_native(module, *t as usize)));
+                let bad = b.code.iter().any(|op| matches!(op, OpCode::Call(_, t) if !ok[*t as usize] && !inlinable_native(module, *t as usize)));
                 if bad { ok[i] = false; changed = true; }
             }
         }
@@ -111,22 +130,25 @@ fn emit(module: &Module, lib: bool) -> Result<String, TranspileError> {
         }
     }
 
-    let mut math_emit = vec![false; module.functions.len()];
+    let mut native_emit = vec![false; module.functions.len()];
     for (i, b) in bridge.iter().enumerate() {
         if !*b { continue; }
         if let Chunk::Bytecode(bc) = &module.functions[i] {
             for op in &bc.code {
                 if let OpCode::Call(_, t) = op {
-                    if math_native(module, *t as usize) { math_emit[*t as usize] = true; }
+                    if inlinable_native(module, *t as usize) { native_emit[*t as usize] = true; }
                 }
             }
         }
     }
-    for (i, e) in math_emit.iter().enumerate() {
+    for (i, e) in native_emit.iter().enumerate() {
         if !*e { continue; }
         if let Chunk::Native(n) = &module.functions[i] {
-            let expr = inline_native_math(&n.name).unwrap();
-            let _ = writeln!(out, "fn f{}(_h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ Ok(({}, false)) }}", i, expr);
+            if let Some(expr) = inline_native_math(&n.name) {
+                let _ = writeln!(out, "fn f{}(_h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ Ok(({}, false)) }}", i, expr);
+            } else if let Some(body) = inline_native_str(&n.name) {
+                let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ {} }}", i, body);
+            }
         }
     }
 
