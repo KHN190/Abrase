@@ -46,6 +46,39 @@ fn hybrid_pure_leaf_runs_native_in_effect_module() {
     }
 }
 
+#[test]
+fn lib_emit_exposes_host_injectable_items_no_main() {
+    let src = r#"
+        effect E { op tick() -> Unit }
+        fn fib(n: Int) -> Int { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+        fn body() -> <E> Int { E.tick(); fib(10) }
+        fn main() -> Int {
+            handle body() {
+                return r  => r,
+                E.tick _  => resume(())
+            }
+        }
+    "#;
+    let module = module_of_src(src);
+    let lib = polka_rustc::transpile_module_lib(&module).expect("lib emit");
+    assert!(lib.contains("pub const PK"), "lib must expose PK for the host to read_pk");
+    assert!(lib.contains("pub fn register_aot"), "lib must expose register_aot for host VM");
+    assert!(!lib.contains("fn main"), "lib must not emit a main; host owns the entry");
+}
+
+#[test]
+fn lib_emit_pure_module_same_shape_pk_register_aot_no_main() {
+    let src = r#"
+        fn fib(n: Int) -> Int { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+        fn main() -> Int { fib(10) }
+    "#;
+    let module = module_of_src(src);
+    let lib = polka_rustc::transpile_module_lib(&module).expect("pure lib emit");
+    assert!(lib.contains("pub const PK"), "every lib cart exposes PK, effectful or not");
+    assert!(lib.contains("pub fn register_aot"), "every lib cart exposes register_aot (empty when nothing bridges)");
+    assert!(!lib.contains("fn main"), "lib must not emit a main; host owns the entry");
+}
+
 fn diff_hybrid(src: &str) {
     let module = module_of_src(src);
     let mut vm = VirtualMachine::new().with_step_cap(1_000_000);

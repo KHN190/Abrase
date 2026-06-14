@@ -1,6 +1,3 @@
-// modules that use effects (Handle/Raise/Resume) can't lower to the
-// native fast path yet, so emit a self-contained Rust program that embeds the
-// `.pk` bytecode and runs it on the myriad VM (no_std-capable).
 use polka::Module;
 use std::fmt::Write;
 
@@ -15,13 +12,26 @@ pub(crate) fn is_effectful(module: &Module) -> bool {
 }
 
 pub(crate) fn transpile_module(module: &Module) -> Result<String, TranspileError> {
+    emit(module, false)
+}
+
+pub(crate) fn transpile_module_lib(module: &Module) -> Result<String, TranspileError> {
+    emit(module, true)
+}
+
+fn emit(module: &Module, lib: bool) -> Result<String, TranspileError> {
     let pk = polka::cartridge::write_pk(module)
         .map_err(|e| TranspileError::Unsupported(format!("write_pk: {:?}", e)))?;
     let mut out = String::new();
     let _ = writeln!(out, "#![allow(dead_code)]");
-    let _ = write!(out, "const PK: &[u8] = &[");
+    let vis = if lib { "pub " } else { "" };
+    let _ = write!(out, "{}const PK: &[u8] = &[", vis);
     for b in &pk { let _ = write!(out, "{},", b); }
     let _ = writeln!(out, "];");
+    if lib {
+        let _ = writeln!(out, "pub fn register_aot(_vm: &mut myriad::VirtualMachine) {{}}");
+        return Ok(out);
+    }
     let _ = writeln!(out, "fn main() {{");
     let _ = writeln!(out, "    use std::io::Write;");
     let _ = writeln!(out, "    let module = myriad::read_pk(PK).expect(\"read_pk\");");

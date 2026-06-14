@@ -21,6 +21,7 @@ usage:
     abrase check   <file.abe>            type-check only; no execution
     abrase disasm  <file.abe>  [flags]   compile and dump bytecode
     abrase transpile <file.abe> [flags]  compile and emit standalone Rust (trusted-AOT) to stdout
+                                         --lib: emit host-injectable items (pub PK + register_aot), no main
     abrase explain <file.abe>            AST → typeck → bytecode chain
     abrase explain --expr '<snippet>'    same for inline code (auto-wrapped)
     abrase export  <file.abe> <out.pk>   compile and write a .pk cartridge
@@ -49,6 +50,7 @@ fn main() -> ExitCode {
     let mut trace = false;
     let mut handlers = false;
     let mut int32 = false;
+    let mut lib = false;
     let mut no_built_in = false;
     let mut leak = false;
     let mut show_version = false;
@@ -64,6 +66,7 @@ fn main() -> ExitCode {
             "--debug"        => { trace = true; handlers = true; }
             "--trace-frames" => handlers = true,
             "--int32"        => int32 = true,
+            "--lib"          => lib = true,
             "--no-built-in" | "--no-builtin" => no_built_in = true,
             "--leak"         => leak = true,
             "--version" | "-V" => show_version = true,
@@ -126,7 +129,7 @@ fn main() -> ExitCode {
         "check" => cmd_check(&program, int32, no_built_in),
         "parse" => cmd_parse(&program),
         "disasm" => cmd_disasm(&program, int32, no_built_in),
-        "transpile" => cmd_transpile(&program, int32, no_built_in),
+        "transpile" => cmd_transpile(&program, int32, no_built_in, lib),
         _ => {
             eprint!("{}", USAGE);
             ExitCode::from(64)
@@ -467,7 +470,7 @@ fn cmd_disasm(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -
     ExitCode::SUCCESS
 }
 
-fn cmd_transpile(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -> ExitCode {
+fn cmd_transpile(program: &loader::LoadedProgram, int32: bool, no_built_in: bool, lib: bool) -> ExitCode {
     let ast = &program.decls;
     let source = &program.entry_source;
     let mut compiler = Compiler::new()
@@ -481,7 +484,9 @@ fn cmd_transpile(program: &loader::LoadedProgram, int32: bool, no_built_in: bool
             return ExitCode::from(1);
         }
     };
-    match polka_rustc::transpile_module(&module) {
+    let result = if lib { polka_rustc::transpile_module_lib(&module) }
+                 else { polka_rustc::transpile_module(&module) };
+    match result {
         Ok(rust) => { print!("{}", rust); ExitCode::SUCCESS }
         Err(e) => { eprintln!("transpile error: {}", e); ExitCode::from(1) }
     }

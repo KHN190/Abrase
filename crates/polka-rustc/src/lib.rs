@@ -373,7 +373,7 @@ fn emit_fns(out: &mut String, module: &Module) -> Result<(), TranspileError> {
     Ok(())
 }
 
-fn emit_run_body(out: &mut String, module: &Module) {
+fn emit_setup(out: &mut String, module: &Module) {
     let _ = writeln!(out, "    let mut cs: Vec<Vec<u64>> = Vec::new();");
     let _ = writeln!(out, "    let mut __sc: Vec<(u32, u32)> = Vec::new();");
     for chunk in module.functions.iter() {
@@ -396,6 +396,10 @@ fn emit_run_body(out: &mut String, module: &Module) {
     if let Some(init) = module.exports.iter().find(|e| e.name == "__module_init") {
         let _ = writeln!(out, "    let _ = f{}(h, host, &mut rt, &cs, &mut mt, &[], &[])?;", init.fn_id);
     }
+}
+
+fn emit_run_body(out: &mut String, module: &Module) {
+    emit_setup(out, module);
     if cart_info(module).is_some() {
         let _ = writeln!(out, "    let mut st = St{}::default();", module.entry);
         let _ = writeln!(out, "    let (v, _) = loop {{ match f{}_step(&mut st, h, host, &mut rt, &cs, &mut mt)? {{", module.entry);
@@ -415,11 +419,15 @@ pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
     if embed::is_effectful(module) {
         return hybrid::transpile_module(module);
     }
+    emit_native(module)
+}
+
+fn emit_native(module: &Module) -> Result<String, TranspileError> {
     let mut out = String::new();
     let _ = writeln!(out, "#![allow(unused_mut, unused_variables, dead_code, unused_assignments, unused_parens)]");
     let _ = writeln!(out, "enum CartStep {{ Yield, Done(u64, bool) }}");
     emit_fns(&mut out, module)?;
-    let _ = writeln!(out, "fn run(h: &mut myriad::Heap, host: &mut myriad::AotHost) -> Result<(u64, usize), String> {{");
+    let _ = writeln!(out, "fn run(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives) -> Result<(u64, usize), String> {{");
     emit_run_body(&mut out, module);
     let _ = writeln!(out, "}}");
     let _ = writeln!(out, "fn main() {{");
@@ -434,6 +442,14 @@ pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}");
     Ok(out)
+}
+
+pub fn transpile_module_lib(module: &Module) -> Result<String, TranspileError> {
+    if embed::is_effectful(module) {
+        hybrid::transpile_module_lib(module)
+    } else {
+        embed::transpile_module_lib(module)
+    }
 }
 
 pub fn transpile_batch(modules: &[&Module]) -> Result<String, TranspileError> {
