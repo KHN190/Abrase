@@ -16,4 +16,4 @@ homepage.workspace     = true
 doctest = false
 
 [dependencies]
-polka = { package = "polka-rs", path = "../polka", version = "=0.1.2" }
+polka = { package = "polka-rs", path = "../polka", version = "=0.2.0" }

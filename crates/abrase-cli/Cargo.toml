@@ -20,10 +20,10 @@ path = "src/main.rs"
 doctest = false
 
 [dependencies]
-abrase = { path = "../abrase", version = "=0.1.2" }
-myriad = { package = "myriad-rs", path = "../myriad", version = "=0.1.2" }
-polka-rustc = { path = "../polka-rustc", version = "=0.1.2" }
-polka  = { package = "polka-rs", path = "../polka", version = "=0.1.2" }
+abrase = { path = "../abrase", version = "=0.2.0" }
+myriad = { package = "myriad-rs", path = "../myriad", version = "=0.2.0" }
+polka-rustc = { path = "../polka-rustc", version = "=0.2.0" }
+polka  = { package = "polka-rs", path = "../polka", version = "=0.2.0" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

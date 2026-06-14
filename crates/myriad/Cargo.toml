@@ -20,6 +20,6 @@ name = "myriad"
 doctest = false
 
 [dependencies]
-polka = { package = "polka-rs", path = "../polka", version = "=0.1.2", default-features = false }
+polka = { package = "polka-rs", path = "../polka", version = "=0.2.0", default-features = false }
 hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
 libm = "0.2"
