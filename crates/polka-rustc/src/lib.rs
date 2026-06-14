@@ -308,10 +308,14 @@ fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_coun
         }
         let _ = writeln!(out, "    let mut pc: isize = 0;");
     }
-    for off in 0..chunk.constants.len() {
-        let _ = writeln!(out, "    let c{}: u64 = cs[{}][{}];", off, idx, off);
-    }
     let const_flags: Vec<bool> = (0..chunk.constants.len()).map(|i| chunk.const_is_handle(i as u16)).collect();
+    for off in 0..chunk.constants.len() {
+        if const_flags[off] {
+            let _ = writeln!(out, "    let c{}: u64 = cs[{}][{}];", off, idx, off);
+        } else {
+            let _ = writeln!(out, "    let c{}: u64 = {}u64;", off, chunk.constants[off]);
+        }
+    }
     let ctx = Ctx { reg_count: chunk.reg_count, param_counts, is_native, const_is_handle: &const_flags, int32_safe, cart };
     let _ = writeln!(out, "    loop {{");
     let _ = writeln!(out, "        match pc {{");

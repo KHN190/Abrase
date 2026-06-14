@@ -79,6 +79,40 @@ fn lib_emit_pure_module_same_shape_pk_register_aot_no_main() {
     assert!(!lib.contains("fn main"), "lib must not emit a main; host owns the entry");
 }
 
+#[test]
+fn hybrid_to_s_builtin_bridged_native_matches_interpreter() {
+    let src = r#"
+        effect E { op tick() -> Unit }
+        fn count(n: Int) -> Int {
+            if n <= 0 { 0 } else { let s = n.to_s(); 1 + count(n - 1) }
+        }
+        fn body() -> <E> Int { E.tick(); count(6) }
+        fn main() -> Int {
+            handle body() {
+                return r  => r,
+                E.tick _  => resume(())
+            }
+        }
+    "#;
+    let module = module_of_src(src);
+    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
+    myriad::Host::default().install_into(&mut vm);
+    let i = match vm.run_module(&module) {
+        Ok(v) => Outcome::Ok(v.raw()),
+        Err(e) => Outcome::Err(e),
+    };
+    let i_live = vm.heap_live_count();
+
+    let tsrc = transpile_module(&module).expect("transpile effect module");
+    assert!(tsrc.contains("alloc_string"), "to_s builtin must be bridged native (inline alloc_string)");
+
+    let (t, t_live) = compile_run_full(&tsrc);
+    compare(&i, &t);
+    if let Outcome::Ok(_) = i {
+        assert_eq!(i_live, t_live, "to_s-bridge live-count mismatch: interp={} transpiled={}", i_live, t_live);
+    }
+}
+
 fn diff_lib(src: &str) {
     let module = module_of_src(src);
     let mut vm = VirtualMachine::new().with_step_cap(1_000_000);

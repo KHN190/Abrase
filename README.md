@@ -29,10 +29,6 @@ It can be added to **any Rust application**, or *compile to Rust*. See [wiki](ht
 
 Try it now in [browser](https://khn190.github.io/abrase/).
 
-Try it now in [browser](https://khn190.github.io/abrase/).
-
-> _Transpile to Rust is WIP._
-
 ## Installation
 
 ```bash
@@ -75,7 +71,7 @@ fn main() -> Int {
 
 ## Benchmarks
 
-Generally 2.5x better than CPython. On specific smaller tasks, could be ~10x faster. See [`Wiki / Optimizations`](./wiki/12-Optimizations.md).
+Generally 2.5x better than CPython. On pure function tasks, could be ~20x faster. In most cases, it's equivalent to JIT like JavaScript in V8 engine. See [`Wiki / Optimizations`](./wiki/12-Optimizations.md).
 
 Reproduce with [hyperfine](https://github.com/sharkdp/hyperfine).
 

@@ -18,8 +18,8 @@ name = "abrc"
 path = "src/bin/abrc.rs"
 
 [dependencies]
-polka = { package = "polka-rs", path = "../polka", version = "=0.1.2" }
+polka = { package = "polka-rs", path = "../polka", version = "=0.2.0" }
 
 [dev-dependencies]
-myriad = { package = "myriad-rs", path = "../myriad", version = "=0.1.2" }
-abrase = { path = "../abrase", version = "=0.1.2" }
+myriad = { package = "myriad-rs", path = "../myriad", version = "=0.2.0" }
+abrase = { path = "../abrase", version = "=0.2.0" }

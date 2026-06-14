@@ -15,8 +15,8 @@ crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [dependencies]
-abrase = { path = "../abrase", version = "=0.1.2" }
-myriad = { package = "myriad-rs", path = "../myriad", version = "=0.1.2" }
-polka  = { package = "polka-rs", path = "../polka", version = "=0.1.2" }
+abrase = { path = "../abrase", version = "=0.2.0" }
+myriad = { package = "myriad-rs", path = "../myriad", version = "=0.2.0" }
+polka  = { package = "polka-rs", path = "../polka", version = "=0.2.0" }
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"
