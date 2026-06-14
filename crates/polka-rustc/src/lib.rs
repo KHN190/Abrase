@@ -290,9 +290,9 @@ fn emit_function(out: &mut String, idx: usize, chunk: &BytecodeChunk, param_coun
                  is_native: &[bool], int32_safe: bool, cart: Option<CartCtx>) -> Result<(), TranspileError> {
     let nregs = chunk.reg_count + STAGE_SLACK;
     if cart.is_some() {
-        let _ = writeln!(out, "#[derive(Default)] pub struct St{} {{ {} pub pc: isize }}", idx,
+        let _ = writeln!(out, "#[derive(Default)] struct St{} {{ {} pc: isize }}", idx,
             (0..nregs).map(|n| format!("r{}: u64, r{}_h: bool,", n, n)).collect::<String>());
-        let _ = writeln!(out, "pub fn f{}_step(st: &mut St{}, h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, rt: &mut myriad::RegionTable, cs: &[Vec<u64>], mt: &mut (u64, bool)) -> Result<CartStep, String> {{", idx, idx);
+        let _ = writeln!(out, "fn f{}_step(st: &mut St{}, h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, rt: &mut myriad::RegionTable, cs: &[Vec<u64>], mt: &mut (u64, bool)) -> Result<CartStep, String> {{", idx, idx);
         for n in 0..nregs {
             let _ = writeln!(out, "    let mut r{}: u64 = st.r{}; let mut r{}_h: bool = st.r{}_h;", n, n, n, n);
         }
@@ -419,29 +419,17 @@ pub fn transpile_module(module: &Module) -> Result<String, TranspileError> {
     if embed::is_effectful(module) {
         return hybrid::transpile_module(module);
     }
-    emit_native(module, false)
+    emit_native(module)
 }
 
-fn emit_native(module: &Module, lib: bool) -> Result<String, TranspileError> {
+fn emit_native(module: &Module) -> Result<String, TranspileError> {
     let mut out = String::new();
     let _ = writeln!(out, "#![allow(unused_mut, unused_variables, dead_code, unused_assignments, unused_parens)]");
-    let _ = writeln!(out, "{}enum CartStep {{ Yield, Done(u64, bool) }}", if lib { "pub " } else { "" });
+    let _ = writeln!(out, "enum CartStep {{ Yield, Done(u64, bool) }}");
     emit_fns(&mut out, module)?;
-    let _ = writeln!(out, "{}fn run(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives) -> Result<(u64, usize), String> {{", if lib { "pub " } else { "" });
+    let _ = writeln!(out, "fn run(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives) -> Result<(u64, usize), String> {{");
     emit_run_body(&mut out, module);
     let _ = writeln!(out, "}}");
-    if lib {
-        if cart_info(module).is_some() {
-            let e = module.entry;
-            let _ = writeln!(out, "pub type CartState = St{};", e);
-            let _ = writeln!(out, "pub fn cart_setup(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives) -> Result<(Vec<Vec<u64>>, Vec<(u32, u32)>, myriad::RegionTable, (u64, bool)), String> {{");
-            emit_setup(&mut out, module);
-            let _ = writeln!(out, "    Ok((cs, __sc, rt, mt))");
-            let _ = writeln!(out, "}}");
-            let _ = writeln!(out, "pub fn cart_step(st: &mut CartState, h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, rt: &mut myriad::RegionTable, cs: &[Vec<u64>], mt: &mut (u64, bool)) -> Result<CartStep, String> {{ f{}_step(st, h, host, rt, cs, mt) }}", e);
-        }
-        return Ok(out);
-    }
     let _ = writeln!(out, "fn main() {{");
     let _ = writeln!(out, "    use std::io::Write;");
     let _ = writeln!(out, "    let mut h = myriad::Heap::new();");
@@ -458,9 +446,10 @@ fn emit_native(module: &Module, lib: bool) -> Result<String, TranspileError> {
 
 pub fn transpile_module_lib(module: &Module) -> Result<String, TranspileError> {
     if embed::is_effectful(module) {
-        return hybrid::transpile_module_lib(module);
+        hybrid::transpile_module_lib(module)
+    } else {
+        embed::transpile_module_lib(module)
     }
-    emit_native(module, true)
 }
 
 pub fn transpile_batch(modules: &[&Module]) -> Result<String, TranspileError> {

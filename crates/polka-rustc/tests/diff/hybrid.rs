@@ -67,34 +67,16 @@ fn lib_emit_exposes_host_injectable_items_no_main() {
 }
 
 #[test]
-fn lib_emit_native_module_exposes_run_no_main() {
+fn lib_emit_pure_module_same_shape_pk_register_aot_no_main() {
     let src = r#"
         fn fib(n: Int) -> Int { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
         fn main() -> Int { fib(10) }
     "#;
     let module = module_of_src(src);
-    let lib = polka_rustc::transpile_module_lib(&module).expect("native lib emit");
-    assert!(lib.contains("pub fn run("), "native lib must expose run for the host to drive");
-    assert!(lib.contains("&mut dyn myriad::AotNatives"), "run must take host-agnostic AotNatives");
+    let lib = polka_rustc::transpile_module_lib(&module).expect("pure lib emit");
+    assert!(lib.contains("pub const PK"), "every lib cart exposes PK, effectful or not");
+    assert!(lib.contains("pub fn register_aot"), "every lib cart exposes register_aot (empty when nothing bridges)");
     assert!(!lib.contains("fn main"), "lib must not emit a main; host owns the entry");
-}
-
-#[test]
-fn lib_emit_cart_exposes_per_frame_step_api() {
-    let src = r#"
-        @cart
-        fn main() -> <frame> Unit {
-            let mut i = 0;
-            while i < 3 { frame.present(); i = i + 1 };
-            halt(0)
-        }
-    "#;
-    let module = module_of_src(src);
-    let lib = polka_rustc::transpile_module_lib(&module).expect("cart lib emit");
-    assert!(lib.contains("pub type CartState"), "host needs a stable cart-state type");
-    assert!(lib.contains("pub fn cart_setup("), "host needs setup to build consts + run module_init");
-    assert!(lib.contains("pub fn cart_step("), "host needs a per-frame step entry");
-    assert!(!lib.contains("fn main"), "lib must not emit a main; host drives the frame loop");
 }
 
 fn diff_hybrid(src: &str) {
