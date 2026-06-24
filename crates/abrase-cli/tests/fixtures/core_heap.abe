@@ -1,0 +1,203 @@
+const HDR_FRONTIER: Int = 0;
+const HDR_SIZE: Int = 8;
+const HDR_FREELIST: Int = 16;
+const GLOBAL_HDR: Int = 32;
+const BLK_HDR: Int = 24;
+const BLK_NEXT: Int = 16;
+
+fn at(off: Int) -> <core> Addr { __ptr_add(__arena_base(), off) }
+fn mask_words(size: Int) -> <core> Int { (size + 63) / 64 }
+fn blk_bytes(size: Int) -> <core> Int { BLK_HDR + mask_words(size) * 8 + size * 8 }
+fn data_start(off: Int, size: Int) -> <core> Int { off + BLK_HDR + mask_words(size) * 8 }
+
+fn enc(off: Int, gen: Int) -> <core> Int { (off << 24) | (gen & 16777215) }
+fn blk_off(h: Int) -> <core> Int { h >> 24 }
+
+fn chk(h: Int) -> <core> Int {
+    let off = blk_off(h);
+    if off < GLOBAL_HDR {
+        0 - 1
+    } else {
+        if (__peek32(at(off + 4)) & 16777215) != (h & 16777215) { 0 - 1 } else { off }
+    }
+}
+
+fn mask_word_off(off: Int, i: Int) -> <core> Int { off + BLK_HDR + (i / 64) * 8 }
+fn test_mask(off: Int, i: Int) -> <core> Int {
+    (__peek64(at(mask_word_off(off, i))) >> (i & 63)) & 1
+}
+fn set_mask(off: Int, i: Int) -> <core> Unit {
+    let w = mask_word_off(off, i);
+    __poke64(at(w), __peek64(at(w)) | (1 << (i & 63)))
+}
+fn clr_mask(off: Int, i: Int) -> <core> Unit {
+    let w = mask_word_off(off, i);
+    __poke64(at(w), __peek64(at(w)) & (0 - 1 - (1 << (i & 63))))
+}
+fn clear_mask(off: Int, size: Int) -> <core> Unit {
+    let mw = mask_words(size);
+    let mut j = 0;
+    while j < mw {
+        __poke64(at(off + BLK_HDR + j * 8), 0);
+        j = j + 1;
+    }
+}
+fn clear_data(off: Int, size: Int) -> <core> Unit {
+    let ds = data_start(off, size);
+    let mut j = 0;
+    while j < size {
+        __poke64(at(ds + j * 8), 0 - 1);
+        j = j + 1;
+    }
+}
+fn prep_block(off: Int, size: Int) -> <core> Unit {
+    __poke32(at(off), 1);
+    clear_mask(off, size);
+    clear_data(off, size)
+}
+
+pub fn core_init(size: Int) -> <core> Unit {
+    __poke64(at(HDR_FRONTIER), GLOBAL_HDR);
+    __poke64(at(HDR_SIZE), size);
+    __poke64(at(HDR_FREELIST), 0)
+}
+
+fn bump_alloc(size: Int) -> <core> Int {
+    let frontier = __peek64(at(HDR_FRONTIER));
+    let need = blk_bytes(size);
+    let arena = __peek64(at(HDR_SIZE));
+    if frontier + need > arena {
+        0
+    } else {
+        __poke32(at(frontier + 4), 0);
+        __poke32(at(frontier + 8), size);
+        prep_block(frontier, size);
+        __poke64(at(HDR_FRONTIER), frontier + need);
+        enc(frontier, 0)
+    }
+}
+
+pub fn alloc(size: Int) -> <core> Int {
+    if size < 0 || size > 268435456 {
+        0
+    } else {
+        let mut prev = 0 - 1;
+        let mut cur = __peek64(at(HDR_FREELIST));
+        let mut found = 0 - 1;
+        while cur != 0 {
+            let next = __peek64(at(cur + BLK_NEXT));
+            if found < 0 && __peek32(at(cur + 8)) == size {
+                if prev < 0 {
+                    __poke64(at(HDR_FREELIST), next);
+                    ()
+                } else {
+                    __poke64(at(prev + BLK_NEXT), next);
+                    ()
+                };
+                found = cur;
+                cur = 0;
+                ()
+            } else {
+                prev = cur;
+                cur = next;
+                ()
+            };
+        }
+        if found < 0 {
+            bump_alloc(size)
+        } else {
+            prep_block(found, size);
+            enc(found, __peek32(at(found + 4)))
+        }
+    }
+}
+
+fn free(off: Int) -> <core> Unit {
+    let size = __peek32(at(off + 8));
+    let mut i = 0;
+    while i < size {
+        if test_mask(off, i) == 1 {
+            rc_dec(__peek64(at(data_start(off, size) + i * 8)));
+            ()
+        } else {
+            ()
+        };
+        i = i + 1;
+    }
+    __poke32(at(off + 4), __peek32(at(off + 4)) + 1);
+    let head = __peek64(at(HDR_FREELIST));
+    __poke64(at(off + BLK_NEXT), head);
+    __poke64(at(HDR_FREELIST), off)
+}
+
+pub fn cell_get(h: Int, i: Int) -> <core> Int {
+    let off = chk(h);
+    if off < 0 {
+        0 - 1
+    } else {
+        let size = __peek32(at(off + 8));
+        if i < 0 || i >= size {
+            0 - 1
+        } else {
+            __peek64(at(data_start(off, size) + i * 8))
+        }
+    }
+}
+
+pub fn cell_set(h: Int, i: Int, v: Int) -> <core> Int {
+    let off = chk(h);
+    if off < 0 {
+        0 - 1
+    } else {
+        let size = __peek32(at(off + 8));
+        if i < 0 || i >= size {
+            0 - 1
+        } else {
+            __poke64(at(data_start(off, size) + i * 8), v);
+            clr_mask(off, i);
+            0
+        }
+    }
+}
+
+pub fn cell_set_child(h: Int, i: Int, child: Int) -> <core> Int {
+    let off = chk(h);
+    if off < 0 {
+        0 - 1
+    } else {
+        let size = __peek32(at(off + 8));
+        if i < 0 || i >= size {
+            0 - 1
+        } else {
+            __poke64(at(data_start(off, size) + i * 8), child);
+            set_mask(off, i);
+            0
+        }
+    }
+}
+
+pub fn rc_inc(h: Int) -> <core> Int {
+    let off = chk(h);
+    if off < 0 {
+        0 - 1
+    } else {
+        __poke32(at(off), __peek32(at(off)) + 1);
+        0
+    }
+}
+
+pub fn rc_dec(h: Int) -> <core> Int {
+    let off = chk(h);
+    if off < 0 {
+        0 - 1
+    } else {
+        let rc = __peek32(at(off)) - 1;
+        __poke32(at(off), rc);
+        if rc == 0 {
+            free(off);
+            1
+        } else {
+            0
+        }
+    }
+}

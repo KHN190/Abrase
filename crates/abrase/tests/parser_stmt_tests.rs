@@ -112,3 +112,30 @@ fn test_let_nested_tuple_pattern() {
         panic!("Expected Let statement");
     }
 }
+
+// An expr-with-block (if/while/match) used as a statement needs no trailing `;`
+// (BNF 09). A following statement that starts with an identifier — assignment or
+// call — must not be misread as a continuation of the block expression.
+fn parse_ok(src: &str) -> Vec<String> {
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let _ = p.parse_program();
+    p.errors.iter().map(|e| e.message.clone()).collect()
+}
+
+#[test]
+fn if_else_statement_followed_by_assignment_no_semicolon() {
+    let errs = parse_ok("fn f() -> Int { let mut a = 0; if a == 0 { a = 1; } else { a = 2; } a = a + 1; a }");
+    assert!(errs.is_empty(), "if-else then assignment must parse: {:?}", errs);
+}
+
+#[test]
+fn if_else_statement_followed_by_call_no_semicolon() {
+    let errs = parse_ok("fn g() -> Unit { () }\nfn f() -> Unit { if true { () } else { () } g() }");
+    assert!(errs.is_empty(), "if-else then call must parse: {:?}", errs);
+}
+
+#[test]
+fn if_else_statement_followed_by_literal_or_let_still_ok() {
+    assert!(parse_ok("fn f() -> Int { if true { 1 } else { 2 } 3 }").is_empty());
+    assert!(parse_ok("fn f() -> Int { if true { 1 } else { 2 } let x = 3; x }").is_empty());
+}

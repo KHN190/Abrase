@@ -50,6 +50,7 @@ impl VirtualMachine {
                 }
                 let mut ctx = NativeCtx {
                     heap: &mut self.heap, devices: &mut self.devices,
+                    core_arena: &mut self.core_arena,
                     halted: &mut self.halted, exit_code: &mut self.exit_code,
                 };
                 let (result, result_is_handle) = aot(&mut ctx, &buf[..param_count], &tags[..param_count])?;
@@ -71,6 +72,7 @@ impl VirtualMachine {
             let mut ctx = NativeCtx {
                 heap: &mut self.heap,
                 devices: &mut self.devices,
+                core_arena: &mut self.core_arena,
                 halted: &mut self.halted,
                 exit_code: &mut self.exit_code,
             };

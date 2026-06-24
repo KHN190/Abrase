@@ -1,5 +1,6 @@
 use alloc::{boxed::Box, string::String, vec::Vec};
 use crate::builtins::{NativeCtx, NativeRegistry, register_default_builtins};
+use crate::core_mem::CoreArena;
 use crate::devices::{BufferConsole, Console, DeviceTable, CONSOLE_ID, SharedBuf};
 use crate::memory::Heap;
 use crate::Value;
@@ -34,6 +35,7 @@ fn walk(h: &Heap, slot: u32, g: u32, seen: &mut hashbrown::HashSet<(u32, u32)>) 
 
 pub struct AotHost {
     devices: DeviceTable,
+    core_arena: CoreArena,
     registry: NativeRegistry,
     halted: bool,
     exit_code: Option<i64>,
@@ -52,7 +54,7 @@ impl AotHost {
         devices.install(CONSOLE_ID, Box::new(Box::new(console) as Box<dyn Console>));
         let mut registry = NativeRegistry::new();
         register_default_builtins(&mut registry);
-        Self { devices, registry, halted: false, exit_code: None, stdout }
+        Self { devices, core_arena: CoreArena::new(), registry, halted: false, exit_code: None, stdout }
     }
 
     pub fn halted(&self) -> bool { self.halted }
@@ -71,6 +73,7 @@ impl AotNatives for AotHost {
         let mut ctx = NativeCtx {
             heap,
             devices: &mut self.devices,
+            core_arena: &mut self.core_arena,
             halted: &mut self.halted,
             exit_code: &mut self.exit_code,
         };
