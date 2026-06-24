@@ -98,10 +98,23 @@ fn emit_core_fn(
     }
     out.push_str("    let mut pc: usize = 0;\n    loop { match pc {\n");
 
-    for (i, op) in bc.code.iter().enumerate() {
-        let next = i as isize + 1;
-        let stmt = emit_core_op(i, op, next, bc.reg_count, param_counts, module, &bc.constants, bc.code.len())?;
-        let _ = write!(out, "        {} => {{ {} }}\n", i, stmt);
+    // Basic-block emission: one match arm per block (leader = branch target /
+    // fallthrough). Straight-line ops chain into the arm; their intermediate
+    // `pc =` writes are dead and LLVM removes them, recovering native branches.
+    let len = bc.code.len();
+    let leaders = crate::block_leaders(&bc.code, None);
+    let mut i = 0;
+    while i < len {
+        let mut body = String::new();
+        let mut j = i;
+        loop {
+            body.push_str(&emit_core_op(j, &bc.code[j], j as isize + 1, bc.reg_count, param_counts, module, &bc.constants, len)?);
+            body.push(' ');
+            j += 1;
+            if j >= len || leaders[j] { break; }
+        }
+        let _ = write!(out, "        {} => {{ {} }}\n", i, body);
+        i = j;
     }
     out.push_str("        _ => return Ok(r0),\n    } }\n}\n");
     Ok(())

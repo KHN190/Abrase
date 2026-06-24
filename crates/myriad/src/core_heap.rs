@@ -138,18 +138,26 @@ impl CoreHeap {
         Ok((val, is_handle))
     }
 
+    // Cell read/write is a trivial bounds-checked byte op (not allocation logic),
+    // so it stays host-side — the abrase core owns only alloc/free/rc.
     pub fn st(&mut self, slot: u32, generation: u32, offset: usize, val: u64, is_handle: bool)
         -> Result<(u64, bool), String>
     {
-        let old = self.ld(slot, generation, offset)?;
-        let h = make_handle(slot, generation);
-        let r = if is_handle {
-            cgen::cell_set_child(self.bytes_mut(), h, offset as u64, val)
-        } else {
-            cgen::cell_set(self.bytes_mut(), h, offset as u64, val)
-        };
-        r.map_err(String::from)?;
-        Ok(old)
+        let off = self.valid(slot, generation, "st")?;
+        let size = self.block_size(off);
+        if offset as u64 >= size {
+            return Err(format!("st: offset {} out of bounds (size {})", offset, size));
+        }
+        let waddr = self.data_start(off, size) + offset as u64 * 8;
+        let old = self.r64(waddr);
+        let maddr = off + BLK_HDR + (offset as u64 / 64) * 8;
+        let mword = self.r64(maddr);
+        let bit = 1u64 << (offset as u64 & 63);
+        let old_is_handle = mword & bit != 0;
+        self.w_bytes(waddr, &val.to_le_bytes());
+        let newm = if is_handle { mword | bit } else { mword & !bit };
+        self.w_bytes(maddr, &newm.to_le_bytes());
+        Ok((old, old_is_handle))
     }
 
     // ds is a multiple of 8, so the byte offset maps to an exact word index.
@@ -272,13 +280,11 @@ impl CoreHeap {
         cgen::core_init(self.bytes_mut(), blen).expect("core_init");
     }
 
+    // O(1) conservative upper bound: bytes bumped past the global header (counts
+    // freed-but-not-reclaimed space too). Used only for the RAM cap, where
+    // over-reporting is safe; called per allocation, so it must not scan.
     pub fn bytes_used(&self) -> usize {
-        let mut total = 0u64;
-        self.scan_live(|off| {
-            let size = self.block_size(off);
-            total += size * 8 + mask_words(size) * 8;
-        });
-        total as usize
+        (self.r64(HDR_FRONTIER) - GLOBAL_HDR) as usize
     }
 
     pub fn set_trace(&mut self, _slot: Option<u32>, _all: bool, _out: fn(&str)) {}
