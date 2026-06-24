@@ -16,18 +16,17 @@
   <a href="https://crates.io/crates/abrase-cli"><img src="https://img.shields.io/crates/v/abrase-cli.svg?label=abrase-cli" alt="crates.io"></a>
 </p>
 
-Abrase (`.abe`, abbreviated **Abe**) is a Rust-inspired language. Abrase source compiles to **Polka** bytecode, which runs on the **Myriad** runtime.
+Abrase (`.abe`, abbreviated **Abe**) is a small, strongly-typed language with algebraic effects and region-based memory. Source compiles to **Polka** bytecode on the **Myriad** runtime.
 
-It features:
+One source, three ways to run:
 
-* Strong typed
-* Algebraic effects
-* Region memory lifecycle design - no GC, leak free
-* Linter & Debugger
+* Add to any Rust application — zero-dependency runtime.
+* Transpile to Rust (no std), run on bare metal.
+* In the browser — try it [here](https://khn190.github.io/abrase/).
 
-It can be added to **any Rust application**, or *compile to Rust*. See [wiki](https://github.com/KHN190/Abrase/wiki).
+It is a self-hosting language. Its own memory management — allocation, reference counting, regions — is written in Abrase, equivalent to native-speed Rust.
 
-Try it now in [browser](https://khn190.github.io/abrase/).
+Plus algebraic effects & handlers, a linter, and a debugger. See [wiki](https://github.com/KHN190/Abrase/wiki).
 
 ## Installation
 
