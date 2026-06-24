@@ -2,6 +2,8 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use myriad::{Heap, Value, VirtualMachine};
+use myriad::core_heap::CoreHeap;
+use myriad::memory::make_handle;
 
 fn xorshift(s: &mut u64) -> u64 {
     *s ^= *s << 13;
@@ -76,8 +78,8 @@ fn reused_block_data_is_cleared_no_residue() {
     call(&mut vm, &m, "rc_dec", &[h1]);
     let h2 = call(&mut vm, &m, "alloc", &[2]);
     assert_eq!(h2 >> 24, h1 >> 24, "same block reused");
-    assert_eq!(call(&mut vm, &m, "cell_get", &[h2, 0]), 0, "stale data word 0 cleared");
-    assert_eq!(call(&mut vm, &m, "cell_get", &[h2, 1]), 0, "stale data word 1 cleared");
+    assert_eq!(call(&mut vm, &m, "cell_get", &[h2, 0]), -1, "stale data word 0 reset to HANDLE_NONE");
+    assert_eq!(call(&mut vm, &m, "cell_get", &[h2, 1]), -1, "stale data word 1 reset to HANDLE_NONE");
 }
 
 #[test]
@@ -203,6 +205,29 @@ fn alloc_reuses_only_exact_size_class() {
 }
 
 #[test]
+fn freelist_unlinks_middle_node_keeps_list_intact() {
+    let (m, mut vm) = vm_init(1 << 16);
+    // three blocks of mixed sizes; free in order so the freelist is C(2)->B(3)->A(2)
+    let a = call(&mut vm, &m, "alloc", &[2]);
+    let b = call(&mut vm, &m, "alloc", &[3]);
+    let c = call(&mut vm, &m, "alloc", &[2]);
+    call(&mut vm, &m, "rc_dec", &[a]);
+    call(&mut vm, &m, "rc_dec", &[b]);
+    call(&mut vm, &m, "rc_dec", &[c]);
+    // alloc(3) must walk past C, unlink the middle node B (prev.next = B.next), reuse B
+    let rb = call(&mut vm, &m, "alloc", &[3]);
+    assert_eq!(rb >> 24, b >> 24, "size-3 reused the middle freelist node");
+    // the surviving list (C, A — both size 2) must still be intact and reusable
+    let r1 = call(&mut vm, &m, "alloc", &[2]);
+    let r2 = call(&mut vm, &m, "alloc", &[2]);
+    let mut got = [r1 >> 24, r2 >> 24];
+    got.sort();
+    let mut want = [a >> 24, c >> 24];
+    want.sort();
+    assert_eq!(got, want, "both surviving size-2 nodes still reachable after middle unlink");
+}
+
+#[test]
 fn mismatched_size_does_not_reuse_smaller_block() {
     let (m, mut vm) = vm_init(1 << 16);
     // free a size-1 block, then request size-4: exact-size policy must NOT reuse
@@ -236,6 +261,21 @@ fn cell_get_set_roundtrip() {
     assert_eq!(call(&mut vm, &m, "cell_set", &[h, 2, 222]), 0);
     assert_eq!(call(&mut vm, &m, "cell_get", &[h, 0]), 111);
     assert_eq!(call(&mut vm, &m, "cell_get", &[h, 2]), 222);
+}
+
+#[test]
+fn overwriting_handle_slot_with_scalar_clears_mask() {
+    let (m, mut vm) = vm_init(1024);
+    let parent = call(&mut vm, &m, "alloc", &[1]);
+    let child = call(&mut vm, &m, "alloc", &[1]);
+    let coff = (child >> 24) as u64;
+    call(&mut vm, &m, "cell_set_child", &[parent, 0, child]);
+    // overwrite the handle slot with a scalar — mask bit must clear
+    call(&mut vm, &m, "cell_set", &[parent, 0, 999]);
+    assert_eq!(vm.core_arena_ref().peek((parent >> 24) as u64 + 24, 8).unwrap(), 0, "mask bit cleared");
+    // freeing parent must NOT recurse into the (now scalar) slot
+    call(&mut vm, &m, "rc_dec", &[parent]);
+    assert_eq!(vm.core_arena_ref().peek(coff, 4).unwrap(), 1, "child untouched (not phantom-freed)");
 }
 
 #[test]
@@ -403,4 +443,100 @@ fn differential_rc_against_rust_heap() {
         h.alive = false;
     }
     assert_eq!(heap.live_count(), 0, "rust heap fully reclaimed after balanced drain");
+}
+
+struct Wh { slot: u32, g: u32, rc: i64, alive: bool }
+
+#[test]
+fn coreheap_rc_lifecycle_matches_model() {
+    let mut core = CoreHeap::with_capacity(1 << 20);
+    let mut hs: Vec<Wh> = Vec::new();
+    let mut rng: u64 = 0x9e37_79b9_7f4a_7c15;
+    for _ in 0..3000 {
+        let live: Vec<usize> = (0..hs.len()).filter(|&i| hs[i].alive).collect();
+        let pick = if live.is_empty() { 0 } else { xorshift(&mut rng) % 3 };
+        if pick == 0 {
+            let size = (xorshift(&mut rng) % 4 + 1) as usize;
+            let (cs, cg) = core.alloc(size);
+            assert_eq!(core.rc(cs, cg), Some(1));
+            hs.push(Wh { slot: cs, g: cg, rc: 1, alive: true });
+        } else {
+            let idx = live[(xorshift(&mut rng) as usize) % live.len()];
+            let (s, g) = (hs[idx].slot, hs[idx].g);
+            if pick == 1 {
+                core.rc_inc(s, g).unwrap();
+                hs[idx].rc += 1;
+            } else {
+                let freed = core.rc_dec(s, g).unwrap();
+                hs[idx].rc -= 1;
+                assert_eq!(freed, hs[idx].rc == 0, "freed-flag");
+                if hs[idx].rc == 0 { hs[idx].alive = false; }
+            }
+            if hs[idx].alive {
+                assert_eq!(core.rc(s, g).map(|x| x as i64), Some(hs[idx].rc), "rc");
+            }
+        }
+    }
+    let alive_before = hs.iter().filter(|h| h.alive).count();
+    assert_eq!(core.live_count(), alive_before, "scan == alive count");
+    for h in hs.iter().filter(|h| h.alive) {
+        let mut rc = h.rc;
+        while rc > 0 { core.rc_dec(h.slot, h.g).unwrap(); rc -= 1; }
+    }
+    assert_eq!(core.live_count(), 0, "core reclaimed");
+}
+
+#[test]
+fn coreheap_st_ld_cell_data_force_free() {
+    let mut core = CoreHeap::with_capacity(1 << 16);
+    let (s, g) = core.alloc(3);
+    core.st(s, g, 0, 111, false).unwrap();
+    core.st(s, g, 2, 222, false).unwrap();
+    assert_eq!(core.ld(s, g, 0).unwrap(), (111, false));
+    assert_eq!(core.ld(s, g, 2).unwrap(), (222, false));
+    assert_eq!(core.cell_data(s, g).unwrap(), &[111, u64::MAX, 222]);
+    assert_eq!(core.size(s, g).unwrap(), 3);
+    let (cs, cg) = core.alloc(1);
+    core.st(s, g, 1, make_handle(cs, cg), true).unwrap();
+    assert!(core.is_live(cs, cg));
+    core.force_free(s, g).unwrap();
+    assert!(!core.is_live(s, g), "parent freed");
+    assert!(!core.is_live(cs, cg), "child recursively freed");
+    assert_eq!(core.live_count(), 0);
+}
+
+#[test]
+fn coreheap_st_handle_then_scalar_clears_mask() {
+    let mut core = CoreHeap::with_capacity(1 << 16);
+    let (s, g) = core.alloc(1);
+    let (cs, cg) = core.alloc(1);
+    core.st(s, g, 0, make_handle(cs, cg), true).unwrap();
+    assert_eq!(core.ld(s, g, 0).unwrap().1, true, "slot is a handle");
+    core.st(s, g, 0, 999, false).unwrap();
+    assert_eq!(core.ld(s, g, 0).unwrap(), (999, false), "now a scalar");
+    core.force_free(s, g).unwrap();
+    assert!(core.is_live(cs, cg), "child not phantom-freed via cleared mask bit");
+}
+
+#[test]
+fn coreheap_invalid_and_stale_rejected() {
+    let mut core = CoreHeap::with_capacity(1 << 16);
+    assert!(core.rc_inc(0, 0).is_err());
+    assert!(core.rc_dec(0, 0).is_err());
+    assert!(core.ld(0, 0, 0).is_err());
+    assert!(core.st(0, 0, 0, 7, false).is_err());
+    assert!(!core.is_live(0, 0));
+    let (s, g) = core.alloc(1);
+    core.rc_dec(s, g).unwrap();
+    assert!(!core.is_live(s, g));
+    assert!(core.rc_inc(s, g).is_err(), "stale rc_inc rejected");
+    assert!(core.ld(s, g, 0).is_err(), "stale ld rejected");
+}
+
+#[test]
+fn coreheap_exhaustion_returns_err_once_capped() {
+    let mut core = CoreHeap::with_capacity(1 << 12);
+    assert!(core.try_alloc(1 << 28).is_err(), "request beyond grow cap errors");
+    let (s, g) = core.alloc(2);
+    assert_eq!(core.rc(s, g), Some(1));
 }

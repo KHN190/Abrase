@@ -1,110 +1,285 @@
+use alloc::format;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+
+use crate::memory::{handle_parts, make_handle};
 
 #[path = "core_heap_gen.rs"]
 mod cgen;
 
-// Thin wrapper over the vendored trust-archive heap (the abrase-written
-// alloc/RC/region, AOT-compiled to no_std Rust). Operates on a flat byte arena;
-// handles are the core's `(offset<<24)|gen` encoding.
+// Drop-in replacement for `Heap`, backed by the vendored trust-archive heap (the
+// abrase-written alloc/RC/region, AOT-compiled to no_std Rust). Handles use the
+// core's `(offset<<24)|gen` encoding, identical to `make_handle`, so `slot` ==
+// byte offset. The arena is a `Vec<u64>` so its base is u64-aligned by the type
+// system; cell data/mask views are then plain safe slices. The core fns work on
+// bytes, reached through a `&[u8]`/`&mut [u8]` reinterpretation of the words
+// (always sound: u8 has alignment 1 and the length is exact). The arena grows on
+// OOM — offsets are arena-relative, so moving the backing Vec is safe.
+const GLOBAL_HDR: u64 = 32;
+const BLK_HDR: u64 = 24;
+const HDR_SIZE: u64 = 8;
+const HDR_FRONTIER: u64 = 0;
+
 pub struct CoreHeap {
-    arena: Vec<u8>,
+    arena: Vec<u64>,
+    pub trace_pc: usize,
 }
+
+fn mask_words(size: u64) -> u64 { (size + 63) / 64 }
 
 impl CoreHeap {
-    pub fn new(bytes: usize) -> Result<Self, &'static str> {
-        let mut arena = vec![0u8; bytes];
-        cgen::core_init(&mut arena, bytes as u64)?;
-        Ok(Self { arena })
+    pub fn new() -> Self {
+        Self::with_capacity(1 << 16)
     }
 
-    pub fn alloc(&mut self, size: u64) -> Result<u64, &'static str> {
-        cgen::alloc(&mut self.arena, size)
-    }
-    pub fn rc_inc(&mut self, h: u64) -> Result<u64, &'static str> {
-        cgen::rc_inc(&mut self.arena, h)
-    }
-    pub fn rc_dec(&mut self, h: u64) -> Result<u64, &'static str> {
-        cgen::rc_dec(&mut self.arena, h)
-    }
-    pub fn cell_get(&mut self, h: u64, i: u64) -> Result<u64, &'static str> {
-        cgen::cell_get(&mut self.arena, h, i)
-    }
-    pub fn cell_set(&mut self, h: u64, i: u64, v: u64) -> Result<u64, &'static str> {
-        cgen::cell_set(&mut self.arena, h, i, v)
-    }
-    pub fn cell_set_child(&mut self, h: u64, i: u64, c: u64) -> Result<u64, &'static str> {
-        cgen::cell_set_child(&mut self.arena, h, i, c)
+    pub fn with_capacity(bytes: usize) -> Self {
+        let words = (bytes + 7) / 8;
+        let mut h = Self { arena: vec![0u64; words], trace_pc: 0 };
+        debug_assert!(h.arena.as_ptr() as usize & 7 == 0, "Vec<u64> base must be 8-aligned");
+        let blen = h.blen();
+        cgen::core_init(h.bytes_mut(), blen).expect("core_init");
+        h
     }
 
-    pub fn rc_of(&self, handle: u64) -> u32 {
-        let off = (handle >> 24) as usize;
-        u32::from_le_bytes([self.arena[off], self.arena[off + 1], self.arena[off + 2], self.arena[off + 3]])
+    fn blen(&self) -> u64 { (self.arena.len() * 8) as u64 }
+
+    fn bytes(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.arena.as_ptr() as *const u8, self.arena.len() * 8) }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::CoreHeap;
-    use crate::Heap;
-    use alloc::vec::Vec;
-
-    fn xorshift(s: &mut u64) -> u64 {
-        *s ^= *s << 13;
-        *s ^= *s >> 7;
-        *s ^= *s << 17;
-        *s
+    fn bytes_mut(&mut self) -> &mut [u8] {
+        let n = self.arena.len() * 8;
+        unsafe { core::slice::from_raw_parts_mut(self.arena.as_mut_ptr() as *mut u8, n) }
     }
 
-    // The vendored trust-archive heap must track RC and freeing identically to
-    // the hand-written Rust Heap over a random alloc/inc/dec sequence.
-    #[test]
-    fn vendored_core_matches_rust_heap() {
-        let mut core = CoreHeap::new(1 << 20).unwrap();
-        let mut heap = Heap::new();
-        struct H { core: u64, slot: u32, g: u32, rc: i64, alive: bool }
-        let mut hs: Vec<H> = Vec::new();
-        let mut rng: u64 = 0x9e37_79b9_7f4a_7c15;
+    fn r32(&self, addr: u64) -> u32 {
+        let b = self.bytes();
+        let a = addr as usize;
+        u32::from_le_bytes([b[a], b[a + 1], b[a + 2], b[a + 3]])
+    }
+    fn r64(&self, addr: u64) -> u64 {
+        let b = self.bytes();
+        let a = addr as usize;
+        let mut x = [0u8; 8];
+        x.copy_from_slice(&b[a..a + 8]);
+        u64::from_le_bytes(x)
+    }
+    fn w_bytes(&mut self, addr: u64, src: &[u8]) {
+        let a = addr as usize;
+        self.bytes_mut()[a..a + src.len()].copy_from_slice(src);
+    }
 
-        for _ in 0..3000 {
-            let live: Vec<usize> = (0..hs.len()).filter(|&i| hs[i].alive).collect();
-            let pick = if live.is_empty() { 0 } else { xorshift(&mut rng) % 3 };
-            if pick == 0 {
-                let size = (xorshift(&mut rng) % 4 + 1) as u64;
-                let c = core.alloc(size).unwrap();
-                assert_ne!(c, 0, "arena OOM");
-                let (slot, g) = heap.alloc(size as usize);
-                assert_eq!(core.rc_of(c), 1);
-                assert_eq!(heap.rc(slot, g), Some(1));
-                hs.push(H { core: c, slot, g, rc: 1, alive: true });
-            } else {
-                let idx = live[(xorshift(&mut rng) as usize) % live.len()];
-                if pick == 1 {
-                    assert_eq!(core.rc_inc(hs[idx].core).unwrap(), 0);
-                    heap.rc_inc(hs[idx].slot, hs[idx].g).unwrap();
-                    hs[idx].rc += 1;
-                } else {
-                    let cf = core.rc_dec(hs[idx].core).unwrap();
-                    let rf = heap.rc_dec(hs[idx].slot, hs[idx].g).unwrap();
-                    hs[idx].rc -= 1;
-                    let freed = hs[idx].rc == 0;
-                    assert_eq!(cf == 1, freed, "core freed-flag");
-                    assert_eq!(rf, freed, "rust freed-flag");
-                    if freed { hs[idx].alive = false; }
-                }
-                if hs[idx].alive {
-                    assert_eq!(core.rc_of(hs[idx].core) as i64, hs[idx].rc, "core rc");
-                    assert_eq!(heap.rc(hs[idx].slot, hs[idx].g).map(|x| x as i64), Some(hs[idx].rc), "rust rc");
-                }
-            }
+    fn block_size(&self, off: u64) -> u64 { self.r32(off + 8) as u64 }
+    fn data_start(&self, off: u64, size: u64) -> u64 { off + BLK_HDR + mask_words(size) * 8 }
+
+    fn valid(&self, slot: u32, generation: u32, op: &str) -> Result<u64, String> {
+        let off = slot as u64;
+        if off < GLOBAL_HDR || off + BLK_HDR > self.blen() {
+            return Err(format!("{}: invalid slot {}", op, slot));
         }
-        for h in hs.iter_mut().filter(|h| h.alive) {
-            while h.rc > 0 {
-                core.rc_dec(h.core).unwrap();
-                heap.rc_dec(h.slot, h.g).unwrap();
-                h.rc -= 1;
-            }
+        if self.r32(off) == 0 {
+            return Err(format!("{}: use-after-free of slot {}", op, slot));
         }
-        assert_eq!(heap.live_count(), 0, "rust heap reclaimed");
+        if (self.r32(off + 4) & 0x00FF_FFFF) != generation {
+            return Err(format!("{}: stale handle for slot {} (have gen {}, live {})",
+                op, slot, generation, self.r32(off + 4) & 0x00FF_FFFF));
+        }
+        Ok(off)
     }
+
+    fn grow(&mut self) {
+        let n = self.arena.len();
+        self.arena.resize(n * 2, 0);
+        let blen = self.blen();
+        self.w_bytes(HDR_SIZE, &blen.to_le_bytes());
+    }
+
+    pub fn try_alloc(&mut self, size: usize) -> Result<(u32, u32), String> {
+        loop {
+            let h = cgen::alloc(self.bytes_mut(), size as u64).map_err(String::from)?;
+            if h != 0 {
+                return Ok(handle_parts(h));
+            }
+            if self.blen() >= (1 << 28) {
+                return Err("heap: arena exhausted".into());
+            }
+            self.grow();
+        }
+    }
+
+    pub fn alloc(&mut self, size: usize) -> (u32, u32) {
+        self.try_alloc(size).expect("alloc")
+    }
+
+    pub fn try_alloc_with_mask(&mut self, size: usize, init_mask: &[u64]) -> Result<(u32, u32), String> {
+        let (slot, g) = self.try_alloc(size)?;
+        let off = slot as u64;
+        let mw = mask_words(size as u64) as usize;
+        for w in 0..mw.min(init_mask.len()) {
+            self.w_bytes(off + BLK_HDR + w as u64 * 8, &init_mask[w].to_le_bytes());
+        }
+        Ok((slot, g))
+    }
+
+    pub fn alloc_with_mask(&mut self, size: usize, init_mask: &[u64]) -> (u32, u32) {
+        self.try_alloc_with_mask(size, init_mask).expect("alloc_with_mask")
+    }
+
+    pub fn ld(&self, slot: u32, generation: u32, offset: usize) -> Result<(u64, bool), String> {
+        let off = self.valid(slot, generation, "ld")?;
+        let size = self.block_size(off);
+        if offset as u64 >= size {
+            return Err(format!("ld: offset {} out of bounds (size {})", offset, size));
+        }
+        let ds = self.data_start(off, size);
+        let val = self.r64(ds + offset as u64 * 8);
+        let mw = self.r64(off + BLK_HDR + (offset as u64 / 64) * 8);
+        let is_handle = (mw >> (offset as u64 & 63)) & 1 == 1;
+        Ok((val, is_handle))
+    }
+
+    pub fn st(&mut self, slot: u32, generation: u32, offset: usize, val: u64, is_handle: bool)
+        -> Result<(u64, bool), String>
+    {
+        let old = self.ld(slot, generation, offset)?;
+        let h = make_handle(slot, generation);
+        let r = if is_handle {
+            cgen::cell_set_child(self.bytes_mut(), h, offset as u64, val)
+        } else {
+            cgen::cell_set(self.bytes_mut(), h, offset as u64, val)
+        };
+        r.map_err(String::from)?;
+        Ok(old)
+    }
+
+    // ds is a multiple of 8, so the byte offset maps to an exact word index.
+    fn data_words(&self, off: u64, size: u64) -> &[u64] {
+        let ds = self.data_start(off, size);
+        debug_assert!(ds & 7 == 0, "cell data not word-aligned");
+        let w = (ds / 8) as usize;
+        &self.arena[w..w + size as usize]
+    }
+
+    pub fn cell_data(&self, slot: u32, generation: u32) -> Result<&[u64], String> {
+        let off = self.valid(slot, generation, "cell")?;
+        let size = self.block_size(off);
+        Ok(self.data_words(off, size))
+    }
+
+    pub fn cell_data_mut(&mut self, slot: u32, generation: u32) -> Result<&mut [u64], String> {
+        let off = self.valid(slot, generation, "cell_mut")?;
+        let size = self.block_size(off);
+        let ds = self.data_start(off, size);
+        debug_assert!(ds & 7 == 0, "cell data not word-aligned");
+        let w = (ds / 8) as usize;
+        Ok(&mut self.arena[w..w + size as usize])
+    }
+
+    pub fn cell_mask(&self, slot: u32, generation: u32) -> Result<&[u64], String> {
+        let off = self.valid(slot, generation, "cell_mask")?;
+        let size = self.block_size(off);
+        let w = ((off + BLK_HDR) / 8) as usize;
+        Ok(&self.arena[w..w + mask_words(size) as usize])
+    }
+
+    pub fn size(&self, slot: u32, generation: u32) -> Result<usize, String> {
+        let off = self.valid(slot, generation, "size")?;
+        Ok(self.block_size(off) as usize)
+    }
+
+    pub fn is_live(&self, slot: u32, generation: u32) -> bool {
+        let off = slot as u64;
+        off >= GLOBAL_HDR
+            && off + BLK_HDR <= self.blen()
+            && self.r32(off) != 0
+            && (self.r32(off + 4) & 0x00FF_FFFF) == generation
+    }
+
+    pub fn rc_inc_handle(&mut self, raw: u64) -> Result<(), String> {
+        if raw == polka::HANDLE_NONE { return Ok(()); }
+        let (s, g) = handle_parts(raw);
+        self.rc_inc(s, g)
+    }
+    pub fn rc_dec_handle(&mut self, raw: u64) -> Result<(), String> {
+        if raw == polka::HANDLE_NONE { return Ok(()); }
+        let (s, g) = handle_parts(raw);
+        self.rc_dec(s, g)?;
+        Ok(())
+    }
+
+    pub fn rc_inc(&mut self, slot: u32, generation: u32) -> Result<(), String> {
+        self.valid(slot, generation, "rc_inc")?;
+        let h = make_handle(slot, generation);
+        let r = cgen::rc_inc(self.bytes_mut(), h).map_err(String::from)?;
+        if r != 0 { return Err(format!("rc_inc: stale slot {}", slot)); }
+        Ok(())
+    }
+
+    pub fn rc_dec(&mut self, slot: u32, generation: u32) -> Result<bool, String> {
+        self.valid(slot, generation, "rc_dec")?;
+        let h = make_handle(slot, generation);
+        let r = cgen::rc_dec(self.bytes_mut(), h).map_err(String::from)?;
+        Ok(r == 1)
+    }
+
+    pub fn force_free(&mut self, slot: u32, generation: u32) -> Result<(), String> {
+        if !self.is_live(slot, generation) { return Ok(()); }
+        let off = slot as u64;
+        self.w_bytes(off, &1u32.to_le_bytes());
+        let h = make_handle(slot, generation);
+        cgen::rc_dec(self.bytes_mut(), h).map_err(String::from)?;
+        Ok(())
+    }
+
+    fn scan_live<F: FnMut(u64)>(&self, mut f: F) {
+        let frontier = self.r64(HDR_FRONTIER);
+        let mut off = GLOBAL_HDR;
+        while off < frontier {
+            let size = self.block_size(off);
+            let span = BLK_HDR + mask_words(size) * 8 + size * 8;
+            if self.r32(off) != 0 { f(off); }
+            off += span;
+        }
+    }
+
+    pub fn live_count(&self) -> usize {
+        let mut n = 0;
+        self.scan_live(|_| n += 1);
+        n
+    }
+
+    pub fn rc(&self, slot: u32, generation: u32) -> Option<u32> {
+        self.valid(slot, generation, "rc").ok().map(|off| self.r32(off))
+    }
+
+    pub fn live_cells(&self) -> Vec<(u32, u32, u32, Vec<u64>, Vec<bool>)> {
+        let mut out = Vec::new();
+        self.scan_live(|off| {
+            let size = self.block_size(off);
+            let data: Vec<u64> = self.data_words(off, size).to_vec();
+            let mask: Vec<bool> = (0..size).map(|i| {
+                let mw = self.r64(off + BLK_HDR + (i / 64) * 8);
+                (mw >> (i & 63)) & 1 == 1
+            }).collect();
+            out.push((off as u32, self.r32(off + 4) & 0x00FF_FFFF, self.r32(off), data, mask));
+        });
+        out
+    }
+
+    pub fn clear(&mut self) {
+        for w in self.arena.iter_mut() { *w = 0; }
+        let blen = self.blen();
+        cgen::core_init(self.bytes_mut(), blen).expect("core_init");
+    }
+
+    pub fn bytes_used(&self) -> usize {
+        let mut total = 0u64;
+        self.scan_live(|off| {
+            let size = self.block_size(off);
+            total += size * 8 + mask_words(size) * 8;
+        });
+        total as usize
+    }
+
+    pub fn set_trace(&mut self, _slot: Option<u32>, _all: bool, _out: fn(&str)) {}
 }

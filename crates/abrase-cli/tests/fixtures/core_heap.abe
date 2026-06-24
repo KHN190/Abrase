@@ -30,6 +30,10 @@ fn set_mask(off: Int, i: Int) -> <core> Unit {
     let w = mask_word_off(off, i);
     __poke64(at(w), __peek64(at(w)) | (1 << (i & 63)))
 }
+fn clr_mask(off: Int, i: Int) -> <core> Unit {
+    let w = mask_word_off(off, i);
+    __poke64(at(w), __peek64(at(w)) & (0 - 1 - (1 << (i & 63))))
+}
 fn clear_mask(off: Int, size: Int) -> <core> Unit {
     let mw = mask_words(size);
     let mut j = 0;
@@ -42,7 +46,7 @@ fn clear_data(off: Int, size: Int) -> <core> Unit {
     let ds = data_start(off, size);
     let mut j = 0;
     while j < size {
-        __poke64(at(ds + j * 8), 0);
+        __poke64(at(ds + j * 8), 0 - 1);
         j = j + 1;
     }
 }
@@ -150,6 +154,7 @@ pub fn cell_set(h: Int, i: Int, v: Int) -> <core> Int {
             0 - 1
         } else {
             __poke64(at(data_start(off, size) + i * 8), v);
+            clr_mask(off, i);
             0
         }
     }

@@ -641,6 +641,81 @@ fn f48(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r41: u64 = 0;
     let mut r42: u64 = 0;
     let mut r43: u64 = 0;
+    r0 = a[0];
+    r1 = a[1];
+    let mut pc: usize = 0;
+    loop { match pc {
+        0 => { r12 = r0; pc = 1; }
+        1 => { r13 = r1; pc = 2; }
+        2 => { r2 = f45(arena, &[r12, r13])?; pc = 3; }
+        3 => { r12 = r2; pc = 4; }
+        4 => { r3 = f38(arena, &[r12])?; pc = 5; }
+        5 => { r12 = r2; pc = 6; }
+        6 => { r4 = f38(arena, &[r12])?; pc = 7; }
+        7 => { r12 = r4; r4 = u64::MAX; pc = 8; }
+        8 => { pc = 9; }
+        9 => { r4 = core_peek(arena, r12, 8)?; pc = 10; }
+        10 => { r5 = 18446744073709551615u64; pc = 11; }
+        11 => { r6 = 1u64; pc = 12; }
+        12 => { r7 = 63u64; pc = 13; }
+        13 => { r8 = r1 & r7; pc = 14; }
+        14 => { r9 = (r6 as i64).wrapping_shl((r8 as u32) & 63) as u64; pc = 15; }
+        15 => { r10 = (r5 as i64).wrapping_sub(r9 as i64) as u64; pc = 16; }
+        16 => { r11 = r4 & r10; pc = 17; }
+        17 => { r12 = r3; r3 = u64::MAX; pc = 18; }
+        18 => { r13 = r11; r11 = u64::MAX; pc = 19; }
+        19 => { pc = 20; }
+        20 => { pc = 21; }
+        21 => { core_poke(arena, r12, r13, 8)?; r3 = 0; pc = 22; }
+        22 => { return Ok(r3); }
+        _ => return Ok(r0),
+    } }
+}
+fn f49(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+    let mut r0: u64 = 0;
+    let mut r1: u64 = 0;
+    let mut r2: u64 = 0;
+    let mut r3: u64 = 0;
+    let mut r4: u64 = 0;
+    let mut r5: u64 = 0;
+    let mut r6: u64 = 0;
+    let mut r7: u64 = 0;
+    let mut r8: u64 = 0;
+    let mut r9: u64 = 0;
+    let mut r10: u64 = 0;
+    let mut r11: u64 = 0;
+    let mut r12: u64 = 0;
+    let mut r13: u64 = 0;
+    let mut r14: u64 = 0;
+    let mut r15: u64 = 0;
+    let mut r16: u64 = 0;
+    let mut r17: u64 = 0;
+    let mut r18: u64 = 0;
+    let mut r19: u64 = 0;
+    let mut r20: u64 = 0;
+    let mut r21: u64 = 0;
+    let mut r22: u64 = 0;
+    let mut r23: u64 = 0;
+    let mut r24: u64 = 0;
+    let mut r25: u64 = 0;
+    let mut r26: u64 = 0;
+    let mut r27: u64 = 0;
+    let mut r28: u64 = 0;
+    let mut r29: u64 = 0;
+    let mut r30: u64 = 0;
+    let mut r31: u64 = 0;
+    let mut r32: u64 = 0;
+    let mut r33: u64 = 0;
+    let mut r34: u64 = 0;
+    let mut r35: u64 = 0;
+    let mut r36: u64 = 0;
+    let mut r37: u64 = 0;
+    let mut r38: u64 = 0;
+    let mut r39: u64 = 0;
+    let mut r40: u64 = 0;
+    let mut r41: u64 = 0;
+    let mut r42: u64 = 0;
+    let mut r43: u64 = 0;
     let mut r44: u64 = 0;
     r0 = a[0];
     r1 = a[1];
@@ -677,7 +752,7 @@ fn f48(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-fn f49(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f50(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -740,7 +815,7 @@ fn f49(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         12 => { r10 = (r2 as i64).wrapping_add(r9 as i64) as u64; pc = 13; }
         13 => { r11 = r10; r10 = u64::MAX; pc = 14; }
         14 => { r8 = f38(arena, &[r11])?; pc = 15; }
-        15 => { r9 = 0u64; pc = 16; }
+        15 => { r9 = 18446744073709551615u64; pc = 16; }
         16 => { r11 = r8; r8 = u64::MAX; pc = 17; }
         17 => { r12 = r9; r9 = u64::MAX; pc = 18; }
         18 => { pc = 19; }
@@ -755,7 +830,7 @@ fn f49(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-fn f50(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f51(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -806,16 +881,16 @@ fn f50(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         7 => { pc = 8; }
         8 => { r4 = r0; pc = 9; }
         9 => { r5 = r1; pc = 10; }
-        10 => { r2 = f48(arena, &[r4, r5])?; pc = 11; }
+        10 => { r2 = f49(arena, &[r4, r5])?; pc = 11; }
         11 => { pc = 12; }
         12 => { r4 = r0; pc = 13; }
         13 => { r5 = r1; pc = 14; }
-        14 => { r2 = f49(arena, &[r4, r5])?; pc = 15; }
+        14 => { r2 = f50(arena, &[r4, r5])?; pc = 15; }
         15 => { return Ok(r2); }
         _ => return Ok(r0),
     } }
 }
-fn f51(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f52(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -883,7 +958,7 @@ fn f51(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-fn f52(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f53(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -966,7 +1041,7 @@ fn f52(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         35 => { pc = 36; }
         36 => { r9 = r1; pc = 37; }
         37 => { r10 = r0; pc = 38; }
-        38 => { r7 = f50(arena, &[r9, r10])?; pc = 39; }
+        38 => { r7 = f51(arena, &[r9, r10])?; pc = 39; }
         39 => { pc = 40; }
         40 => { r7 = 0u64; pc = 41; }
         41 => { r9 = r7; pc = 42; }
@@ -987,7 +1062,7 @@ fn f52(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-fn f53(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f54(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -1129,13 +1204,13 @@ fn f53(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         76 => { r11 = if (r9 as i64) < (r10 as i64) { 1 } else { 0 }; pc = 77; }
         77 => { if r11 == 0 { pc = 83; } else { pc = 78; } }
         78 => { r27 = r0; pc = 79; }
-        79 => { r13 = f52(arena, &[r27])?; pc = 80; }
+        79 => { r13 = f53(arena, &[r27])?; pc = 80; }
         80 => { r12 = r13; pc = 81; }
         81 => { pc = 82; }
         82 => { pc = 99; }
         83 => { r27 = r9; pc = 84; }
         84 => { r28 = r0; pc = 85; }
-        85 => { r13 = f50(arena, &[r27, r28])?; pc = 86; }
+        85 => { r13 = f51(arena, &[r27, r28])?; pc = 86; }
         86 => { pc = 87; }
         87 => { r13 = (r9 as i64).wrapping_add(4) as u64; pc = 88; }
         88 => { r27 = r13; r13 = u64::MAX; pc = 89; }
@@ -1157,7 +1232,7 @@ fn f53(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-fn f54(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f55(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -1241,7 +1316,7 @@ fn f54(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         30 => { r11 = core_peek(arena, r15, 8)?; pc = 31; }
         31 => { r15 = r11; r11 = u64::MAX; pc = 32; }
         32 => { pc = 33; }
-        33 => { r11 = f59(arena, &[r15])?; pc = 34; }
+        33 => { r11 = f60(arena, &[r15])?; pc = 34; }
         34 => { pc = 35; }
         35 => { r10 = 0u64; pc = 36; }
         36 => { pc = 38; }
@@ -1294,7 +1369,7 @@ fn f54(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-fn f55(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f56(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -1388,7 +1463,7 @@ fn f55(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-fn f56(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f57(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -1449,7 +1524,7 @@ fn f56(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         3 => { r5 = if (r3 as i64) < (r4 as i64) { 1 } else { 0 }; pc = 4; }
         4 => { if r5 == 0 { pc = 7; } else { pc = 5; } }
         5 => { r6 = 18446744073709551615u64; pc = 6; }
-        6 => { pc = 37; }
+        6 => { pc = 41; }
         7 => { r7 = (r3 as i64).wrapping_add(8) as u64; pc = 8; }
         8 => { r17 = r7; r7 = u64::MAX; pc = 9; }
         9 => { r7 = f38(arena, &[r17])?; pc = 10; }
@@ -1462,7 +1537,7 @@ fn f56(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         16 => { r10 = if (r1 as i64) >= (r7 as i64) { 1 } else { 0 }; pc = 17; }
         17 => { if r10 == 0 { pc = 20; } else { pc = 18; } }
         18 => { r12 = 18446744073709551615u64; pc = 19; }
-        19 => { pc = 35; }
+        19 => { pc = 39; }
         20 => { r17 = r3; pc = 21; }
         21 => { r18 = r7; pc = 22; }
         22 => { r13 = f41(arena, &[r17, r18])?; pc = 23; }
@@ -1477,14 +1552,18 @@ fn f56(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         31 => { pc = 32; }
         32 => { core_poke(arena, r17, r18, 8)?; r13 = 0; pc = 33; }
         33 => { pc = 34; }
-        34 => { r12 = 0u64; pc = 35; }
-        35 => { r6 = r12; pc = 36; }
-        36 => { pc = 37; }
-        37 => { return Ok(r6); }
+        34 => { r17 = r3; pc = 35; }
+        35 => { r18 = r1; pc = 36; }
+        36 => { r13 = f48(arena, &[r17, r18])?; pc = 37; }
+        37 => { pc = 38; }
+        38 => { r12 = 0u64; pc = 39; }
+        39 => { r6 = r12; pc = 40; }
+        40 => { pc = 41; }
+        41 => { return Ok(r6); }
         _ => return Ok(r0),
     } }
 }
-fn f57(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f58(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -1584,7 +1663,7 @@ fn f57(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-fn f58(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f59(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -1654,7 +1733,7 @@ fn f58(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-fn f59(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
+fn f60(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
     let mut r1: u64 = 0;
     let mut r2: u64 = 0;
@@ -1726,7 +1805,7 @@ fn f59(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         22 => { r8 = if (r6 as i64) == (r7 as i64) { 1 } else { 0 }; pc = 23; }
         23 => { if r8 == 0 { pc = 29; } else { pc = 24; } }
         24 => { r11 = r1; pc = 25; }
-        25 => { r10 = f54(arena, &[r11])?; pc = 26; }
+        25 => { r10 = f55(arena, &[r11])?; pc = 26; }
         26 => { pc = 27; }
         27 => { r9 = 1u64; pc = 28; }
         28 => { pc = 30; }
@@ -1736,10 +1815,10 @@ fn f59(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
         _ => return Ok(r0),
     } }
 }
-pub fn core_init(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f51(arena, &[a0]) }
-pub fn alloc(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f53(arena, &[a0]) }
-pub fn cell_get(arena: &mut [u8], a0: u64, a1: u64) -> Result<u64, &'static str> { f55(arena, &[a0, a1]) }
-pub fn cell_set(arena: &mut [u8], a0: u64, a1: u64, a2: u64) -> Result<u64, &'static str> { f56(arena, &[a0, a1, a2]) }
-pub fn cell_set_child(arena: &mut [u8], a0: u64, a1: u64, a2: u64) -> Result<u64, &'static str> { f57(arena, &[a0, a1, a2]) }
-pub fn rc_inc(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f58(arena, &[a0]) }
-pub fn rc_dec(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f59(arena, &[a0]) }
+pub fn core_init(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f52(arena, &[a0]) }
+pub fn alloc(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f54(arena, &[a0]) }
+pub fn cell_get(arena: &mut [u8], a0: u64, a1: u64) -> Result<u64, &'static str> { f56(arena, &[a0, a1]) }
+pub fn cell_set(arena: &mut [u8], a0: u64, a1: u64, a2: u64) -> Result<u64, &'static str> { f57(arena, &[a0, a1, a2]) }
+pub fn cell_set_child(arena: &mut [u8], a0: u64, a1: u64, a2: u64) -> Result<u64, &'static str> { f58(arena, &[a0, a1, a2]) }
+pub fn rc_inc(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f59(arena, &[a0]) }
+pub fn rc_dec(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f60(arena, &[a0]) }
