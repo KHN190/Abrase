@@ -67,7 +67,7 @@ impl Type {
             }
             Type::Shared { .. } => Ownership::Share,
             Type::Function { .. } => Ownership::Copy,
-            Type::Named(name) if name == "Share" => Ownership::Copy,
+            Type::Named(name) if name == "Share" || name == "Addr" => Ownership::Copy,
             Type::Named(_) => Ownership::Move,
             // Conservative: treat Unknown as Copy to avoid spurious moves before inference.
             Type::Unknown => Ownership::Copy,

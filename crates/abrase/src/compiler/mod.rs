@@ -107,6 +107,7 @@ pub struct Compiler {
     pub(super) remaining_uses: HashMap<String, usize>,
     pub(super) int32_mode: bool,
     pub(super) no_built_in: bool,
+    pub(super) allow_no_main: bool,
     pub(super) drop_elision: bool,
     pub(super) inline: bool,
     pub(super) copy_coalesce: bool,
@@ -191,6 +192,7 @@ impl Compiler {
             remaining_uses: HashMap::new(),
             int32_mode: false,
             no_built_in: false,
+            allow_no_main: false,
             drop_elision: true,
             inline: true,
             copy_coalesce: true,
@@ -223,6 +225,13 @@ impl Compiler {
 
     pub fn with_source(mut self, source: String) -> Self {
         self.source = source;
+        self
+    }
+
+    // Core libraries (`<core>` runtime primitives) export functions but have no
+    // `main`; they are driven via `call_export`, never run as a cart.
+    pub fn with_lib(mut self, on: bool) -> Self {
+        self.allow_no_main = on;
         self
     }
 
@@ -431,6 +440,7 @@ impl Compiler {
 
         let entry = match self.func_map.get("main").copied() {
             Some(idx) => idx,
+            None if self.allow_no_main => usize::MAX,
             None => {
                 self.errors.push(Error::new(
                     ErrorCode::CodegenError, ast::Span::new(0, 0), "No main function found",

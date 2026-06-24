@@ -26,7 +26,7 @@ impl Compiler {
 
 pub(in crate::compiler) fn type_is_unboxed(ty: &ast::Type) -> bool {
     match ty {
-        ast::Type::Named(n) => matches!(n.as_str(), "Int" | "Float" | "Bool" | "Char"),
+        ast::Type::Named(n) => matches!(n.as_str(), "Int" | "Float" | "Bool" | "Char" | "Addr"),
         ast::Type::Tuple(items) => items.is_empty(),
         _ => false,
     }

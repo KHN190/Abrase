@@ -54,6 +54,16 @@ impl Compiler {
         // System
         self.register_typed_native("halt",  vec![i.clone()], u.clone(), 1);
         self.register_typed_native("abort", vec![s.clone()], u.clone(), 1);
+        // <core> raw-memory intrinsics (Addr = unboxed, no RC)
+        let addr = TyType::Named("Addr".into());
+        for name in &["__peek8", "__peek32", "__peek64"] {
+            self.register_typed_native(name, vec![addr.clone()], i.clone(), 1);
+        }
+        for name in &["__poke8", "__poke32", "__poke64"] {
+            self.register_typed_native(name, vec![addr.clone(), i.clone()], u.clone(), 2);
+        }
+        self.register_typed_native("__ptr_add", vec![addr.clone(), i.clone()], addr.clone(), 2);
+        self.register_typed_native("__arena_base", vec![], addr.clone(), 0);
     }
 
     pub(super) fn register_frame_present_native(&mut self) {
@@ -216,6 +226,17 @@ impl Compiler {
                 effects: vec![],
             },
         );
+        // `<core>` is abrase's `unsafe`: raw-memory intrinsics produce it. Declared
+        // here so it propagates, but NOT a native capability — a normal cart that
+        // reaches it stays impure and fails. Only core-lib compilation provides it.
+        checker.register_effect("core".into(), vec![]);
+        let core = vec![ast::EffectItem { name: vec!["core".into()], arg: None }];
+        for name in &[
+            "__peek8", "__peek32", "__peek64",
+            "__poke8", "__poke32", "__poke64", "__ptr_add", "__arena_base",
+        ] {
+            checker.register_function_effects_no_capability(name.to_string(), core.clone());
+        }
     }
 
     pub(super) fn seed_builtin_method_dispatch(

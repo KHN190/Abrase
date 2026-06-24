@@ -4,6 +4,11 @@ use crate::ast::{Span, Spanned};
 use crate::ty::{Ownership, Type};
 use super::*;
 
+fn is_core_scalar(t: &Type) -> bool {
+    matches!(t, Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit)
+        || matches!(t, Type::Named(n) if n == "Addr")
+}
+
 impl Checker {
 
     pub fn check_program(&mut self, decls: &[ast::Decl]) {
@@ -62,6 +67,22 @@ impl Checker {
                             format!("`main` function must be pure (no effects); found: {}",
                                 fn_decl.effects.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
                             ast::Span { line: 0, col: 0 }
+                        );
+                    }
+                }
+
+                let is_core = effects.iter()
+                    .any(|e| matches!(e, crate::ty::Effect::UserEffect(n) if n == "core"));
+                if is_core {
+                    let bad = params.iter().chain(std::iter::once(&*ret))
+                        .any(|t| !is_core_scalar(t));
+                    if bad {
+                        self.report_error(
+                            format!("`<core>` function `{}` may only take and return unboxed \
+                                     scalars (Int/Float/Bool/Char/Unit/Addr); a handle value \
+                                     would make the compiler emit RC into core code",
+                                fn_decl.name),
+                            ast::Span { line: 0, col: 0 },
                         );
                     }
                 }
@@ -312,6 +333,101 @@ impl Checker {
         }
     }
 
+    fn lookup_fn_ret(&self, name: &str) -> Option<Type> {
+        for s in self.scopes.iter().rev() {
+            if let Some(m) = s.vars.get(name) {
+                if let Type::Function { ret, .. } = &m.ty {
+                    return Some((**ret).clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn check_core_body(&mut self, block: &ast::Block) {
+        for stmt in &block.stmts {
+            match &stmt.node {
+                ast::Stmt::Let { value, .. } => self.core_check_expr(value),
+                ast::Stmt::Expr(e) => self.core_check_expr(e),
+                ast::Stmt::Empty => {}
+            }
+        }
+        if let Some(ret) = &block.ret {
+            self.core_check_expr(ret);
+        }
+    }
+
+    fn core_check_expr(&mut self, e: &ast::Spanned<ast::Expr>) {
+        use ast::Expr::*;
+        let forbid = |me: &mut Self, what: &str| {
+            me.report_error(
+                format!("`<core>` code may not use {} (it would create a heap handle and \
+                         make the compiler emit RC into core)", what),
+                e.span,
+            );
+        };
+        match &e.node {
+            Literal(ast::Literal::String(_)) | Literal(ast::Literal::StringInterp(_)) => forbid(self, "string values"),
+            Array(_) | ArrayRepeat { .. } => forbid(self, "arrays"),
+            Record { .. } => forbid(self, "records"),
+            Variant { .. } => forbid(self, "variant constructors"),
+            Tuple(items) if !items.is_empty() => forbid(self, "tuples"),
+            Closure { .. } => forbid(self, "closures"),
+            Region { .. } => forbid(self, "region blocks"),
+            Handle { .. } => forbid(self, "handle blocks"),
+            Throw(_) => forbid(self, "throw"),
+            Resume(_) => forbid(self, "resume"),
+            Question(_) => forbid(self, "the `?` operator"),
+            Call { callee, .. } => {
+                if let ast::Expr::Identifier(name) = &callee.node {
+                    if let Some(ret) = self.lookup_fn_ret(name) {
+                        if !is_core_scalar(&ret) {
+                            self.report_error(
+                                format!("`<core>` code may not call `{}`: it returns a heap handle", name),
+                                e.span,
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.core_check_children(e);
+    }
+
+    fn core_check_children(&mut self, e: &ast::Spanned<ast::Expr>) {
+        use ast::Expr::*;
+        match &e.node {
+            Binary { left, right, .. } => { self.core_check_expr(left); self.core_check_expr(right); }
+            Unary { right, .. } => self.core_check_expr(right),
+            Call { callee, args } => { self.core_check_expr(callee); for a in args { self.core_check_expr(a); } }
+            Index { base, index } => { self.core_check_expr(base); self.core_check_expr(index); }
+            Block(b) => self.check_core_body(b),
+            If { condition, consequence, alternative } => {
+                self.core_check_expr(condition);
+                self.core_check_expr(consequence);
+                if let Some(a) = alternative { self.core_check_expr(a); }
+            }
+            Match { scrutinee, arms } => {
+                self.core_check_expr(scrutinee);
+                for arm in arms { self.core_check_expr(&arm.body); }
+            }
+            For { iter, body, .. } => { self.core_check_expr(iter); self.check_core_body(body); }
+            While { condition, body } => { self.core_check_expr(condition); self.check_core_body(body); }
+            Loop { body } => self.check_core_body(body),
+            Break(Some(v)) => self.core_check_expr(v),
+            Return(Some(v)) => self.core_check_expr(v),
+            Paren(inner) => self.core_check_expr(inner),
+            Tuple(items) | Array(items) => { for it in items { self.core_check_expr(it); } }
+            FieldAccess { base, .. } => self.core_check_expr(base),
+            Range { start, end, .. } => {
+                if let Some(s) = start { self.core_check_expr(s); }
+                if let Some(en) = end { self.core_check_expr(en); }
+            }
+            _ => {}
+        }
+    }
+
     pub fn check_fn_decl(&mut self, fn_decl: &ast::FnDecl) {
         // Register generics and enforce where clause bounds.
         // type_args is empty at definition time; abstract generic vars are skipped.
@@ -377,6 +493,12 @@ impl Checker {
                     span,
                 );
             }
+        }
+
+        let is_core = self.fn_declared_effects.iter()
+            .any(|e| matches!(e, crate::ty::Effect::UserEffect(n) if n == "core"));
+        if is_core {
+            self.check_core_body(&fn_decl.body);
         }
 
         // Effect declaration check: every required effect produced by the body
