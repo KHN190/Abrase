@@ -81,127 +81,228 @@ pub fn transpile_core(module: &Module) -> Result<String, TranspileError> {
     Ok(out)
 }
 
-fn emit_core_fn(
-    out: &mut String,
-    idx: usize,
-    bc: &BytecodeChunk,
-    param_counts: &[usize],
-    module: &Module,
-) -> Result<(), TranspileError> {
+use std::collections::{BTreeMap, BTreeSet};
+
+enum Term { Goto(usize), Br { cond: String, t: usize, f: usize }, Ret(String) }
+struct CBlock { body: String, term: Term }
+
+fn term_succ(t: &Term) -> Vec<usize> {
+    match t { Term::Goto(a) => vec![*a], Term::Br { t, f, .. } => vec![*t, *f], Term::Ret(_) => vec![] }
+}
+
+fn emit_core_fn(out: &mut String, idx: usize, bc: &BytecodeChunk, param_counts: &[usize], module: &Module) -> Result<(), TranspileError> {
     let _ = write!(out, "fn f{}(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {{\n", idx);
     let nregs = bc.reg_count + crate::STAGE_SLACK;
-    for r in 0..nregs {
-        let _ = write!(out, "    let mut r{}: u64 = 0;\n", r);
-    }
-    for j in 0..param_counts[idx] {
-        let _ = write!(out, "    r{} = a[{}];\n", j, j);
-    }
-    out.push_str("    let mut pc: usize = 0;\n    loop { match pc {\n");
+    for r in 0..nregs { let _ = write!(out, "    let mut r{}: u64 = 0;\n", r); }
+    for j in 0..param_counts[idx] { let _ = write!(out, "    r{} = a[{}];\n", j, j); }
+    out.push_str("    let mut __lbl: usize = 0; let _ = &mut __lbl;\n");
 
-    // Basic-block emission: one match arm per block (leader = branch target /
-    // fallthrough). Straight-line ops chain into the arm; their intermediate
-    // `pc =` writes are dead and LLVM removes them, recovering native branches.
     let len = bc.code.len();
     let leaders = crate::block_leaders(&bc.code, None);
-    let mut i = 0;
-    while i < len {
+    let block_ids: Vec<usize> = (0..len).filter(|&i| leaders[i]).collect();
+    let block_ids = if block_ids.is_empty() { vec![0] } else { block_ids };
+
+    let mut blocks: BTreeMap<usize, CBlock> = BTreeMap::new();
+    for (bi, &start) in block_ids.iter().enumerate() {
+        let end = block_ids.get(bi + 1).copied().unwrap_or(len);
         let mut body = String::new();
-        let mut j = i;
-        loop {
-            body.push_str(&emit_core_op(j, &bc.code[j], j as isize + 1, bc.reg_count, param_counts, module, &bc.constants, len)?);
-            body.push(' ');
-            j += 1;
-            if j >= len || leaders[j] { break; }
+        let mut term = Term::Goto(end);
+        let mut body_end = end;
+        if end > start {
+            match &bc.code[end - 1] {
+                OpCode::Jmp(off) => { term = Term::Goto(jtgt(end - 1, *off, len)); body_end = end - 1; }
+                OpCode::Jz(c, off) => { term = Term::Br { cond: format!("r{} == 0", c.0), t: jtgt(end - 1, *off, len), f: end }; body_end = end - 1; }
+                OpCode::Jnz(c, off) => { term = Term::Br { cond: format!("r{} != 0", c.0), t: jtgt(end - 1, *off, len), f: end }; body_end = end - 1; }
+                OpCode::Ret(r) => { term = Term::Ret(reg(*r)); body_end = end - 1; }
+                _ => {}
+            }
         }
-        let _ = write!(out, "        {} => {{ {} }}\n", i, body);
-        i = j;
+        for j in start..body_end {
+            let s = emit_core_op(&bc.code[j], bc.reg_count, param_counts, module, &bc.constants)?;
+            if !s.is_empty() { body.push_str(&s); body.push(' '); }
+        }
+        if let Term::Goto(t) = term { if t >= len { term = Term::Ret("r0".into()); } }
+        blocks.insert(start, CBlock { body, term });
     }
-    out.push_str("        _ => return Ok(r0),\n    } }\n}\n");
+
+    let mut rl = Reloop { blocks: &blocks, lbl: 0 };
+    let all: BTreeSet<usize> = block_ids.iter().cloned().collect();
+    let mut entry = BTreeSet::new();
+    entry.insert(block_ids[0]);
+    rl.process(&entry, &all, out, &BTreeMap::new());
+    out.push_str("    #[allow(unreachable_code)] { return Ok(r0); }\n}\n");
     Ok(())
 }
 
-fn set(d: Register, expr: String, next: isize) -> String {
-    format!("{} = {}; pc = {};", reg(d), expr, next)
+fn jtgt(i: usize, off: i16, len: usize) -> usize {
+    let t = target(i, off);
+    if t < 0 { len } else { t as usize }
 }
 
-fn emit_core_op(
-    i: usize,
-    op: &OpCode,
-    next: isize,
-    reg_count: usize,
-    param_counts: &[usize],
-    module: &Module,
-    constants: &[u64],
-    len: usize,
-) -> Result<String, TranspileError> {
+// Relooper: reducible CFG -> structured Rust. `breaks` maps a target reached from
+// an enclosing scope to its continue/break statement; such edges are excluded
+// from the local CFG so loop bodies become acyclic and recursion terminates.
+struct Reloop<'a> { blocks: &'a BTreeMap<usize, CBlock>, lbl: usize }
+
+impl<'a> Reloop<'a> {
+    fn lsucc(&self, b: usize, breaks: &BTreeMap<usize, String>) -> Vec<usize> {
+        term_succ(&self.blocks[&b].term).into_iter().filter(|s| !breaks.contains_key(s)).collect()
+    }
+    fn forward(&self, entries: &BTreeSet<usize>, set: &BTreeSet<usize>, breaks: &BTreeMap<usize, String>) -> BTreeSet<usize> {
+        let mut seen = BTreeSet::new();
+        let mut stk: Vec<usize> = entries.iter().cloned().filter(|e| set.contains(e)).collect();
+        while let Some(b) = stk.pop() {
+            if !seen.insert(b) { continue; }
+            for s in self.lsucc(b, breaks) { if set.contains(&s) { stk.push(s); } }
+        }
+        seen
+    }
+    fn coreach(&self, targets: &BTreeSet<usize>, set: &BTreeSet<usize>, breaks: &BTreeMap<usize, String>) -> BTreeSet<usize> {
+        let mut res: BTreeSet<usize> = targets.iter().cloned().filter(|t| set.contains(t)).collect();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &b in set {
+                if res.contains(&b) { continue; }
+                if self.lsucc(b, breaks).iter().any(|s| res.contains(s)) { res.insert(b); changed = true; }
+            }
+        }
+        res
+    }
+    fn jump_to(&self, t: usize, ne: &BTreeSet<usize>, breaks: &BTreeMap<usize, String>) -> String {
+        if let Some(s) = breaks.get(&t) { format!("{};", s) }
+        else if ne.contains(&t) { if ne.len() == 1 { String::new() } else { format!("__lbl = {};", t) } }
+        else { String::new() }
+    }
+    fn emit_term(&self, b: usize, ne: &BTreeSet<usize>, breaks: &BTreeMap<usize, String>, out: &mut String) {
+        match &self.blocks[&b].term {
+            Term::Ret(e) => { let _ = write!(out, "return Ok({});\n", e); }
+            Term::Goto(t) => { let j = self.jump_to(*t, ne, breaks); if !j.is_empty() { out.push_str(&j); out.push('\n'); } }
+            Term::Br { cond, t, f } => {
+                let jt = self.jump_to(*t, ne, breaks);
+                let jf = self.jump_to(*f, ne, breaks);
+                if !(jt.is_empty() && jf.is_empty()) { let _ = write!(out, "if {} {{ {} }} else {{ {} }}\n", cond, jt, jf); }
+            }
+        }
+    }
+    fn process(&mut self, entries: &BTreeSet<usize>, set: &BTreeSet<usize>, out: &mut String, breaks: &BTreeMap<usize, String>) {
+        if entries.is_empty() { return; }
+        let reach = self.forward(entries, set, breaks);
+        if reach.is_empty() { return; }
+        let has_back = entries.iter().any(|&e| {
+            let succ: BTreeSet<usize> = self.lsucc(e, breaks).into_iter().filter(|s| reach.contains(s)).collect();
+            self.forward(&succ, &reach, breaks).contains(&e)
+        });
+        if has_back {
+            let mut inner = self.coreach(entries, &reach, breaks);
+            for &e in entries { inner.insert(e); }
+            let next: BTreeSet<usize> = reach.difference(&inner).cloned().collect();
+            let next_entries: BTreeSet<usize> = inner.iter().flat_map(|&b| self.lsucc(b, breaks)).filter(|s| next.contains(s)).collect();
+            let id = self.lbl; self.lbl += 1;
+            let mut ib = breaks.clone();
+            for &e in entries { ib.insert(e, format!("continue 'l{}", id)); }
+            for &n in &next_entries { ib.insert(n, format!("break 'l{}", id)); }
+            let _ = write!(out, "'l{}: loop {{\n", id);
+            self.process(entries, &inner, out, &ib);
+            let _ = write!(out, "break 'l{};\n}}\n", id);
+            self.process(&next_entries, &next, out, breaks);
+            return;
+        }
+        if entries.len() == 1 {
+            let e = *entries.iter().next().unwrap();
+            out.push_str(&self.blocks[&e].body); out.push('\n');
+            let rest: BTreeSet<usize> = reach.iter().filter(|&&b| b != e).cloned().collect();
+            let ne: BTreeSet<usize> = self.lsucc(e, breaks).into_iter().filter(|s| rest.contains(s)).collect();
+            self.emit_term(e, &ne, breaks, out);
+            self.process(&ne, &rest, out, breaks);
+            return;
+        }
+        // Only handle entries that no other entry can reach; entries reachable
+        // from a sibling flow through `next` (after the dispatch), never as a
+        // sibling arm (the `match` runs once, so a late `__lbl` set is missed).
+        let mut next_entries: BTreeSet<usize> = BTreeSet::new();
+        let mut owned_all: BTreeSet<usize> = BTreeSet::new();
+        let mut regions: Vec<(usize, BTreeSet<usize>)> = Vec::new();
+        for &e in entries {
+            let others: BTreeSet<usize> = entries.iter().cloned().filter(|&x| x != e).collect();
+            let from_others = self.forward(&others, &reach, breaks);
+            if from_others.contains(&e) { next_entries.insert(e); continue; }
+            let mut es = BTreeSet::new(); es.insert(e);
+            let owned: BTreeSet<usize> = self.forward(&es, &reach, breaks).into_iter().filter(|b| !from_others.contains(b) || *b == e).collect();
+            for &b in &owned { owned_all.insert(b); }
+            regions.push((e, owned));
+        }
+        let _ = write!(out, "match __lbl {{\n");
+        for (e, owned) in regions {
+            let _ = write!(out, "{} => {{\n", e);
+            let exits: BTreeSet<usize> = owned.iter().flat_map(|&b| self.lsucc(b, breaks)).filter(|s| !owned.contains(s) && reach.contains(s)).collect();
+            for &x in &exits { next_entries.insert(x); }
+            let mut mb = breaks.clone();
+            for &x in &exits { mb.insert(x, format!("__lbl = {}", x)); }
+            let mut sub = BTreeSet::new(); sub.insert(e);
+            self.process(&sub, &owned, out, &mb);
+            out.push_str("}\n");
+        }
+        out.push_str("_ => {}\n}\n");
+        let next: BTreeSet<usize> = reach.difference(&owned_all).cloned().collect();
+        self.process(&next_entries, &next, out, breaks);
+    }
+}
+
+fn emit_core_op(op: &OpCode, reg_count: usize, param_counts: &[usize], module: &Module, constants: &[u64]) -> Result<String, TranspileError> {
     let bin = |a: Register, b: Register, m: &str| format!("({} as i64).{}({} as i64) as u64", reg(a), m, reg(b));
     let cmp = |a: Register, b: Register, o: &str| format!("if ({} as i64) {} ({} as i64) {{ 1 }} else {{ 0 }}", reg(a), o, reg(b));
+    let asg = |d: Register, e: String| format!("{} = {};", reg(d), e);
     let s = match op {
-        OpCode::Add(d, a, b) => set(*d, bin(*a, *b, "wrapping_add"), next),
-        OpCode::Sub(d, a, b) => set(*d, bin(*a, *b, "wrapping_sub"), next),
-        OpCode::Mul(d, a, b) => set(*d, bin(*a, *b, "wrapping_mul"), next),
-        OpCode::Div(d, a, b) => format!("{} = match ({} as i64).checked_div({} as i64) {{ Some(v) => v as u64, None => return Err(\"div by zero\") }}; pc = {};", reg(*d), reg(*a), reg(*b), next),
-        OpCode::Mod(d, a, b) => format!("{} = match ({} as i64).checked_rem({} as i64) {{ Some(v) => v as u64, None => return Err(\"mod by zero\") }}; pc = {};", reg(*d), reg(*a), reg(*b), next),
-        OpCode::Neg(d, a) => set(*d, format!("({} as i64).wrapping_neg() as u64", reg(*a)), next),
-        OpCode::AddImm(d, a, imm) => set(*d, format!("({} as i64).wrapping_add({}) as u64", reg(*a), *imm as i64), next),
-        OpCode::SubImm(d, a, imm) => set(*d, format!("({} as i64).wrapping_sub({}) as u64", reg(*a), *imm as i64), next),
-        OpCode::Eq(d, a, b) => set(*d, cmp(*a, *b, "=="), next),
-        OpCode::Neq(d, a, b) => set(*d, cmp(*a, *b, "!="), next),
-        OpCode::Lt(d, a, b) => set(*d, cmp(*a, *b, "<"), next),
-        OpCode::Gt(d, a, b) => set(*d, cmp(*a, *b, ">"), next),
-        OpCode::Lte(d, a, b) => set(*d, cmp(*a, *b, "<="), next),
-        OpCode::Gte(d, a, b) => set(*d, cmp(*a, *b, ">="), next),
-        OpCode::And(d, a, b) => set(*d, format!("{} & {}", reg(*a), reg(*b)), next),
-        OpCode::Or(d, a, b) => set(*d, format!("{} | {}", reg(*a), reg(*b)), next),
-        OpCode::Xor(d, a, b) => set(*d, format!("{} ^ {}", reg(*a), reg(*b)), next),
-        OpCode::Shl(d, a, b) => set(*d, format!("({} as i64).wrapping_shl(({} as u32) & 63) as u64", reg(*a), reg(*b)), next),
-        OpCode::Shr(d, a, b) => set(*d, format!("({} as i64).wrapping_shr(({} as u32) & 63) as u64", reg(*a), reg(*b)), next),
-        OpCode::PushConst(d, ci) => {
-            let v = constants.get(*ci as usize).copied().unwrap_or(0);
-            set(*d, format!("{}u64", v), next)
-        }
-        OpCode::Copy(d, a) => set(*d, reg(*a), next),
-        OpCode::Move(d, a) => format!("{} = {}; {} = u64::MAX; pc = {};", reg(*d), reg(*a), reg(*a), next),
-        OpCode::Jmp(off) => format!("pc = {};", jt(i, *off, len)),
-        OpCode::Jz(c, off) => format!("if {} == 0 {{ pc = {}; }} else {{ pc = {}; }}", reg(*c), jt(i, *off, len), next),
-        OpCode::Jnz(c, off) => format!("if {} != 0 {{ pc = {}; }} else {{ pc = {}; }}", reg(*c), jt(i, *off, len), next),
-        OpCode::Ret(r) => format!("return Ok({});", reg(*r)),
-        OpCode::Drop(_) => format!("pc = {};", next),
-        // Region push/pop scaffolding around scopes. Core holds no handles, so
-        // every region operation is a no-op (nothing to track or reclaim).
-        OpCode::Deo(_, _) => format!("pc = {};", next),
+        OpCode::Add(d, a, b) => asg(*d, bin(*a, *b, "wrapping_add")),
+        OpCode::Sub(d, a, b) => asg(*d, bin(*a, *b, "wrapping_sub")),
+        OpCode::Mul(d, a, b) => asg(*d, bin(*a, *b, "wrapping_mul")),
+        OpCode::Div(d, a, b) => format!("{} = match ({} as i64).checked_div({} as i64) {{ Some(v) => v as u64, None => return Err(\"div by zero\") }};", reg(*d), reg(*a), reg(*b)),
+        OpCode::Mod(d, a, b) => format!("{} = match ({} as i64).checked_rem({} as i64) {{ Some(v) => v as u64, None => return Err(\"mod by zero\") }};", reg(*d), reg(*a), reg(*b)),
+        OpCode::Neg(d, a) => asg(*d, format!("({} as i64).wrapping_neg() as u64", reg(*a))),
+        OpCode::AddImm(d, a, imm) => asg(*d, format!("({} as i64).wrapping_add({}) as u64", reg(*a), *imm as i64)),
+        OpCode::SubImm(d, a, imm) => asg(*d, format!("({} as i64).wrapping_sub({}) as u64", reg(*a), *imm as i64)),
+        OpCode::Eq(d, a, b) => asg(*d, cmp(*a, *b, "==")),
+        OpCode::Neq(d, a, b) => asg(*d, cmp(*a, *b, "!=")),
+        OpCode::Lt(d, a, b) => asg(*d, cmp(*a, *b, "<")),
+        OpCode::Gt(d, a, b) => asg(*d, cmp(*a, *b, ">")),
+        OpCode::Lte(d, a, b) => asg(*d, cmp(*a, *b, "<=")),
+        OpCode::Gte(d, a, b) => asg(*d, cmp(*a, *b, ">=")),
+        OpCode::And(d, a, b) => asg(*d, format!("{} & {}", reg(*a), reg(*b))),
+        OpCode::Or(d, a, b) => asg(*d, format!("{} | {}", reg(*a), reg(*b))),
+        OpCode::Xor(d, a, b) => asg(*d, format!("{} ^ {}", reg(*a), reg(*b))),
+        OpCode::Shl(d, a, b) => asg(*d, format!("({} as i64).wrapping_shl(({} as u32) & 63) as u64", reg(*a), reg(*b))),
+        OpCode::Shr(d, a, b) => asg(*d, format!("({} as i64).wrapping_shr(({} as u32) & 63) as u64", reg(*a), reg(*b))),
+        OpCode::PushConst(d, ci) => asg(*d, format!("{}u64", constants.get(*ci as usize).copied().unwrap_or(0))),
+        OpCode::Copy(d, a) => asg(*d, reg(*a)),
+        OpCode::Move(d, a) => format!("{} = {}; {} = u64::MAX;", reg(*d), reg(*a), reg(*a)),
+        OpCode::Drop(_) | OpCode::Deo(_, _) => String::new(),
         OpCode::Call(dest, fn_id) => {
             let fid = *fn_id as usize;
             let k = *param_counts.get(fid).ok_or_else(|| TranspileError::Unsupported(format!("call to unknown fn {}", fid)))?;
             let args: Vec<String> = (0..k).map(|j| reg(Register((reg_count + j) as u8))).collect();
-            if let Some(name) = intrinsic_name(module, fid) {
-                emit_intrinsic(*dest, name, &args, next)?
-            } else {
-                format!("{} = f{}(arena, &[{}])?; pc = {};", reg(*dest), fid, args.join(", "), next)
-            }
+            if let Some(name) = intrinsic_name(module, fid) { emit_intrinsic(*dest, name, &args)? }
+            else { format!("{} = f{}(arena, &[{}])?;", reg(*dest), fid, args.join(", ")) }
         }
+        OpCode::Jmp(_) | OpCode::Jz(_, _) | OpCode::Jnz(_, _) | OpCode::Ret(_) => String::new(),
         other => return Err(TranspileError::Unsupported(format!("core op {:?}", other))),
     };
     Ok(s)
 }
 
-fn jt(i: usize, off: i16, len: usize) -> String {
-    let t = target(i, off);
-    if t < 0 || t > len as isize { "usize::MAX".to_string() } else { format!("{}", t) }
-}
-
-fn emit_intrinsic(dest: Register, name: &str, args: &[String], next: isize) -> Result<String, TranspileError> {
+fn emit_intrinsic(dest: Register, name: &str, args: &[String]) -> Result<String, TranspileError> {
     let d = reg(dest);
     let s = match name {
-        "__peek8" => format!("{} = core_peek(arena, {}, 1)?; pc = {};", d, args[0], next),
-        "__peek32" => format!("{} = core_peek(arena, {}, 4)?; pc = {};", d, args[0], next),
-        "__peek64" => format!("{} = core_peek(arena, {}, 8)?; pc = {};", d, args[0], next),
-        "__poke8" => format!("core_poke(arena, {}, {}, 1)?; {} = 0; pc = {};", args[0], args[1], d, next),
-        "__poke32" => format!("core_poke(arena, {}, {}, 4)?; {} = 0; pc = {};", args[0], args[1], d, next),
-        "__poke64" => format!("core_poke(arena, {}, {}, 8)?; {} = 0; pc = {};", args[0], args[1], d, next),
-        "__ptr_add" => format!("{} = {}.wrapping_add({}); pc = {};", d, args[0], args[1], next),
-        "__arena_base" => format!("{} = 0; pc = {};", d, next),
+        "__peek8" => format!("{} = core_peek(arena, {}, 1)?;", d, args[0]),
+        "__peek32" => format!("{} = core_peek(arena, {}, 4)?;", d, args[0]),
+        "__peek64" => format!("{} = core_peek(arena, {}, 8)?;", d, args[0]),
+        "__poke8" => format!("core_poke(arena, {}, {}, 1)?; {} = 0;", args[0], args[1], d),
+        "__poke32" => format!("core_poke(arena, {}, {}, 4)?; {} = 0;", args[0], args[1], d),
+        "__poke64" => format!("core_poke(arena, {}, {}, 8)?; {} = 0;", args[0], args[1], d),
+        "__ptr_add" => format!("{} = {}.wrapping_add({});", d, args[0], args[1]),
+        "__arena_base" => format!("{} = 0;", d),
         other => return Err(TranspileError::Unsupported(format!("core intrinsic {}", other))),
     };
     Ok(s)
 }
+

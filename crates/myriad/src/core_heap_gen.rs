@@ -57,11 +57,10 @@ fn f38(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r32: u64 = 0;
     let mut r33: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r1 = 0; pc = 1; r2 = r1; r1 = u64::MAX; pc = 2; r3 = r0; pc = 3; pc = 4; r1 = r2.wrapping_add(r3); pc = 5; return Ok(r1);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r1 = 0; r2 = r1; r1 = u64::MAX; r3 = r0; r1 = r2.wrapping_add(r3); 
+return Ok(r1);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f39(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -101,11 +100,10 @@ fn f39(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r34: u64 = 0;
     let mut r35: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r1 = (r0 as i64).wrapping_add(63) as u64; pc = 1; r2 = 64u64; pc = 2; r3 = match (r1 as i64).checked_div(r2 as i64) { Some(v) => v as u64, None => return Err("div by zero") }; pc = 3; return Ok(r3);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r1 = (r0 as i64).wrapping_add(63) as u64; r2 = 64u64; r3 = match (r1 as i64).checked_div(r2 as i64) { Some(v) => v as u64, None => return Err("div by zero") }; 
+return Ok(r3);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f40(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -150,11 +148,10 @@ fn f40(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r39: u64 = 0;
     let mut r40: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r1 = 24u64; pc = 1; r9 = r0; pc = 2; r2 = f39(arena, &[r9])?; pc = 3; r3 = 8u64; pc = 4; r4 = (r2 as i64).wrapping_mul(r3 as i64) as u64; pc = 5; r5 = (r1 as i64).wrapping_add(r4 as i64) as u64; pc = 6; r6 = 8u64; pc = 7; r7 = (r0 as i64).wrapping_mul(r6 as i64) as u64; pc = 8; r8 = (r5 as i64).wrapping_add(r7 as i64) as u64; pc = 9; return Ok(r8);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r1 = 24u64; r9 = r0; r2 = f39(arena, &[r9])?; r3 = 8u64; r4 = (r2 as i64).wrapping_mul(r3 as i64) as u64; r5 = (r1 as i64).wrapping_add(r4 as i64) as u64; r6 = 8u64; r7 = (r0 as i64).wrapping_mul(r6 as i64) as u64; r8 = (r5 as i64).wrapping_add(r7 as i64) as u64; 
+return Ok(r8);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f41(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -199,11 +196,10 @@ fn f41(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r39: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r2 = 24u64; pc = 1; r3 = (r0 as i64).wrapping_add(r2 as i64) as u64; pc = 2; r8 = r1; pc = 3; r4 = f39(arena, &[r8])?; pc = 4; r5 = 8u64; pc = 5; r6 = (r4 as i64).wrapping_mul(r5 as i64) as u64; pc = 6; r7 = (r3 as i64).wrapping_add(r6 as i64) as u64; pc = 7; return Ok(r7);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r2 = 24u64; r3 = (r0 as i64).wrapping_add(r2 as i64) as u64; r8 = r1; r4 = f39(arena, &[r8])?; r5 = 8u64; r6 = (r4 as i64).wrapping_mul(r5 as i64) as u64; r7 = (r3 as i64).wrapping_add(r6 as i64) as u64; 
+return Ok(r7);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f42(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -247,11 +243,10 @@ fn f42(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r38: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r2 = 24u64; pc = 1; r3 = (r0 as i64).wrapping_shl((r2 as u32) & 63) as u64; pc = 2; r4 = 16777215u64; pc = 3; r5 = r1 & r4; pc = 4; r6 = r3 | r5; pc = 5; return Ok(r6);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r2 = 24u64; r3 = (r0 as i64).wrapping_shl((r2 as u32) & 63) as u64; r4 = 16777215u64; r5 = r1 & r4; r6 = r3 | r5; 
+return Ok(r6);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f43(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -290,11 +285,10 @@ fn f43(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r33: u64 = 0;
     let mut r34: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r1 = 24u64; pc = 1; r2 = (r0 as i64).wrapping_shr((r1 as u32) & 63) as u64; pc = 2; return Ok(r2);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r1 = 24u64; r2 = (r0 as i64).wrapping_shr((r1 as u32) & 63) as u64; 
+return Ok(r2);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f44(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -343,17 +337,36 @@ fn f44(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r43: u64 = 0;
     let mut r44: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r13 = r0; pc = 1; r1 = f43(arena, &[r13])?; pc = 2; r2 = 32u64; pc = 3; r3 = if (r1 as i64) < (r2 as i64) { 1 } else { 0 }; pc = 4; if r3 == 0 { pc = 7; } else { pc = 5; }  }
-        5 => { r4 = 18446744073709551615u64; pc = 6; pc = 25;  }
-        7 => { r5 = (r1 as i64).wrapping_add(4) as u64; pc = 8; r13 = r5; r5 = u64::MAX; pc = 9; r5 = f38(arena, &[r13])?; pc = 10; r13 = r5; r5 = u64::MAX; pc = 11; pc = 12; r5 = core_peek(arena, r13, 4)?; pc = 13; r6 = 16777215u64; pc = 14; r7 = r5 & r6; pc = 15; r8 = 16777215u64; pc = 16; r9 = r0 & r8; pc = 17; r10 = if (r7 as i64) != (r9 as i64) { 1 } else { 0 }; pc = 18; if r10 == 0 { pc = 21; } else { pc = 19; }  }
-        19 => { r11 = 18446744073709551615u64; pc = 20; pc = 22;  }
-        21 => { r11 = r1; pc = 22;  }
-        22 => { r4 = r11; pc = 23; pc = 24; pc = 25;  }
-        25 => { return Ok(r4);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r13 = r0; r1 = f43(arena, &[r13])?; r2 = 32u64; r3 = if (r1 as i64) < (r2 as i64) { 1 } else { 0 }; 
+if r3 == 0 { __lbl = 7; } else { __lbl = 5; }
+match __lbl {
+5 => {
+r4 = 18446744073709551615u64; 
+__lbl = 25;
+}
+7 => {
+r5 = (r1 as i64).wrapping_add(4) as u64; r13 = r5; r5 = u64::MAX; r5 = f38(arena, &[r13])?; r13 = r5; r5 = u64::MAX; r5 = core_peek(arena, r13, 4)?; r6 = 16777215u64; r7 = r5 & r6; r8 = 16777215u64; r9 = r0 & r8; r10 = if (r7 as i64) != (r9 as i64) { 1 } else { 0 }; 
+if r10 == 0 { __lbl = 21; } else { __lbl = 19; }
+match __lbl {
+19 => {
+r11 = 18446744073709551615u64; 
+__lbl = 22;
+}
+21 => {
+r11 = r1; 
+__lbl = 22;
+}
+_ => {}
+}
+r4 = r11; 
+__lbl = 25;
+}
+_ => {}
+}
+
+return Ok(r4);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f45(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -399,11 +412,10 @@ fn f45(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r40: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r2 = 24u64; pc = 1; r3 = (r0 as i64).wrapping_add(r2 as i64) as u64; pc = 2; r4 = 64u64; pc = 3; r5 = match (r1 as i64).checked_div(r4 as i64) { Some(v) => v as u64, None => return Err("div by zero") }; pc = 4; r6 = 8u64; pc = 5; r7 = (r5 as i64).wrapping_mul(r6 as i64) as u64; pc = 6; r8 = (r3 as i64).wrapping_add(r7 as i64) as u64; pc = 7; return Ok(r8);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r2 = 24u64; r3 = (r0 as i64).wrapping_add(r2 as i64) as u64; r4 = 64u64; r5 = match (r1 as i64).checked_div(r4 as i64) { Some(v) => v as u64, None => return Err("div by zero") }; r6 = 8u64; r7 = (r5 as i64).wrapping_mul(r6 as i64) as u64; r8 = (r3 as i64).wrapping_add(r7 as i64) as u64; 
+return Ok(r8);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f46(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -448,11 +460,10 @@ fn f46(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r39: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r8 = r0; pc = 1; r9 = r1; pc = 2; r2 = f45(arena, &[r8, r9])?; pc = 3; r8 = r2; r2 = u64::MAX; pc = 4; pc = 5; r2 = f38(arena, &[r8])?; pc = 6; r8 = r2; r2 = u64::MAX; pc = 7; pc = 8; r2 = core_peek(arena, r8, 8)?; pc = 9; r3 = 63u64; pc = 10; r4 = r1 & r3; pc = 11; r5 = (r2 as i64).wrapping_shr((r4 as u32) & 63) as u64; pc = 12; r6 = 1u64; pc = 13; r7 = r5 & r6; pc = 14; return Ok(r7);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r8 = r0; r9 = r1; r2 = f45(arena, &[r8, r9])?; r8 = r2; r2 = u64::MAX; r2 = f38(arena, &[r8])?; r8 = r2; r2 = u64::MAX; r2 = core_peek(arena, r8, 8)?; r3 = 63u64; r4 = r1 & r3; r5 = (r2 as i64).wrapping_shr((r4 as u32) & 63) as u64; r6 = 1u64; r7 = r5 & r6; 
+return Ok(r7);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f47(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -499,11 +510,10 @@ fn f47(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r41: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r10 = r0; pc = 1; r11 = r1; pc = 2; r2 = f45(arena, &[r10, r11])?; pc = 3; r10 = r2; pc = 4; r3 = f38(arena, &[r10])?; pc = 5; r10 = r2; pc = 6; r4 = f38(arena, &[r10])?; pc = 7; r10 = r4; r4 = u64::MAX; pc = 8; pc = 9; r4 = core_peek(arena, r10, 8)?; pc = 10; r5 = 1u64; pc = 11; r6 = 63u64; pc = 12; r7 = r1 & r6; pc = 13; r8 = (r5 as i64).wrapping_shl((r7 as u32) & 63) as u64; pc = 14; r9 = r4 | r8; pc = 15; r10 = r3; r3 = u64::MAX; pc = 16; r11 = r9; r9 = u64::MAX; pc = 17; pc = 18; pc = 19; core_poke(arena, r10, r11, 8)?; r3 = 0; pc = 20; return Ok(r3);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r10 = r0; r11 = r1; r2 = f45(arena, &[r10, r11])?; r10 = r2; r3 = f38(arena, &[r10])?; r10 = r2; r4 = f38(arena, &[r10])?; r10 = r4; r4 = u64::MAX; r4 = core_peek(arena, r10, 8)?; r5 = 1u64; r6 = 63u64; r7 = r1 & r6; r8 = (r5 as i64).wrapping_shl((r7 as u32) & 63) as u64; r9 = r4 | r8; r10 = r3; r3 = u64::MAX; r11 = r9; r9 = u64::MAX; core_poke(arena, r10, r11, 8)?; r3 = 0; 
+return Ok(r3);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f48(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -552,11 +562,10 @@ fn f48(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r43: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r12 = r0; pc = 1; r13 = r1; pc = 2; r2 = f45(arena, &[r12, r13])?; pc = 3; r12 = r2; pc = 4; r3 = f38(arena, &[r12])?; pc = 5; r12 = r2; pc = 6; r4 = f38(arena, &[r12])?; pc = 7; r12 = r4; r4 = u64::MAX; pc = 8; pc = 9; r4 = core_peek(arena, r12, 8)?; pc = 10; r5 = 18446744073709551615u64; pc = 11; r6 = 1u64; pc = 12; r7 = 63u64; pc = 13; r8 = r1 & r7; pc = 14; r9 = (r6 as i64).wrapping_shl((r8 as u32) & 63) as u64; pc = 15; r10 = (r5 as i64).wrapping_sub(r9 as i64) as u64; pc = 16; r11 = r4 & r10; pc = 17; r12 = r3; r3 = u64::MAX; pc = 18; r13 = r11; r11 = u64::MAX; pc = 19; pc = 20; pc = 21; core_poke(arena, r12, r13, 8)?; r3 = 0; pc = 22; return Ok(r3);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r12 = r0; r13 = r1; r2 = f45(arena, &[r12, r13])?; r12 = r2; r3 = f38(arena, &[r12])?; r12 = r2; r4 = f38(arena, &[r12])?; r12 = r4; r4 = u64::MAX; r4 = core_peek(arena, r12, 8)?; r5 = 18446744073709551615u64; r6 = 1u64; r7 = 63u64; r8 = r1 & r7; r9 = (r6 as i64).wrapping_shl((r8 as u32) & 63) as u64; r10 = (r5 as i64).wrapping_sub(r9 as i64) as u64; r11 = r4 & r10; r12 = r3; r3 = u64::MAX; r13 = r11; r11 = u64::MAX; core_poke(arena, r12, r13, 8)?; r3 = 0; 
+return Ok(r3);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f49(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -606,14 +615,18 @@ fn f49(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r44: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r13 = r1; pc = 1; r2 = f39(arena, &[r13])?; pc = 2; r3 = 0u64; pc = 3; r4 = 0u64; pc = 4;  }
-        4 => { r5 = if (r3 as i64) < (r2 as i64) { 1 } else { 0 }; pc = 5; if r5 == 0 { pc = 27; } else { pc = 6; }  }
-        6 => { r6 = 0u64; pc = 7; r7 = 57600u64; pc = 8; pc = 9; r8 = 24u64; pc = 10; r9 = (r0 as i64).wrapping_add(r8 as i64) as u64; pc = 11; r10 = 8u64; pc = 12; r11 = (r3 as i64).wrapping_mul(r10 as i64) as u64; pc = 13; r12 = (r9 as i64).wrapping_add(r11 as i64) as u64; pc = 14; r13 = r12; r12 = u64::MAX; pc = 15; r8 = f38(arena, &[r13])?; pc = 16; r9 = 0u64; pc = 17; r13 = r8; r8 = u64::MAX; pc = 18; r14 = r9; r9 = u64::MAX; pc = 19; pc = 20; core_poke(arena, r13, r14, 8)?; r8 = 0; pc = 21; pc = 22; r3 = (r3 as i64).wrapping_add(1) as u64; pc = 23; r8 = 0u64; pc = 24; r9 = 57601u64; pc = 25; pc = 26; pc = 4;  }
-        27 => { return Ok(r4);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r13 = r1; r2 = f39(arena, &[r13])?; r3 = 0u64; r4 = 0u64; 
+'l0: loop {
+r5 = if (r3 as i64) < (r2 as i64) { 1 } else { 0 }; 
+if r5 == 0 { break 'l0; } else {  }
+r6 = 0u64; r7 = 57600u64; r8 = 24u64; r9 = (r0 as i64).wrapping_add(r8 as i64) as u64; r10 = 8u64; r11 = (r3 as i64).wrapping_mul(r10 as i64) as u64; r12 = (r9 as i64).wrapping_add(r11 as i64) as u64; r13 = r12; r12 = u64::MAX; r8 = f38(arena, &[r13])?; r9 = 0u64; r13 = r8; r8 = u64::MAX; r14 = r9; r9 = u64::MAX; core_poke(arena, r13, r14, 8)?; r8 = 0; r3 = (r3 as i64).wrapping_add(1) as u64; r8 = 0u64; r9 = 57601u64; 
+continue 'l0;
+break 'l0;
+}
+
+return Ok(r4);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f50(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -661,14 +674,18 @@ fn f50(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r42: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r11 = r0; pc = 1; r12 = r1; pc = 2; r2 = f41(arena, &[r11, r12])?; pc = 3; r3 = 0u64; pc = 4; r4 = 0u64; pc = 5;  }
-        5 => { r5 = if (r3 as i64) < (r1 as i64) { 1 } else { 0 }; pc = 6; if r5 == 0 { pc = 26; } else { pc = 7; }  }
-        7 => { r6 = 0u64; pc = 8; r7 = 57600u64; pc = 9; pc = 10; r8 = 8u64; pc = 11; r9 = (r3 as i64).wrapping_mul(r8 as i64) as u64; pc = 12; r10 = (r2 as i64).wrapping_add(r9 as i64) as u64; pc = 13; r11 = r10; r10 = u64::MAX; pc = 14; r8 = f38(arena, &[r11])?; pc = 15; r9 = 18446744073709551615u64; pc = 16; r11 = r8; r8 = u64::MAX; pc = 17; r12 = r9; r9 = u64::MAX; pc = 18; pc = 19; core_poke(arena, r11, r12, 8)?; r8 = 0; pc = 20; pc = 21; r3 = (r3 as i64).wrapping_add(1) as u64; pc = 22; r8 = 0u64; pc = 23; r9 = 57601u64; pc = 24; pc = 25; pc = 5;  }
-        26 => { return Ok(r4);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r11 = r0; r12 = r1; r2 = f41(arena, &[r11, r12])?; r3 = 0u64; r4 = 0u64; 
+'l0: loop {
+r5 = if (r3 as i64) < (r1 as i64) { 1 } else { 0 }; 
+if r5 == 0 { break 'l0; } else {  }
+r6 = 0u64; r7 = 57600u64; r8 = 8u64; r9 = (r3 as i64).wrapping_mul(r8 as i64) as u64; r10 = (r2 as i64).wrapping_add(r9 as i64) as u64; r11 = r10; r10 = u64::MAX; r8 = f38(arena, &[r11])?; r9 = 18446744073709551615u64; r11 = r8; r8 = u64::MAX; r12 = r9; r9 = u64::MAX; core_poke(arena, r11, r12, 8)?; r8 = 0; r3 = (r3 as i64).wrapping_add(1) as u64; r8 = 0u64; r9 = 57601u64; 
+continue 'l0;
+break 'l0;
+}
+
+return Ok(r4);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f51(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -709,11 +726,10 @@ fn f51(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r35: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r4 = r0; pc = 1; r2 = f38(arena, &[r4])?; pc = 2; r3 = 1u64; pc = 3; r4 = r2; r2 = u64::MAX; pc = 4; r5 = r3; r3 = u64::MAX; pc = 5; pc = 6; core_poke(arena, r4, r5, 4)?; r2 = 0; pc = 7; pc = 8; r4 = r0; pc = 9; r5 = r1; pc = 10; r2 = f49(arena, &[r4, r5])?; pc = 11; pc = 12; r4 = r0; pc = 13; r5 = r1; pc = 14; r2 = f50(arena, &[r4, r5])?; pc = 15; return Ok(r2);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r4 = r0; r2 = f38(arena, &[r4])?; r3 = 1u64; r4 = r2; r2 = u64::MAX; r5 = r3; r3 = u64::MAX; core_poke(arena, r4, r5, 4)?; r2 = 0; r4 = r0; r5 = r1; r2 = f49(arena, &[r4, r5])?; r4 = r0; r5 = r1; r2 = f50(arena, &[r4, r5])?; 
+return Ok(r2);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f52(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -752,11 +768,10 @@ fn f52(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r33: u64 = 0;
     let mut r34: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r1 = 0u64; pc = 1; r3 = r1; pc = 2; r1 = f38(arena, &[r3])?; pc = 3; r2 = 32u64; pc = 4; r3 = r1; r1 = u64::MAX; pc = 5; r4 = r2; pc = 6; pc = 7; core_poke(arena, r3, r4, 8)?; r1 = 0; pc = 8; pc = 9; r1 = 8u64; pc = 10; r3 = r1; pc = 11; r1 = f38(arena, &[r3])?; pc = 12; r3 = r1; r1 = u64::MAX; pc = 13; r4 = r0; pc = 14; pc = 15; core_poke(arena, r3, r4, 8)?; r1 = 0; pc = 16; pc = 17; r1 = 16u64; pc = 18; r3 = r1; pc = 19; r1 = f38(arena, &[r3])?; pc = 20; r2 = 0u64; pc = 21; r3 = r1; r1 = u64::MAX; pc = 22; r4 = r2; r2 = u64::MAX; pc = 23; pc = 24; core_poke(arena, r3, r4, 8)?; r1 = 0; pc = 25; return Ok(r1);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r1 = 0u64; r3 = r1; r1 = f38(arena, &[r3])?; r2 = 32u64; r3 = r1; r1 = u64::MAX; r4 = r2; core_poke(arena, r3, r4, 8)?; r1 = 0; r1 = 8u64; r3 = r1; r1 = f38(arena, &[r3])?; r3 = r1; r1 = u64::MAX; r4 = r0; core_poke(arena, r3, r4, 8)?; r1 = 0; r1 = 16u64; r3 = r1; r1 = f38(arena, &[r3])?; r2 = 0u64; r3 = r1; r1 = u64::MAX; r4 = r2; r2 = u64::MAX; core_poke(arena, r3, r4, 8)?; r1 = 0; 
+return Ok(r1);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f53(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -801,14 +816,23 @@ fn f53(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r39: u64 = 0;
     let mut r40: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r1 = 0u64; pc = 1; r9 = r1; pc = 2; r1 = f38(arena, &[r9])?; pc = 3; r9 = r1; r1 = u64::MAX; pc = 4; pc = 5; r1 = core_peek(arena, r9, 8)?; pc = 6; r9 = r0; pc = 7; r2 = f40(arena, &[r9])?; pc = 8; r3 = 8u64; pc = 9; r9 = r3; pc = 10; r3 = f38(arena, &[r9])?; pc = 11; r9 = r3; r3 = u64::MAX; pc = 12; pc = 13; r3 = core_peek(arena, r9, 8)?; pc = 14; r4 = (r1 as i64).wrapping_add(r2 as i64) as u64; pc = 15; r5 = if (r4 as i64) > (r3 as i64) { 1 } else { 0 }; pc = 16; if r5 == 0 { pc = 19; } else { pc = 17; }  }
-        17 => { r6 = 0u64; pc = 18; pc = 55;  }
-        19 => { r7 = (r1 as i64).wrapping_add(4) as u64; pc = 20; r9 = r7; r7 = u64::MAX; pc = 21; r7 = f38(arena, &[r9])?; pc = 22; r8 = 0u64; pc = 23; r9 = r7; r7 = u64::MAX; pc = 24; r10 = r8; r8 = u64::MAX; pc = 25; pc = 26; core_poke(arena, r9, r10, 4)?; r7 = 0; pc = 27; pc = 28; r7 = (r1 as i64).wrapping_add(8) as u64; pc = 29; r9 = r7; r7 = u64::MAX; pc = 30; r7 = f38(arena, &[r9])?; pc = 31; r9 = r7; r7 = u64::MAX; pc = 32; r10 = r0; pc = 33; pc = 34; core_poke(arena, r9, r10, 4)?; r7 = 0; pc = 35; pc = 36; r9 = r1; pc = 37; r10 = r0; pc = 38; r7 = f51(arena, &[r9, r10])?; pc = 39; pc = 40; r7 = 0u64; pc = 41; r9 = r7; pc = 42; r7 = f38(arena, &[r9])?; pc = 43; r8 = (r1 as i64).wrapping_add(r2 as i64) as u64; pc = 44; r9 = r7; r7 = u64::MAX; pc = 45; r10 = r8; r8 = u64::MAX; pc = 46; pc = 47; core_poke(arena, r9, r10, 8)?; r7 = 0; pc = 48; pc = 49; r7 = 0u64; pc = 50; r9 = r1; pc = 51; r10 = r7; r7 = u64::MAX; pc = 52; r7 = f42(arena, &[r9, r10])?; pc = 53; r6 = r7; pc = 54; pc = 55;  }
-        55 => { return Ok(r6);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r1 = 0u64; r9 = r1; r1 = f38(arena, &[r9])?; r9 = r1; r1 = u64::MAX; r1 = core_peek(arena, r9, 8)?; r9 = r0; r2 = f40(arena, &[r9])?; r3 = 8u64; r9 = r3; r3 = f38(arena, &[r9])?; r9 = r3; r3 = u64::MAX; r3 = core_peek(arena, r9, 8)?; r4 = (r1 as i64).wrapping_add(r2 as i64) as u64; r5 = if (r4 as i64) > (r3 as i64) { 1 } else { 0 }; 
+if r5 == 0 { __lbl = 19; } else { __lbl = 17; }
+match __lbl {
+17 => {
+r6 = 0u64; 
+__lbl = 55;
+}
+19 => {
+r7 = (r1 as i64).wrapping_add(4) as u64; r9 = r7; r7 = u64::MAX; r7 = f38(arena, &[r9])?; r8 = 0u64; r9 = r7; r7 = u64::MAX; r10 = r8; r8 = u64::MAX; core_poke(arena, r9, r10, 4)?; r7 = 0; r7 = (r1 as i64).wrapping_add(8) as u64; r9 = r7; r7 = u64::MAX; r7 = f38(arena, &[r9])?; r9 = r7; r7 = u64::MAX; r10 = r0; core_poke(arena, r9, r10, 4)?; r7 = 0; r9 = r1; r10 = r0; r7 = f51(arena, &[r9, r10])?; r7 = 0u64; r9 = r7; r7 = f38(arena, &[r9])?; r8 = (r1 as i64).wrapping_add(r2 as i64) as u64; r9 = r7; r7 = u64::MAX; r10 = r8; r8 = u64::MAX; core_poke(arena, r9, r10, 8)?; r7 = 0; r7 = 0u64; r9 = r1; r10 = r7; r7 = u64::MAX; r7 = f42(arena, &[r9, r10])?; r6 = r7; 
+__lbl = 55;
+}
+_ => {}
+}
+
+return Ok(r6);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f54(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -871,30 +895,88 @@ fn f54(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r57: u64 = 0;
     let mut r58: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r1 = 0u64; pc = 1; r3 = if (r0 as i64) < (r1 as i64) { 1 } else { 0 }; pc = 2; if r3 != 0 { pc = 5; } else { pc = 3; }  }
-        3 => { r4 = 268435456u64; pc = 4; r3 = if (r0 as i64) > (r4 as i64) { 1 } else { 0 }; pc = 5;  }
-        5 => { if r3 == 0 { pc = 8; } else { pc = 6; }  }
-        6 => { r6 = 0u64; pc = 7; pc = 103;  }
-        8 => { r7 = 18446744073709551615u64; pc = 9; r8 = 16u64; pc = 10; r27 = r8; pc = 11; r8 = f38(arena, &[r27])?; pc = 12; r27 = r8; r8 = u64::MAX; pc = 13; pc = 14; r8 = core_peek(arena, r27, 8)?; pc = 15; r9 = 18446744073709551615u64; pc = 16; r10 = 0u64; pc = 17;  }
-        17 => { r11 = 0u64; pc = 18; r12 = if (r8 as i64) != (r11 as i64) { 1 } else { 0 }; pc = 19; if r12 == 0 { pc = 75; } else { pc = 20; }  }
-        20 => { r13 = 0u64; pc = 21; r14 = 57600u64; pc = 22; pc = 23; r15 = 16u64; pc = 24; r16 = (r8 as i64).wrapping_add(r15 as i64) as u64; pc = 25; r27 = r16; r16 = u64::MAX; pc = 26; r15 = f38(arena, &[r27])?; pc = 27; r27 = r15; r15 = u64::MAX; pc = 28; pc = 29; r15 = core_peek(arena, r27, 8)?; pc = 30; r16 = 0u64; pc = 31; r18 = if (r9 as i64) < (r16 as i64) { 1 } else { 0 }; pc = 32; if r18 == 0 { pc = 40; } else { pc = 33; }  }
-        33 => { r19 = (r8 as i64).wrapping_add(8) as u64; pc = 34; r27 = r19; r19 = u64::MAX; pc = 35; r19 = f38(arena, &[r27])?; pc = 36; r27 = r19; r19 = u64::MAX; pc = 37; pc = 38; r19 = core_peek(arena, r27, 4)?; pc = 39; r18 = if (r19 as i64) == (r0 as i64) { 1 } else { 0 }; pc = 40;  }
-        40 => { if r18 == 0 { pc = 68; } else { pc = 41; }  }
-        41 => { r22 = 0u64; pc = 42; r23 = if (r7 as i64) < (r22 as i64) { 1 } else { 0 }; pc = 43; if r23 == 0 { pc = 54; } else { pc = 44; }  }
-        44 => { r25 = 16u64; pc = 45; r27 = r25; pc = 46; r25 = f38(arena, &[r27])?; pc = 47; r27 = r25; r25 = u64::MAX; pc = 48; r28 = r15; pc = 49; pc = 50; core_poke(arena, r27, r28, 8)?; r25 = 0; pc = 51; pc = 52; r24 = 0u64; pc = 53; pc = 64;  }
-        54 => { r25 = 16u64; pc = 55; r26 = (r7 as i64).wrapping_add(r25 as i64) as u64; pc = 56; r27 = r26; r26 = u64::MAX; pc = 57; r25 = f38(arena, &[r27])?; pc = 58; r27 = r25; r25 = u64::MAX; pc = 59; r28 = r15; pc = 60; pc = 61; core_poke(arena, r27, r28, 8)?; r25 = 0; pc = 62; pc = 63; r24 = 0u64; pc = 64;  }
-        64 => { r9 = r8; pc = 65; r8 = 0u64; pc = 66; r21 = 0u64; pc = 67; pc = 71;  }
-        68 => { r7 = r8; pc = 69; r8 = r15; pc = 70; r21 = 0u64; pc = 71;  }
-        71 => { r22 = 0u64; pc = 72; r23 = 57601u64; pc = 73; pc = 74; pc = 17;  }
-        75 => { r10 = 0u64; pc = 76; r11 = if (r9 as i64) < (r10 as i64) { 1 } else { 0 }; pc = 77; if r11 == 0 { pc = 83; } else { pc = 78; }  }
-        78 => { r27 = r0; pc = 79; r13 = f53(arena, &[r27])?; pc = 80; r12 = r13; pc = 81; pc = 82; pc = 99;  }
-        83 => { r27 = r9; pc = 84; r28 = r0; pc = 85; r13 = f51(arena, &[r27, r28])?; pc = 86; pc = 87; r13 = (r9 as i64).wrapping_add(4) as u64; pc = 88; r27 = r13; r13 = u64::MAX; pc = 89; r13 = f38(arena, &[r27])?; pc = 90; r27 = r13; r13 = u64::MAX; pc = 91; pc = 92; r13 = core_peek(arena, r27, 4)?; pc = 93; r27 = r9; pc = 94; r28 = r13; r13 = u64::MAX; pc = 95; pc = 96; r13 = f42(arena, &[r27, r28])?; pc = 97; r12 = r13; pc = 98; pc = 99;  }
-        99 => { r6 = r12; pc = 100; pc = 101; pc = 102; pc = 103;  }
-        103 => { return Ok(r6);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r1 = 0u64; r3 = if (r0 as i64) < (r1 as i64) { 1 } else { 0 }; 
+if r3 != 0 { __lbl = 5; } else { __lbl = 3; }
+match __lbl {
+3 => {
+r4 = 268435456u64; r3 = if (r0 as i64) > (r4 as i64) { 1 } else { 0 }; 
+__lbl = 5;
+}
+_ => {}
+}
+
+if r3 == 0 { __lbl = 8; } else { __lbl = 6; }
+match __lbl {
+6 => {
+r6 = 0u64; 
+__lbl = 103;
+}
+8 => {
+r7 = 18446744073709551615u64; r8 = 16u64; r27 = r8; r8 = f38(arena, &[r27])?; r27 = r8; r8 = u64::MAX; r8 = core_peek(arena, r27, 8)?; r9 = 18446744073709551615u64; r10 = 0u64; 
+'l0: loop {
+r11 = 0u64; r12 = if (r8 as i64) != (r11 as i64) { 1 } else { 0 }; 
+if r12 == 0 { break 'l0; } else {  }
+r13 = 0u64; r14 = 57600u64; r15 = 16u64; r16 = (r8 as i64).wrapping_add(r15 as i64) as u64; r27 = r16; r16 = u64::MAX; r15 = f38(arena, &[r27])?; r27 = r15; r15 = u64::MAX; r15 = core_peek(arena, r27, 8)?; r16 = 0u64; r18 = if (r9 as i64) < (r16 as i64) { 1 } else { 0 }; 
+if r18 == 0 { __lbl = 40; } else { __lbl = 33; }
+match __lbl {
+33 => {
+r19 = (r8 as i64).wrapping_add(8) as u64; r27 = r19; r19 = u64::MAX; r19 = f38(arena, &[r27])?; r27 = r19; r19 = u64::MAX; r19 = core_peek(arena, r27, 4)?; r18 = if (r19 as i64) == (r0 as i64) { 1 } else { 0 }; 
+__lbl = 40;
+}
+_ => {}
+}
+
+if r18 == 0 { __lbl = 68; } else { __lbl = 41; }
+match __lbl {
+41 => {
+r22 = 0u64; r23 = if (r7 as i64) < (r22 as i64) { 1 } else { 0 }; 
+if r23 == 0 { __lbl = 54; } else { __lbl = 44; }
+match __lbl {
+44 => {
+r25 = 16u64; r27 = r25; r25 = f38(arena, &[r27])?; r27 = r25; r25 = u64::MAX; r28 = r15; core_poke(arena, r27, r28, 8)?; r25 = 0; r24 = 0u64; 
+__lbl = 64;
+}
+54 => {
+r25 = 16u64; r26 = (r7 as i64).wrapping_add(r25 as i64) as u64; r27 = r26; r26 = u64::MAX; r25 = f38(arena, &[r27])?; r27 = r25; r25 = u64::MAX; r28 = r15; core_poke(arena, r27, r28, 8)?; r25 = 0; r24 = 0u64; 
+__lbl = 64;
+}
+_ => {}
+}
+r9 = r8; r8 = 0u64; r21 = 0u64; 
+__lbl = 71;
+}
+68 => {
+r7 = r8; r8 = r15; r21 = 0u64; 
+__lbl = 71;
+}
+_ => {}
+}
+r22 = 0u64; r23 = 57601u64; 
+continue 'l0;
+break 'l0;
+}
+r10 = 0u64; r11 = if (r9 as i64) < (r10 as i64) { 1 } else { 0 }; 
+if r11 == 0 { __lbl = 83; } else { __lbl = 78; }
+match __lbl {
+78 => {
+r27 = r0; r13 = f53(arena, &[r27])?; r12 = r13; 
+__lbl = 99;
+}
+83 => {
+r27 = r9; r28 = r0; r13 = f51(arena, &[r27, r28])?; r13 = (r9 as i64).wrapping_add(4) as u64; r27 = r13; r13 = u64::MAX; r13 = f38(arena, &[r27])?; r27 = r13; r13 = u64::MAX; r13 = core_peek(arena, r27, 4)?; r27 = r9; r28 = r13; r13 = u64::MAX; r13 = f42(arena, &[r27, r28])?; r12 = r13; 
+__lbl = 99;
+}
+_ => {}
+}
+r6 = r12; 
+__lbl = 103;
+}
+_ => {}
+}
+
+return Ok(r6);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f55(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -945,17 +1027,31 @@ fn f55(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r45: u64 = 0;
     let mut r46: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r1 = (r0 as i64).wrapping_add(8) as u64; pc = 1; r15 = r1; r1 = u64::MAX; pc = 2; r1 = f38(arena, &[r15])?; pc = 3; r15 = r1; r1 = u64::MAX; pc = 4; pc = 5; r1 = core_peek(arena, r15, 4)?; pc = 6; r2 = 0u64; pc = 7; r3 = 0u64; pc = 8;  }
-        8 => { r4 = if (r2 as i64) < (r1 as i64) { 1 } else { 0 }; pc = 9; if r4 == 0 { pc = 44; } else { pc = 10; }  }
-        10 => { r5 = 0u64; pc = 11; r6 = 57600u64; pc = 12; pc = 13; r15 = r0; pc = 14; r16 = r2; pc = 15; r7 = f46(arena, &[r15, r16])?; pc = 16; r8 = 1u64; pc = 17; r9 = if (r7 as i64) == (r8 as i64) { 1 } else { 0 }; pc = 18; if r9 == 0 { pc = 37; } else { pc = 19; }  }
-        19 => { r15 = r0; pc = 20; r16 = r1; pc = 21; r11 = f41(arena, &[r15, r16])?; pc = 22; r12 = 8u64; pc = 23; r13 = (r2 as i64).wrapping_mul(r12 as i64) as u64; pc = 24; r14 = (r11 as i64).wrapping_add(r13 as i64) as u64; pc = 25; r15 = r14; r14 = u64::MAX; pc = 26; pc = 27; r11 = f38(arena, &[r15])?; pc = 28; r15 = r11; r11 = u64::MAX; pc = 29; pc = 30; r11 = core_peek(arena, r15, 8)?; pc = 31; r15 = r11; r11 = u64::MAX; pc = 32; pc = 33; r11 = f60(arena, &[r15])?; pc = 34; pc = 35; r10 = 0u64; pc = 36; pc = 38;  }
-        37 => { r10 = 0u64; pc = 38;  }
-        38 => { pc = 39; r2 = (r2 as i64).wrapping_add(1) as u64; pc = 40; r7 = 0u64; pc = 41; r8 = 57601u64; pc = 42; pc = 43; pc = 8;  }
-        44 => { r3 = (r0 as i64).wrapping_add(4) as u64; pc = 45; r15 = r3; r3 = u64::MAX; pc = 46; r3 = f38(arena, &[r15])?; pc = 47; r4 = (r0 as i64).wrapping_add(4) as u64; pc = 48; r15 = r4; r4 = u64::MAX; pc = 49; r4 = f38(arena, &[r15])?; pc = 50; r15 = r4; r4 = u64::MAX; pc = 51; pc = 52; r4 = core_peek(arena, r15, 4)?; pc = 53; r5 = (r4 as i64).wrapping_add(1) as u64; pc = 54; r15 = r3; r3 = u64::MAX; pc = 55; r16 = r5; r5 = u64::MAX; pc = 56; pc = 57; pc = 58; core_poke(arena, r15, r16, 4)?; r3 = 0; pc = 59; pc = 60; r3 = 16u64; pc = 61; r15 = r3; pc = 62; r3 = f38(arena, &[r15])?; pc = 63; r15 = r3; r3 = u64::MAX; pc = 64; pc = 65; r3 = core_peek(arena, r15, 8)?; pc = 66; r4 = 16u64; pc = 67; r5 = (r0 as i64).wrapping_add(r4 as i64) as u64; pc = 68; r15 = r5; r5 = u64::MAX; pc = 69; r4 = f38(arena, &[r15])?; pc = 70; r15 = r4; r4 = u64::MAX; pc = 71; r16 = r3; pc = 72; pc = 73; core_poke(arena, r15, r16, 8)?; r4 = 0; pc = 74; pc = 75; r4 = 16u64; pc = 76; r15 = r4; pc = 77; r4 = f38(arena, &[r15])?; pc = 78; r15 = r4; r4 = u64::MAX; pc = 79; r16 = r0; pc = 80; pc = 81; core_poke(arena, r15, r16, 8)?; r4 = 0; pc = 82; return Ok(r4);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r1 = (r0 as i64).wrapping_add(8) as u64; r15 = r1; r1 = u64::MAX; r1 = f38(arena, &[r15])?; r15 = r1; r1 = u64::MAX; r1 = core_peek(arena, r15, 4)?; r2 = 0u64; r3 = 0u64; 
+'l0: loop {
+r4 = if (r2 as i64) < (r1 as i64) { 1 } else { 0 }; 
+if r4 == 0 { break 'l0; } else {  }
+r5 = 0u64; r6 = 57600u64; r15 = r0; r16 = r2; r7 = f46(arena, &[r15, r16])?; r8 = 1u64; r9 = if (r7 as i64) == (r8 as i64) { 1 } else { 0 }; 
+if r9 == 0 { __lbl = 37; } else { __lbl = 19; }
+match __lbl {
+19 => {
+r15 = r0; r16 = r1; r11 = f41(arena, &[r15, r16])?; r12 = 8u64; r13 = (r2 as i64).wrapping_mul(r12 as i64) as u64; r14 = (r11 as i64).wrapping_add(r13 as i64) as u64; r15 = r14; r14 = u64::MAX; r11 = f38(arena, &[r15])?; r15 = r11; r11 = u64::MAX; r11 = core_peek(arena, r15, 8)?; r15 = r11; r11 = u64::MAX; r11 = f60(arena, &[r15])?; r10 = 0u64; 
+__lbl = 38;
+}
+37 => {
+r10 = 0u64; 
+__lbl = 38;
+}
+_ => {}
+}
+r2 = (r2 as i64).wrapping_add(1) as u64; r7 = 0u64; r8 = 57601u64; 
+continue 'l0;
+break 'l0;
+}
+r3 = (r0 as i64).wrapping_add(4) as u64; r15 = r3; r3 = u64::MAX; r3 = f38(arena, &[r15])?; r4 = (r0 as i64).wrapping_add(4) as u64; r15 = r4; r4 = u64::MAX; r4 = f38(arena, &[r15])?; r15 = r4; r4 = u64::MAX; r4 = core_peek(arena, r15, 4)?; r5 = (r4 as i64).wrapping_add(1) as u64; r15 = r3; r3 = u64::MAX; r16 = r5; r5 = u64::MAX; core_poke(arena, r15, r16, 4)?; r3 = 0; r3 = 16u64; r15 = r3; r3 = f38(arena, &[r15])?; r15 = r3; r3 = u64::MAX; r3 = core_peek(arena, r15, 8)?; r4 = 16u64; r5 = (r0 as i64).wrapping_add(r4 as i64) as u64; r15 = r5; r5 = u64::MAX; r4 = f38(arena, &[r15])?; r15 = r4; r4 = u64::MAX; r16 = r3; core_poke(arena, r15, r16, 8)?; r4 = 0; r4 = 16u64; r15 = r4; r4 = f38(arena, &[r15])?; r15 = r4; r4 = u64::MAX; r16 = r0; core_poke(arena, r15, r16, 8)?; r4 = 0; 
+return Ok(r4);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f56(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -1008,19 +1104,45 @@ fn f56(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r47: u64 = 0;
     r0 = a[0];
     r1 = a[1];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r16 = r0; pc = 1; r2 = f44(arena, &[r16])?; pc = 2; r3 = 0u64; pc = 3; r4 = if (r2 as i64) < (r3 as i64) { 1 } else { 0 }; pc = 4; if r4 == 0 { pc = 7; } else { pc = 5; }  }
-        5 => { r5 = 18446744073709551615u64; pc = 6; pc = 37;  }
-        7 => { r6 = (r2 as i64).wrapping_add(8) as u64; pc = 8; r16 = r6; r6 = u64::MAX; pc = 9; r6 = f38(arena, &[r16])?; pc = 10; r16 = r6; r6 = u64::MAX; pc = 11; pc = 12; r6 = core_peek(arena, r16, 4)?; pc = 13; r7 = 0u64; pc = 14; r9 = if (r1 as i64) < (r7 as i64) { 1 } else { 0 }; pc = 15; if r9 != 0 { pc = 17; } else { pc = 16; }  }
-        16 => { r9 = if (r1 as i64) >= (r6 as i64) { 1 } else { 0 }; pc = 17;  }
-        17 => { if r9 == 0 { pc = 20; } else { pc = 18; }  }
-        18 => { r11 = 18446744073709551615u64; pc = 19; pc = 34;  }
-        20 => { r16 = r2; pc = 21; r17 = r6; pc = 22; r12 = f41(arena, &[r16, r17])?; pc = 23; r13 = 8u64; pc = 24; r14 = (r1 as i64).wrapping_mul(r13 as i64) as u64; pc = 25; r15 = (r12 as i64).wrapping_add(r14 as i64) as u64; pc = 26; r16 = r15; r15 = u64::MAX; pc = 27; pc = 28; r12 = f38(arena, &[r16])?; pc = 29; r16 = r12; r12 = u64::MAX; pc = 30; pc = 31; r12 = core_peek(arena, r16, 8)?; pc = 32; r11 = r12; pc = 33; pc = 34;  }
-        34 => { r5 = r11; pc = 35; pc = 36; pc = 37;  }
-        37 => { return Ok(r5);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r16 = r0; r2 = f44(arena, &[r16])?; r3 = 0u64; r4 = if (r2 as i64) < (r3 as i64) { 1 } else { 0 }; 
+if r4 == 0 { __lbl = 7; } else { __lbl = 5; }
+match __lbl {
+5 => {
+r5 = 18446744073709551615u64; 
+__lbl = 37;
+}
+7 => {
+r6 = (r2 as i64).wrapping_add(8) as u64; r16 = r6; r6 = u64::MAX; r6 = f38(arena, &[r16])?; r16 = r6; r6 = u64::MAX; r6 = core_peek(arena, r16, 4)?; r7 = 0u64; r9 = if (r1 as i64) < (r7 as i64) { 1 } else { 0 }; 
+if r9 != 0 { __lbl = 17; } else { __lbl = 16; }
+match __lbl {
+16 => {
+r9 = if (r1 as i64) >= (r6 as i64) { 1 } else { 0 }; 
+__lbl = 17;
+}
+_ => {}
+}
+
+if r9 == 0 { __lbl = 20; } else { __lbl = 18; }
+match __lbl {
+18 => {
+r11 = 18446744073709551615u64; 
+__lbl = 34;
+}
+20 => {
+r16 = r2; r17 = r6; r12 = f41(arena, &[r16, r17])?; r13 = 8u64; r14 = (r1 as i64).wrapping_mul(r13 as i64) as u64; r15 = (r12 as i64).wrapping_add(r14 as i64) as u64; r16 = r15; r15 = u64::MAX; r12 = f38(arena, &[r16])?; r16 = r12; r12 = u64::MAX; r12 = core_peek(arena, r16, 8)?; r11 = r12; 
+__lbl = 34;
+}
+_ => {}
+}
+r5 = r11; 
+__lbl = 37;
+}
+_ => {}
+}
+
+return Ok(r5);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f57(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -1075,19 +1197,45 @@ fn f57(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     r0 = a[0];
     r1 = a[1];
     r2 = a[2];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r17 = r0; pc = 1; r3 = f44(arena, &[r17])?; pc = 2; r4 = 0u64; pc = 3; r5 = if (r3 as i64) < (r4 as i64) { 1 } else { 0 }; pc = 4; if r5 == 0 { pc = 7; } else { pc = 5; }  }
-        5 => { r6 = 18446744073709551615u64; pc = 6; pc = 41;  }
-        7 => { r7 = (r3 as i64).wrapping_add(8) as u64; pc = 8; r17 = r7; r7 = u64::MAX; pc = 9; r7 = f38(arena, &[r17])?; pc = 10; r17 = r7; r7 = u64::MAX; pc = 11; pc = 12; r7 = core_peek(arena, r17, 4)?; pc = 13; r8 = 0u64; pc = 14; r10 = if (r1 as i64) < (r8 as i64) { 1 } else { 0 }; pc = 15; if r10 != 0 { pc = 17; } else { pc = 16; }  }
-        16 => { r10 = if (r1 as i64) >= (r7 as i64) { 1 } else { 0 }; pc = 17;  }
-        17 => { if r10 == 0 { pc = 20; } else { pc = 18; }  }
-        18 => { r12 = 18446744073709551615u64; pc = 19; pc = 39;  }
-        20 => { r17 = r3; pc = 21; r18 = r7; pc = 22; r13 = f41(arena, &[r17, r18])?; pc = 23; r14 = 8u64; pc = 24; r15 = (r1 as i64).wrapping_mul(r14 as i64) as u64; pc = 25; r16 = (r13 as i64).wrapping_add(r15 as i64) as u64; pc = 26; r17 = r16; r16 = u64::MAX; pc = 27; pc = 28; r13 = f38(arena, &[r17])?; pc = 29; r17 = r13; r13 = u64::MAX; pc = 30; r18 = r2; pc = 31; pc = 32; core_poke(arena, r17, r18, 8)?; r13 = 0; pc = 33; pc = 34; r17 = r3; pc = 35; r18 = r1; pc = 36; r13 = f48(arena, &[r17, r18])?; pc = 37; pc = 38; r12 = 0u64; pc = 39;  }
-        39 => { r6 = r12; pc = 40; pc = 41;  }
-        41 => { return Ok(r6);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r17 = r0; r3 = f44(arena, &[r17])?; r4 = 0u64; r5 = if (r3 as i64) < (r4 as i64) { 1 } else { 0 }; 
+if r5 == 0 { __lbl = 7; } else { __lbl = 5; }
+match __lbl {
+5 => {
+r6 = 18446744073709551615u64; 
+__lbl = 41;
+}
+7 => {
+r7 = (r3 as i64).wrapping_add(8) as u64; r17 = r7; r7 = u64::MAX; r7 = f38(arena, &[r17])?; r17 = r7; r7 = u64::MAX; r7 = core_peek(arena, r17, 4)?; r8 = 0u64; r10 = if (r1 as i64) < (r8 as i64) { 1 } else { 0 }; 
+if r10 != 0 { __lbl = 17; } else { __lbl = 16; }
+match __lbl {
+16 => {
+r10 = if (r1 as i64) >= (r7 as i64) { 1 } else { 0 }; 
+__lbl = 17;
+}
+_ => {}
+}
+
+if r10 == 0 { __lbl = 20; } else { __lbl = 18; }
+match __lbl {
+18 => {
+r12 = 18446744073709551615u64; 
+__lbl = 39;
+}
+20 => {
+r17 = r3; r18 = r7; r13 = f41(arena, &[r17, r18])?; r14 = 8u64; r15 = (r1 as i64).wrapping_mul(r14 as i64) as u64; r16 = (r13 as i64).wrapping_add(r15 as i64) as u64; r17 = r16; r16 = u64::MAX; r13 = f38(arena, &[r17])?; r17 = r13; r13 = u64::MAX; r18 = r2; core_poke(arena, r17, r18, 8)?; r13 = 0; r17 = r3; r18 = r1; r13 = f48(arena, &[r17, r18])?; r12 = 0u64; 
+__lbl = 39;
+}
+_ => {}
+}
+r6 = r12; 
+__lbl = 41;
+}
+_ => {}
+}
+
+return Ok(r6);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f58(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -1142,19 +1290,45 @@ fn f58(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     r0 = a[0];
     r1 = a[1];
     r2 = a[2];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r17 = r0; pc = 1; r3 = f44(arena, &[r17])?; pc = 2; r4 = 0u64; pc = 3; r5 = if (r3 as i64) < (r4 as i64) { 1 } else { 0 }; pc = 4; if r5 == 0 { pc = 7; } else { pc = 5; }  }
-        5 => { r6 = 18446744073709551615u64; pc = 6; pc = 41;  }
-        7 => { r7 = (r3 as i64).wrapping_add(8) as u64; pc = 8; r17 = r7; r7 = u64::MAX; pc = 9; r7 = f38(arena, &[r17])?; pc = 10; r17 = r7; r7 = u64::MAX; pc = 11; pc = 12; r7 = core_peek(arena, r17, 4)?; pc = 13; r8 = 0u64; pc = 14; r10 = if (r1 as i64) < (r8 as i64) { 1 } else { 0 }; pc = 15; if r10 != 0 { pc = 17; } else { pc = 16; }  }
-        16 => { r10 = if (r1 as i64) >= (r7 as i64) { 1 } else { 0 }; pc = 17;  }
-        17 => { if r10 == 0 { pc = 20; } else { pc = 18; }  }
-        18 => { r12 = 18446744073709551615u64; pc = 19; pc = 39;  }
-        20 => { r17 = r3; pc = 21; r18 = r7; pc = 22; r13 = f41(arena, &[r17, r18])?; pc = 23; r14 = 8u64; pc = 24; r15 = (r1 as i64).wrapping_mul(r14 as i64) as u64; pc = 25; r16 = (r13 as i64).wrapping_add(r15 as i64) as u64; pc = 26; r17 = r16; r16 = u64::MAX; pc = 27; pc = 28; r13 = f38(arena, &[r17])?; pc = 29; r17 = r13; r13 = u64::MAX; pc = 30; r18 = r2; pc = 31; pc = 32; core_poke(arena, r17, r18, 8)?; r13 = 0; pc = 33; pc = 34; r17 = r3; pc = 35; r18 = r1; pc = 36; r13 = f47(arena, &[r17, r18])?; pc = 37; pc = 38; r12 = 0u64; pc = 39;  }
-        39 => { r6 = r12; pc = 40; pc = 41;  }
-        41 => { return Ok(r6);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r17 = r0; r3 = f44(arena, &[r17])?; r4 = 0u64; r5 = if (r3 as i64) < (r4 as i64) { 1 } else { 0 }; 
+if r5 == 0 { __lbl = 7; } else { __lbl = 5; }
+match __lbl {
+5 => {
+r6 = 18446744073709551615u64; 
+__lbl = 41;
+}
+7 => {
+r7 = (r3 as i64).wrapping_add(8) as u64; r17 = r7; r7 = u64::MAX; r7 = f38(arena, &[r17])?; r17 = r7; r7 = u64::MAX; r7 = core_peek(arena, r17, 4)?; r8 = 0u64; r10 = if (r1 as i64) < (r8 as i64) { 1 } else { 0 }; 
+if r10 != 0 { __lbl = 17; } else { __lbl = 16; }
+match __lbl {
+16 => {
+r10 = if (r1 as i64) >= (r7 as i64) { 1 } else { 0 }; 
+__lbl = 17;
+}
+_ => {}
+}
+
+if r10 == 0 { __lbl = 20; } else { __lbl = 18; }
+match __lbl {
+18 => {
+r12 = 18446744073709551615u64; 
+__lbl = 39;
+}
+20 => {
+r17 = r3; r18 = r7; r13 = f41(arena, &[r17, r18])?; r14 = 8u64; r15 = (r1 as i64).wrapping_mul(r14 as i64) as u64; r16 = (r13 as i64).wrapping_add(r15 as i64) as u64; r17 = r16; r16 = u64::MAX; r13 = f38(arena, &[r17])?; r17 = r13; r13 = u64::MAX; r18 = r2; core_poke(arena, r17, r18, 8)?; r13 = 0; r17 = r3; r18 = r1; r13 = f47(arena, &[r17, r18])?; r12 = 0u64; 
+__lbl = 39;
+}
+_ => {}
+}
+r6 = r12; 
+__lbl = 41;
+}
+_ => {}
+}
+
+return Ok(r6);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f59(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -1198,14 +1372,23 @@ fn f59(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r38: u64 = 0;
     let mut r39: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r8 = r0; pc = 1; r1 = f44(arena, &[r8])?; pc = 2; r2 = 0u64; pc = 3; r3 = if (r1 as i64) < (r2 as i64) { 1 } else { 0 }; pc = 4; if r3 == 0 { pc = 7; } else { pc = 5; }  }
-        5 => { r4 = 18446744073709551615u64; pc = 6; pc = 22;  }
-        7 => { r8 = r1; pc = 8; r5 = f38(arena, &[r8])?; pc = 9; r8 = r1; pc = 10; r6 = f38(arena, &[r8])?; pc = 11; r8 = r6; r6 = u64::MAX; pc = 12; pc = 13; r6 = core_peek(arena, r8, 4)?; pc = 14; r7 = (r6 as i64).wrapping_add(1) as u64; pc = 15; r8 = r5; r5 = u64::MAX; pc = 16; r9 = r7; r7 = u64::MAX; pc = 17; pc = 18; pc = 19; core_poke(arena, r8, r9, 4)?; r5 = 0; pc = 20; pc = 21; r4 = 0u64; pc = 22;  }
-        22 => { return Ok(r4);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r8 = r0; r1 = f44(arena, &[r8])?; r2 = 0u64; r3 = if (r1 as i64) < (r2 as i64) { 1 } else { 0 }; 
+if r3 == 0 { __lbl = 7; } else { __lbl = 5; }
+match __lbl {
+5 => {
+r4 = 18446744073709551615u64; 
+__lbl = 22;
+}
+7 => {
+r8 = r1; r5 = f38(arena, &[r8])?; r8 = r1; r6 = f38(arena, &[r8])?; r8 = r6; r6 = u64::MAX; r6 = core_peek(arena, r8, 4)?; r7 = (r6 as i64).wrapping_add(1) as u64; r8 = r5; r5 = u64::MAX; r9 = r7; r7 = u64::MAX; core_poke(arena, r8, r9, 4)?; r5 = 0; r4 = 0u64; 
+__lbl = 22;
+}
+_ => {}
+}
+
+return Ok(r4);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 fn f60(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r0: u64 = 0;
@@ -1252,17 +1435,36 @@ fn f60(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {
     let mut r41: u64 = 0;
     let mut r42: u64 = 0;
     r0 = a[0];
-    let mut pc: usize = 0;
-    loop { match pc {
-        0 => { r11 = r0; pc = 1; r1 = f44(arena, &[r11])?; pc = 2; r2 = 0u64; pc = 3; r3 = if (r1 as i64) < (r2 as i64) { 1 } else { 0 }; pc = 4; if r3 == 0 { pc = 7; } else { pc = 5; }  }
-        5 => { r4 = 18446744073709551615u64; pc = 6; pc = 31;  }
-        7 => { r11 = r1; pc = 8; r5 = f38(arena, &[r11])?; pc = 9; r11 = r5; r5 = u64::MAX; pc = 10; pc = 11; r5 = core_peek(arena, r11, 4)?; pc = 12; r6 = (r5 as i64).wrapping_sub(1) as u64; pc = 13; pc = 14; r11 = r1; pc = 15; r7 = f38(arena, &[r11])?; pc = 16; r11 = r7; r7 = u64::MAX; pc = 17; r12 = r6; pc = 18; pc = 19; core_poke(arena, r11, r12, 4)?; r7 = 0; pc = 20; pc = 21; r7 = 0u64; pc = 22; r8 = if (r6 as i64) == (r7 as i64) { 1 } else { 0 }; pc = 23; if r8 == 0 { pc = 29; } else { pc = 24; }  }
-        24 => { r11 = r1; pc = 25; r10 = f55(arena, &[r11])?; pc = 26; pc = 27; r9 = 1u64; pc = 28; pc = 30;  }
-        29 => { r9 = 0u64; pc = 30;  }
-        30 => { r4 = r9; pc = 31;  }
-        31 => { return Ok(r4);  }
-        _ => return Ok(r0),
-    } }
+    let mut __lbl: usize = 0; let _ = &mut __lbl;
+r11 = r0; r1 = f44(arena, &[r11])?; r2 = 0u64; r3 = if (r1 as i64) < (r2 as i64) { 1 } else { 0 }; 
+if r3 == 0 { __lbl = 7; } else { __lbl = 5; }
+match __lbl {
+5 => {
+r4 = 18446744073709551615u64; 
+__lbl = 31;
+}
+7 => {
+r11 = r1; r5 = f38(arena, &[r11])?; r11 = r5; r5 = u64::MAX; r5 = core_peek(arena, r11, 4)?; r6 = (r5 as i64).wrapping_sub(1) as u64; r11 = r1; r7 = f38(arena, &[r11])?; r11 = r7; r7 = u64::MAX; r12 = r6; core_poke(arena, r11, r12, 4)?; r7 = 0; r7 = 0u64; r8 = if (r6 as i64) == (r7 as i64) { 1 } else { 0 }; 
+if r8 == 0 { __lbl = 29; } else { __lbl = 24; }
+match __lbl {
+24 => {
+r11 = r1; r10 = f55(arena, &[r11])?; r9 = 1u64; 
+__lbl = 30;
+}
+29 => {
+r9 = 0u64; 
+__lbl = 30;
+}
+_ => {}
+}
+r4 = r9; 
+__lbl = 31;
+}
+_ => {}
+}
+
+return Ok(r4);
+    #[allow(unreachable_code)] { return Ok(r0); }
 }
 pub fn core_init(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f52(arena, &[a0]) }
 pub fn alloc(arena: &mut [u8], a0: u64) -> Result<u64, &'static str> { f54(arena, &[a0]) }

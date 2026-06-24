@@ -253,14 +253,6 @@ impl<'a> Parser<'a> {
 
         if alternative.is_some() && self.current_token == Token::Else {
             self.report_error("Unexpected else after terminal else".into(), self.current_span);
-        } else if self.current_token != Token::RBrace &&
-                  self.current_token != Token::Eof &&
-                  self.current_token != Token::Semicolon &&
-                  self.current_token != Token::Comma &&
-                  self.current_token != Token::FatArrow &&
-                  !matches!(self.current_token, Token::Else | Token::In) &&
-                  matches!(self.current_token, Token::Ident(_)) {
-            self.report_error("Unexpected token after if expression".into(), self.current_span);
         }
 
         Ok(Expr::If { condition, consequence, alternative })
