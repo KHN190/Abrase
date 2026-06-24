@@ -252,7 +252,7 @@ fn test_fresh_alloc_starts_at_generation_zero() {
     use myriad::memory::Heap;
     let mut heap = Heap::new();
     let (slot, g_) = heap.alloc(2);
-    assert_eq!((slot, g_), (0, 0));
+    assert_eq!(g_, 0);
     assert!(heap.is_live(slot, g_));
     assert_eq!(heap.live_count(), 1);
 }

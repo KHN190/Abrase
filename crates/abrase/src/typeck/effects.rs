@@ -213,6 +213,17 @@ impl Checker {
         self.function_effects.insert(fn_name, effects);
     }
 
+    // Like `register_function_effects` but does NOT promote the effect to a host
+    // capability. `<core>` propagates impurity yet is no runtime-discharged
+    // capability (it lives below the VM), so a cart naming it never compiles.
+    pub fn register_function_effects_no_capability(
+        &mut self,
+        fn_name: String,
+        effects: Vec<ast::EffectItem>,
+    ) {
+        self.function_effects.insert(fn_name, effects);
+    }
+
     pub fn register_native_capability(&mut self, effect: crate::ty::Effect) {
         if !self.native_effects.iter().any(|e| self.effects_equal(e, &effect)) {
             self.native_effects.push(effect);

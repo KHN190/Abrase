@@ -8,6 +8,9 @@ use alloc::{boxed::Box, string::{String, ToString}, vec::Vec};
 pub mod value;
 pub mod frame;
 pub mod memory;
+#[path = "core.rs"]
+pub mod core_mem;
+pub mod core_heap;
 pub mod devices;
 pub mod interpreter;
 pub mod loader;
@@ -23,6 +26,7 @@ pub use polka::cartridge::read_pk;
 pub use value::{alloc_string, read_string};
 pub use devices::{Device, DeviceTable};
 pub use memory::Heap;
+pub use core_mem::CoreArena;
 pub use region::RegionTable;
 pub use builtins::{NativeCtx, NativeFn, NativeRegistry};
 pub use debug::{render_fn_label, DebugEvent, DebugSink};
@@ -65,6 +69,7 @@ pub struct VirtualMachine {
     pub(crate) aot_fns: alloc::collections::BTreeMap<alloc::string::String, AotFn>,
     pub(crate) resolved_aot: Vec<Option<AotFn>>,
     pub(crate) region_table: RegionTable,
+    pub(crate) core_arena: CoreArena,
     pub(crate) natives: NativeRegistry,
     pub(crate) debug_sink: Option<DebugSink>,
     pub(crate) trace_filter: Option<Vec<bool>>,
@@ -161,6 +166,7 @@ impl VirtualMachine {
             aot_fns: alloc::collections::BTreeMap::new(),
             resolved_aot: Vec::new(),
             region_table: RegionTable::new(),
+            core_arena: CoreArena::new(),
             natives,
             debug_sink: None,
             trace_filter: None,
@@ -200,6 +206,14 @@ impl VirtualMachine {
         self.heap_check = on;
         self
     }
+
+    pub fn with_core_arena(mut self, bytes: usize) -> Self {
+        self.core_arena = CoreArena::with_size(bytes);
+        self
+    }
+
+    pub fn core_arena_ref(&self) -> &CoreArena { &self.core_arena }
+    pub fn core_arena_mut(&mut self) -> &mut CoreArena { &mut self.core_arena }
 
     // N of instructions executed. Monotonic; a profiler reads the per-frame delta.
     pub fn steps(&self) -> u64 { self.steps }

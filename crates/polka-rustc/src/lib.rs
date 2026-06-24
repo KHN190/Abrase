@@ -3,6 +3,7 @@ use std::fmt::Write;
 
 mod embed;
 mod hybrid;
+pub mod core;
 
 const STAGE_SLACK: usize = 32;
 

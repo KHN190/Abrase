@@ -1,4 +1,5 @@
 use crate::{Heap, Value};
+use crate::core_mem::CoreArena;
 use crate::devices::DeviceTable;
 use crate::devices::{console, CONSOLE_ID};
 use crate::value::{alloc_string, read_string};
@@ -21,6 +22,7 @@ pub mod fmath {
 pub struct NativeCtx<'a> {
     pub heap: &'a mut Heap,
     pub devices: &'a mut DeviceTable,
+    pub core_arena: &'a mut CoreArena,
     pub halted: &'a mut bool,
     pub exit_code: &'a mut Option<i64>,
 }
@@ -77,12 +79,50 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("__int_max",   max_native());
     reg.register("__int_min",   min_native());
 
+    reg.register("__peek8",     peek_native(1));
+    reg.register("__peek32",    peek_native(4));
+    reg.register("__peek64",    peek_native(8));
+    reg.register("__poke8",     poke_native(1));
+    reg.register("__poke32",    poke_native(4));
+    reg.register("__poke64",    poke_native(8));
+    reg.register("__ptr_add",   ptr_add_native());
+    reg.register("__arena_base", arena_base_native());
+
     reg.register("halt",        halt_native());
     reg.register("abort",       abort_native());
 
     // Frame-yield intrinsic: do_call intercepts it before the body runs, so this
     // registration only makes the name resolvable like any other runtime native.
     reg.register("__frame_present", frame_present_native());
+}
+
+fn peek_native(width: u64) -> NativeFn {
+    Rc::new(move |ctx, args| {
+        let addr = args[0].raw();
+        let v = ctx.core_arena.peek(addr, width)?;
+        Ok(plain(Value::from_raw(v)))
+    })
+}
+
+fn poke_native(width: u64) -> NativeFn {
+    Rc::new(move |ctx, args| {
+        let addr = args[0].raw();
+        let val = args[1].raw();
+        ctx.core_arena.poke(addr, width, val)?;
+        Ok(plain(Value::from_int(0)))
+    })
+}
+
+fn ptr_add_native() -> NativeFn {
+    Rc::new(|_ctx, args| {
+        let addr = args[0].raw();
+        let delta = args[1].as_int();
+        Ok(plain(Value::from_raw(CoreArena::ptr_add(addr, delta))))
+    })
+}
+
+fn arena_base_native() -> NativeFn {
+    Rc::new(|_ctx, _args| Ok(plain(Value::from_raw(0))))
 }
 
 fn frame_present_native() -> NativeFn {
