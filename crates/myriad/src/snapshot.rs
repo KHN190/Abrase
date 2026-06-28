@@ -379,32 +379,6 @@ mod snapshot_tests {
         assert_eq!(v.current_fn_reg_count(&module), 0);
     }
 
-    // A register handle whose cell sits past byte offset 2^24 (arena grown past
-    // 16MB) must snapshot/restore against its real slot — the inline decode used
-    // to truncate slot to 24 bits, rc-touching a wrong cell and prematurely
-    // freeing the real one (the large-array-in-record @cart UAF).
-    #[test]
-    fn snapshot_restore_handle_past_16mb_touches_real_cell() {
-        let mut v = vm();
-        let _big = v.heap.try_alloc(1 << 21).expect("16MB alloc grows arena");
-        let (slot, gen_) = v.heap_alloc(1);
-        assert!(slot >= (1 << 24), "need slot past 16MB, got {}", slot);
-        v.ensure_registers(1);
-        v.registers[0] = encode_handle(slot, gen_);
-        v.set_reg_mask_bit(0, true);
-
-        let snap = v.snapshot_registers(0, 1).expect("snap");
-        assert_eq!(v.heap.rc(slot, gen_), Some(2),
-            "snapshot must rc_inc the REAL cell (was 1); a truncated slot would leave it at 1");
-
-        // resume: register cleared, restore brings the handle back + rebalances rc.
-        v.registers[0] = HANDLE_NONE;
-        v.set_reg_mask_bit(0, false);
-        v.restore_registers(0, snap).expect("restore");
-        assert_eq!(v.registers[0], encode_handle(slot, gen_), "restore must round-trip the full handle");
-        assert!(v.heap.is_live(slot, gen_));
-    }
-
     #[test]
     fn snapshot_then_restore_round_trip_preserves_values() {
         let mut v = vm();

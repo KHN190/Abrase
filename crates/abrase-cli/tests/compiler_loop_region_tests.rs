@@ -497,9 +497,7 @@ fn main() -> Int {
 "#), 0, "nested literal-array field");
 }
 
-// Real @cart frame loop (run_to_yield + resume), not a while loop: a handle owned
-// by a record, read across frames. Reproduces the cross-frame snapshot rc path
-// that crash.abe exercises (which a while loop does not).
+// Real @cart frame loop (run_to_yield + resume): a record-owned handle read across frames exercises the snapshot rc path.
 #[test]
 fn cart_handle_in_record_across_frames() {
     use compiler_codegen_common::*;
