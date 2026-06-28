@@ -476,3 +476,26 @@ fn big_array_handle_in_record_rc_survives_grow() {
     }
     assert_eq!(h.rc(arr, ag), Some(1), "array rc must remain 1 (record's owning ref)");
 }
+
+// Stress: drive the heap frontier past 16MB, then exercise a real cell whose
+// byte offset exceeds 2^24 through the Value handle codec (the path every VM
+// rc/Drop/Ld op uses). A 24-bit slot mask truncates it and rc-touches a wrong
+// cell — the large-array-in-record UAF. No posara/native needed.
+#[test]
+fn value_codec_and_rc_hit_real_cell_past_16mb() {
+    use myriad::memory::Heap;
+    let mut h = Heap::with_capacity(1 << 16);
+    let _big = h.try_alloc(1 << 21).expect("16MB pushes frontier past 2^24");
+    let (slot, gen_) = h.try_alloc(2).expect("record-ish cell past 16MB");
+    assert!(slot >= (1 << 24), "need a slot past 16MB, got {}", slot);
+
+    // round-trip through the VM's primary codec, as Drop/Ld/St do.
+    let raw = myriad::Value::from_handle(slot, gen_).raw();
+    let (s, g) = myriad::Value::from_raw(raw).as_handle();
+    assert_eq!((s, g), (slot, gen_), "Value codec truncated slot past 16MB");
+
+    h.rc_inc(s, g).expect("rc_inc");
+    assert_eq!(h.rc(slot, gen_), Some(2), "rc must land on the real cell, not a truncated alias");
+    assert!(h.rc_dec(s, g).is_ok());
+    assert!(h.is_live(slot, gen_));
+}
