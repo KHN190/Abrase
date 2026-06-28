@@ -21,7 +21,6 @@ static HEAP_TRACE_HITS: AtomicUsize = AtomicUsize::new(0);
 fn heap_sink(_s: &str) { HEAP_TRACE_HITS.fetch_add(1, Ordering::Relaxed); }
 
 #[test]
-#[ignore = "core-backed Heap has no per-RC trace hook; set_trace is a no-op"]
 fn heap_trace_hook_receives_lines() {
     HEAP_TRACE_HITS.store(0, Ordering::Relaxed);
     let prog = chunk(vec![OpCode::Alloc(r(0), 2), OpCode::Drop(r(0)), OpCode::Ret(r(1))], vec![]);

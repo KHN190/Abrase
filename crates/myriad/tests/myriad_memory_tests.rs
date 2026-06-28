@@ -451,3 +451,28 @@ fn heap_api_model_fuzz() {
     }
     assert_eq!(h.live_count(), live.len(), "live_count must match model");
 }
+
+// Big array (forces arena grow past 16MB) stored as a handle in a record cell,
+// then repeatedly loaded + rc-cycled like cross-frame access — its refcount must
+// stay balanced (regression for large-array-in-record premature free).
+#[test]
+fn big_array_handle_in_record_rc_survives_grow() {
+    use myriad::memory::{make_handle, Heap};
+    let mut h = Heap::with_capacity(1 << 16);
+    let (arr, ag) = h.try_alloc(1 << 21).expect("2M-elem array"); // 16MB → grows arena
+    let (rec, rg) = h.try_alloc(2).expect("record");
+    // record owns the array: store handle + the owning ref is the array's rc=1.
+    h.st(rec, rg, 0, make_handle(arr, ag), true).expect("st field");
+    // simulate 10 frames of `s.sheet[0]`: owning Ld (rc_inc) ... use ... Drop (rc_dec).
+    for f in 0..10 {
+        let (raw, is_h) = h.ld(rec, rg, 0).expect("ld field");
+        assert!(is_h, "frame {}: field lost handle tag", f);
+        let (s, g) = myriad::memory::handle_parts(raw);
+        assert_eq!((s, g), (arr, ag), "frame {}: field handle corrupted", f);
+        h.rc_inc(s, g).expect("rc_inc");
+        assert!(h.is_live(arr, ag), "frame {}: array dead after inc", f);
+        h.rc_dec(s, g).expect("rc_dec");
+        assert!(h.is_live(arr, ag), "frame {}: array prematurely freed", f);
+    }
+    assert_eq!(h.rc(arr, ag), Some(1), "array rc must remain 1 (record's owning ref)");
+}
