@@ -482,9 +482,6 @@ fn main() -> Int {
 "#), 0, "nested native-handle field must survive then free");
 }
 
-"#) <= 2, "reassigning whole record each iter must not accumulate");
-}
-
 #[test]
 fn matrix_literal_array_in_nested_record() {
     assert_eq!(live_of(r#"
@@ -498,8 +495,4 @@ fn main() -> Int {
   o.t
 }
 "#), 0, "nested literal-array field");
-}
-
-"#);
-    eprintln!("3ITER: {:?}", r);
 }

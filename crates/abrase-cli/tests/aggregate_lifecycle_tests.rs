@@ -1,9 +1,5 @@
-// Aggregate construction (array/tuple/variant/record) must NOT consume a live
-// binding used as an element. compile_record routes element stores through
-// emit_store_field (move-or-copy by liveness); compile_array/tuple/variant emit
-// a raw consuming `St`, so a binding reused elsewhere (loop counter, second
-// element, later use) is zeroed = infinite loop (scalar) or use-after-free
-// (handle). These tests pin the whole pattern.
+// Aggregate construction must not consume a live binding used as an element:
+// scalar reused (loop counter) must survive; reused move-type handle is rejected.
 
 #[path = "compiler_codegen_common.rs"]
 mod compiler_codegen_common;
@@ -89,32 +85,49 @@ fn main() -> Int {
 "#), 6);
 }
 
-// ---- handle binding reused as element: must not be moved out (else UAF on later use) ----
+// ---- handle (move-type) binding reused as element: typeck must reject (move-
+//      only, no implicit alias) — so no UAF is even reachable here ----
 
-#[test]
-fn array_of_handle_reuses_binding_no_uaf() {
-    assert_eq!(heap(r#"
-fn main() -> Int {
-  let s = "hi";
-  let pair = [s, s];
-  let _u = "{pair[0]}{pair[1]}";
-  let _again = "{s}";
-  0
-}
-"#), 0);
+fn err(src: &str) -> String {
+    run_source(src).expect_err("must be rejected")
 }
 
 #[test]
-fn tuple_of_handle_reuses_binding_no_uaf() {
-    assert_eq!(heap(r#"
+fn array_of_reused_handle_binding_rejected() {
+    assert!(err(r#"
 fn main() -> Int {
   let s = "hi";
-  let t = (s, s);
-  let _u = "{t.0}";
-  let _again = "{s}";
+  let _pair = [s, s];
   0
 }
-"#), 0);
+"#).contains("moved"), "reusing a moved handle as an array element must be a move error");
+}
+
+#[test]
+fn tuple_of_reused_handle_binding_rejected() {
+    assert!(err(r#"
+fn main() -> Int {
+  let s = "hi";
+  let _t = (s, s);
+  0
+}
+"#).contains("moved"), "reusing a moved handle as a tuple element must be a move error");
+}
+
+// A handle binding moved ONCE into an aggregate (the reporter's shape) is valid
+// and must not corrupt the source path or leak.
+#[test]
+fn handle_moved_once_into_array_ok() {
+    let (v, live) = run_source_with_heap(r#"
+fn main() -> Int {
+  let s = "hi";
+  let a = [s];
+  let _first = a[0];
+  0
+}
+"#).expect("single move into array must work");
+    assert_eq!(v.as_int(), 0);
+    assert_eq!(live, 0);
 }
 
 // ---- the reporter's class: native-returned handle owned by a record, accessed

@@ -274,8 +274,9 @@ impl Compiler {
         self.emit(OpCode::St(tag_reg, dest, 0));
         for (i, arg) in args.iter().enumerate() {
             let offset = to_u16(i + 1, "Variant payload offset")?;
+            let want_move = self.arg_should_move(arg);
             let v = self.compile_expr(arg)?;
-            self.emit(OpCode::St(v, dest, offset));
+            self.emit_store_field(v, want_move, dest, offset)?;
         }
         Ok(dest)
     }
@@ -330,8 +331,6 @@ impl Compiler {
         self.emit(OpCode::Ld(dest, base_reg, idx));
         if self.typed_ld && field_scalar { self.set_reg_handle(dest, false); }
         // Drop the base cell if it was a temporary (not a direct variable binding).
-        // Named variables are kept alive by their scope; only anonymous sub-expressions
-        // allocate a cell that nobody else owns after the field is extracted.
         if !matches!(base.node, ast::Expr::Identifier(_)) {
             self.emit(OpCode::Drop(base_reg));
         }
@@ -348,8 +347,9 @@ impl Compiler {
         for (i, item) in items.iter().enumerate() {
             let offset = to_u16(i, "Array element offset")?;
             let mark = self.snapshot_register_high_water();
+            let want_move = self.arg_should_move(item);
             let v = self.compile_expr(item)?;
-            self.emit(OpCode::St(v, dest, offset));
+            self.emit_store_field(v, want_move, dest, offset)?;
             self.restore_register_high_water(mark);
         }
         Ok(dest)
@@ -391,8 +391,9 @@ impl Compiler {
         for (i, item) in items.iter().enumerate() {
             let offset = to_u16(i, "Tuple element offset")?;
             let mark = self.snapshot_register_high_water();
+            let want_move = self.arg_should_move(item);
             let v = self.compile_expr(item)?;
-            self.emit(OpCode::St(v, dest, offset));
+            self.emit_store_field(v, want_move, dest, offset)?;
             self.restore_register_high_water(mark);
         }
         Ok(dest)
@@ -412,7 +413,9 @@ impl Compiler {
         self.emit(OpCode::Alloc(dest, n_u16));
         let elem_ty = self.infer_expr_type(elem);
         let is_heap = elem_ty.as_ref().map(super::is_move_type).unwrap_or(false);
-        if is_heap {
+        // Re-eval only a fresh expr; an identifier is a live binding, alias via Copy instead.
+        let reeval = is_heap && !matches!(elem.node, ast::Expr::Identifier(_));
+        if reeval {
             for i in 0..n {
                 let offset = to_u16(i, "Array-repeat offset")?;
                 let mark = self.snapshot_register_high_water();
