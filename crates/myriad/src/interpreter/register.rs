@@ -154,9 +154,11 @@ impl VirtualMachine {
         Ok(Self::decode_handle(v))
     }
 
+    // slot = byte offset = 32 bits (arena to 256MB); only gen is 24 bits. Must
+    // match memory::handle_parts — truncating slot aliases cells past 16MB.
     #[inline(always)]
     pub(crate) fn decode_handle(raw: u64) -> (u32, u32) {
-        (((raw >> 24) & 0x00FF_FFFF) as u32, (raw & 0x00FF_FFFF) as u32)
+        (((raw >> 24) & 0xFFFF_FFFF) as u32, (raw & 0x00FF_FFFF) as u32)
     }
 
     pub(crate) fn check_handle_tags(&self, where_: &str) -> Result<(), String> {

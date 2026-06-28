@@ -496,3 +496,28 @@ fn main() -> Int {
 }
 "#), 0, "nested literal-array field");
 }
+
+// Real @cart frame loop (run_to_yield + resume), not a while loop: a handle owned
+// by a record, read across frames. Reproduces the cross-frame snapshot rc path
+// that crash.abe exercises (which a while loop does not).
+#[test]
+fn cart_handle_in_record_across_frames() {
+    use compiler_codegen_common::*;
+    let src = r#"
+type Rec = { arr: Array<Int>, t: Int }
+fn step(r: &mut Rec) -> Int { r.t = r.arr[0] + r.t; r.t }
+@cart
+fn main() -> <frame> Unit {
+  let mut rec = Rec { arr: [10, 20, 30], t: 0 };
+  loop { let _ = step(&mut rec); frame.present() }
+}
+"#;
+    let ast = parse_source(src);
+    let mut compiler = Compiler::new();
+    let module = compiler.compile_module(&ast).unwrap_or_else(|e| panic!("compile: {:?}", e.iter().map(|x| &x.message).collect::<Vec<_>>()));
+    let mut vm = VirtualMachine::new();
+    vm.run_to_yield(&module).expect("frame 0");
+    for f in 1..6 {
+        vm.resume(&module, Value::from_int(0)).unwrap_or_else(|e| panic!("frame {} crashed: {}", f, e));
+    }
+}
