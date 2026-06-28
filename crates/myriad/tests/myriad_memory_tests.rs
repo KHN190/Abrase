@@ -356,15 +356,17 @@ fn test_handle_after_free_is_rejected_via_generation() {
     assert_eq!(result, Ok(Value::from_int(0)));
 }
 
-// Handle slot = byte offset; arena grows past 16MB so slot needs >24 bits (gen is 24).
-// Truncating slot aliases cells past offset 2^24 = use-after-free.
+// Handle slot = byte offset; arena grows to the 1<<28 cap so slot needs >24 bits
+// (only gen is 24). Sweep across the 2^24 boundary so any codec narrowing fails
+// before runtime (else a big Array crossing 16MB aliases a neighbour = UAF).
 #[test]
-fn handle_round_trips_for_slot_past_16mb() {
-    let slot = 0x0100_0005u32; // 16MB + 5 bytes
-    let g = 7u32;
-    let (s, gg) = myriad::memory::handle_parts(myriad::memory::make_handle(slot, g));
-    assert_eq!(s, slot, "slot truncated above 16MB offset");
-    assert_eq!(gg, g);
+fn handle_codec_round_trips_across_boundaries() {
+    for &slot in &[0u32, 1, 0xFFFF, 0xFF_FFFF, 0x100_0000, 0x100_0001, 0xFFF_FFFF, 0x1000_0000] {
+        for &g in &[0u32, 1, 0x7F_FFFF, 0xFF_FFFF] {
+            let (s2, g2) = myriad::memory::handle_parts(myriad::memory::make_handle(slot, g));
+            assert_eq!((s2, g2), (slot, g), "codec narrowed slot {:#x} gen {:#x}", slot, g);
+        }
+    }
 }
 
 #[test]
@@ -376,4 +378,76 @@ fn alloc_past_16mb_does_not_alias() {
     h.st(sb, gb, 0, 0xBBBB, false).expect("st b");
     assert_eq!(h.ld(sa, ga, 0).expect("ld a").0, 0xAAAA, "block A clobbered by aliased B");
     assert_eq!(h.ld(sb, gb, 0).expect("ld b").0, 0xBBBB, "block B handle truncated");
+}
+
+// Allocate blocks whose cumulative size carries the frontier past byte offset
+// 2^24, filling every element, then read back — any slot truncation or data
+// aliasing across the 16MB boundary corrupts a neighbour.
+#[test]
+fn arena_size_sweep_past_16mb_keeps_data_intact() {
+    use myriad::memory::Heap;
+    let mut h = Heap::with_capacity(1 << 16);
+    let sizes = [4usize, 1 << 20, 7, 1 << 20, 1 << 20, 9]; // ~24MB total, blocks cross 2^24
+    let mut blocks = Vec::new();
+    for (tag, &sz) in sizes.iter().enumerate() {
+        let (s, g) = h.try_alloc(sz).expect("alloc");
+        for j in 0..sz {
+            h.st(s, g, j, ((tag as u64) << 40) | j as u64, false).expect("st");
+        }
+        blocks.push((s, g, sz, tag));
+    }
+    for (s, g, sz, tag) in blocks {
+        for &j in &[0usize, sz / 2, sz - 1] {
+            assert_eq!(
+                h.ld(s, g, j).expect("ld").0,
+                ((tag as u64) << 40) | j as u64,
+                "block {} elem {} corrupted (slot {} crossed 16MB?)", tag, j, s
+            );
+        }
+    }
+}
+
+// Random alloc/st/ld/rc sequence checked against a shadow model: every ld must
+// equal the last st to that cell (catches slot aliasing); rc_dec to zero must
+// reclaim without disturbing other live cells.
+#[test]
+fn heap_api_model_fuzz() {
+    use myriad::memory::Heap;
+    let mut h = Heap::with_capacity(1 << 16);
+    let mut live: Vec<(u32, u32, Vec<u64>)> = Vec::new();
+    let mut s = 0x9E3779B97F4A7C15u64;
+    let rng = |s: &mut u64| {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    };
+    for _ in 0..8000 {
+        let op = rng(&mut s) % 100;
+        if live.is_empty() || op < 35 {
+            let sz = (rng(&mut s) % 8 + 1) as usize;
+            let (slot, g) = h.try_alloc(sz).expect("alloc");
+            live.push((slot, g, vec![u64::MAX; sz]));
+        } else if op < 65 {
+            let i = (rng(&mut s) as usize) % live.len();
+            let (slot, g, sz) = (live[i].0, live[i].1, live[i].2.len());
+            let off = (rng(&mut s) as usize) % sz;
+            let val = rng(&mut s);
+            h.st(slot, g, off, val, false).expect("st");
+            live[i].2[off] = val;
+        } else if op < 90 {
+            let i = (rng(&mut s) as usize) % live.len();
+            let (slot, g) = (live[i].0, live[i].1);
+            for (off, &want) in live[i].2.iter().enumerate() {
+                assert_eq!(h.ld(slot, g, off).expect("ld").0, want,
+                    "aliasing: slot {} off {} drifted", slot, off);
+            }
+        } else {
+            let i = (rng(&mut s) as usize) % live.len();
+            let (slot, g) = (live[i].0, live[i].1);
+            assert!(h.rc_dec(slot, g).expect("rc_dec"), "single owner must reclaim");
+            live.swap_remove(i);
+        }
+    }
+    assert_eq!(h.live_count(), live.len(), "live_count must match model");
 }
