@@ -355,3 +355,25 @@ fn test_handle_after_free_is_rejected_via_generation() {
     let result = vm.run_module(&module);
     assert_eq!(result, Ok(Value::from_int(0)));
 }
+
+// Handle slot = byte offset; arena grows past 16MB so slot needs >24 bits (gen is 24).
+// Truncating slot aliases cells past offset 2^24 = use-after-free.
+#[test]
+fn handle_round_trips_for_slot_past_16mb() {
+    let slot = 0x0100_0005u32; // 16MB + 5 bytes
+    let g = 7u32;
+    let (s, gg) = myriad::memory::handle_parts(myriad::memory::make_handle(slot, g));
+    assert_eq!(s, slot, "slot truncated above 16MB offset");
+    assert_eq!(gg, g);
+}
+
+#[test]
+fn alloc_past_16mb_does_not_alias() {
+    let mut h = myriad::Heap::with_capacity(1 << 16);
+    let (sa, ga) = h.try_alloc(1 << 21).expect("big alloc");
+    let (sb, gb) = h.try_alloc(2).expect("alloc past 16MB");
+    h.st(sa, ga, 0, 0xAAAA, false).expect("st a");
+    h.st(sb, gb, 0, 0xBBBB, false).expect("st b");
+    assert_eq!(h.ld(sa, ga, 0).expect("ld a").0, 0xAAAA, "block A clobbered by aliased B");
+    assert_eq!(h.ld(sb, gb, 0).expect("ld b").0, 0xBBBB, "block B handle truncated");
+}

@@ -74,15 +74,20 @@ impl CoreHeap {
 
     fn valid(&self, slot: u32, generation: u32, op: &str) -> Result<u64, String> {
         let off = slot as u64;
+        let frontier = self.r64(HDR_FRONTIER);
         if off < GLOBAL_HDR || off + BLK_HDR > self.blen() {
-            return Err(format!("{}: invalid slot {}", op, slot));
+            let why = if off >= frontier { "past frontier — overflowed/truncated handle" } else { "below header" };
+            return Err(format!("{}: slot {} off {:#x} outside arena [{:#x},{:#x}) ({})",
+                op, slot, off, GLOBAL_HDR, self.blen(), why));
         }
         if self.r32(off) == 0 {
-            return Err(format!("{}: use-after-free of slot {}", op, slot));
+            let why = if off >= frontier { "never allocated — overflowed/truncated handle" } else { "freed or mid-block" };
+            return Err(format!("{}: use-after-free slot {} off {:#x} rc=0 ({}); frontier {:#x}",
+                op, slot, off, why, frontier));
         }
         if (self.r32(off + 4) & 0x00FF_FFFF) != generation {
-            return Err(format!("{}: stale handle for slot {} (have gen {}, live {})",
-                op, slot, generation, self.r32(off + 4) & 0x00FF_FFFF));
+            return Err(format!("{}: stale handle for slot {} off {:#x} (have gen {}, live {})",
+                op, slot, off, generation, self.r32(off + 4) & 0x00FF_FFFF));
         }
         Ok(off)
     }
@@ -98,7 +103,11 @@ impl CoreHeap {
         loop {
             let h = cgen::alloc(self.bytes_mut(), size as u64).map_err(String::from)?;
             if h != 0 {
-                return Ok(handle_parts(h));
+                let (slot, generation) = handle_parts(h);
+                if make_handle(slot, generation) != h {
+                    return Err(format!("alloc: arena offset {:#x} exceeds handle slot capacity", h >> 24));
+                }
+                return Ok((slot, generation));
             }
             if self.blen() >= (1 << 28) {
                 return Err("heap: arena exhausted".into());
