@@ -330,6 +330,48 @@ fn test_array_repeat_literal() {
 }
 
 #[test]
+fn test_single_block_terminated_element_array_in_statement() {
+    let input = "fn main() { let a = [ A{ x: 1 } ]; }";
+    let errs = parse_errs(input);
+    assert!(errs.is_empty(), "unexpected parse errors: {:?}", errs);
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    let Decl::Fn(f) = decls.into_iter().next().unwrap() else { panic!("expected fn") };
+    let Stmt::Let { value, .. } = &f.body.stmts[0].node else { panic!("expected let") };
+    let Expr::Array(items) = &value.node else {
+        panic!("expected Array, got {:?}", value.node);
+    };
+    assert_eq!(items.len(), 1);
+    assert!(matches!(items[0].node, Expr::Record { .. }));
+}
+
+#[test]
+fn test_block_terminated_element_in_tuple_call_record_statement() {
+    for input in [
+        "fn main() { let a = ( A{ x: 1 }, 2 ); }",
+        "fn main() { f( A{ x: 1 } ); }",
+        "fn main() { let a = B{ inner: A{ x: 1 } }; }",
+        "fn main() { let a = [ if b { 1 } else { 2 } ]; }",
+        "fn main() { let a = [ A{ x: 1 }, A{ x: 2 } ]; }",
+    ] {
+        let errs = parse_errs(input);
+        assert!(errs.is_empty(), "unexpected parse errors for {input:?}: {errs:?}");
+    }
+}
+
+#[test]
+fn test_block_terminated_array_repeat_still_parses() {
+    let input = "fn main() { let a = [ A{ x: 1 }; 3 ]; }";
+    let errs = parse_errs(input);
+    assert!(errs.is_empty(), "unexpected parse errors: {errs:?}");
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    let Decl::Fn(f) = decls.into_iter().next().unwrap() else { panic!("expected fn") };
+    let Stmt::Let { value, .. } = &f.body.stmts[0].node else { panic!("expected let") };
+    assert!(matches!(value.node, Expr::ArrayRepeat { .. }), "got {:?}", value.node);
+}
+
+#[test]
 fn test_paren_unit_literal() {
     let mut p = Parser::new(Lexer::new("()"));
     let expr = p.parse_expr(Precedence::Lowest);
