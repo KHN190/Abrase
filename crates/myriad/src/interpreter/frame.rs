@@ -59,7 +59,6 @@ impl VirtualMachine {
                     self.write_abs_raw(new_base + i, HANDLE_NONE);
                 }
                 self.write_abs(dest_abs, result.raw(), result_is_handle);
-                self.region_record_native_return(result.raw(), result_is_handle);
                 return Ok(());
             }
             let func = self.resolved_natives[fn_id].as_ref()
@@ -88,7 +87,6 @@ impl VirtualMachine {
                 self.write_abs_raw(abs, HANDLE_NONE);
             }
             self.write_abs(dest_abs, result.raw(), result_is_handle);
-            self.region_record_native_return(result.raw(), result_is_handle);
             return Ok(());
         }
 
@@ -108,15 +106,6 @@ impl VirtualMachine {
         self.pc = 0;
         self.trace_frame_event("CALL push", format_args!("func={} dest=r{}", fn_id, dest.0));
         Ok(())
-    }
-
-    // Native returns an owned (rc=1) handle like a bytecode `Alloc`
-    #[inline]
-    fn region_record_native_return(&mut self, raw: u64, is_handle: bool) {
-        if is_handle && raw != HANDLE_NONE {
-            let (slot, generation) = polka::Value::from_raw(raw).as_handle();
-            self.region_record_alloc(slot, generation);
-        }
     }
 
     pub(super) fn do_raise(
