@@ -19,11 +19,12 @@ impl Lint {
     }
 
     pub fn pretty_print(&self, source: &str) -> String {
+        let loc = if self.module.is_empty() { String::new() } else { format!("{} ", self.module.join("/")) };
         let mut out = if self.span.line > 0 {
-            format!("Warning[{}] at line {}, col {}: {}\n",
-                self.code, self.span.line, self.span.col, self.message)
+            format!("Warning[{}] {}at line {}, col {}: {}\n",
+                self.code, loc, self.span.line, self.span.col, self.message)
         } else {
-            format!("Warning[{}]: {}\n", self.code, self.message)
+            format!("Warning[{}] {}: {}\n", self.code, loc, self.message)
         };
         let lines: Vec<&str> = source.lines().collect();
         if self.span.line > 0 && self.span.line <= lines.len() {

@@ -1451,13 +1451,14 @@ fn stmt_has_break(stmt: &ast::Spanned<ast::Stmt>) -> bool {
 
 fn expr_has_break(expr: &ast::Spanned<ast::Expr>) -> bool {
     match &expr.node {
-        ast::Expr::Break(_) => true,
+        ast::Expr::Break(_) | ast::Expr::Return(_) => true,
         ast::Expr::Block(b) => block_has_break(b),
         ast::Expr::If { consequence, alternative, .. } =>
             expr_has_break(consequence) || alternative.as_ref().map_or(false, |a| expr_has_break(a)),
         // Don't descend into nested loops — their breaks belong to them, not the outer loop
         ast::Expr::Loop { .. } | ast::Expr::While { .. } | ast::Expr::For { .. } => false,
         ast::Expr::Match { arms, .. } => arms.iter().any(|a| expr_has_break(&a.body)),
+        ast::Expr::Handle { expr, arms } => expr_has_break(expr) || arms.iter().any(|a| expr_has_break(&a.body)),
         _ => false,
     }
 }

@@ -8,9 +8,6 @@ use compiler_codegen_common::*;
 fn val(src: &str) -> i64 {
     run_source(src).unwrap_or_else(|e| panic!("must not error/UAF: {}", e)).as_int()
 }
-fn heap(src: &str) -> usize {
-    run_source_with_heap(src).unwrap_or_else(|e| panic!("must not error/UAF: {}", e)).1
-}
 
 // ---- scalar binding reused as element: must not be consumed (else infinite loop) ----
 
