@@ -101,3 +101,31 @@ fn verify_compile_comparison_gte_equal() {
     let result = compile_and_run(&ast).expect("Execution failed");
     assert_eq!(result, Value::from_bool(true));
 }
+
+#[test]
+fn string_eq_same_content_distinct_alloc() {
+    let src = "fn main() -> Bool { let x = \"b\"; let a = \"ab\"; let b = \"a{x}\"; a == b }";
+    let r = run_source(src).expect("Execution failed");
+    assert_eq!(r, Value::from_bool(true), "equal-content strings must compare equal");
+}
+
+#[test]
+fn string_eq_different_content() {
+    let src = "fn main() -> Bool { let a = \"ab\"; let b = \"ac\"; a == b }";
+    let r = run_source(src).expect("Execution failed");
+    assert_eq!(r, Value::from_bool(false), "different strings must not compare equal");
+}
+
+#[test]
+fn string_neq_same_content() {
+    let src = "fn main() -> Bool { let x = \"b\"; let a = \"ab\"; let b = \"a{x}\"; a != b }";
+    let r = run_source(src).expect("Execution failed");
+    assert_eq!(r, Value::from_bool(false), "equal-content strings: != must be false");
+}
+
+#[test]
+fn string_neq_different_content() {
+    let src = "fn main() -> Bool { let a = \"ab\"; let b = \"ac\"; a != b }";
+    let r = run_source(src).expect("Execution failed");
+    assert_eq!(r, Value::from_bool(true), "different strings: != must be true");
+}

@@ -360,6 +360,14 @@ impl Compiler {
         base: &ast::Spanned<ast::Expr>,
         index: &ast::Spanned<ast::Expr>,
     ) -> Result<Register, String> {
+        if matches!(self.infer_expr_type(base), Some(ast::Type::Named(ref n)) if n == "String") {
+            let base_reg = self.compile_expr(base)?;
+            let idx_reg = self.compile_expr(index)?;
+            let fid = *self.func_map.get("__str_byte_at")
+                .ok_or_else(|| "internal: __str_byte_at builtin not registered".to_string())?;
+            let dest = self.emit_builtin_call(fid, &[base_reg, idx_reg])?;
+            return Ok(dest);
+        }
         let elem_scalar = {
             fn elem_of(t: &ast::Type) -> Option<&ast::Type> {
                 match t {

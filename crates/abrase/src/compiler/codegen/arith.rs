@@ -267,6 +267,27 @@ impl Compiler {
                         return Ok(dr);
                     }
                 }
+                if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::Neq)
+                    && matches!(self.infer_expr_type(left),
+                                Some(ast::Type::Named(ref n)) if n == "String")
+                    && matches!(self.infer_expr_type(right),
+                                Some(ast::Type::Named(ref n)) if n == "String")
+                {
+                    let lr = self.compile_expr(left)?;
+                    let rr = self.compile_expr(right)?;
+                    let eq_id = *self.func_map.get("__str_eq")
+                        .ok_or_else(|| "internal: __str_eq builtin not registered".to_string())?;
+                    let eq = self.emit_builtin_call(eq_id, &[lr, rr])?;
+                    if matches!(op, ast::BinaryOp::Neq) {
+                        let zero = self.alloc_register()?;
+                        let idx = self.add_constant(Value::from_bool(false))?;
+                        self.emit(OpCode::PushConst(zero, idx));
+                        let dest = self.alloc_register()?;
+                        self.emit(OpCode::Eq(dest, eq, zero));
+                        return Ok(dest);
+                    }
+                    return Ok(eq);
+                }
                 let is_float = matches!(self.infer_expr_type(left),
                                 Some(ast::Type::Named(ref n)) if n == "Float")
                     && matches!(self.infer_expr_type(right),

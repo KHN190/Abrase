@@ -51,6 +51,9 @@ impl Compiler {
         for (name, p, r) in conv {
             self.register_typed_native(name, vec![p.clone()], r.clone(), 1);
         }
+        self.register_typed_native("__str_eq", vec![s.clone(), s.clone()], b.clone(), 2);
+        self.register_typed_native("__str_len", vec![s.clone()], i.clone(), 1);
+        self.register_typed_native("__str_byte_at", vec![s.clone(), i.clone()], i.clone(), 2);
         // System
         self.register_typed_native("halt",  vec![i.clone()], u.clone(), 1);
         self.register_typed_native("abort", vec![s.clone()], u.clone(), 1);
@@ -189,6 +192,12 @@ impl Compiler {
         }
         checker.register_impl_method("ToC", "Int", "to_c", "__int_to_c".into());
         checker.register_impl("Int", "ToC");
+        checker.register_trait("Str".into(), vec!["len".into(), "byte_at".into()]);
+        checker.register_trait_method_sig("Str", "len", vec![self_ty.clone()], i.clone());
+        checker.register_trait_method_sig("Str", "byte_at", vec![self_ty.clone(), i.clone()], i.clone());
+        checker.register_impl_method("Str", "String", "len", "__str_len".into());
+        checker.register_impl_method("Str", "String", "byte_at", "__str_byte_at".into());
+        checker.register_impl("String", "Str");
         for &(ty, mangled) in &[
             ("Int",    "__int_to_s"),
             ("Float",  "__float_to_s"),
@@ -262,6 +271,8 @@ impl Compiler {
             ("Char",   "to_s", "__char_to_s"),
             ("String", "to_s", "__string_to_s"),
             ("Unit",   "to_s", "__unit_to_s"),
+            ("String", "len",  "__str_len"),
+            ("String", "byte_at", "__str_byte_at"),
         ];
         for &(ty, m, mangled) in entries {
             dispatch.insert((ty.into(), m.into()), mangled.into());

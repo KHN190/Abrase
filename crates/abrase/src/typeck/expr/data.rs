@@ -57,8 +57,9 @@ impl Checker {
         let result = match deref {
             Type::Generic { name, args } if name == "Array" => args.get(0).cloned().unwrap_or(Type::Unknown),
             Type::Tuple(elems) => if elems.is_empty() { Type::Unknown } else { elems[0].clone() },
+            Type::String => Type::Int,
             Type::Unknown => Type::Unknown,
-            _ => self.report_error("Can only index arrays or tuples".into(), base.span),
+            _ => self.report_error("Can only index arrays, tuples, or strings".into(), base.span),
         };
         self.context_stack.pop();
         result

@@ -466,3 +466,35 @@ fn test_parser_traps_deeply_nested_input() {
     assert!(errs.iter().any(|e| e.contains("nested too deeply")),
             "expected depth-limit error, got: {:?}", errs);
 }
+
+#[test]
+fn string_literal_index_parses_to_index() {
+    let e = fn_body_expr("fn f() -> Int { \"ab\"[0] }");
+    let Expr::Index { index, .. } = e else { panic!("expected Index, got {:?}", e) };
+    assert_eq!(index.node, Expr::Literal(Literal::Int(0)));
+}
+
+#[test]
+fn string_binding_index_parses_to_index() {
+    let e = fn_body_expr("fn f() -> Int { let s = \"ab\"; s[1] }");
+    let Expr::Index { base, .. } = e else { panic!("expected Index, got {:?}", e) };
+    assert_eq!(base.node, Expr::Identifier("s".into()));
+}
+
+#[test]
+fn string_byte_at_parses_to_method_call() {
+    let e = fn_body_expr("fn f() -> Int { \"ab\".byte_at(0) }");
+    let Expr::Call { callee, args } = e else { panic!("expected Call, got {:?}", e) };
+    let Expr::FieldAccess { field, .. } = callee.node else { panic!("expected FieldAccess callee") };
+    assert_eq!(field, "byte_at");
+    assert_eq!(args.len(), 1);
+}
+
+#[test]
+fn string_len_parses_to_method_call() {
+    let e = fn_body_expr("fn f() -> Int { \"ab\".len() }");
+    let Expr::Call { callee, args } = e else { panic!("expected Call, got {:?}", e) };
+    let Expr::FieldAccess { field, .. } = callee.node else { panic!("expected FieldAccess callee") };
+    assert_eq!(field, "len");
+    assert!(args.is_empty());
+}
