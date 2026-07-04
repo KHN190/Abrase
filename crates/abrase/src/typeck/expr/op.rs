@@ -106,7 +106,17 @@ impl Checker {
                 ast::BinaryOp::Add | ast::BinaryOp::Sub | ast::BinaryOp::Mul | ast::BinaryOp::Div | ast::BinaryOp::Mod => {
                     if l_ty == Type::Int || l_ty == Type::Float { l_ty } else { self.report_error("Expected numeric types".into(), span) }
                 }
-                ast::BinaryOp::Eq | ast::BinaryOp::Neq | ast::BinaryOp::Lt | ast::BinaryOp::Gt | ast::BinaryOp::Lte | ast::BinaryOp::Gte => {
+                ast::BinaryOp::Eq | ast::BinaryOp::Neq => {
+                    if let Type::Named(n) = &l_ty {
+                        if let Some(ast::TypeBody::Variant(cases)) = self.type_registry.get(n) {
+                            if !cases.iter().all(|c| matches!(c, ast::VariantCase::Unit(_))) {
+                                self.report_error("`==` on a variant with payload is unsupported; use `match`".into(), span);
+                            }
+                        }
+                    }
+                    Type::Bool
+                }
+                ast::BinaryOp::Lt | ast::BinaryOp::Gt | ast::BinaryOp::Lte | ast::BinaryOp::Gte => {
                     Type::Bool
                 }
                 ast::BinaryOp::And | ast::BinaryOp::Or => {

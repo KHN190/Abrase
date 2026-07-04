@@ -202,3 +202,57 @@ fn verify_compile_variant_record_variant() {
     let result = compile_module_and_run(&ast);
     assert_eq!(result, Ok(Value::from_int(66)));
 }
+
+const COLOR: &str = "type Color = Red | Green | Blue ";
+
+#[test]
+fn variant_eq_same_case_true() {
+    let src = format!("{COLOR} fn main() -> Bool {{ let a = Red; let b = Red; a == b }}");
+    assert_eq!(run_source(&src).expect("run"), Value::from_bool(true));
+}
+
+#[test]
+fn variant_eq_different_case_false() {
+    let src = format!("{COLOR} fn main() -> Bool {{ let a = Red; let b = Green; a == b }}");
+    assert_eq!(run_source(&src).expect("run"), Value::from_bool(false));
+}
+
+#[test]
+fn variant_neq_same_case_false() {
+    let src = format!("{COLOR} fn main() -> Bool {{ let a = Blue; let b = Blue; a != b }}");
+    assert_eq!(run_source(&src).expect("run"), Value::from_bool(false));
+}
+
+#[test]
+fn variant_neq_different_case_true() {
+    let src = format!("{COLOR} fn main() -> Bool {{ let a = Red; let b = Blue; a != b }}");
+    assert_eq!(run_source(&src).expect("run"), Value::from_bool(true));
+}
+
+#[test]
+fn variant_eq_inline_ctor_temporaries() {
+    let src = format!("{COLOR} fn main() -> Bool {{ Green == Green }}");
+    assert_eq!(run_source(&src).expect("run"), Value::from_bool(true));
+}
+
+#[test]
+fn variant_eq_drives_if_logic() {
+    let src = format!("{COLOR} fn main() -> Int {{ let x = Green; if x == Green {{ 1 }} else {{ 0 }} }}");
+    assert_eq!(run_source(&src).expect("run"), Value::from_int(1));
+}
+
+#[test]
+fn variant_eq_temporaries_no_leak() {
+    let src = format!("{COLOR} fn main() -> Int {{ if Red == Blue {{ 1 }} else {{ 0 }} }}");
+    let (v, live) = run_source_with_heap(&src).expect("run");
+    assert_eq!(v, Value::from_int(0));
+    assert_eq!(live, 0, "variant temporaries must be freed: {live} live");
+}
+
+#[test]
+fn variant_eq_binding_no_leak() {
+    let src = format!("{COLOR} fn main() -> Int {{ let a = Red; let b = Red; if a == b {{ 7 }} else {{ 0 }} }}");
+    let (v, live) = run_source_with_heap(&src).expect("run");
+    assert_eq!(v, Value::from_int(7));
+    assert_eq!(live, 0, "bound variants must be freed: {live} live");
+}

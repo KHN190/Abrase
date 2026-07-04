@@ -288,6 +288,28 @@ impl Compiler {
                     }
                     return Ok(eq);
                 }
+                if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::Neq)
+                    && matches!(self.infer_expr_type(left),
+                                Some(ast::Type::Named(ref n)) if self.layouts.variants.values().any(|v| &v.type_name == n))
+                {
+                    let lr = self.compile_expr(left)?;
+                    let rr = self.compile_expr(right)?;
+                    let lt = self.alloc_register()?;
+                    self.emit(OpCode::Ld(lt, lr, 0));
+                    let rt = self.alloc_register()?;
+                    self.emit(OpCode::Ld(rt, rr, 0));
+                    let l_bound = matches!(&left.node, ast::Expr::Identifier(n) if self.var_to_reg.contains_key(n));
+                    let r_bound = matches!(&right.node, ast::Expr::Identifier(n) if self.var_to_reg.contains_key(n));
+                    if !l_bound { self.emit(OpCode::Drop(lr)); }
+                    if !r_bound { self.emit(OpCode::Drop(rr)); }
+                    let dest = self.alloc_register()?;
+                    if matches!(op, ast::BinaryOp::Neq) {
+                        self.emit(OpCode::Neq(dest, lt, rt));
+                    } else {
+                        self.emit(OpCode::Eq(dest, lt, rt));
+                    }
+                    return Ok(dest);
+                }
                 let is_float = matches!(self.infer_expr_type(left),
                                 Some(ast::Type::Named(ref n)) if n == "Float")
                     && matches!(self.infer_expr_type(right),

@@ -433,3 +433,18 @@ fn method_arg_type_mismatch_rejected() {
     let err = must_reject(src);
     assert!(!err.is_empty(), "method arg type mismatch must be rejected");
 }
+
+#[test]
+fn eq_on_variant_with_payload_rejected() {
+    let src = r#"
+        type Opt = Some(Int) | None
+        fn main() -> Bool {
+            let a = Some(1);
+            let b = None;
+            a == b
+        }
+    "#;
+    let err = must_reject(src);
+    assert!(err.contains("variant with payload") || !err.is_empty(),
+        "`==` on payload-bearing variant must be rejected: {err}");
+}
