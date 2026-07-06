@@ -1,11 +1,31 @@
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ExprId(pub u32);
+
+impl ExprId {
+    pub const NONE: ExprId = ExprId(0);
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Span {
     pub line: usize,
     pub col: usize,
+    pub id: ExprId,
 }
 
 impl Span {
-    pub fn new(line: usize, col: usize) -> Self { Self { line, col } }
+    pub fn new(line: usize, col: usize) -> Self { Self { line, col, id: ExprId::NONE } }
+    pub fn with_id(mut self, id: ExprId) -> Self { self.id = id; self }
+}
+
+impl PartialEq for Span {
+    fn eq(&self, other: &Self) -> bool { self.line == other.line && self.col == other.col }
+}
+impl Eq for Span {}
+impl std::hash::Hash for Span {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.line.hash(state);
+        self.col.hash(state);
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -330,4 +350,89 @@ pub enum Decl {
         name: String,
         effects: Vec<EffectItem>,
     },
+}
+
+pub fn stamp_expr_ids(decls: &mut [Decl]) {
+    let mut n: u32 = 0;
+    for d in decls.iter_mut() {
+        stamp_decl(d, &mut n);
+    }
+}
+
+fn stamp_decl(d: &mut Decl, n: &mut u32) {
+    match d {
+        Decl::Fn(fd) => stamp_block(&mut fd.body, n),
+        Decl::Const { value, .. } | Decl::Static { value, .. } => stamp_expr(value, n),
+        Decl::Trait { items, .. } => {
+            for it in items.iter_mut() {
+                if let TraitItem::Default(fd) = it { stamp_block(&mut fd.body, n); }
+            }
+        }
+        Decl::Impl { methods, .. } => {
+            for fd in methods.iter_mut() { stamp_block(&mut fd.body, n); }
+        }
+        _ => {}
+    }
+}
+
+fn stamp_block(b: &mut Block, n: &mut u32) {
+    for s in b.stmts.iter_mut() {
+        match &mut s.node {
+            Stmt::Let { value, .. } => stamp_expr(value, n),
+            Stmt::Expr(e) => stamp_expr(e, n),
+            Stmt::Empty => {}
+        }
+    }
+    if let Some(r) = b.ret.as_mut() { stamp_expr(r, n); }
+}
+
+fn stamp_expr(e: &mut Spanned<Expr>, n: &mut u32) {
+    *n += 1;
+    e.span.id = ExprId(*n);
+    match &mut e.node {
+        Expr::Binary { left, right, .. } => { stamp_expr(left, n); stamp_expr(right, n); }
+        Expr::Unary { right, .. } => stamp_expr(right, n),
+        Expr::Call { callee, args } => { stamp_expr(callee, n); for a in args { stamp_expr(a, n); } }
+        Expr::Index { base, index } => { stamp_expr(base, n); stamp_expr(index, n); }
+        Expr::Block(b) => stamp_block(b, n),
+        Expr::If { condition, consequence, alternative } => {
+            stamp_expr(condition, n);
+            stamp_expr(consequence, n);
+            if let Some(a) = alternative.as_mut() { stamp_expr(a, n); }
+        }
+        Expr::Match { scrutinee, arms } => {
+            stamp_expr(scrutinee, n);
+            for arm in arms.iter_mut() {
+                if let Some(g) = arm.guard.as_mut() { stamp_expr(g, n); }
+                stamp_expr(&mut arm.body, n);
+            }
+        }
+        Expr::For { iter, body, .. } => { stamp_expr(iter, n); stamp_block(body, n); }
+        Expr::While { condition, body } => { stamp_expr(condition, n); stamp_block(body, n); }
+        Expr::Loop { body } | Expr::Region { body, .. } => stamp_block(body, n),
+        Expr::Break(o) | Expr::Return(o) | Expr::Resume(o) => {
+            if let Some(x) = o.as_mut() { stamp_expr(x, n); }
+        }
+        Expr::Throw(x) | Expr::Question(x) | Expr::Paren(x) => stamp_expr(x, n),
+        Expr::Tuple(xs) | Expr::Array(xs) | Expr::Variant { args: xs, .. } => {
+            for x in xs.iter_mut() { stamp_expr(x, n); }
+        }
+        Expr::ArrayRepeat { elem, count } => { stamp_expr(elem, n); stamp_expr(count, n); }
+        Expr::Record { fields, .. } => {
+            for f in fields.iter_mut() {
+                if let Some(v) = f.value.as_mut() { stamp_expr(v, n); }
+            }
+        }
+        Expr::FieldAccess { base, .. } => stamp_expr(base, n),
+        Expr::Closure { body, .. } => stamp_expr(body, n),
+        Expr::Range { start, end, .. } => {
+            if let Some(s) = start.as_mut() { stamp_expr(s, n); }
+            if let Some(en) = end.as_mut() { stamp_expr(en, n); }
+        }
+        Expr::Handle { expr, arms } => {
+            stamp_expr(expr, n);
+            for arm in arms.iter_mut() { stamp_expr(&mut arm.body, n); }
+        }
+        Expr::Literal(_) | Expr::Identifier(_) | Expr::Continue | Expr::Error => {}
+    }
 }

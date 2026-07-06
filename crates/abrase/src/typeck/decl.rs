@@ -44,7 +44,7 @@ impl Checker {
                 if is_cart && fn_decl.name != "main" {
                     self.report_error(
                         "`@cart` can only be applied to `main`".into(),
-                        ast::Span { line: 0, col: 0 },
+                        ast::Span::new(0, 0),
                     );
                 }
                 if fn_decl.name == "main" {
@@ -59,14 +59,14 @@ impl Checker {
                                 format!("`@cart main` may only use runtime-provided effects; \
                                          the runtime has no native to discharge: {}",
                                     bad.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
-                                ast::Span { line: 0, col: 0 }
+                                ast::Span::new(0, 0)
                             );
                         }
                     } else if !fn_decl.effects.is_empty() {
                         self.report_error(
                             format!("`main` function must be pure (no effects); found: {}",
                                 fn_decl.effects.iter().map(|e| e.name.join(".")).collect::<Vec<_>>().join(", ")),
-                            ast::Span { line: 0, col: 0 }
+                            ast::Span::new(0, 0)
                         );
                     }
                 }
@@ -82,7 +82,7 @@ impl Checker {
                                      scalars (Int/Float/Bool/Char/Unit/Addr); a handle value \
                                      would make the compiler emit RC into core code",
                                 fn_decl.name),
-                            ast::Span { line: 0, col: 0 },
+                            ast::Span::new(0, 0),
                         );
                     }
                 }
@@ -90,7 +90,7 @@ impl Checker {
                 let fn_type = Type::Function { params, effects, ret };
                 let module_path = self.current_module.clone();
                 self.register_module_item(&module_path, fn_decl.name.clone(), fn_type.clone());
-                self.insert_var(fn_decl.name.clone(), fn_type, false, ast::Span { line: 0, col: 0 });
+                self.insert_var(fn_decl.name.clone(), fn_type, false, ast::Span::new(0, 0));
 
                 if !fn_decl.generics.is_empty() {
                     let names: Vec<String> = fn_decl.generics.iter().map(|g| g.name.clone()).collect();
@@ -120,7 +120,7 @@ impl Checker {
                                     "type '{}' cannot be declared `@share`; \
                                      wrap it in `Shared<T>` instead", name
                                 ),
-                                ast::Span { line: 0, col: 0 },
+                                ast::Span::new(0, 0),
                             );
                             Ownership::Move
                         }
@@ -128,7 +128,7 @@ impl Checker {
                     self.register_ownership(name.clone(), ownership);
                 }
                 let mut visited = std::collections::HashSet::new();
-                self.check_type_recursion(name, body, &mut visited, ast::Span { line: 0, col: 0 });
+                self.check_type_recursion(name, body, &mut visited, ast::Span::new(0, 0));
             },
 
             ast::Decl::TypeAlias { name, ty, is_pub, .. } => {
@@ -148,7 +148,7 @@ impl Checker {
                         format!("Cannot redefine built-in trait '{}'; \
                                  it is reserved by `@derive` and cannot be shadowed",
                                 name),
-                        ast::Span { line: 0, col: 0 },
+                        ast::Span::new(0, 0),
                     );
                     return;
                 }
@@ -210,7 +210,7 @@ impl Checker {
                 if self.lookup_module_item(&module_path, name).is_some() {
                     self.report_error(
                         format!("`{}` is already declared in this module", name),
-                        ast::Span { line: 0, col: 0 },
+                        ast::Span::new(0, 0),
                     );
                 }
                 self.register_module_item(&module_path, name.clone(), static_type.clone());
@@ -253,7 +253,7 @@ impl Checker {
                         self.report_error(
                             format!("Cannot import '{}' from {}: item is private",
                                 item.name, path.join(".")),
-                            ast::Span { line: 0, col: 0 },
+                            ast::Span::new(0, 0),
                         );
                     }
                 }
@@ -436,7 +436,7 @@ impl Checker {
             &fn_decl.generics,
             &fn_decl.where_clause,
             &[],
-            ast::Span { line: 0, col: 0 },
+            ast::Span::new(0, 0),
         );
 
         let saved_declared = std::mem::take(&mut self.fn_declared_effects);
@@ -453,7 +453,7 @@ impl Checker {
                     let param_type = self.convert_type(ty);
                     match &pattern.node {
                         ast::Pattern::Bind(name) => {
-                            self.insert_var(name.clone(), param_type, false, ast::Span { line: 0, col: 0 });
+                            self.insert_var(name.clone(), param_type, false, ast::Span::new(0, 0));
                         }
                         _ => {
                             self.check_pattern(pattern, &param_type, pattern.span);
@@ -486,7 +486,7 @@ impl Checker {
             if !self.types_compatible(&expected_return, &body_type) {
                 let span = fn_decl.body.ret.as_ref().map(|r| r.span)
                     .or_else(|| fn_decl.body.stmts.last().map(|s| s.span))
-                    .unwrap_or(ast::Span { line: 1, col: 1 });
+                    .unwrap_or(ast::Span::new(1, 1));
                 self.report_error(
                     format!("Return type mismatch in '{}': expected {}, got {}",
                         fn_decl.name, format!("{:?}", expected_return), format!("{:?}", body_type)),
@@ -511,7 +511,7 @@ impl Checker {
             if !declared {
                 let span = fn_decl.body.ret.as_ref().map(|r| r.span)
                     .or_else(|| fn_decl.body.stmts.first().map(|s| s.span))
-                    .unwrap_or(ast::Span { line: 1, col: 1 });
+                    .unwrap_or(ast::Span::new(1, 1));
                 self.report_error(
                     format!("Function '{}' uses effect {:?} but does not declare it in its signature",
                         fn_decl.name, effect),
@@ -566,7 +566,7 @@ impl Checker {
         let mut assigned: std::collections::HashSet<String> = std::collections::HashSet::new();
         let body_expr = ast::Spanned {
             node: ast::Expr::Block(fn_decl.body.clone()),
-            span: ast::Span { line: 0, col: 0 },
+            span: ast::Span::new(0, 0),
         };
         crate::compiler::closures::collect_assigned_idents(&body_expr, &mut_names, &mut assigned);
 
@@ -592,7 +592,7 @@ impl Checker {
                             "type '{}' cannot be declared `@share`; \
                              wrap it in `Shared<T>` instead", name
                         ),
-                        ast::Span { line: 0, col: 0 },
+                        ast::Span::new(0, 0),
                     );
                     Ownership::Move
                 }
@@ -610,7 +610,7 @@ impl Checker {
         }
 
         let mut visited = std::collections::HashSet::new();
-        self.check_type_recursion(name, body, &mut visited, ast::Span { line: 0, col: 0 });
+        self.check_type_recursion(name, body, &mut visited, ast::Span::new(0, 0));
     }
 
     pub fn check_impl_decl(
@@ -642,7 +642,7 @@ impl Checker {
             generics,
             where_clause,
             &type_args,
-            ast::Span { line: 0, col: 0 },
+            ast::Span::new(0, 0),
         );
 
         // Translate Self-style params to a regular `self: ReceiverType` binding so
@@ -652,14 +652,14 @@ impl Checker {
                 ast::Param::SelfVal => ast::Param::Named {
                     pattern: ast::Spanned {
                         node: ast::Pattern::Bind("self".into()),
-                        span: ast::Span { line: 0, col: 0 },
+                        span: ast::Span::new(0, 0),
                     },
                     ty: ast::Type::Named(type_name.clone()),
                 },
                 ast::Param::SelfRef { is_mut } => ast::Param::Named {
                     pattern: ast::Spanned {
                         node: ast::Pattern::Bind("self".into()),
-                        span: ast::Span { line: 0, col: 0 },
+                        span: ast::Span::new(0, 0),
                     },
                     ty: ast::Type::Reference {
                         is_mut: *is_mut,
@@ -693,7 +693,7 @@ impl Checker {
                     self.report_error(
                         format!("impl of trait '{}' for type '{}' is missing method '{}'",
                             trait_str, type_name, required),
-                        ast::Span { line: 0, col: 0 },
+                        ast::Span::new(0, 0),
                     );
                 }
             }
@@ -740,7 +740,7 @@ impl Checker {
                                      expected ({:?}) -> {:?}, got ({:?}) -> {:?}",
                                 method.name, type_name, trait_str,
                                 expected_params, expected_ret, impl_params, impl_ret),
-                            ast::Span { line: 0, col: 0 },
+                            ast::Span::new(0, 0),
                         );
                     }
                 }
@@ -1166,7 +1166,7 @@ pub(super) fn lint_unused_imports(decls: &[ast::Decl], all_idents: &std::collect
                     checker.report_warning(
                         "unused_import",
                         format!("unused import `{}`", local_name),
-                        ast::Span { line: 0, col: 0 },
+                        ast::Span::new(0, 0),
                     );
                 }
             }
@@ -1189,14 +1189,14 @@ pub(super) fn lint_dead_code(decls: &[ast::Decl], checker: &mut super::Checker) 
             ast::Decl::Fn(f) => {
                 let synthetic = f.name.starts_with("__");
                 if !synthetic {
-                    fn_info.insert(f.name.clone(), (f.is_pub, ast::Span { line: 0, col: 0 }));
+                    fn_info.insert(f.name.clone(), (f.is_pub, ast::Span::new(0, 0)));
                 }
                 let mut refs = HashSet::new();
                 collect_idents_block(&f.body, &mut refs);
                 fn_refs.insert(f.name.clone(), refs);
             }
             ast::Decl::Type { name, is_pub, .. } => {
-                type_info.insert(name.clone(), (*is_pub, ast::Span { line: 0, col: 0 }));
+                type_info.insert(name.clone(), (*is_pub, ast::Span::new(0, 0)));
             }
             _ => {}
         }
@@ -1488,7 +1488,7 @@ pub(super) fn lint_unused_effects(decls: &[ast::Decl], checker: &mut super::Chec
             checker.report_warning(
                 "dead_code",
                 format!("effect `{}` is declared but never handled", name),
-                ast::Span { line: 0, col: 0 },
+                ast::Span::new(0, 0),
             );
         }
     }

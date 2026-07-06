@@ -22,7 +22,7 @@ impl Checker {
                     self.report_error(
                         format!("'{}' already imported from {:?}, cannot import from {:?}",
                             accessible_name, existing_module, module_path),
-                        crate::ast::Span { line: 0, col: 0 },
+                        crate::ast::Span::new(0, 0),
                     );
                     continue; // Skip adding this conflicting import
                 }
@@ -46,7 +46,7 @@ impl Checker {
             self.import_collisions.insert(name.to_string());
             self.report_error(
                 format!("'{}' imported from {:?} conflicts with existing binding", name, module_path),
-                crate::ast::Span { line: 0, col: 0 },
+                crate::ast::Span::new(0, 0),
             );
             return true;
         }
@@ -59,7 +59,7 @@ impl Checker {
             self.import_collisions.insert(name.to_string());
             self.report_error(
                 format!("'{}' imported from {:?} conflicts with import from {:?}", name, module_path, existing),
-                crate::ast::Span { line: 0, col: 0 },
+                crate::ast::Span::new(0, 0),
             );
             return true;
         }

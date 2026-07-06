@@ -158,8 +158,8 @@ pub struct Checker {
     // Type Aliases
     type_alias_registry: HashMap<String, Type>,
 
-    // Authoritative per-expression types, keyed by (module, span, expr-kind). Populated by infer_expr.
-    pub expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), Type>,
+    // Authoritative per-expression types, keyed by parser-assigned ExprId.
+    pub expr_types: HashMap<ast::ExprId, Type>,
     // Body-tail spans of fallible functions whose tail expression already yields
     // a Result skips the function-level `Ok`-wrap for these.
     pub result_tail_spans: std::collections::HashSet<(Vec<String>, ast::Span)>,

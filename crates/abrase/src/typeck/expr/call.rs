@@ -94,6 +94,9 @@ impl Checker {
                         self.infer_expr(base)
                     };
                     self.context_stack.pop();
+                    if !matches!(base_ty, Type::Unknown) && base.span.id != ast::ExprId::NONE {
+                        self.expr_types.insert(base.span.id, base_ty.clone());
+                    }
                     if field == "clone" && args.is_empty() {
                         return base_ty;
                     }

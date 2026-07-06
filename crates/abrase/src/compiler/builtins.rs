@@ -112,13 +112,13 @@ impl Compiler {
             effects: vec![],
             ret: Box::new(TyType::Unit),
         };
-        checker.insert_var("device_in".into(), device_in_ty, false, ast::Span { line: 0, col: 0 });
+        checker.insert_var("device_in".into(), device_in_ty, false, ast::Span::new(0, 0));
         let device_out_ty = TyType::Function {
             params: vec![TyType::Int],
             effects: vec![],
             ret: Box::new(TyType::Int),
         };
-        checker.insert_var("device_out".into(), device_out_ty, false, ast::Span { line: 0, col: 0 });
+        checker.insert_var("device_out".into(), device_out_ty, false, ast::Span::new(0, 0));
 
         self.register_builtin_effects(checker);
 
@@ -128,7 +128,7 @@ impl Compiler {
                 effects: checker.convert_effect_items(&decl.effects),
                 ret: Box::new(decl.ret.clone()),
             };
-            checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+            checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span::new(0, 0));
             if !decl.effects.is_empty() {
                 checker.register_function_effects(decl.name.clone(), decl.effects.clone());
             }
@@ -139,7 +139,7 @@ impl Compiler {
                 effects: vec![],
                 ret: Box::new(ret.clone()),
             };
-            checker.insert_var(name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+            checker.insert_var(name.clone(), fn_ty, false, ast::Span::new(0, 0));
         }
         self.register_builtin_traits(checker);
         let mut dispatch = std::collections::HashMap::new();

@@ -7,8 +7,9 @@ pub fn monomorphize_with_methods_and_builtins(
     decls: Vec<Decl>,
     method_dispatch: HashMap<(String, String), String>,
     builtin_returns: HashMap<String, Type>,
+    expr_types: HashMap<ExprId, Type>,
 ) -> Result<Vec<Decl>, Vec<Error>> {
-    Mono::new(decls, method_dispatch, builtin_returns).run()
+    Mono::new(decls, method_dispatch, builtin_returns, expr_types).run()
 }
 
 struct Mono {
@@ -19,6 +20,8 @@ struct Mono {
     method_dispatch: HashMap<(String, String), String>,
     /// mangled fn name -> return type, for builtins that aren't in `fn_sigs`.
     builtin_returns: HashMap<String, Type>,
+    /// typeck's per-expr types by ExprId; primary receiver-type source. peek_type is the id-NONE fallback.
+    expr_types: HashMap<ExprId, Type>,
     out: Vec<Decl>,
     out_specials: Vec<FnDecl>,
     pending: Vec<(String, Vec<Type>)>,
@@ -31,6 +34,7 @@ impl Mono {
         decls: Vec<Decl>,
         method_dispatch: HashMap<(String, String), String>,
         builtin_returns: HashMap<String, Type>,
+        expr_types: HashMap<ExprId, Type>,
     ) -> Self {
         let mut generic_fns = HashMap::new();
         let mut fn_sigs = HashMap::new();
@@ -52,6 +56,7 @@ impl Mono {
             fn_sigs,
             method_dispatch,
             builtin_returns,
+            expr_types,
             out,
             out_specials: Vec::new(),
             pending: Vec::new(),
@@ -422,7 +427,8 @@ impl Mono {
     ) {
         let mangled_opt: Option<String> = if let Expr::Call { callee, .. } = &expr.node {
             if let Expr::FieldAccess { base, field } = &callee.node {
-                let base_ty = peek_type_with_builtins(base, env, &self.fn_sigs, &self.builtin_returns);
+                let base_ty = self.expr_types.get(&base.span.id).cloned()
+                    .or_else(|| peek_type_with_builtins(base, env, &self.fn_sigs, &self.builtin_returns));
                 let recv = base_ty.as_ref().and_then(|t| receiver_name_of(t));
                 let recv_sub = recv.as_ref().and_then(|n| {
                     subst.get(n).and_then(|t| receiver_name_of(t))

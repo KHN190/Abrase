@@ -118,7 +118,7 @@ pub struct Compiler {
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
-    pub(super) typeck_expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), crate::ty::Type>,
+    pub(super) typeck_expr_types: HashMap<ast::ExprId, crate::ty::Type>,
     pub(super) result_tail_spans: std::collections::HashSet<(Vec<String>, ast::Span)>,
 }
 
@@ -701,8 +701,11 @@ impl Compiler {
         let builtin_returns: std::collections::HashMap<String, ast::Type> = self.builtin_types.iter()
             .filter_map(|(name, (_, ret))| codegen::inference::ty_to_ast(ret).map(|t| (name.clone(), t)))
             .collect();
+        let expr_types: std::collections::HashMap<ast::ExprId, ast::Type> = self.typeck_expr_types.iter()
+            .filter_map(|(id, t)| codegen::inference::ty_to_ast(t).map(|a| (*id, a)))
+            .collect();
         mono::monomorphize_with_methods_and_builtins(
-            decls, self.method_dispatch.clone(), builtin_returns,
+            decls, self.method_dispatch.clone(), builtin_returns, expr_types,
         ).map_err(|es| { self.errors.extend(es); self.errors.clone() })
     }
 

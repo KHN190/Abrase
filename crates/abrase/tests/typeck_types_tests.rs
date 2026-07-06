@@ -2,7 +2,7 @@ use abrase::ty::{Type, Variance};
 use abrase::ast::{self, Pattern, RecordField, Span, Spanned, Type as AstType, TypeBody, VariantCase};
 use abrase::typeck::Checker;
 
-fn d_span() -> Span { Span { line: 0, col: 0 } }
+fn d_span() -> Span { Span::new(0, 0) }
 fn sp<T>(node: T) -> Spanned<T> { Spanned { node, span: d_span() } }
 fn body_breaking(name: &str) -> ast::Block {
     ast::Block {

@@ -628,7 +628,7 @@ impl Doubler for Int { fn double(self) -> Int { self * 2 } }
 "#;
 
 #[test]
-fn method_field_receiver_reaches_codegen_method_path() {
+fn method_field_receiver_monomorphized_to_function() {
     let src = format!(
         "{METHOD_DOUBLER_INNER}
         type Outer = {{ inner: Inner }}
@@ -639,14 +639,15 @@ fn method_field_receiver_reaches_codegen_method_path() {
     );
     let kinds = method_resolved_kinds(&src);
     assert!(
-        kinds.iter().any(|k| k.contains("resolved to \"Method\"")),
-        "field-receiver call must resolve via codegen Method path; got {:?}",
+        kinds.iter().any(|k| k.contains("resolved to \"Function\""))
+            && !kinds.iter().any(|k| k.contains("resolved to \"Method\"")),
+        "field-receiver call must be mono-rewritten to a Function call (typeck-typed via ExprId); got {:?}",
         kinds
     );
 }
 
 #[test]
-fn method_index_receiver_reaches_method_path() {
+fn method_index_receiver_monomorphized_to_function() {
     let src = format!(
         "{METHOD_DOUBLER_INNER}
         fn main() -> Int {{
@@ -656,8 +657,9 @@ fn method_index_receiver_reaches_method_path() {
     );
     let kinds = method_resolved_kinds(&src);
     assert!(
-        kinds.iter().any(|k| k.contains("resolved to \"Method\"")),
-        "index-receiver call must resolve via codegen Method path; got {:?}",
+        kinds.iter().any(|k| k.contains("resolved to \"Function\""))
+            && !kinds.iter().any(|k| k.contains("resolved to \"Method\"")),
+        "index-receiver call must be mono-rewritten to a Function call; got {:?}",
         kinds
     );
 }
@@ -727,7 +729,7 @@ fn method_deep_field_chain_receiver_heap_balanced() {
 }
 
 #[test]
-fn method_and_function_dispatch_paths_agree() {
+fn method_field_and_literal_receivers_agree() {
     let field = format!(
         "{METHOD_DOUBLER_INNER}
         type Outer = {{ inner: Inner }}
@@ -742,14 +744,15 @@ fn method_and_function_dispatch_paths_agree() {
     );
     let fk = method_resolved_kinds(&field);
     let lk = method_resolved_kinds(&literal);
-    assert!(fk.iter().any(|k| k.contains("\"Method\"")), "field form must be Method; got {:?}", fk);
-    assert!(
-        lk.iter().any(|k| k.contains("\"Function\"")) && !lk.iter().any(|k| k.contains("\"Method\"")),
-        "literal form must be Function; got {:?}", lk
-    );
+    for (form, k) in [("field", &fk), ("literal", &lk)] {
+        assert!(
+            k.iter().any(|s| s.contains("\"Function\"")) && !k.iter().any(|s| s.contains("\"Method\"")),
+            "{form} form must be a mono-rewritten Function call (unified on ExprId table); got {:?}", k
+        );
+    }
     let (a, _) = run_source_with_heap(&field).unwrap();
     let (b, _) = run_source_with_heap(&literal).unwrap();
-    assert_eq!(a, b, "Method path and Function path must agree on the value");
+    assert_eq!(a, b, "field and literal receivers must agree on the value");
     assert_eq!(a, Value::from_int(42));
 }
 
@@ -787,4 +790,51 @@ fn method_field_receiver_fuzz_matches_oracle_and_balances_heap() {
         assert_eq!(v, Value::from_int(n.wrapping_mul(2)), "n={n}");
         assert_eq!(live, 0, "n={n}: heap must balance");
     }
+}
+
+// Guard for deleting the codegen Method path: every FieldAccess-callee shape must mono-rewrite to Function. Any "Method" = shape still needs it.
+#[test]
+fn every_method_receiver_shape_monomorphizes_to_function() {
+    let prelude = "
+type Inner = { v: Int }
+type Mid = { inner: Inner }
+type Top = { mid: Mid }
+trait Doubler { fn double(self) -> Int { 0 } }
+trait Twin { fn twin(self) -> Inner { Inner { v: 0 } } }
+impl Doubler for Inner { fn double(self) -> Int { self.v * 2 } }
+impl Twin for Inner { fn twin(self) -> Inner { Inner { v: self.v } } }
+fn mk() -> Inner { Inner { v: 21 } }
+";
+    let bodies: [(&str, &str); 10] = [
+        ("identifier binding", "let i = Inner { v: 21 }; i.double()"),
+        ("field access",       "let m = Mid { inner: Inner { v: 21 } }; m.inner.double()"),
+        ("deep field chain",   "let t = Top { mid: Mid { inner: Inner { v: 21 } } }; t.mid.inner.double()"),
+        ("array index",        "let a = [Inner { v: 21 }]; a[0].double()"),
+        ("paren receiver",     "let m = Mid { inner: Inner { v: 21 } }; (m.inner).double()"),
+        ("call result",        "mk().double()"),
+        ("method chain",       "let i = Inner { v: 21 }; i.twin().double()"),
+        ("call-then-chain",    "mk().twin().double()"),
+        ("block receiver",     "({ let x = Inner { v: 21 }; x }).double()"),
+        ("match receiver",     "let flag = true; (match flag { true => Inner { v: 21 }, _ => Inner { v: 0 } }).double()"),
+    ];
+    for (label, body) in bodies {
+        let src = format!("{prelude}\nfn main() -> Int {{ {body} }}");
+        let kinds = method_resolved_kinds(&src);
+        assert!(
+            !kinds.iter().any(|k| k.contains("resolved to \"Method\"")),
+            "receiver shape `{label}` hit the codegen Method path (still needed): {:?}",
+            kinds
+        );
+        let (v, live) = run_source_with_heap(&src).unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert_eq!(v, Value::from_int(42), "shape `{label}` wrong value");
+        assert_eq!(live, 0, "shape `{label}` heap must balance");
+    }
+}
+
+// Unresolvable receiver must be a clean typeck error, never a codegen panic.
+#[test]
+fn unresolvable_method_receiver_errors_clean_not_panic() {
+    let src = "\ntrait D { fn double(self) -> Int { 0 } }\ntype Inner = { v: Int }\nimpl D for Inner { fn double(self) -> Int { self.v } }\nfn main() -> Int { nope.double() }\n";
+    let r = run_source(src);
+    assert!(r.is_err(), "unresolved receiver must be a clean compile error, got {:?}", r);
 }

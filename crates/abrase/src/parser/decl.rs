@@ -24,6 +24,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        crate::ast::stamp_expr_ids(&mut decls);
         decls
     }
 

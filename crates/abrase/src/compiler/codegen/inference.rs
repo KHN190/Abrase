@@ -6,16 +6,8 @@ use crate::compiler::Compiler;
 
 impl Compiler {
     pub(in crate::compiler) fn infer_expr_type(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ast::Type> {
-        // `expr_types` is keyed by (module, span, discriminant), but Span is
-        // start-only (line,col): nested same-discriminant Binary nodes share a
-        // start col, so the outer comparison's Bool clobbers the inner arith's
-        // Float. Derive Binary types from operands instead (correct + collision-free).
-        if matches!(expr.node, ast::Expr::Binary { .. }) {
-            return self.infer_expr_type_fallback(expr);
-        }
-        if expr.span != ast::Span::new(0, 0) {
-            let key = (self.current_fn_module.clone(), expr.span, std::mem::discriminant(&expr.node));
-            if let Some(ty) = self.typeck_expr_types.get(&key) {
+        if expr.span.id != ast::ExprId::NONE {
+            if let Some(ty) = self.typeck_expr_types.get(&expr.span.id) {
                 if let Some(ast_ty) = ty_to_ast(ty) {
                     return Some(ast_ty);
                 }
@@ -174,12 +166,6 @@ impl Compiler {
             ast::Expr::Paren(inner) => self.infer_expr_type(inner),
             _ => None,
         }
-    }
-
-    // Handles literals, identifiers, and references (`&x`).
-    pub(in crate::compiler) fn receiver_type_name(&self, base: &ast::Spanned<ast::Expr>) -> Option<String> {
-        let ty = self.infer_expr_type(base)?;
-        receiver_name_of(&ty)
     }
 
     pub(in crate::compiler) fn try_const_fold(&self, expr: &ast::Spanned<ast::Expr>) -> Option<ConstValue> {

@@ -171,3 +171,79 @@ fn verify_compile_float_nan_lt_is_false() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), Value::from_bool(false));
 }
+
+// ---- ExprId type-table: nested float arith must pick float opcodes, verified
+//      against a Rust f64 reference oracle (not hand-computed bit patterns). ----
+
+#[test]
+fn nested_float_arith_matches_ieee_oracle() {
+    let cases: [(&str, f64); 5] = [
+        ("(1.5 + 2.5) * 2.0",            (1.5 + 2.5) * 2.0),
+        ("(1.5 + 2.5) * 2.0 - 1.0",      (1.5 + 2.5) * 2.0 - 1.0),
+        ("10.0 / 4.0 + 0.25",            10.0 / 4.0 + 0.25),
+        ("((3.0 - 1.5) * 4.0) / 2.0",    ((3.0 - 1.5) * 4.0) / 2.0),
+        ("1.0 + 2.0 * 3.0 - 4.0 / 2.0",  1.0 + 2.0 * 3.0 - 4.0 / 2.0),
+    ];
+    for (expr, oracle) in cases {
+        let src = format!("fn main() -> Float {{ {expr} }}");
+        let (v, live) = run_source_with_heap(&src).unwrap_or_else(|e| panic!("{expr}: {e}"));
+        assert_eq!(v, Value::from_float(oracle), "expr `{expr}`: got {:?}, oracle {}", v, oracle);
+        assert_eq!(live, 0, "expr `{expr}`: heap must balance");
+    }
+}
+
+// An int expression in the same program must NOT be typed as float, and a float
+// one must NOT be typed as int — the classic span-collision poisoning. Value
+// oracle catches an integer opcode emitted for float arith (garbage bit result).
+#[test]
+fn mixed_int_and_float_in_one_program_dont_poison() {
+    let src = r#"
+        fn main() -> Float {
+            let i = 3 * 4 - 2;
+            let f = 1.5 * 4.0 - 2.0;
+            f + i.to_f()
+        }
+    "#;
+    // f = 4.0, i = 10 -> 14.0
+    assert_eq!(run_source(src), Ok(Value::from_float(14.0)));
+}
+
+#[test]
+fn nested_mixed_float_int_fuzz_matches_oracle() {
+    // Deterministic generator: vary operands by index, build a nested float
+    // expression, diff against the Rust f64 evaluation of the same shape.
+    for i in 0..40u32 {
+        let a = (i as f64) * 0.5 - 7.0;
+        let b = (i as f64) * 0.25 + 1.0;
+        let c = 2.0 + (i % 5) as f64;
+        let d = 1.0 + (i % 3) as f64;
+        // shape: ((a + b) * c - d) / (1.0 + b*b)  — all float, nested, mixed ops
+        let oracle = ((a + b) * c - d) / (1.0 + b * b);
+        let src = format!(
+            "fn main() -> Float {{ (({a:?} + {b:?}) * {c:?} - {d:?}) / (1.0 + {b:?} * {b:?}) }}"
+        );
+        let (v, live) = run_source_with_heap(&src).unwrap_or_else(|e| panic!("i={i}: {e}"));
+        assert_eq!(v, Value::from_float(oracle), "i={i}: got {:?}, oracle {}", v, oracle);
+        assert_eq!(live, 0, "i={i}: heap must balance");
+    }
+}
+
+// Synthetic codegen nodes (ExprId::NONE) must still type correctly via the
+// structural fallback: string interpolation builds field/ident access nodes at
+// compile time, and inlining copies bodies. Both must keep float-vs-int right.
+#[test]
+fn interpolated_float_uses_float_conversion_not_int() {
+    let src = r#"
+        fn main() -> String { let f = 2.5; "v={f}" }
+    "#;
+    assert_eq!(run_source_string(src).as_deref(), Ok("v=2.5"));
+}
+
+#[test]
+fn inlined_float_fn_result_stays_float() {
+    let src = r#"
+        fn half() -> Float { 1.5 }
+        fn main() -> Float { half() + 2.5 }
+    "#;
+    assert_eq!(run_source(src), Ok(Value::from_float(4.0)));
+}

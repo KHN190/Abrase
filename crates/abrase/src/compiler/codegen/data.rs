@@ -136,6 +136,7 @@ impl Compiler {
                     self.emit(OpCode::PushConst(reg, idx));
                     return Ok(reg);
                 }
+                let span = span.with_id(ast::ExprId::NONE);
                 let mut expr = Spanned {
                     node: ast::Expr::Identifier(path[0].clone()),
                     span,

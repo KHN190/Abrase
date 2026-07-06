@@ -2,7 +2,7 @@ use abrase::ast::{self, Block, Expr, Literal, MatchArm, Pattern, Span, Spanned, 
 use abrase::typeck::Checker;
 
 fn sp<T>(node: T) -> Spanned<T> {
-    Spanned { node, span: Span { line: 0, col: 0 } }
+    Spanned { node, span: Span::new(0, 0) }
 }
 
 fn lit(n: i64) -> Spanned<Expr> { sp(Expr::Literal(Literal::Int(n))) }
