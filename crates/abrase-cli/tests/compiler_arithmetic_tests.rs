@@ -247,3 +247,142 @@ fn inlined_float_fn_result_stays_float() {
     "#;
     assert_eq!(run_source(src), Ok(Value::from_float(4.0)));
 }
+
+#[test]
+fn int_to_f_small_exact() {
+    assert_eq!(run_source("fn main() -> Float { 42.to_f() }"), Ok(Value::from_float(42.0)));
+}
+
+#[test]
+fn int_to_f_matches_rust_cast_oracle() {
+    for n in [0i64, 1, 42, 1 << 52, 1 << 53, (1 << 53) + 1, i64::MAX, -1, -(1 << 53) - 1] {
+        let src = format!("fn main() -> Float {{ ({n}).to_f() }}");
+        assert_eq!(run_source(&src), Ok(Value::from_float(n as f64)), "n={n}");
+    }
+}
+
+#[test]
+fn int_to_f_beyond_mantissa_loses_precision_no_trap() {
+    let big = (1i64 << 53) + 1;
+    assert_eq!(run_source(&format!("fn main() -> Float {{ ({big}).to_f() }}")),
+        Ok(Value::from_float((1i64 << 53) as f64)),
+        "2^53+1 must round down to 2^53 (mantissa limit), not trap");
+}
+
+#[test]
+fn int_to_f_i64_max_no_panic() {
+    assert_eq!(run_source(&format!("fn main() -> Float {{ ({}).to_f() }}", i64::MAX)),
+        Ok(Value::from_float(i64::MAX as f64)));
+}
+
+const MIN_EXPR: &str = "((0 - 9223372036854775807) - 1)";
+
+#[test]
+fn int_max_plus_one_wraps_to_min() {
+    assert_eq!(run_source("fn main() -> Int { 9223372036854775807 + 1 }"), Ok(Value::from_int(i64::MIN)));
+}
+
+#[test]
+fn int_mul_overflow_wraps() {
+    assert_eq!(run_source("fn main() -> Int { 9223372036854775807 * 2 }"), Ok(Value::from_int(-2)));
+}
+
+#[test]
+fn int_min_negate_stays_min() {
+    let src = format!("fn main() -> Int {{ let x = {MIN_EXPR}; -x }}");
+    assert_eq!(run_source(&src), Ok(Value::from_int(i64::MIN)));
+}
+
+#[test]
+fn int_min_abs_stays_min_no_panic() {
+    let src = format!("fn main() -> Int {{ {MIN_EXPR}.abs() }}");
+    assert_eq!(run_source(&src), Ok(Value::from_int(i64::MIN)));
+}
+
+#[test]
+fn int_div_by_zero_traps_not_panic() {
+    assert!(run_source("fn main() -> Int { 1 / 0 }").is_err());
+}
+
+#[test]
+fn int_min_div_neg_one_const_folds_no_panic() {
+    let src = format!("fn main() -> Int {{ {MIN_EXPR} / (0 - 1) }}");
+    assert!(run_source(&src).is_ok(), "compile-time fold of MIN/-1 must not host-panic");
+}
+
+#[test]
+fn int_min_div_neg_one_runtime_traps_not_panic() {
+    let src = format!("fn main() -> Int {{ let mut d = 0; d = 0 - 1; {MIN_EXPR} / d }}");
+    assert!(run_source(&src).is_err(), "runtime MIN/-1 overflow must trap in VM, not host-panic");
+}
+
+#[test]
+fn int_mod_by_zero_traps_not_panic() {
+    assert!(run_source("fn main() -> Int { 1 % 0 }").is_err());
+}
+
+#[test]
+fn int_min_mod_neg_one_const_folds_no_panic() {
+    let src = format!("fn main() -> Int {{ {MIN_EXPR} % (0 - 1) }}");
+    assert!(run_source(&src).is_ok(), "compile-time fold of MIN%-1 must not host-panic");
+}
+
+#[test]
+fn int_min_mod_neg_one_runtime_traps_not_panic() {
+    let src = format!("fn main() -> Int {{ let mut d = 0; d = 0 - 1; {MIN_EXPR} % d }}");
+    assert!(run_source(&src).is_err(), "runtime MIN%-1 overflow must trap in VM, not host-panic");
+}
+
+#[test]
+fn int_shl_ge_width_masks_mod_64() {
+    assert_eq!(run_source("fn main() -> Int { 1 << 64 }"), Ok(Value::from_int(1)));
+}
+
+#[test]
+fn int_shl_63_is_min() {
+    assert_eq!(run_source("fn main() -> Int { 1 << 63 }"), Ok(Value::from_int(i64::MIN)));
+}
+
+#[test]
+fn float_div_zero_is_pos_inf() {
+    let v = run_source("fn main() -> Float { 1.0 / 0.0 }").unwrap();
+    assert!(v.as_float().is_infinite() && v.as_float() > 0.0);
+}
+
+#[test]
+fn float_neg_div_zero_is_neg_inf() {
+    let v = run_source("fn main() -> Float { (0.0 - 1.0) / 0.0 }").unwrap();
+    assert!(v.as_float().is_infinite() && v.as_float() < 0.0);
+}
+
+#[test]
+fn float_zero_div_zero_is_nan() {
+    let v = run_source("fn main() -> Float { 0.0 / 0.0 }").unwrap();
+    assert!(v.as_float().is_nan());
+}
+
+#[test]
+fn sqrt_negative_is_nan_no_panic() {
+    let v = run_source("fn main() -> Float { sqrt(0.0 - 1.0) }").unwrap();
+    assert!(v.as_float().is_nan());
+}
+
+#[test]
+fn float_nan_to_i_is_zero() {
+    assert_eq!(run_source("fn main() -> Int { (0.0 / 0.0).to_i() }"), Ok(Value::from_int(0)));
+}
+
+#[test]
+fn float_pos_inf_to_i_saturates_max() {
+    assert_eq!(run_source("fn main() -> Int { (1.0 / 0.0).to_i() }"), Ok(Value::from_int(i64::MAX)));
+}
+
+#[test]
+fn float_neg_inf_to_i_saturates_min() {
+    assert_eq!(run_source("fn main() -> Int { ((0.0 - 1.0) / 0.0).to_i() }"), Ok(Value::from_int(i64::MIN)));
+}
+
+#[test]
+fn float_huge_to_i_saturates_max() {
+    assert_eq!(run_source("fn main() -> Int { 1e300.to_i() }"), Ok(Value::from_int(i64::MAX)));
+}

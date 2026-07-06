@@ -69,6 +69,7 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("__str_eq",      str_eq_native());
     reg.register("__str_len",     str_len_native());
     reg.register("__str_byte_at", str_byte_at_native());
+    reg.register("__str_slice",   str_slice_native());
 
     reg.register("print",       print_native());
     reg.register("println",     println_native());
@@ -379,6 +380,21 @@ fn str_byte_at_native() -> NativeFn {
         let s = read_string(ctx.heap, args[0]).unwrap_or_default();
         let b = if i < 0 { 0 } else { s.as_bytes().get(i as usize).copied().unwrap_or(0) };
         Ok(plain(Value::from_int(b as i64)))
+    })
+}
+
+fn str_slice_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let s = read_string(ctx.heap, args[0]).unwrap_or_default();
+        let bytes = s.as_bytes();
+        let off = args[1].as_int();
+        let len = args[2].as_int();
+        let start = off.max(0).min(bytes.len() as i64) as usize;
+        let take = len.max(0) as usize;
+        let end = start.saturating_add(take).min(bytes.len());
+        let out = String::from_utf8_lossy(&bytes[start..end]);
+        let v = alloc_string(ctx.heap, &out)?;
+        Ok(handle(v))
     })
 }
 
