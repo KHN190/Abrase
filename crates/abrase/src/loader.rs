@@ -45,10 +45,13 @@ impl LoadedProgram {
     // carry their module path); fall back to the entry file otherwise.
     pub fn render_errors(&self, errors: &[Error]) -> String {
         errors.iter().map(|e| {
-            match self.module_sources.get(&e.module) {
-                Some((path, src)) if !e.module.is_empty() =>
+            let key: &[String] = match e.module.split_first() {
+                Some((h, rest)) if h == "root" => rest,
+                _ => &e.module,
+            };
+            match self.module_sources.get(key) {
+                Some((path, src)) =>
                     format!("  --> {}\n{}", path.display(), e.pretty_print(src)),
-                Some((_, src)) => e.pretty_print(src),
                 None => e.pretty_print(&self.entry_source),
             }
         }).collect::<Vec<_>>().join("\n")

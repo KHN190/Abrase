@@ -57,14 +57,24 @@
   .editor { flex: 1; position: relative; min-width: 0; }
   .editor pre, .editor textarea {
     position: absolute; inset: 0; margin: 0; padding: 1rem 1.25rem;
-    font: 13px/1.6 var(--mono);
+    font-family: var(--mono); font-size: 13px; line-height: 20px; font-weight: 400;
     white-space: pre; overflow: auto; tab-size: 4;
+    letter-spacing: 0; -webkit-text-size-adjust: 100%; text-rendering: auto;
   }
   .editor pre { pointer-events: none; color: var(--ink); }
+  .editor pre code, .editor pre code * { font: inherit; line-height: 20px; vertical-align: baseline; }
   .editor textarea {
     resize: none; border: none; outline: none;
     background: transparent; color: transparent; caret-color: var(--ink);
   }
+  #ac {
+    position: absolute; z-index: 20; min-width: 8rem; max-height: 11rem; overflow: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+    box-shadow: 0 6px 18px rgba(0,0,0,.14); display: none; padding: 3px 0;
+  }
+  #ac div { padding: 1px 12px; cursor: pointer; white-space: nowrap; color: var(--ink); }
+  #ac div.sel { background: var(--accent); color: #fff; }
 
   .panel { border-top: 1px solid var(--border); }
   .toolbar { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 1.25rem; }
@@ -117,7 +127,8 @@
   <nav id="tabs"></nav>
   <div class="editor">
     <pre aria-hidden="true"><code id="hl"></code></pre>
-    <textarea id="src" spellcheck="false"></textarea>
+    <textarea id="src" spellcheck="false" wrap="off" autocapitalize="off" autocorrect="off"></textarea>
+    <div id="ac"></div>
   </div>
 </main>
 <div class="panel">
@@ -293,14 +304,114 @@ async function stop() {
   await spawnWorker();
 }
 
-srcEl.addEventListener("input", render);
+const acEl = document.getElementById("ac");
+let acItems = [], acSel = 0, acStart = 0;
+const CHARW = (() => {
+  const s = document.createElement("span");
+  s.style.cssText = "position:absolute;visibility:hidden;font-family:var(--mono);font-size:13px;white-space:pre";
+  s.textContent = "0".repeat(80);
+  document.body.appendChild(s);
+  const w = s.getBoundingClientRect().width / 80;
+  s.remove();
+  return w;
+})();
+
+function collectSymbols() {
+  const v = srcEl.value, map = new Map();
+  let m;
+  const rl = /\b(?:let|const|static)\s+(?:mut\s+)?([A-Za-z_]\w*)/g;
+  while ((m = rl.exec(v))) map.set(m[1], "var");
+  const rf = /\bfn\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/g;
+  while ((m = rf.exec(v))) {
+    map.set(m[1], "fn");
+    for (const p of m[2].split(",")) {
+      const id = p.trim().replace(/^mut\s+/, "").replace(/^&(?:mut\s+)?/, "").split(":")[0].trim();
+      if (/^[A-Za-z_]\w*$/.test(id)) map.set(id, "var");
+    }
+  }
+  const kinds = { type: "ty", effect: "fx", trait: "ty" };
+  const rt = /\b(type|effect|trait)\s+([A-Za-z_]\w*)/g;
+  while ((m = rt.exec(v))) map.set(m[2], kinds[m[1]]);
+  return map;
+}
+
+function acPrefixAt() {
+  const p = srcEl.selectionStart;
+  const mm = /[A-Za-z_]\w*$/.exec(srcEl.value.slice(0, p));
+  return mm ? { word: mm[0], start: p - mm[0].length } : { word: "", start: p };
+}
+
+function positionAC() {
+  const before = srcEl.value.slice(0, acStart);
+  const row = (before.match(/\n/g) || []).length;
+  const col = acStart - (before.lastIndexOf("\n") + 1);
+  acEl.style.left = (20 + col * CHARW - srcEl.scrollLeft) + "px";
+  acEl.style.top = (16 + (row + 1) * 20 - srcEl.scrollTop) + "px";
+}
+
+function renderAC() {
+  acEl.innerHTML = "";
+  acItems.forEach((it, i) => {
+    const d = document.createElement("div");
+    d.textContent = it;
+    if (i === acSel) d.className = "sel";
+    d.onmousedown = (e) => { e.preventDefault(); acSel = i; acceptAC(); };
+    acEl.appendChild(d);
+  });
+  positionAC();
+  acEl.style.display = "block";
+  const sel = acEl.children[acSel];
+  if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+
+function openAC(force) {
+  if (srcEl.selectionStart !== srcEl.selectionEnd) return hideAC();
+  const { word, start } = acPrefixAt();
+  if (!word && !force) return hideAC();
+  acStart = start;
+  const syms = collectSymbols();
+  syms.delete(word);
+  for (const k of KEYWORDS) if (!syms.has(k)) syms.set(k, "kw");
+  const lw = word.toLowerCase();
+  const items = [...syms.entries()]
+    .filter(([n]) => n.toLowerCase().startsWith(lw))
+    .map(([name, kind]) => ({ name, kind }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (!items.length) return hideAC();
+  acItems = items;
+  acSel = 0;
+  renderAC();
+}
+
+function hideAC() { acEl.style.display = "none"; acItems = []; }
+function acVisible() { return acEl.style.display === "block"; }
+
+function acceptAC() {
+  const word = acItems[acSel];
+  srcEl.setRangeText(word, acStart, srcEl.selectionStart, "end");
+  hideAC();
+  render();
+  srcEl.focus();
+}
+
+srcEl.addEventListener("input", () => { render(); openAC(false); });
+srcEl.addEventListener("blur", () => setTimeout(hideAC, 120));
 srcEl.addEventListener("scroll", () => {
   hlEl.parentElement.scrollTop = srcEl.scrollTop;
   hlEl.parentElement.scrollLeft = srcEl.scrollLeft;
+  if (acVisible()) positionAC();
 });
 srcEl.addEventListener("keydown", (e) => {
+  if (acVisible()) {
+    if (e.key === "ArrowDown") { e.preventDefault(); acSel = (acSel + 1) % acItems.length; renderAC(); return; }
+    if (e.key === "ArrowUp") { e.preventDefault(); acSel = (acSel - 1 + acItems.length) % acItems.length; renderAC(); return; }
+    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); acceptAC(); return; }
+    if (e.key === "Escape") { e.preventDefault(); hideAC(); return; }
+  }
   if (e.key === "Tab") {
     e.preventDefault();
+    openAC(true);
+    if (acVisible()) return;
     const { selectionStart: s, selectionEnd: epos } = srcEl;
     srcEl.setRangeText("  ", s, epos, "end");
     render();

@@ -1193,26 +1193,30 @@ pub(super) fn lint_unused_imports(decls: &[ast::Decl], all_idents: &std::collect
 pub(super) fn lint_dead_code(decls: &[ast::Decl], checker: &mut super::Checker) {
     use std::collections::{HashMap, HashSet, VecDeque};
 
-    // Collect fn metadata: name → (is_pub, span, is_synthetic)
-    let mut fn_info: HashMap<String, (bool, ast::Span)> = HashMap::new();
+    // Collect fn metadata: name → (is_pub, span, module)
+    let mut fn_info: HashMap<String, (bool, ast::Span, Vec<String>)> = HashMap::new();
     // Per-function referenced idents
     let mut fn_refs: HashMap<String, HashSet<String>> = HashMap::new();
     // Type metadata
-    let mut type_info: HashMap<String, (bool, ast::Span)> = HashMap::new();
+    let mut type_info: HashMap<String, (bool, ast::Span, Vec<String>)> = HashMap::new();
 
+    let mut mod_stack: Vec<Vec<String>> = Vec::new();
     for decl in decls {
+        let cur_mod = mod_stack.last().cloned().unwrap_or_default();
         match decl {
+            ast::Decl::ModEnter(p) => mod_stack.push(p.clone()),
+            ast::Decl::ModExit => { mod_stack.pop(); }
             ast::Decl::Fn(f) => {
                 let synthetic = f.name.starts_with("__");
                 if !synthetic {
-                    fn_info.insert(f.name.clone(), (f.is_pub, ast::Span::new(0, 0)));
+                    fn_info.insert(f.name.clone(), (f.is_pub, ast::Span::new(0, 0), cur_mod));
                 }
                 let mut refs = HashSet::new();
                 collect_idents_block(&f.body, &mut refs);
                 fn_refs.insert(f.name.clone(), refs);
             }
             ast::Decl::Type { name, is_pub, .. } => {
-                type_info.insert(name.clone(), (*is_pub, ast::Span::new(0, 0)));
+                type_info.insert(name.clone(), (*is_pub, ast::Span::new(0, 0), cur_mod));
             }
             _ => {}
         }
@@ -1241,7 +1245,8 @@ pub(super) fn lint_dead_code(decls: &[ast::Decl], checker: &mut super::Checker) 
     }
 
     for name in fn_info.keys() {
-        let (is_pub, _) = fn_info[name];
+        let (is_pub, _, _) = &fn_info[name];
+        let is_pub = *is_pub;
         if is_pub || name == "main" {
             live.insert(name.clone());
             queue.push_back(name.clone());
@@ -1270,24 +1275,24 @@ pub(super) fn lint_dead_code(decls: &[ast::Decl], checker: &mut super::Checker) 
     let all_idents = all_program_idents(decls);
 
     // Report dead functions
-    for (name, (is_pub, span)) in &fn_info {
+    for (name, (is_pub, span, module)) in &fn_info {
         if !is_pub && !live.contains(name) {
-            checker.report_warning(
+            checker.warnings.push(crate::lint::Lint::new(
                 "dead_code",
-                format!("function `{}` is never used", name),
                 *span,
-            );
+                format!("function `{}` is never used", name),
+            ).with_module(module.clone()));
         }
     }
 
     // Report dead types (non-pub, never referenced as ident or in type positions)
-    for (name, (is_pub, span)) in &type_info {
+    for (name, (is_pub, span, module)) in &type_info {
         if !is_pub && !all_idents.contains(name.as_str()) {
-            checker.report_warning(
+            checker.warnings.push(crate::lint::Lint::new(
                 "dead_code",
-                format!("type `{}` is never used", name),
                 *span,
-            );
+                format!("type `{}` is never used", name),
+            ).with_module(module.clone()));
         }
     }
 }

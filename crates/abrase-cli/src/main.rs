@@ -140,10 +140,16 @@ fn main() -> ExitCode {
 
 fn print_warnings(program: &loader::LoadedProgram, warnings: &[abrase::lint::Lint]) {
     for w in warnings {
-        let src = program.module_sources.get(&w.module)
-            .map(|(_, s)| s.as_str())
-            .unwrap_or(&program.entry_source);
-        eprint!("{}", w.pretty_print(src));
+        let key: &[String] = match w.module.split_first() {
+            Some((h, rest)) if h == "root" => rest,
+            _ => &w.module,
+        };
+        match program.module_sources.get(key) {
+            Some((path, src)) => {
+                eprint!("  --> {}\n{}", path.display(), w.pretty_print(src));
+            }
+            None => eprint!("{}", w.pretty_print(&program.entry_source)),
+        }
     }
 }
 
