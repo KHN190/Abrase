@@ -340,3 +340,10 @@ fn handler_arm_mut_capture_shared_with_return_arm() {
     // 100 + 10 + 10 = 120, +1 = 121
     assert_eq!(run_source(src), Ok(Value::from_int(121)));
 }
+
+// Regression: a perform with no handler anywhere must still compile — resolved via effect-decl SoT, not the handler-arm table.
+#[test]
+fn effectful_fn_compiles_without_any_handler() {
+    let src = "\neffect Tick { op go() -> Int }\nfn tick() -> <Tick> Int { Tick.go() }\nfn main() -> Int { 0 }\n";
+    assert_eq!(run_source(src), Ok(Value::from_int(0)));
+}
