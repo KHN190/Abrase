@@ -98,7 +98,7 @@ impl Checker {
                                      scalars (Int/Float/Bool/Char/Unit/Addr); a handle value \
                                      would make the compiler emit RC into core code",
                                 fn_decl.name),
-                            ast::Span { line: 0, col: 0 },
+                            ast::Span::new(0, 0),
                         );
                     }
                 }
