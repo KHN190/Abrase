@@ -559,7 +559,7 @@ impl Checker {
             let body = self.type_registry.get(&type_name).cloned();
             if let Some(body) = body {
                 let mut visited = std::collections::HashSet::new();
-                if !self.check_type_recursion(&type_name, &body, &mut visited, ast::Span { line: 0, col: 0 }) {
+                if !self.check_type_recursion(&type_name, &body, &mut visited, ast::Span::new(0, 0)) {
                     has_cycles = true;
                 }
             }

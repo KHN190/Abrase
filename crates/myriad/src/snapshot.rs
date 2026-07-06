@@ -68,8 +68,7 @@ impl VirtualMachine {
             let v = self.registers[base + i];
             let is_handle = mask_bit(&init_mask, i);
             if is_handle && v != HANDLE_NONE {
-                let s = ((v >> 24) & 0x00FF_FFFF) as u32;
-                let g = (v & 0x00FF_FFFF) as u32;
+                let (s, g) = Self::decode_handle(v);
                 self.heap.rc_inc(s, g)?;
             }
             self.heap.st(slot, generation, i, v, is_handle)?;
@@ -97,18 +96,15 @@ impl VirtualMachine {
             let old_val = self.registers[abs];
             let old_is_handle = self.reg_mask_bit(abs);
             let stale = if old_is_handle && old_val != HANDLE_NONE {
-                let s = ((old_val >> 24) & 0x00FF_FFFF) as u32;
-                let g = (old_val & 0x00FF_FFFF) as u32;
+                let (s, g) = Self::decode_handle(old_val);
                 !self.heap.is_live(s, g)
             } else { false };
             if old_is_handle && !stale && old_val != HANDLE_NONE {
-                let s = ((old_val >> 24) & 0x00FF_FFFF) as u32;
-                let g = (old_val & 0x00FF_FFFF) as u32;
+                let (s, g) = Self::decode_handle(old_val);
                 self.heap.rc_dec(s, g)?;
             }
             if new_is_handle && new_val != HANDLE_NONE {
-                let s = ((new_val >> 24) & 0x00FF_FFFF) as u32;
-                let g = (new_val & 0x00FF_FFFF) as u32;
+                let (s, g) = Self::decode_handle(new_val);
                 self.heap.rc_inc(s, g)?;
             }
             self.registers[abs] = new_val;

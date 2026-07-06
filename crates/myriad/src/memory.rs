@@ -3,9 +3,10 @@
 // module keeps only the shared handle/mask helpers consumed across the VM.
 pub use crate::core_heap::CoreHeap as Heap;
 
+// slot = byte offset; arena grows past 16MB so slot needs >24 bits (gen stays 24).
 #[inline(always)]
 pub fn handle_parts(raw: u64) -> (u32, u32) {
-    (((raw >> 24) & 0x00FF_FFFF) as u32, (raw & 0x00FF_FFFF) as u32)
+    (((raw >> 24) & 0xFFFF_FFFF) as u32, (raw & 0x00FF_FFFF) as u32)
 }
 
 #[inline(always)]

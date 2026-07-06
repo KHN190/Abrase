@@ -355,3 +355,161 @@ fn test_handle_after_free_is_rejected_via_generation() {
     let result = vm.run_module(&module);
     assert_eq!(result, Ok(Value::from_int(0)));
 }
+
+// Handle slot = byte offset; arena grows to the 1<<28 cap so slot needs >24 bits
+// (only gen is 24). Sweep across the 2^24 boundary so any codec narrowing fails
+// before runtime (else a big Array crossing 16MB aliases a neighbour = UAF).
+#[test]
+fn handle_codec_round_trips_across_boundaries() {
+    for &slot in &[0u32, 1, 0xFFFF, 0xFF_FFFF, 0x100_0000, 0x100_0001, 0xFFF_FFFF, 0x1000_0000] {
+        for &g in &[0u32, 1, 0x7F_FFFF, 0xFF_FFFF] {
+            let (s2, g2) = myriad::memory::handle_parts(myriad::memory::make_handle(slot, g));
+            assert_eq!((s2, g2), (slot, g), "codec narrowed slot {:#x} gen {:#x}", slot, g);
+        }
+    }
+}
+
+#[test]
+fn alloc_past_16mb_does_not_alias() {
+    let mut h = myriad::Heap::with_capacity(1 << 16);
+    let (sa, ga) = h.try_alloc(1 << 21).expect("big alloc");
+    let (sb, gb) = h.try_alloc(2).expect("alloc past 16MB");
+    h.st(sa, ga, 0, 0xAAAA, false).expect("st a");
+    h.st(sb, gb, 0, 0xBBBB, false).expect("st b");
+    assert_eq!(h.ld(sa, ga, 0).expect("ld a").0, 0xAAAA, "block A clobbered by aliased B");
+    assert_eq!(h.ld(sb, gb, 0).expect("ld b").0, 0xBBBB, "block B handle truncated");
+}
+
+// Allocate blocks whose cumulative size carries the frontier past byte offset
+// 2^24, filling every element, then read back — any slot truncation or data
+// aliasing across the 16MB boundary corrupts a neighbour.
+#[test]
+fn arena_size_sweep_past_16mb_keeps_data_intact() {
+    use myriad::memory::Heap;
+    let mut h = Heap::with_capacity(1 << 16);
+    let sizes = [4usize, 1 << 20, 7, 1 << 20, 1 << 20, 9]; // ~24MB total, blocks cross 2^24
+    let mut blocks = Vec::new();
+    for (tag, &sz) in sizes.iter().enumerate() {
+        let (s, g) = h.try_alloc(sz).expect("alloc");
+        for j in 0..sz {
+            h.st(s, g, j, ((tag as u64) << 40) | j as u64, false).expect("st");
+        }
+        blocks.push((s, g, sz, tag));
+    }
+    for (s, g, sz, tag) in blocks {
+        for &j in &[0usize, sz / 2, sz - 1] {
+            assert_eq!(
+                h.ld(s, g, j).expect("ld").0,
+                ((tag as u64) << 40) | j as u64,
+                "block {} elem {} corrupted (slot {} crossed 16MB?)", tag, j, s
+            );
+        }
+    }
+}
+
+// Random alloc/st/ld/rc sequence checked against a shadow model: every ld must
+// equal the last st to that cell (catches slot aliasing); rc_dec to zero must
+// reclaim without disturbing other live cells.
+#[test]
+fn heap_api_model_fuzz() {
+    use myriad::memory::Heap;
+    let mut h = Heap::with_capacity(1 << 16);
+    let mut live: Vec<(u32, u32, Vec<u64>)> = Vec::new();
+    let mut s = 0x9E3779B97F4A7C15u64;
+    let rng = |s: &mut u64| {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    };
+    for _ in 0..8000 {
+        let op = rng(&mut s) % 100;
+        if live.is_empty() || op < 35 {
+            let sz = (rng(&mut s) % 8 + 1) as usize;
+            let (slot, g) = h.try_alloc(sz).expect("alloc");
+            live.push((slot, g, vec![u64::MAX; sz]));
+        } else if op < 65 {
+            let i = (rng(&mut s) as usize) % live.len();
+            let (slot, g, sz) = (live[i].0, live[i].1, live[i].2.len());
+            let off = (rng(&mut s) as usize) % sz;
+            let val = rng(&mut s);
+            h.st(slot, g, off, val, false).expect("st");
+            live[i].2[off] = val;
+        } else if op < 90 {
+            let i = (rng(&mut s) as usize) % live.len();
+            let (slot, g) = (live[i].0, live[i].1);
+            for (off, &want) in live[i].2.iter().enumerate() {
+                assert_eq!(h.ld(slot, g, off).expect("ld").0, want,
+                    "aliasing: slot {} off {} drifted", slot, off);
+            }
+        } else {
+            let i = (rng(&mut s) as usize) % live.len();
+            let (slot, g) = (live[i].0, live[i].1);
+            assert!(h.rc_dec(slot, g).expect("rc_dec"), "single owner must reclaim");
+            live.swap_remove(i);
+        }
+    }
+    assert_eq!(h.live_count(), live.len(), "live_count must match model");
+}
+
+// Big array (forces arena grow past 16MB) stored as a handle in a record cell,
+// then repeatedly loaded + rc-cycled like cross-frame access — its refcount must
+// stay balanced (regression for large-array-in-record premature free).
+#[test]
+fn big_array_handle_in_record_rc_survives_grow() {
+    use myriad::memory::{make_handle, Heap};
+    let mut h = Heap::with_capacity(1 << 16);
+    let (arr, ag) = h.try_alloc(1 << 21).expect("2M-elem array"); // 16MB → grows arena
+    let (rec, rg) = h.try_alloc(2).expect("record");
+    // record owns the array: store handle + the owning ref is the array's rc=1.
+    h.st(rec, rg, 0, make_handle(arr, ag), true).expect("st field");
+    // simulate 10 frames of `s.sheet[0]`: owning Ld (rc_inc) ... use ... Drop (rc_dec).
+    for f in 0..10 {
+        let (raw, is_h) = h.ld(rec, rg, 0).expect("ld field");
+        assert!(is_h, "frame {}: field lost handle tag", f);
+        let (s, g) = myriad::memory::handle_parts(raw);
+        assert_eq!((s, g), (arr, ag), "frame {}: field handle corrupted", f);
+        h.rc_inc(s, g).expect("rc_inc");
+        assert!(h.is_live(arr, ag), "frame {}: array dead after inc", f);
+        h.rc_dec(s, g).expect("rc_dec");
+        assert!(h.is_live(arr, ag), "frame {}: array prematurely freed", f);
+    }
+    assert_eq!(h.rc(arr, ag), Some(1), "array rc must remain 1 (record's owning ref)");
+}
+
+// Stress: drive the heap frontier past 16MB, then exercise a real cell whose
+// byte offset exceeds 2^24 through the Value handle codec (the path every VM
+// rc/Drop/Ld op uses). A 24-bit slot mask truncates it and rc-touches a wrong
+// cell — the large-array-in-record UAF. No posara/native needed.
+#[test]
+fn value_codec_and_rc_hit_real_cell_past_16mb() {
+    use myriad::memory::Heap;
+    let mut h = Heap::with_capacity(1 << 16);
+    let _big = h.try_alloc(1 << 21).expect("16MB pushes frontier past 2^24");
+    let (slot, gen_) = h.try_alloc(2).expect("record-ish cell past 16MB");
+    assert!(slot >= (1 << 24), "need a slot past 16MB, got {}", slot);
+
+    // round-trip through the VM's primary codec, as Drop/Ld/St do.
+    let raw = myriad::Value::from_handle(slot, gen_).raw();
+    let (s, g) = myriad::Value::from_raw(raw).as_handle();
+    assert_eq!((s, g), (slot, gen_), "Value codec truncated slot past 16MB");
+
+    h.rc_inc(s, g).expect("rc_inc");
+    assert_eq!(h.rc(slot, gen_), Some(2), "rc must land on the real cell, not a truncated alias");
+    assert!(h.rc_dec(s, g).is_ok());
+    assert!(h.is_live(slot, gen_));
+}
+
+#[test]
+fn test_raise_without_handler_traps() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Raise(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::from_int(0), Value::from_int(0)],
+    );
+    assert!(result.is_err(), "raise (perform) without handler must trap");
+}

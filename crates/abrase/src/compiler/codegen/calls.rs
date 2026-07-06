@@ -6,7 +6,6 @@ use crate::bytecode::Value;
 pub(in crate::compiler) enum CallTarget<'a> {
     Function { func_id: u16 },
     FnValue  { callee: &'a ast::Spanned<ast::Expr> },
-    Method   { func_id: u16, receiver: &'a ast::Spanned<ast::Expr> },
     EnvLoad  { env_reg: Register, idx: u16 },
     CellLoad { env_reg: Register, idx: u16 },
     CellStore { env_reg: Register, idx: u16, value: &'a ast::Spanned<ast::Expr> },
@@ -14,7 +13,6 @@ pub(in crate::compiler) enum CallTarget<'a> {
     CloneVal { receiver: &'a ast::Spanned<ast::Expr> },
     HostFn { fn_id: u16 },
     VariantCtor { tag: u32 },
-    UnresolvedMethod { receiver: String, field: String },
     DeviceIn,
     DeviceOut,
     EffectOpDispatch { effect_id: u16, op_id: u8 },
@@ -35,7 +33,6 @@ impl Compiler {
             let kind = match &target {
                 CallTarget::EffectOpDispatch { .. } => "EffectOpDispatch",
                 CallTarget::Function { .. } => "Function",
-                CallTarget::Method { .. } => "Method",
                 _ => "Other",
             };
             sink(&format!("[CALL] resolved to {:?}", kind));
@@ -55,16 +52,11 @@ impl Compiler {
             }
             CallTarget::Function { func_id } => self.emit_func_call(func_id, args),
             CallTarget::FnValue { callee } => self.emit_fn_value_call(callee, args),
-            CallTarget::Method { func_id, receiver } => self.emit_method_call(func_id, receiver, args),
             CallTarget::DeviceIn => self.emit_device_in(args),
             CallTarget::DeviceOut => self.emit_device_out(args),
             CallTarget::EffectOpDispatch { effect_id, op_id } => {
                 self.emit_effect_op_dispatch(effect_id, op_id, args)
             }
-            CallTarget::UnresolvedMethod { receiver, field } => Err(format!(
-                "No method '{}' on type '{}' (or receiver type could not be inferred)",
-                field, receiver
-            )),
         }
     }
 
@@ -84,21 +76,17 @@ impl Compiler {
         if let Some(t) = self.resolve_env_load_closure_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_field_fn_value_call(callee)? { return Ok(t); }
         if let Some(t) = self.resolve_effect_op_call(callee, call_span)? { return Ok(t); }
-        if let Some(t) = self.resolve_method_call(callee)? { return Ok(t); }
         if let ast::Expr::FieldAccess { base, field } = &callee.node {
             if field == "clone" && args.is_empty() {
                 return Ok(CallTarget::CloneVal { receiver: base });
             }
         }
         if let Some(t) = self.resolve_host_or_ctor(callee, args)? { return Ok(t); }
-        if let ast::Expr::FieldAccess { base, field } = &callee.node {
-            let Some(recv) = self.receiver_type_name(base) else {
-                return Err(format!(
-                    "Cannot infer receiver type for method call '.{}'; annotate the base expression",
-                    field
-                ));
-            };
-            return Ok(CallTarget::UnresolvedMethod { receiver: recv, field: field.clone() });
+        if let ast::Expr::FieldAccess { field, .. } = &callee.node {
+            return Err(format!(
+                "Cannot infer receiver type for method call '.{}'; annotate the base expression",
+                field
+            ));
         }
         let ast::Expr::Identifier(name) = &callee.node else {
             // Non-identifier callee (e.g. a closure literal, paren, block) —
@@ -193,26 +181,9 @@ impl Compiler {
             return Ok(Some(CallTarget::HostFn { fn_id }));
         }
         let key = (eff_name.clone(), field.clone());
-        if !self.effect_op_to_arm.contains_key(&key) { return Ok(None); }
-        let effect_id = match self.effect_ids.get(eff_name).copied() {
-            Some(id) => id,
-            None => return Ok(None),
-        };
-        let op_id = self.op_ids.get(&key).copied().unwrap_or(0);
+        let Some(effect_id) = self.effect_ids.get(eff_name).copied() else { return Ok(None) };
+        let Some(op_id) = self.op_ids.get(&key).copied() else { return Ok(None) };
         Ok(Some(CallTarget::EffectOpDispatch { effect_id, op_id }))
-    }
-
-    fn resolve_method_call<'a>(
-        &self,
-        callee: &'a ast::Spanned<ast::Expr>,
-    ) -> Result<Option<CallTarget<'a>>, String> {
-        let ast::Expr::FieldAccess { base, field } = &callee.node else { return Ok(None) };
-        let Some(rname) = self.receiver_type_name(base) else { return Ok(None) };
-        let Some(mangled) = self.method_dispatch.get(&(rname, field.clone())).cloned() else { return Ok(None) };
-        let func_id = *self.func_map.get(&mangled)
-            .ok_or_else(|| format!("internal: method '{}' missing from fn table", mangled))?;
-        let fid = super::scaffold::to_u16(func_id, &format!("Method fn_id for '{}'", mangled))?;
-        Ok(Some(CallTarget::Method { func_id: fid, receiver: base }))
     }
 
     // Resolve `device_in`/`device_out` by name.
@@ -423,10 +394,12 @@ impl Compiler {
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
         let mark = self.snapshot_register_high_water();
+        let borrows = self.native_borrows_args(func_id);
         let mut staged: Vec<(Register, bool)> = Vec::new();
         for arg in args {
             let r = self.compile_expr(arg)?;
-            staged.push((r, self.arg_should_move(arg)));
+            let mv = if borrows { false } else { self.arg_should_move(arg) };
+            staged.push((r, mv));
         }
         self.stage_call_args(&staged)?;
         self.reclaim_temp_regs_above(mark);
@@ -501,24 +474,9 @@ impl Compiler {
         Ok(dummy)
     }
 
-    fn emit_method_call(
-        &mut self,
-        func_id: u16,
-        receiver: &ast::Spanned<ast::Expr>,
-        args: &[ast::Spanned<ast::Expr>],
-    ) -> Result<Register, String> {
-        let mark = self.snapshot_register_high_water();
-        let r = self.compile_expr(receiver)?;
-        let mut staged = vec![(r, self.arg_should_move(receiver))];
-        for arg in args {
-            let r = self.compile_expr(arg)?;
-            staged.push((r, self.arg_should_move(arg)));
-        }
-        self.stage_call_args(&staged)?;
-        self.reclaim_temp_regs_above(mark);
-        let dest = self.alloc_register()?;
-        self.emit(OpCode::Call(dest, func_id));
-        Ok(dest)
+    fn native_borrows_args(&self, func_id: u16) -> bool {
+        matches!(self.functions.get(func_id as usize),
+            Some(crate::bytecode::Chunk::Native(n)) if self.read_only_natives.contains(&n.name))
     }
 
     pub(in crate::compiler) fn arg_should_move(&mut self, arg: &ast::Spanned<ast::Expr>) -> bool {

@@ -190,8 +190,11 @@ impl<'a> Parser<'a> {
         }
         let first = self.parse_expr(Precedence::Lowest);
         let first_block_terminated = is_block_terminated(&first.node);
-        let sees_semi = self.peek_token == Token::Semicolon
-            || (first_block_terminated && self.current_token == Token::Semicolon);
+        let sees_semi = if first_block_terminated {
+            self.current_token == Token::Semicolon
+        } else {
+            self.peek_token == Token::Semicolon
+        };
         if sees_semi {
             if self.current_token != Token::Semicolon { self.next_token(); }
             self.next_token();

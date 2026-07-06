@@ -3,7 +3,7 @@ use abrase::compiler::Compiler;
 use abrase::typeck::Checker;
 
 fn sp<T>(node: T) -> Spanned<T> {
-    Spanned { node, span: Span { line: 0, col: 0 } }
+    Spanned { node, span: Span::new(0, 0) }
 }
 
 fn lit(n: i64) -> Spanned<Expr> {

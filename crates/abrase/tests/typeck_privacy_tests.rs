@@ -3,7 +3,7 @@ use abrase::ty::Type;
 use abrase::typeck::Checker;
 
 fn d_span() -> abrase::ast::Span {
-    abrase::ast::Span { line: 0, col: 0 }
+    abrase::ast::Span::new(0, 0)
 }
 
 // Public Item Access

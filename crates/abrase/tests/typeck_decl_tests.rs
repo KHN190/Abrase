@@ -3,7 +3,7 @@ use abrase::typeck::Checker;
 use abrase::ast::{Block, Expr, Pattern, Span, Spanned, self};
 
 fn d_span() -> Span {
-    Span { line: 0, col: 0 }
+    Span::new(0, 0)
 }
 
 fn dummy_block() -> Block {

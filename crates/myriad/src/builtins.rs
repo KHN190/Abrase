@@ -66,6 +66,9 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("__char_to_s",   char_to_s_native());
     reg.register("__string_to_s", string_to_s_native());
     reg.register("__unit_to_s",   unit_to_s_native());
+    reg.register("__str_eq",      str_eq_native());
+    reg.register("__str_len",     str_len_native());
+    reg.register("__str_byte_at", str_byte_at_native());
 
     reg.register("print",       print_native());
     reg.register("println",     println_native());
@@ -360,6 +363,30 @@ fn string_to_s_native() -> NativeFn {
         let (slot, gen_) = args[0].as_handle();
         ctx.heap.rc_inc(slot, gen_)?;
         Ok(handle(args[0]))
+    })
+}
+
+fn str_len_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let n = read_string(ctx.heap, args[0]).map(|s| s.len()).unwrap_or(0);
+        Ok(plain(Value::from_int(n as i64)))
+    })
+}
+
+fn str_byte_at_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let i = args[1].as_int();
+        let s = read_string(ctx.heap, args[0]).unwrap_or_default();
+        let b = if i < 0 { 0 } else { s.as_bytes().get(i as usize).copied().unwrap_or(0) };
+        Ok(plain(Value::from_int(b as i64)))
+    })
+}
+
+fn str_eq_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let a = read_string(ctx.heap, args[0]);
+        let b = read_string(ctx.heap, args[1]);
+        Ok(plain(Value::from_bool(a == b)))
     })
 }
 

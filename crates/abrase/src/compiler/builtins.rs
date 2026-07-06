@@ -51,6 +51,11 @@ impl Compiler {
         for (name, p, r) in conv {
             self.register_typed_native(name, vec![p.clone()], r.clone(), 1);
         }
+        self.register_typed_native("__str_eq", vec![s.clone(), s.clone()], b.clone(), 2);
+        self.register_typed_native("__str_len", vec![s.clone()], i.clone(), 1);
+        self.register_typed_native("__str_byte_at", vec![s.clone(), i.clone()], i.clone(), 2);
+        self.read_only_natives.insert("__str_len".into());
+        self.read_only_natives.insert("__str_byte_at".into());
         // System
         self.register_typed_native("halt",  vec![i.clone()], u.clone(), 1);
         self.register_typed_native("abort", vec![s.clone()], u.clone(), 1);
@@ -107,13 +112,13 @@ impl Compiler {
             effects: vec![],
             ret: Box::new(TyType::Unit),
         };
-        checker.insert_var("device_in".into(), device_in_ty, false, ast::Span { line: 0, col: 0 });
+        checker.insert_var("device_in".into(), device_in_ty, false, ast::Span::new(0, 0));
         let device_out_ty = TyType::Function {
             params: vec![TyType::Int],
             effects: vec![],
             ret: Box::new(TyType::Int),
         };
-        checker.insert_var("device_out".into(), device_out_ty, false, ast::Span { line: 0, col: 0 });
+        checker.insert_var("device_out".into(), device_out_ty, false, ast::Span::new(0, 0));
 
         self.register_builtin_effects(checker);
 
@@ -123,7 +128,7 @@ impl Compiler {
                 effects: checker.convert_effect_items(&decl.effects),
                 ret: Box::new(decl.ret.clone()),
             };
-            checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+            checker.insert_var(decl.name.clone(), fn_ty, false, ast::Span::new(0, 0));
             if !decl.effects.is_empty() {
                 checker.register_function_effects(decl.name.clone(), decl.effects.clone());
             }
@@ -134,9 +139,16 @@ impl Compiler {
                 effects: vec![],
                 ret: Box::new(ret.clone()),
             };
-            checker.insert_var(name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
+            checker.insert_var(name.clone(), fn_ty, false, ast::Span::new(0, 0));
         }
         self.register_builtin_traits(checker);
+        let mut dispatch = std::collections::HashMap::new();
+        Self::seed_builtin_method_dispatch(&mut dispatch);
+        for ((ty, method), mangled) in &dispatch {
+            if self.read_only_natives.contains(mangled) {
+                checker.register_read_only_method(ty.clone(), method.clone());
+            }
+        }
     }
 
     fn register_builtin_traits(&self, checker: &mut crate::typeck::Checker) {
@@ -189,6 +201,12 @@ impl Compiler {
         }
         checker.register_impl_method("ToC", "Int", "to_c", "__int_to_c".into());
         checker.register_impl("Int", "ToC");
+        checker.register_trait("Str".into(), vec!["len".into(), "byte_at".into()]);
+        checker.register_trait_method_sig("Str", "len", vec![self_ty.clone()], i.clone());
+        checker.register_trait_method_sig("Str", "byte_at", vec![self_ty.clone(), i.clone()], i.clone());
+        checker.register_impl_method("Str", "String", "len", "__str_len".into());
+        checker.register_impl_method("Str", "String", "byte_at", "__str_byte_at".into());
+        checker.register_impl("String", "Str");
         for &(ty, mangled) in &[
             ("Int",    "__int_to_s"),
             ("Float",  "__float_to_s"),
@@ -262,6 +280,8 @@ impl Compiler {
             ("Char",   "to_s", "__char_to_s"),
             ("String", "to_s", "__string_to_s"),
             ("Unit",   "to_s", "__unit_to_s"),
+            ("String", "len",  "__str_len"),
+            ("String", "byte_at", "__str_byte_at"),
         ];
         for &(ty, m, mangled) in entries {
             dispatch.insert((ty.into(), m.into()), mangled.into());

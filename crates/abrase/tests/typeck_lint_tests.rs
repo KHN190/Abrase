@@ -216,6 +216,24 @@ fn loop_with_break_no_warn() {
 }
 
 #[test]
+fn loop_with_return_no_warn() {
+    let src = "fn main() -> Int { loop { return 1 } }";
+    assert!(!has_warning(src, "infinite_loop"), "`loop` exiting via `return` must not warn");
+}
+
+#[test]
+fn loop_with_conditional_return_no_warn() {
+    let src = "fn f(n: Int) -> Int { loop { if n > 0 { return n } } }";
+    assert!(!has_warning(src, "infinite_loop"), "`return` inside `if` in loop must not warn");
+}
+
+#[test]
+fn loop_with_break_inside_handle_no_warn() {
+    let src = "effect E { op ask() -> Int } fn g() -> Int { 0 } fn f() -> Int { loop { handle g() { E.ask q => break 1 } } }";
+    assert!(!has_warning(src, "infinite_loop"), "`break` inside `handle` arm must not warn");
+}
+
+#[test]
 fn while_loop_no_infinite_warn() {
     let src = "fn main() -> Int { while false { 0 }; 0 }";
     assert!(!has_warning(src, "infinite_loop"), "`while` must not trigger infinite_loop");

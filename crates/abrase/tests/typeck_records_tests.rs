@@ -3,7 +3,7 @@ use abrase::ty::Type;
 use abrase::typeck::Checker;
 
 fn d_span() -> Span {
-    Span { line: 0, col: 0 }
+    Span::new(0, 0)
 }
 
 fn sp<T>(node: T) -> abrase::ast::Spanned<T> {

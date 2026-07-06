@@ -91,6 +91,7 @@ pub struct Compiler {
     pub(super) host_fns: HashMap<String, HostFnDecl>,
     pub(super) builtin_types: HashMap<String, (Vec<TyType>, TyType)>,
     pub(super) fn_signatures: HashMap<usize, (Vec<TyType>, TyType)>,
+    pub(super) read_only_natives: std::collections::HashSet<String>,
     pub(super) current_closure_layout: HashMap<String, usize>,
     pub(super) current_closure_capture_types: HashMap<usize, ast::Type>,
     pub(super) current_span: ast::Span,
@@ -117,7 +118,7 @@ pub struct Compiler {
     pub(super) const_values: HashMap<String, codegen::inference::ConstValue>,
     pub(super) static_offsets: HashMap<String, u16>,
     pub(super) static_types: HashMap<String, ast::Type>,
-    pub(super) typeck_expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), crate::ty::Type>,
+    pub(super) typeck_expr_types: HashMap<ast::ExprId, crate::ty::Type>,
     pub(super) result_tail_spans: std::collections::HashSet<(Vec<String>, ast::Span)>,
 }
 
@@ -176,6 +177,7 @@ impl Compiler {
             host_fns: HashMap::new(),
             builtin_types: HashMap::new(),
             fn_signatures: HashMap::new(),
+            read_only_natives: std::collections::HashSet::new(),
             current_closure_layout: HashMap::new(),
             current_closure_capture_types: HashMap::new(),
             current_span: ast::Span::new(0, 0),
@@ -699,8 +701,11 @@ impl Compiler {
         let builtin_returns: std::collections::HashMap<String, ast::Type> = self.builtin_types.iter()
             .filter_map(|(name, (_, ret))| codegen::inference::ty_to_ast(ret).map(|t| (name.clone(), t)))
             .collect();
+        let expr_types: std::collections::HashMap<ast::ExprId, ast::Type> = self.typeck_expr_types.iter()
+            .filter_map(|(id, t)| codegen::inference::ty_to_ast(t).map(|a| (*id, a)))
+            .collect();
         mono::monomorphize_with_methods_and_builtins(
-            decls, self.method_dispatch.clone(), builtin_returns,
+            decls, self.method_dispatch.clone(), builtin_returns, expr_types,
         ).map_err(|es| { self.errors.extend(es); self.errors.clone() })
     }
 

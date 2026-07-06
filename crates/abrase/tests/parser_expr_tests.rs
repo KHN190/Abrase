@@ -330,6 +330,48 @@ fn test_array_repeat_literal() {
 }
 
 #[test]
+fn test_single_block_terminated_element_array_in_statement() {
+    let input = "fn main() { let a = [ A{ x: 1 } ]; }";
+    let errs = parse_errs(input);
+    assert!(errs.is_empty(), "unexpected parse errors: {:?}", errs);
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    let Decl::Fn(f) = decls.into_iter().next().unwrap() else { panic!("expected fn") };
+    let Stmt::Let { value, .. } = &f.body.stmts[0].node else { panic!("expected let") };
+    let Expr::Array(items) = &value.node else {
+        panic!("expected Array, got {:?}", value.node);
+    };
+    assert_eq!(items.len(), 1);
+    assert!(matches!(items[0].node, Expr::Record { .. }));
+}
+
+#[test]
+fn test_block_terminated_element_in_tuple_call_record_statement() {
+    for input in [
+        "fn main() { let a = ( A{ x: 1 }, 2 ); }",
+        "fn main() { f( A{ x: 1 } ); }",
+        "fn main() { let a = B{ inner: A{ x: 1 } }; }",
+        "fn main() { let a = [ if b { 1 } else { 2 } ]; }",
+        "fn main() { let a = [ A{ x: 1 }, A{ x: 2 } ]; }",
+    ] {
+        let errs = parse_errs(input);
+        assert!(errs.is_empty(), "unexpected parse errors for {input:?}: {errs:?}");
+    }
+}
+
+#[test]
+fn test_block_terminated_array_repeat_still_parses() {
+    let input = "fn main() { let a = [ A{ x: 1 }; 3 ]; }";
+    let errs = parse_errs(input);
+    assert!(errs.is_empty(), "unexpected parse errors: {errs:?}");
+    let mut p = Parser::new(Lexer::new(input));
+    let decls = p.parse_program();
+    let Decl::Fn(f) = decls.into_iter().next().unwrap() else { panic!("expected fn") };
+    let Stmt::Let { value, .. } = &f.body.stmts[0].node else { panic!("expected let") };
+    assert!(matches!(value.node, Expr::ArrayRepeat { .. }), "got {:?}", value.node);
+}
+
+#[test]
 fn test_paren_unit_literal() {
     let mut p = Parser::new(Lexer::new("()"));
     let expr = p.parse_expr(Precedence::Lowest);
@@ -423,4 +465,36 @@ fn test_parser_traps_deeply_nested_input() {
     let errs = parse_errs(&src);
     assert!(errs.iter().any(|e| e.contains("nested too deeply")),
             "expected depth-limit error, got: {:?}", errs);
+}
+
+#[test]
+fn string_literal_index_parses_to_index() {
+    let e = fn_body_expr("fn f() -> Int { \"ab\"[0] }");
+    let Expr::Index { index, .. } = e else { panic!("expected Index, got {:?}", e) };
+    assert_eq!(index.node, Expr::Literal(Literal::Int(0)));
+}
+
+#[test]
+fn string_binding_index_parses_to_index() {
+    let e = fn_body_expr("fn f() -> Int { let s = \"ab\"; s[1] }");
+    let Expr::Index { base, .. } = e else { panic!("expected Index, got {:?}", e) };
+    assert_eq!(base.node, Expr::Identifier("s".into()));
+}
+
+#[test]
+fn string_byte_at_parses_to_method_call() {
+    let e = fn_body_expr("fn f() -> Int { \"ab\".byte_at(0) }");
+    let Expr::Call { callee, args } = e else { panic!("expected Call, got {:?}", e) };
+    let Expr::FieldAccess { field, .. } = callee.node else { panic!("expected FieldAccess callee") };
+    assert_eq!(field, "byte_at");
+    assert_eq!(args.len(), 1);
+}
+
+#[test]
+fn string_len_parses_to_method_call() {
+    let e = fn_body_expr("fn f() -> Int { \"ab\".len() }");
+    let Expr::Call { callee, args } = e else { panic!("expected Call, got {:?}", e) };
+    let Expr::FieldAccess { field, .. } = callee.node else { panic!("expected FieldAccess callee") };
+    assert_eq!(field, "len");
+    assert!(args.is_empty());
 }

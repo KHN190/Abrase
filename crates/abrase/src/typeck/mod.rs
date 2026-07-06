@@ -119,6 +119,8 @@ pub struct Checker {
     pub(crate) impl_method_fn: HashMap<(String, String, String), String>,
     // (receiver_type_name, method_name) -> list of trait names that define that method for that type
     pub(crate) method_traits_by_type: HashMap<(String, String), Vec<String>>,
+    // (receiver_type_name, method_name) pairs whose builtin native borrows the receiver
+    pub(crate) read_only_methods: std::collections::HashSet<(String, String)>,
 
     // Region Escape Analysis & Advanced Borrow Checking
     region_stack: Vec<String>,
@@ -156,8 +158,8 @@ pub struct Checker {
     // Type Aliases
     type_alias_registry: HashMap<String, Type>,
 
-    // Authoritative per-expression types, keyed by (module, span, expr-kind). Populated by infer_expr.
-    pub expr_types: HashMap<(Vec<String>, ast::Span, std::mem::Discriminant<ast::Expr>), Type>,
+    // Authoritative per-expression types, keyed by parser-assigned ExprId.
+    pub expr_types: HashMap<ast::ExprId, Type>,
     // Body-tail spans of fallible functions whose tail expression already yields
     // a Result skips the function-level `Ok`-wrap for these.
     pub result_tail_spans: std::collections::HashSet<(Vec<String>, ast::Span)>,
@@ -210,6 +212,7 @@ impl Checker {
             trait_method_sigs: HashMap::new(),
             impl_method_fn: HashMap::new(),
             method_traits_by_type: HashMap::new(),
+            read_only_methods: std::collections::HashSet::new(),
             region_stack: Vec::new(),
             in_handler_arm: false,
             covered_patterns: Vec::new(),

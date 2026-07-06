@@ -3,7 +3,7 @@ use abrase::ty::Type;
 use abrase::typeck::Checker;
 
 fn mk() -> Checker { Checker::new() }
-fn span() -> ast::Span { ast::Span { line: 1, col: 1 } }
+fn span() -> ast::Span { ast::Span::new(1, 1) }
 fn gp(name: &str) -> ast::GenericParam { ast::GenericParam { name: name.into() } }
 fn wb(ty: &str, traits: &[&str]) -> ast::WhereBound {
     ast::WhereBound {
@@ -485,7 +485,7 @@ fn verify_check_all_bounds_named_type_uses_name() {
 
 // Feature 22: trait method call resolution (uses non-reserved `Doubler` trait).
 
-fn s2() -> ast::Span { ast::Span { line: 1, col: 1 } }
+fn s2() -> ast::Span { ast::Span::new(1, 1) }
 fn sp_pat(p: ast::Pattern) -> ast::Spanned<ast::Pattern> { ast::Spanned { node: p, span: s2() } }
 fn sp_expr(e: ast::Expr) -> ast::Spanned<ast::Expr> { ast::Spanned { node: e, span: s2() } }
 

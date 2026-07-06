@@ -6,9 +6,9 @@ pub struct Value(pub u64);
 pub const HANDLE_NONE: u64 = u64::MAX;
 
 const HANDLE_SLOT_BITS: u32 = 24;
-const HANDLE_SLOT_MASK: u64 = (1u64 << HANDLE_SLOT_BITS) - 1;
+const HANDLE_SLOT_MASK: u64 = 0xFFFF_FFFF;
 const HANDLE_GEN_MASK:  u64 = (1u64 << HANDLE_SLOT_BITS) - 1;
-pub const HANDLE_SLOT_MAX: u32 = (1u32 << HANDLE_SLOT_BITS) - 2;
+pub const HANDLE_SLOT_MAX: u32 = u32::MAX - 1;
 
 impl Value {
     pub const ZERO: Value = Value(0);

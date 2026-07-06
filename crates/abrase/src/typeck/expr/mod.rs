@@ -113,12 +113,8 @@ impl Checker {
 
     pub fn infer_expr(&mut self, expr: &Spanned<ast::Expr>) -> Type {
         let ty = self.infer_expr_inner(expr);
-        if !matches!(ty, Type::Unknown) {
-            let module = match self.current_module.split_first() {
-                Some((head, rest)) if head == "root" => rest.to_vec(),
-                _ => self.current_module.clone(),
-            };
-            self.expr_types.insert((module, expr.span, std::mem::discriminant(&expr.node)), ty.clone());
+        if !matches!(ty, Type::Unknown) && expr.span.id != ast::ExprId::NONE {
+            self.expr_types.insert(expr.span.id, ty.clone());
         }
         ty
     }

@@ -381,3 +381,141 @@ fn closure_multi_capture_env_freed() {
     assert_eq!(live, 0,
         "multi-capture env cell must be reclaimed via cascade; live = {}", live);
 }
+
+// A handle (Array/String) stored as a record field, accessed via `&mut record`
+// across many frames, must stay alive — the field owns it, nothing else may free
+// it. Regression for the native-handle-in-record UAF (premature free at rc=0).
+#[test]
+fn handle_field_survives_cross_frame_access() {
+    // Alloc'd (literal) array field.
+    let (v, live) = run_with_heap(r#"
+type Sc = { sheet: Array<Int>, t: Int }
+fn step(s: &mut Sc) -> Int { s.t = s.sheet[0] + s.t; s.t }
+fn main() -> Int {
+  let mut s = Sc { sheet: [10, 20, 30], t: 0 };
+  let mut i = 0;
+  while i < 50 { let _ = step(&mut s); i = i + 1; }
+  s.t
+}
+"#).expect("literal array field must not UAF");
+    assert_eq!(v.as_int(), 500);
+    assert_eq!(live, 0, "all cells freed at exit");
+
+    // Native-returned (interpolated String) handle field — the crash.abe shape.
+    let (v, live) = run_with_heap(r#"
+type Rec = { s: String, t: Int }
+fn step(r: &mut Rec) -> Int { let _u = "v{r.s}"; r.t = r.t + 1; r.t }
+fn main() -> Int {
+  let x = 5;
+  let mut rec = Rec { s: "num{x}", t: 0 };
+  let mut i = 0;
+  while i < 30 { let _ = step(&mut rec); i = i + 1; }
+  rec.t
+}
+"#).expect("native handle field must not UAF");
+    assert_eq!(v.as_int(), 30);
+    assert_eq!(live, 0, "all cells freed at exit");
+}
+
+// A native-returned handle reassigned to an outer binding each iteration must
+// free the prior value (no per-frame leak).
+#[test]
+fn native_handle_reassign_outer_no_leak() {
+    let (_v, live) = run_with_heap(r#"
+fn main() -> Int {
+  let mut buf = "x";
+  let mut i = 0;
+  while i < 30 { buf = "v{i}"; i = i + 1; }
+  let _ = buf;
+  0
+}
+"#).expect("reassign must not error");
+    assert!(live <= 1, "reassigned native strings must not accumulate; live = {}", live);
+}
+
+// --- complete handle-lifecycle matrix: native (interp String) & Alloc (literal
+// array) handles must behave identically — no leak, no premature free — across
+// escape/reassign/nested/temp. Each asserts the final live count is bounded. ---
+
+fn live_of(src: &str) -> usize {
+    run_with_heap(src).unwrap_or_else(|e| panic!("must not UAF/error: {}", e)).1
+}
+
+#[test]
+fn matrix_native_temp_in_loop_dropped() {
+    assert_eq!(live_of(r#"
+fn main() -> Int {
+  let mut i = 0;
+  while i < 40 { let _u = "tmp{i}"; i = i + 1; }
+  0
+}
+"#), 0, "per-iteration native temp must be dropped");
+}
+
+#[test]
+fn matrix_native_field_reassigned_each_frame() {
+    assert_eq!(live_of(r#"
+type Rec = { s: String, t: Int }
+fn step(r: &mut Rec, i: Int) -> Int { r.s = "f{i}"; r.t = r.t + 1; r.t }
+fn main() -> Int {
+  let mut rec = Rec { s: "init", t: 0 };
+  let mut i = 0;
+  while i < 40 { let _ = step(&mut rec, i); i = i + 1; }
+  rec.t
+}
+"#), 0, "reassigning a record's native-handle field each frame must free the old");
+}
+
+#[test]
+fn matrix_native_handle_in_nested_record() {
+    assert_eq!(live_of(r#"
+type Inner = { s: String }
+type Outer = { inner: Inner, t: Int }
+fn step(o: &mut Outer) -> Int { let _u = "v{o.inner.s}"; o.t = o.t + 1; o.t }
+fn main() -> Int {
+  let x = 7;
+  let mut o = Outer { inner: Inner { s: "d{x}" }, t: 0 };
+  let mut i = 0;
+  while i < 30 { let _ = step(&mut o); i = i + 1; }
+  o.t
+}
+"#), 0, "nested native-handle field must survive then free");
+}
+
+#[test]
+fn matrix_literal_array_in_nested_record() {
+    assert_eq!(live_of(r#"
+type Inner = { a: Array<Int> }
+type Outer = { inner: Inner, t: Int }
+fn step(o: &mut Outer) -> Int { o.t = o.inner.a[0] + o.t; o.t }
+fn main() -> Int {
+  let mut o = Outer { inner: Inner { a: [1,2,3] }, t: 0 };
+  let mut i = 0;
+  while i < 30 { let _ = step(&mut o); i = i + 1; }
+  o.t
+}
+"#), 0, "nested literal-array field");
+}
+
+// Real @cart frame loop (run_to_yield + resume): a record-owned handle read across frames exercises the snapshot rc path.
+#[test]
+fn cart_handle_in_record_across_frames() {
+    use compiler_codegen_common::*;
+    let src = r#"
+type Rec = { arr: Array<Int>, t: Int }
+fn step(r: &mut Rec) -> Int { r.t = r.arr[0] + r.t; r.t }
+@cart
+fn main() -> <frame> Unit {
+  let mut rec = Rec { arr: [10, 20, 30], t: 0 };
+  loop { let _ = step(&mut rec); frame.present() }
+}
+"#;
+    let ast = parse_source(src);
+    let mut compiler = Compiler::new();
+    let module = compiler.compile_module(&ast).unwrap_or_else(|e| panic!("compile: {:?}", e.iter().map(|x| &x.message).collect::<Vec<_>>()));
+    let mut vm = VirtualMachine::new();
+    vm.run_to_yield(&module).expect("frame 0");
+    for f in 1..6 {
+        vm.resume(&module, Value::from_int(0)).unwrap_or_else(|e| panic!("frame {} crashed: {}", f, e));
+    }
+}

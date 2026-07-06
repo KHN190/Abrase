@@ -156,7 +156,7 @@ impl VirtualMachine {
 
     #[inline(always)]
     pub(crate) fn decode_handle(raw: u64) -> (u32, u32) {
-        (((raw >> 24) & 0x00FF_FFFF) as u32, (raw & 0x00FF_FFFF) as u32)
+        crate::memory::handle_parts(raw)
     }
 
     pub(crate) fn check_handle_tags(&self, where_: &str) -> Result<(), String> {

@@ -84,11 +84,28 @@ fn handle_slot_max_round_trips() {
 }
 
 #[test]
-fn handle_slot_overflow_truncates_to_24_bits() {
-    let v = Value::from_handle(u32::MAX, u32::MAX);
-    let (s, g) = v.as_handle();
-    assert_eq!(s, 0x00FF_FFFF);
-    assert_eq!(g, 0x00FF_FFFF);
+fn handle_slot_keeps_32_bits_gen_masked_to_24() {
+    let v = Value::from_handle(0x0150_0000, 7);
+    assert_eq!(v.as_handle(), (0x0150_0000, 7));
+    let v2 = Value::from_handle(5, u32::MAX);
+    assert_eq!(v2.as_handle(), (5, 0x00FF_FFFF));
+}
+
+#[test]
+fn handle_codec_round_trips_every_slot_across_24bit_boundary() {
+    // slot = byte offset, spans 0..arena-cap (2^28); only gen is 24-bit. Any
+    // truncation aliases cells past 2^24 (the large-array-in-record UAF).
+    let mut s = 0x1234_5678u64;
+    for _ in 0..200_000 {
+        s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+        let slot = (s % (1 << 28)) as u32;          // within arena cap
+        let gn = ((s >> 32) % (1 << 24)) as u32;   // 24-bit gen
+        assert_eq!(Value::from_handle(slot, gn).as_handle(), (slot, gn),
+            "codec lost slot {:#x} gen {:#x}", slot, gn);
+    }
+    for &slot in &[0, 1, (1<<24)-1, 1<<24, (1<<24)+1, (1<<25), (1<<28)-1] {
+        assert_eq!(Value::from_handle(slot, 0xAB).as_handle(), (slot, 0xAB));
+    }
 }
 
 #[test]

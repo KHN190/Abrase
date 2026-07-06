@@ -24,6 +24,9 @@ const HDR_FRONTIER: u64 = 0;
 pub struct CoreHeap {
     arena: Vec<u64>,
     pub trace_pc: usize,
+    trace_slot: Option<u32>,
+    trace_all: bool,
+    trace_out: Option<fn(&str)>,
 }
 
 fn mask_words(size: u64) -> u64 { (size + 63) / 64 }
@@ -35,7 +38,7 @@ impl CoreHeap {
 
     pub fn with_capacity(bytes: usize) -> Self {
         let words = (bytes + 7) / 8;
-        let mut h = Self { arena: vec![0u64; words], trace_pc: 0 };
+        let mut h = Self { arena: vec![0u64; words], trace_pc: 0, trace_slot: None, trace_all: false, trace_out: None };
         debug_assert!(h.arena.as_ptr() as usize & 7 == 0, "Vec<u64> base must be 8-aligned");
         let blen = h.blen();
         cgen::core_init(h.bytes_mut(), blen).expect("core_init");
@@ -74,15 +77,20 @@ impl CoreHeap {
 
     fn valid(&self, slot: u32, generation: u32, op: &str) -> Result<u64, String> {
         let off = slot as u64;
+        let frontier = self.r64(HDR_FRONTIER);
         if off < GLOBAL_HDR || off + BLK_HDR > self.blen() {
-            return Err(format!("{}: invalid slot {}", op, slot));
+            let why = if off >= frontier { "past frontier — overflowed/truncated handle" } else { "below header" };
+            return Err(format!("{}: slot {} off {:#x} outside arena [{:#x},{:#x}) ({})",
+                op, slot, off, GLOBAL_HDR, self.blen(), why));
         }
         if self.r32(off) == 0 {
-            return Err(format!("{}: use-after-free of slot {}", op, slot));
+            let why = if off >= frontier { "never allocated — overflowed/truncated handle" } else { "freed or mid-block" };
+            return Err(format!("{}: use-after-free slot {} off {:#x} rc=0 ({}); frontier {:#x}",
+                op, slot, off, why, frontier));
         }
         if (self.r32(off + 4) & 0x00FF_FFFF) != generation {
-            return Err(format!("{}: stale handle for slot {} (have gen {}, live {})",
-                op, slot, generation, self.r32(off + 4) & 0x00FF_FFFF));
+            return Err(format!("{}: stale handle for slot {} off {:#x} (have gen {}, live {})",
+                op, slot, off, generation, self.r32(off + 4) & 0x00FF_FFFF));
         }
         Ok(off)
     }
@@ -98,7 +106,12 @@ impl CoreHeap {
         loop {
             let h = cgen::alloc(self.bytes_mut(), size as u64).map_err(String::from)?;
             if h != 0 {
-                return Ok(handle_parts(h));
+                let (slot, generation) = handle_parts(h);
+                if make_handle(slot, generation) != h {
+                    return Err(format!("alloc: arena offset {:#x} exceeds handle slot capacity", h >> 24));
+                }
+                self.emit_trace("alloc", slot, generation);
+                return Ok((slot, generation));
             }
             if self.blen() >= (1 << 28) {
                 return Err("heap: arena exhausted".into());
@@ -220,6 +233,7 @@ impl CoreHeap {
         let h = make_handle(slot, generation);
         let r = cgen::rc_inc(self.bytes_mut(), h).map_err(String::from)?;
         if r != 0 { return Err(format!("rc_inc: stale slot {}", slot)); }
+        self.emit_trace("inc", slot, generation);
         Ok(())
     }
 
@@ -227,11 +241,18 @@ impl CoreHeap {
         self.valid(slot, generation, "rc_dec")?;
         let h = make_handle(slot, generation);
         let r = cgen::rc_dec(self.bytes_mut(), h).map_err(String::from)?;
+        if self.trace_out.is_some() && (self.trace_all || self.trace_slot == Some(slot)) {
+            let alive = self.is_live(slot, generation);
+            let rc = if alive { self.rc(slot, generation).map(|r| r as i64).unwrap_or(-1) } else { 0 };
+            self.trace_out.unwrap()(&format!("[rc] dec slot {} gen {} -> rc {}{} @pc {}",
+                slot, generation, rc, if alive { "" } else { " FREED" }, self.trace_pc));
+        }
         Ok(r == 1)
     }
 
     pub fn force_free(&mut self, slot: u32, generation: u32) -> Result<(), String> {
         if !self.is_live(slot, generation) { return Ok(()); }
+        self.emit_trace("force_free", slot, generation);
         let off = slot as u64;
         self.w_bytes(off, &1u32.to_le_bytes());
         let h = make_handle(slot, generation);
@@ -287,5 +308,16 @@ impl CoreHeap {
         (self.r64(HDR_FRONTIER) - GLOBAL_HDR) as usize
     }
 
-    pub fn set_trace(&mut self, _slot: Option<u32>, _all: bool, _out: fn(&str)) {}
+    pub fn set_trace(&mut self, slot: Option<u32>, all: bool, out: fn(&str)) {
+        self.trace_slot = slot;
+        self.trace_all = all;
+        self.trace_out = Some(out);
+    }
+
+    fn emit_trace(&self, op: &str, slot: u32, generation: u32) {
+        let Some(out) = self.trace_out else { return; };
+        if !self.trace_all && self.trace_slot != Some(slot) { return; }
+        let rc = self.rc(slot, generation).map(|r| r as i64).unwrap_or(-1);
+        out(&format!("[rc] {} slot {} gen {} -> rc {} @pc {}", op, slot, generation, rc, self.trace_pc));
+    }
 }

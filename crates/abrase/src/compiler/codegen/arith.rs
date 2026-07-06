@@ -267,6 +267,49 @@ impl Compiler {
                         return Ok(dr);
                     }
                 }
+                if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::Neq)
+                    && matches!(self.infer_expr_type(left),
+                                Some(ast::Type::Named(ref n)) if n == "String")
+                    && matches!(self.infer_expr_type(right),
+                                Some(ast::Type::Named(ref n)) if n == "String")
+                {
+                    let lr = self.compile_expr(left)?;
+                    let rr = self.compile_expr(right)?;
+                    let eq_id = *self.func_map.get("__str_eq")
+                        .ok_or_else(|| "internal: __str_eq builtin not registered".to_string())?;
+                    let eq = self.emit_builtin_call(eq_id, &[lr, rr])?;
+                    if matches!(op, ast::BinaryOp::Neq) {
+                        let zero = self.alloc_register()?;
+                        let idx = self.add_constant(Value::from_bool(false))?;
+                        self.emit(OpCode::PushConst(zero, idx));
+                        let dest = self.alloc_register()?;
+                        self.emit(OpCode::Eq(dest, eq, zero));
+                        return Ok(dest);
+                    }
+                    return Ok(eq);
+                }
+                if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::Neq)
+                    && matches!(self.infer_expr_type(left),
+                                Some(ast::Type::Named(ref n)) if self.layouts.variants.values().any(|v| &v.type_name == n))
+                {
+                    let lr = self.compile_expr(left)?;
+                    let rr = self.compile_expr(right)?;
+                    let lt = self.alloc_register()?;
+                    self.emit(OpCode::Ld(lt, lr, 0));
+                    let rt = self.alloc_register()?;
+                    self.emit(OpCode::Ld(rt, rr, 0));
+                    let l_bound = matches!(&left.node, ast::Expr::Identifier(n) if self.var_to_reg.contains_key(n));
+                    let r_bound = matches!(&right.node, ast::Expr::Identifier(n) if self.var_to_reg.contains_key(n));
+                    if !l_bound { self.emit(OpCode::Drop(lr)); }
+                    if !r_bound { self.emit(OpCode::Drop(rr)); }
+                    let dest = self.alloc_register()?;
+                    if matches!(op, ast::BinaryOp::Neq) {
+                        self.emit(OpCode::Neq(dest, lt, rt));
+                    } else {
+                        self.emit(OpCode::Eq(dest, lt, rt));
+                    }
+                    return Ok(dest);
+                }
                 let is_float = matches!(self.infer_expr_type(left),
                                 Some(ast::Type::Named(ref n)) if n == "Float")
                     && matches!(self.infer_expr_type(right),

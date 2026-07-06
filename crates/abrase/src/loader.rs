@@ -73,6 +73,7 @@ pub fn load_program_with_root(entry: &Path, root_override: Option<&Path>) -> Res
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut in_progress: HashSet<PathBuf> = HashSet::new();
     load_recursive(entry, &root, &[], &mut out, &mut visited, &mut in_progress, true)?;
+    ast::stamp_expr_ids(&mut out.decls);
     Ok(out)
 }
 
