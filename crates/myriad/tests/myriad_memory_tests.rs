@@ -499,3 +499,17 @@ fn value_codec_and_rc_hit_real_cell_past_16mb() {
     assert!(h.rc_dec(s, g).is_ok());
     assert!(h.is_live(slot, gen_));
 }
+
+#[test]
+fn test_raise_without_handler_traps() {
+    let result = run(
+        vec![
+            OpCode::PushConst(r(0), 0),
+            OpCode::PushConst(r(1), 1),
+            OpCode::Raise(r(2), r(0), r(1)),
+            OpCode::Ret(r(2)),
+        ],
+        vec![Value::from_int(0), Value::from_int(0)],
+    );
+    assert!(result.is_err(), "raise (perform) without handler must trap");
+}
