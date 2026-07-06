@@ -73,8 +73,13 @@
     font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
     box-shadow: 0 6px 18px rgba(0,0,0,.14); display: none; padding: 3px 0;
   }
-  #ac div { padding: 1px 12px; cursor: pointer; white-space: nowrap; color: var(--ink); }
+  #ac div { padding: 1px 10px 1px 6px; cursor: pointer; white-space: nowrap; color: var(--ink); }
   #ac div.sel { background: var(--accent); color: #fff; }
+  #ac div.sel .ac-k { color: #fff; opacity: 0.85; }
+  .ac-k { display: inline-block; width: 2.4em; margin-right: 0.6em; text-align: left;
+    font-size: 0.8em; opacity: 0.6; }
+  .ac-key { color: var(--fx); } .ac-var { color: var(--num); }
+  .ac-fn { color: var(--kw); } .ac-ty { color: var(--ty); } .ac-eff { color: var(--fx); }
 
   .panel { border-top: 1px solid var(--border); }
   .toolbar { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 1.25rem; }
@@ -329,7 +334,7 @@ function collectSymbols() {
       if (/^[A-Za-z_]\w*$/.test(id)) map.set(id, "var");
     }
   }
-  const kinds = { type: "ty", effect: "fx", trait: "ty" };
+  const kinds = { type: "ty", effect: "eff", trait: "ty" };
   const rt = /\b(type|effect|trait)\s+([A-Za-z_]\w*)/g;
   while ((m = rt.exec(v))) map.set(m[2], kinds[m[1]]);
   return map;
@@ -353,7 +358,7 @@ function renderAC() {
   acEl.innerHTML = "";
   acItems.forEach((it, i) => {
     const d = document.createElement("div");
-    d.textContent = it;
+    d.innerHTML = `<span class="ac-k ac-${it.kind}">${it.kind}</span>${esc(it.name)}`;
     if (i === acSel) d.className = "sel";
     d.onmousedown = (e) => { e.preventDefault(); acSel = i; acceptAC(); };
     acEl.appendChild(d);
@@ -371,7 +376,7 @@ function openAC(force) {
   acStart = start;
   const syms = collectSymbols();
   syms.delete(word);
-  for (const k of KEYWORDS) if (!syms.has(k)) syms.set(k, "kw");
+  for (const k of KEYWORDS) if (!syms.has(k)) syms.set(k, "key");
   const lw = word.toLowerCase();
   const items = [...syms.entries()]
     .filter(([n]) => n.toLowerCase().startsWith(lw))
@@ -387,7 +392,7 @@ function hideAC() { acEl.style.display = "none"; acItems = []; }
 function acVisible() { return acEl.style.display === "block"; }
 
 function acceptAC() {
-  const word = acItems[acSel];
+  const word = acItems[acSel].name;
   srcEl.setRangeText(word, acStart, srcEl.selectionStart, "end");
   hideAC();
   render();
