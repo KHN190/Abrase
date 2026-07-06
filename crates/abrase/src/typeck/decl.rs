@@ -87,6 +87,22 @@ impl Checker {
                     }
                 }
 
+                let is_core = effects.iter()
+                    .any(|e| matches!(e, crate::ty::Effect::UserEffect(n) if n == "core"));
+                if is_core {
+                    let bad = params.iter().chain(std::iter::once(&*ret))
+                        .any(|t| !is_core_scalar(t));
+                    if bad {
+                        self.report_error(
+                            format!("`<core>` function `{}` may only take and return unboxed \
+                                     scalars (Int/Float/Bool/Char/Unit/Addr); a handle value \
+                                     would make the compiler emit RC into core code",
+                                fn_decl.name),
+                            ast::Span { line: 0, col: 0 },
+                        );
+                    }
+                }
+
                 let fn_type = Type::Function { params, effects, ret };
                 let module_path = self.current_module.clone();
                 self.register_module_item(&module_path, fn_decl.name.clone(), fn_type.clone());
