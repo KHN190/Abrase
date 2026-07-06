@@ -210,7 +210,9 @@ impl Compiler {
             Unary { op, right } =>
                 matches!(op, ast::UnaryOp::Neg | ast::UnaryOp::Not | ast::UnaryOp::Deref)
                     && f(right),
-            Index { base, index } => f(base) && f(index),
+            Index { base, index } =>
+                !matches!(self.infer_expr_type(base), Some(ast::Type::Named(ref n)) if n == "String")
+                    && f(base) && f(index),
             If { condition, consequence, alternative } =>
                 f(condition) && f(consequence) && alternative.as_deref().map_or(true, f),
             Block(b) => self.block_alloc_free(b),

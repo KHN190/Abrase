@@ -9,6 +9,28 @@ impl Checker {
         self.trait_registry.insert(trait_name, methods);
     }
 
+    pub fn register_read_only_method(&mut self, ty: String, method: String) {
+        self.read_only_methods.insert((ty, method));
+    }
+
+    pub fn is_read_only_method(&self, ty: &str, method: &str) -> bool {
+        self.read_only_methods.contains(&(ty.to_string(), method.to_string()))
+    }
+
+    pub fn receiver_type_name(ty: &Type) -> Option<String> {
+        match ty {
+            Type::Int => Some("Int".to_string()),
+            Type::Float => Some("Float".to_string()),
+            Type::Bool => Some("Bool".to_string()),
+            Type::Char => Some("Char".to_string()),
+            Type::String => Some("String".to_string()),
+            Type::Unit => Some("Unit".to_string()),
+            Type::Named(n) => Some(n.clone()),
+            Type::Reference { inner, .. } => Self::receiver_type_name(inner),
+            _ => None,
+        }
+    }
+
     pub fn register_trait_method_sig(
         &mut self,
         trait_name: &str,

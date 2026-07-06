@@ -119,6 +119,8 @@ pub struct Checker {
     pub(crate) impl_method_fn: HashMap<(String, String, String), String>,
     // (receiver_type_name, method_name) -> list of trait names that define that method for that type
     pub(crate) method_traits_by_type: HashMap<(String, String), Vec<String>>,
+    // (receiver_type_name, method_name) pairs whose builtin native borrows the receiver
+    pub(crate) read_only_methods: std::collections::HashSet<(String, String)>,
 
     // Region Escape Analysis & Advanced Borrow Checking
     region_stack: Vec<String>,
@@ -210,6 +212,7 @@ impl Checker {
             trait_method_sigs: HashMap::new(),
             impl_method_fn: HashMap::new(),
             method_traits_by_type: HashMap::new(),
+            read_only_methods: std::collections::HashSet::new(),
             region_stack: Vec::new(),
             in_handler_arm: false,
             covered_patterns: Vec::new(),

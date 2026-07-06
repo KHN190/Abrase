@@ -423,10 +423,12 @@ impl Compiler {
         args: &[ast::Spanned<ast::Expr>],
     ) -> Result<Register, String> {
         let mark = self.snapshot_register_high_water();
+        let borrows = self.native_borrows_args(func_id);
         let mut staged: Vec<(Register, bool)> = Vec::new();
         for arg in args {
             let r = self.compile_expr(arg)?;
-            staged.push((r, self.arg_should_move(arg)));
+            let mv = if borrows { false } else { self.arg_should_move(arg) };
+            staged.push((r, mv));
         }
         self.stage_call_args(&staged)?;
         self.reclaim_temp_regs_above(mark);
@@ -519,6 +521,11 @@ impl Compiler {
         let dest = self.alloc_register()?;
         self.emit(OpCode::Call(dest, func_id));
         Ok(dest)
+    }
+
+    fn native_borrows_args(&self, func_id: u16) -> bool {
+        matches!(self.functions.get(func_id as usize),
+            Some(crate::bytecode::Chunk::Native(n)) if self.read_only_natives.contains(&n.name))
     }
 
     pub(in crate::compiler) fn arg_should_move(&mut self, arg: &ast::Spanned<ast::Expr>) -> bool {

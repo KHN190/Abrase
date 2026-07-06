@@ -82,6 +82,15 @@ impl Checker {
         self.report_error(msg.into(), place.span)
     }
 
+    fn infer_operand(&mut self, e: &Spanned<ast::Expr>, read_only: bool) -> Type {
+        if read_only {
+            if let ast::Expr::Identifier(name) = &e.node {
+                return self.get_var(name, true, e.span);
+            }
+        }
+        self.infer_expr(e)
+    }
+
     pub(super) fn infer_binary(&mut self, op: &ast::BinaryOp, left: &Spanned<ast::Expr>, right: &Spanned<ast::Expr>, span: ast::Span) -> Type {
         self.context_stack.push("In binary expression".into());
         if matches!(op,
@@ -92,8 +101,11 @@ impl Checker {
             self.context_stack.pop();
             return ret;
         }
-        let l_ty = self.infer_expr(left);
-        let r_ty = self.infer_expr(right);
+        let read_only = matches!(op,
+            ast::BinaryOp::Eq | ast::BinaryOp::Neq | ast::BinaryOp::Lt |
+            ast::BinaryOp::Gt | ast::BinaryOp::Lte | ast::BinaryOp::Gte);
+        let l_ty = self.infer_operand(left, read_only);
+        let r_ty = self.infer_operand(right, read_only);
 
         let result = if l_ty == Type::Unknown || r_ty == Type::Unknown {
             Type::Unknown

@@ -54,6 +54,8 @@ impl Compiler {
         self.register_typed_native("__str_eq", vec![s.clone(), s.clone()], b.clone(), 2);
         self.register_typed_native("__str_len", vec![s.clone()], i.clone(), 1);
         self.register_typed_native("__str_byte_at", vec![s.clone(), i.clone()], i.clone(), 2);
+        self.read_only_natives.insert("__str_len".into());
+        self.read_only_natives.insert("__str_byte_at".into());
         // System
         self.register_typed_native("halt",  vec![i.clone()], u.clone(), 1);
         self.register_typed_native("abort", vec![s.clone()], u.clone(), 1);
@@ -140,6 +142,13 @@ impl Compiler {
             checker.insert_var(name.clone(), fn_ty, false, ast::Span { line: 0, col: 0 });
         }
         self.register_builtin_traits(checker);
+        let mut dispatch = std::collections::HashMap::new();
+        Self::seed_builtin_method_dispatch(&mut dispatch);
+        for ((ty, method), mangled) in &dispatch {
+            if self.read_only_natives.contains(mangled) {
+                checker.register_read_only_method(ty.clone(), method.clone());
+            }
+        }
     }
 
     fn register_builtin_traits(&self, checker: &mut crate::typeck::Checker) {

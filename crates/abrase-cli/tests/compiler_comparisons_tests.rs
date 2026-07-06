@@ -129,3 +129,18 @@ fn string_neq_different_content() {
     let r = run_source(src).expect("Execution failed");
     assert_eq!(r, Value::from_bool(true), "different strings: != must be true");
 }
+
+#[test]
+fn string_eq_operands_not_consumed() {
+    let src = "fn main() -> Int { let a = \"xy\"; let b = \"xy\"; if a == b { a.len() + b.len() } else { 0 } }";
+    let (v, live) = run_source_with_heap(src).expect("run");
+    assert_eq!(v, Value::from_int(4), "== must borrow operands, not consume");
+    assert_eq!(live, 0, "no leak from borrowed ==: {live} live");
+}
+
+#[test]
+fn copy_type_method_reuse_unaffected() {
+    let (v, live) = run_source_with_heap("fn main() -> Int { let x = 5; x.max(3) + x.min(2) + x }").expect("run");
+    assert_eq!(v, Value::from_int(12));
+    assert_eq!(live, 0, "{live} live");
+}

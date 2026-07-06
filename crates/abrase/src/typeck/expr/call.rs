@@ -82,30 +82,22 @@ impl Checker {
                 // Method-call dispatch
                 if let ast::Expr::FieldAccess { base, field } = &callee.node {
                     self.context_stack.push(format!("In method call '.{}'", field));
-                    let base_ty = self.infer_expr(base);
+                    let base_ty = if let ast::Expr::Identifier(name) = &base.node {
+                        let peeked = self.get_var(name, true, base.span);
+                        let read_only = Self::receiver_type_name(&peeked)
+                            .map_or(false, |rn| self.is_read_only_method(&rn, field));
+                        if !read_only && peeked.ownership() == crate::ty::Ownership::Move {
+                            self.get_var(name, false, base.span);
+                        }
+                        peeked
+                    } else {
+                        self.infer_expr(base)
+                    };
                     self.context_stack.pop();
                     if field == "clone" && args.is_empty() {
                         return base_ty;
                     }
-                    let receiver_name = match &base_ty {
-                        Type::Int => Some("Int".to_string()),
-                        Type::Float => Some("Float".to_string()),
-                        Type::Bool => Some("Bool".to_string()),
-                        Type::Char => Some("Char".to_string()),
-                        Type::String => Some("String".to_string()),
-                        Type::Unit => Some("Unit".to_string()),
-                        Type::Named(n) => Some(n.clone()),
-                        Type::Reference { inner, .. } => match inner.as_ref() {
-                            Type::Int => Some("Int".to_string()),
-                            Type::Float => Some("Float".to_string()),
-                            Type::Bool => Some("Bool".to_string()),
-                            Type::Char => Some("Char".to_string()),
-                            Type::String => Some("String".to_string()),
-                            Type::Named(n) => Some(n.clone()),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
+                    let receiver_name = Self::receiver_type_name(&base_ty);
 
                     if let Some(rname) = receiver_name {
                         let receiver_ty: Type = match rname.as_str() {

@@ -256,3 +256,11 @@ fn variant_eq_binding_no_leak() {
     assert_eq!(v, Value::from_int(7));
     assert_eq!(live, 0, "bound variants must be freed: {live} live");
 }
+
+#[test]
+fn variant_eq_operand_reused_after_compare() {
+    let src = "type C = Red | Green fn f(c: C) -> Int { match c { Red => 0, Green => 1 } } fn main() -> Int { let c = Green; if c == Green { f(c) } else { 0 } }";
+    let (v, live) = run_source_with_heap(src).expect("run");
+    assert_eq!(v, Value::from_int(1), "== must borrow variant operand, allowing later use");
+    assert_eq!(live, 0, "{live} live");
+}

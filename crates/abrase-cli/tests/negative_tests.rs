@@ -448,3 +448,17 @@ fn eq_on_variant_with_payload_rejected() {
     assert!(err.contains("variant with payload") || !err.is_empty(),
         "`==` on payload-bearing variant must be rejected: {err}");
 }
+
+#[test]
+fn to_s_consumes_receiver_reuse_rejected() {
+    let src = "fn main() -> Int { let s = \"hi\"; let a = s.to_s(); s.len() + a.len() }";
+    let err = must_reject(src);
+    assert!(err.contains("moved"), "consuming method `to_s` must still move its receiver (affine): {err}");
+}
+
+#[test]
+fn plain_fn_consumes_string_arg_reuse_rejected() {
+    let src = "fn take(s: String) -> Int { s.len() } fn main() -> Int { let s = \"ab\"; take(s) + s.len() }";
+    let err = must_reject(src);
+    assert!(err.contains("moved"), "a non-borrowing fn must still consume its String arg (affine): {err}");
+}
