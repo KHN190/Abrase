@@ -83,8 +83,10 @@ impl Compiler {
         }
         if let Some(t) = self.resolve_host_or_ctor(callee, args)? { return Ok(t); }
         if let ast::Expr::FieldAccess { field, .. } = &callee.node {
-            debug_assert!(false, "method call reached codegen unresolved; typeck accepts only dispatchable methods and mono rewrites them all");
-            return Err(format!("internal: unresolved method '.{}'", field));
+            return Err(format!(
+                "Cannot infer receiver type for method call '.{}'; annotate the base expression",
+                field
+            ));
         }
         let ast::Expr::Identifier(name) = &callee.node else {
             // Non-identifier callee (e.g. a closure literal, paren, block) —
@@ -179,12 +181,8 @@ impl Compiler {
             return Ok(Some(CallTarget::HostFn { fn_id }));
         }
         let key = (eff_name.clone(), field.clone());
-        if !self.effect_op_to_arm.contains_key(&key) { return Ok(None); }
-        let effect_id = match self.effect_ids.get(eff_name).copied() {
-            Some(id) => id,
-            None => return Ok(None),
-        };
-        let op_id = self.op_ids.get(&key).copied().unwrap_or(0);
+        let Some(effect_id) = self.effect_ids.get(eff_name).copied() else { return Ok(None) };
+        let Some(op_id) = self.op_ids.get(&key).copied() else { return Ok(None) };
         Ok(Some(CallTarget::EffectOpDispatch { effect_id, op_id }))
     }
 
