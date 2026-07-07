@@ -1,6 +1,9 @@
 use crate::ast::Span;
 use super::*;
 
+pub(crate) const BUILTIN_PUBLIC_TYPES: &[&str] =
+    &["Int", "String", "Float", "Bool", "Unit", "Char", "Bytes"];
+
 impl Checker {
 
     // Visibility & Module Scoping
@@ -59,10 +62,7 @@ impl Checker {
     }
 
     pub fn is_public(&self, item_name: &str) -> bool {
-        match item_name {
-            "Int" | "String" | "Float" | "Bool" | "Unit" | "Char" | "Bytes" => return true,
-            _ => {}
-        }
+        if BUILTIN_PUBLIC_TYPES.contains(&item_name) { return true; }
         for public_item in &self.public_items {
             if public_item.ends_with(&format!("::{}", item_name)) {
                 return true;
@@ -72,10 +72,7 @@ impl Checker {
     }
 
     pub fn is_item_accessible(&self, item_name: &str) -> bool {
-        match item_name {
-            "Int" | "String" | "Float" | "Bool" | "Unit" | "Char" | "Bytes" => return true,
-            _ => {}
-        }
+        if BUILTIN_PUBLIC_TYPES.contains(&item_name) { return true; }
         for public_item in &self.public_items {
             if public_item.ends_with(&format!("::{}", item_name)) {
                 return true;
