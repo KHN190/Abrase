@@ -137,6 +137,20 @@ fn main() -> Int {
 }
 "#;
 
+const BYTES_SCAN: &str = r#"
+fn main() -> Int {
+  let b = "abcdefghijklmnopqrstuvwxyz".to_bytes();
+  let mut i = 0;
+  let mut total = 0;
+  while i < 5000 {
+    let piece = b.slice(0, 5);
+    total = total + piece.len() + b.byte_at(0);
+    i = i + 1
+  };
+  total
+}
+"#;
+
 struct Prog { name: &'static str, src: &'static str }
 
 fn bench_vm(c: &mut Criterion) {
@@ -150,6 +164,7 @@ fn bench_vm(c: &mut Criterion) {
         Prog { name: "float_arith",   src: FLOAT_ARITH    },
         Prog { name: "leaf_calls",    src: LEAF_CALLS     },
         Prog { name: "string_scan",   src: STRING_SCAN    },
+        Prog { name: "bytes_scan",    src: BYTES_SCAN     },
     ];
 
     let mut group = c.benchmark_group("vm_run");

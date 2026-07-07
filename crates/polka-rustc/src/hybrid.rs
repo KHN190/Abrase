@@ -16,7 +16,7 @@ fn pure_op(op: &OpCode) -> bool {
         | Jmp(..) | Jz(..) | Jnz(..) | Call(..) | Ret(..))
 }
 
-fn inline_native_math(name: &str) -> Option<&'static str> {
+pub(crate) fn inline_native_math(name: &str) -> Option<&'static str> {
     Some(match name {
         "sqrt" => "myriad::builtins::fmath::sqrt(f64::from_bits(a[0])).to_bits()",
         "sin" => "myriad::builtins::fmath::sin(f64::from_bits(a[0])).to_bits()",
@@ -35,13 +35,21 @@ fn inline_native_math(name: &str) -> Option<&'static str> {
     })
 }
 
-fn inline_native_str(name: &str) -> Option<&'static str> {
+pub(crate) fn inline_native_str(name: &str) -> Option<&'static str> {
     Some(match name {
         "__int_to_s" => "let v = myriad::alloc_string(h, &(a[0] as i64).to_string())?; Ok((v.raw(), true))",
         "__float_to_s" => "let v = myriad::alloc_string(h, &f64::from_bits(a[0]).to_string())?; Ok((v.raw(), true))",
         "__bool_to_s" => "let v = myriad::alloc_string(h, &(a[0] != 0).to_string())?; Ok((v.raw(), true))",
         "__unit_to_s" => "let v = myriad::alloc_string(h, \"()\")?; Ok((v.raw(), true))",
         "__char_to_s" => "let c = char::from_u32(a[0] as u32).ok_or_else(|| \"__char_to_s: bad codepoint\".to_string())?; let v = myriad::alloc_string(h, &c.to_string())?; Ok((v.raw(), true))",
+        "__str_len" => "Ok((myriad::read_string(h, myriad::Value::from_raw(a[0])).map(|s| s.len()).unwrap_or(0) as u64, false))",
+        "__bytes_len" => "Ok((myriad::read_bytes(h, myriad::Value::from_raw(a[0])).map(|b| b.len()).unwrap_or(0) as u64, false))",
+        "__str_byte_at" => "let i = a[1] as i64; let s = myriad::read_string(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let b = if i < 0 { 0 } else { s.as_bytes().get(i as usize).copied().unwrap_or(0) }; Ok((b as u64, false))",
+        "__bytes_byte_at" => "let i = a[1] as i64; let b = myriad::read_bytes(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let v = if i < 0 { 0 } else { b.get(i as usize).copied().unwrap_or(0) }; Ok((v as u64, false))",
+        "__str_eq" => "let x = myriad::read_string(h, myriad::Value::from_raw(a[0])); let y = myriad::read_string(h, myriad::Value::from_raw(a[1])); Ok((if x == y { 1 } else { 0 }, false))",
+        "__str_to_bytes" => "let b = myriad::read_bytes(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let v = myriad::alloc_bytes(h, &b)?; Ok((v.raw(), true))",
+        "__str_slice" => "let s = myriad::read_string(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let by = s.as_bytes(); let off = a[1] as i64; let len = a[2] as i64; let start = off.max(0).min(by.len() as i64) as usize; let take = len.max(0) as usize; let end = start.saturating_add(take).min(by.len()); let out = String::from_utf8_lossy(&by[start..end]); let v = myriad::alloc_string(h, &out)?; Ok((v.raw(), true))",
+        "__bytes_slice" => "let b = myriad::read_bytes(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let off = a[1] as i64; let len = a[2] as i64; let start = off.max(0).min(b.len() as i64) as usize; let take = len.max(0) as usize; let end = start.saturating_add(take).min(b.len()); let v = myriad::alloc_bytes(h, &b[start..end])?; Ok((v.raw(), true))",
         _ => return None,
     })
 }

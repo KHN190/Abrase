@@ -369,9 +369,19 @@ fn emit_fns(out: &mut String, module: &Module) -> Result<(), TranspileError> {
         match chunk {
             Chunk::Bytecode(bc) => emit_function(out, idx, bc, &param_counts, &is_native, int32_safe, fn_cart)?,
             Chunk::Native(n) => {
-                let _ = writeln!(out,
-                    "fn f{}(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ let args: Vec<myriad::Value> = a.iter().map(|&x| myriad::Value::from_raw(x)).collect(); host.call({:?}, h, &args) }}",
-                    idx, n.name);
+                if let Some(expr) = hybrid::inline_native_math(&n.name) {
+                    let _ = writeln!(out,
+                        "fn f{}(_h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ Ok(({}, false)) }}",
+                        idx, expr);
+                } else if let Some(body) = hybrid::inline_native_str(&n.name) {
+                    let _ = writeln!(out,
+                        "fn f{}(h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ {} }}",
+                        idx, body);
+                } else {
+                    let _ = writeln!(out,
+                        "fn f{}(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ let args: Vec<myriad::Value> = a.iter().map(|&x| myriad::Value::from_raw(x)).collect(); host.call({:?}, h, &args) }}",
+                        idx, n.name);
+                }
             }
         }
     }
