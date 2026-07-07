@@ -310,10 +310,8 @@ impl Compiler {
     ) -> Result<(), String> {
         let is_scalar = matches!(
             ty,
-            ast::Type::Named(n) if matches!(
-                n.as_str(),
-                "Int" | "Float" | "Bool" | "Char" | "Unit" | "Never"
-            )
+            ast::Type::Named(n)
+                if super::BUILTIN_SCALAR_KERNEL.contains(&n.as_str()) || matches!(n.as_str(), "Unit" | "Never")
         );
         if is_scalar { return Ok(()); }
         self.emit_region_forget(reg)

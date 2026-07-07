@@ -10,6 +10,11 @@ pub mod closure_expr;
 
 pub(in crate::compiler) use inference::{is_move_type, is_share_type};
 
+// Single source for the copy-scalar name kernel shared by the two non-exhaustive
+// by-name predicates (type_is_unboxed, region-forget is_scalar); each adds its
+// own extras. The ty::Type enum predicates (ownership) are exhaustive-checked.
+pub(in crate::compiler) const BUILTIN_SCALAR_KERNEL: &[&str] = &["Int", "Float", "Bool", "Char"];
+
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
