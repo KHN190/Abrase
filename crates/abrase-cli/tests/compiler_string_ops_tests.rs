@@ -298,3 +298,88 @@ fn str_slice_fuzz_len_no_leak() {
         assert_eq!(live, 0, "fuzz slice leak s={s:?} off={off} len={len}: {live} live");
     }
 }
+
+// --- allocation profiling (String Copy/St vs construction) ---
+// heap alloc counter = cumulative try_alloc calls (myriad CoreHeap). These are
+// metamorphic: vary the loop trip count and assert the alloc delta, isolating
+// which ops actually hit the arena.
+
+#[test]
+fn string_array_reads_are_alloc_free_regardless_of_iterations() {
+    let prog = |n: i32| format!(
+        "fn main() -> Int {{ let a = \"aa\"; let b = \"bb\"; let c = \"cc\"; let d = \"dd\"; \
+         let arr = [a, b, c, d]; let mut i = 0; let mut s = 0; \
+         while i < {n} {{ s = s + arr[0].len() + arr[1].len() + arr[2].len() + arr[3].len(); i = i + 1 }}; s }}");
+    let (_, _, a10) = run_source_with_allocs(&prog(10)).expect("run 10");
+    let (_, _, a100) = run_source_with_allocs(&prog(100)).expect("run 100");
+    assert_eq!(a10, a100,
+        "array index-read + len must be alloc-free; if Copy/St/Ld deep-copied Strings, more iterations would allocate ({a10} vs {a100})");
+}
+
+#[test]
+fn slice_allocates_exactly_one_string_per_call() {
+    let prog = |n: i32| format!(
+        "fn main() -> Int {{ let src = \"abcdefghij\"; let mut i = 0; let mut s = 0; \
+         while i < {n} {{ let piece = src.slice(0, 3); s = s + piece.len(); i = i + 1 }}; s }}");
+    let (_, _, a10) = run_source_with_allocs(&prog(10)).expect("run 10");
+    let (_, _, a20) = run_source_with_allocs(&prog(20)).expect("run 20");
+    assert_eq!(a20 - a10, 10,
+        "slice must allocate exactly one owned String per call; 10 extra calls => 10 extra allocs (got {})", a20 - a10);
+}
+
+#[test]
+fn byte_at_scan_on_parent_is_alloc_free() {
+    let prog = |n: i32| format!(
+        "fn main() -> Int {{ let src = \"abcdefghij\"; let mut i = 0; let mut s = 0; \
+         while i < {n} {{ s = s + src[0]; i = i + 1 }}; s }}");
+    let (_, _, a10) = run_source_with_allocs(&prog(10)).expect("run 10");
+    let (_, _, a100) = run_source_with_allocs(&prog(100)).expect("run 100");
+    assert_eq!(a10, a100,
+        "byte_at index scan on the parent string must not allocate ({a10} vs {a100})");
+}
+
+// Pattern (b): scan the parent string with byte_at + compare a region against a
+// target in place — no per-line slice. Zero runtime allocation regardless of how
+// many lines are scanned; only the two string literals are ever allocated. This
+// is the allocation-free alternative to slicing every line then comparing.
+fn zero_alloc_line_search(n_lines: usize) -> (i64, u64) {
+    let mut src = String::new();
+    for _ in 0..n_lines - 1 { src.push_str("aa\\n"); }
+    src.push_str("zz");
+    let prog = format!(
+        "fn main() -> Int {{ let src = \"{src}\"; let target = \"zz\"; \
+         let tl = target.len(); let n = src.len(); let mut i = 0; let mut ls = 0; let mut found = 0 - 1; \
+         while i <= n {{ \
+           let boundary = i == n; \
+           let nl = if boundary {{ true }} else {{ src[i] == 10 }}; \
+           if nl {{ \
+             if (i - ls) == tl {{ \
+               let mut j = 0; let mut m = 1; \
+               while j < tl {{ if src[ls + j] != target[j] {{ m = 0 }}; j = j + 1 }}; \
+               if m == 1 {{ found = ls }} \
+             }}; ls = i + 1 \
+           }}; i = i + 1 \
+         }}; found }}");
+    let (v, live, alloc) = run_source_with_allocs(&prog).expect("run");
+    assert_eq!(live, 0, "no leak");
+    (v.as_int(), alloc)
+}
+
+#[test]
+fn zero_alloc_scan_finds_target_line() {
+    // "zz" sits after (n-1) "aa\n" (3 bytes each) => byte offset 3*(n-1).
+    let (found4, _) = zero_alloc_line_search(4);
+    let (found8, _) = zero_alloc_line_search(8);
+    assert_eq!(found4, 9, "zz starts at byte 9 with 4 lines");
+    assert_eq!(found8, 21, "zz starts at byte 21 with 8 lines");
+}
+
+#[test]
+fn zero_alloc_scan_allocation_is_constant_in_line_count() {
+    let (_, a4) = zero_alloc_line_search(4);
+    let (_, a8) = zero_alloc_line_search(8);
+    let (_, a64) = zero_alloc_line_search(64);
+    assert_eq!(a4, a8, "scanning more lines must not allocate more ({a4} vs {a8})");
+    assert_eq!(a8, a64, "64 lines allocates the same as 8 ({a8} vs {a64})");
+    assert_eq!(a4, 2, "only the two string literals are ever allocated, got {a4}");
+}

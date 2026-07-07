@@ -27,6 +27,7 @@ pub struct CoreHeap {
     trace_slot: Option<u32>,
     trace_all: bool,
     trace_out: Option<fn(&str)>,
+    alloc_count: u64,
 }
 
 fn mask_words(size: u64) -> u64 { (size + 63) / 64 }
@@ -38,7 +39,7 @@ impl CoreHeap {
 
     pub fn with_capacity(bytes: usize) -> Self {
         let words = (bytes + 7) / 8;
-        let mut h = Self { arena: vec![0u64; words], trace_pc: 0, trace_slot: None, trace_all: false, trace_out: None };
+        let mut h = Self { arena: vec![0u64; words], trace_pc: 0, trace_slot: None, trace_all: false, trace_out: None, alloc_count: 0 };
         debug_assert!(h.arena.as_ptr() as usize & 7 == 0, "Vec<u64> base must be 8-aligned");
         let blen = h.blen();
         cgen::core_init(h.bytes_mut(), blen).expect("core_init");
@@ -111,6 +112,7 @@ impl CoreHeap {
                     return Err(format!("alloc: arena offset {:#x} exceeds handle slot capacity", h >> 24));
                 }
                 self.emit_trace("alloc", slot, generation);
+                self.alloc_count += 1;
                 return Ok((slot, generation));
             }
             if self.blen() >= (1 << 28) {
@@ -276,6 +278,8 @@ impl CoreHeap {
         self.scan_live(|_| n += 1);
         n
     }
+
+    pub fn alloc_count(&self) -> u64 { self.alloc_count }
 
     pub fn rc(&self, slot: u32, generation: u32) -> Option<u32> {
         self.valid(slot, generation, "rc").ok().map(|off| self.r32(off))

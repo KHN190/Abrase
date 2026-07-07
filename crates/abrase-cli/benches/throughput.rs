@@ -123,6 +123,20 @@ fn main() -> Int {
 }
 "#;
 
+const STRING_SCAN: &str = r#"
+fn main() -> Int {
+  let src = "abcdefghijklmnopqrstuvwxyz";
+  let mut i = 0;
+  let mut total = 0;
+  while i < 5000 {
+    let piece = src.slice(0, 5);
+    total = total + piece.len() + src[0];
+    i = i + 1
+  };
+  total
+}
+"#;
+
 struct Prog { name: &'static str, src: &'static str }
 
 fn bench_vm(c: &mut Criterion) {
@@ -135,6 +149,7 @@ fn bench_vm(c: &mut Criterion) {
         Prog { name: "records",       src: RECORDS        },
         Prog { name: "float_arith",   src: FLOAT_ARITH    },
         Prog { name: "leaf_calls",    src: LEAF_CALLS     },
+        Prog { name: "string_scan",   src: STRING_SCAN    },
     ];
 
     let mut group = c.benchmark_group("vm_run");

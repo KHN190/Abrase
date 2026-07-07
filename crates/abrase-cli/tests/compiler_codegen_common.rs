@@ -62,6 +62,18 @@ pub fn compile_module_and_run(ast: &[Decl]) -> Result<Value, String> {
     vm.run_module(&module)
 }
 
+pub fn run_source_with_allocs(src: &str) -> Result<(Value, usize, u64), String> {
+    let ast = parse_source(src);
+    let mut compiler = Compiler::new();
+    let module = compiler.compile_module(&ast).map_err(|errs| {
+        errs.iter().map(|e| format!("{:?}: {}", e.code, e.message))
+            .collect::<Vec<_>>().join("\n")
+    })?;
+    let mut vm = VirtualMachine::new();
+    let v = vm.run_module(&module)?;
+    Ok((v, vm.heap_live_count(), vm.heap_alloc_count()))
+}
+
 pub fn compile_module_and_run_with_heap(ast: &[Decl]) -> Result<(Value, usize), String> {
     let mut compiler = Compiler::new();
     let module = compiler.compile_module(ast).map_err(|errs| {

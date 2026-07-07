@@ -378,6 +378,8 @@ impl VirtualMachine {
         total.saturating_sub(const_live).saturating_sub(module_live)
     }
 
+    pub fn heap_alloc_count(&self) -> u64 { self.heap.alloc_count() }
+
     fn collect_reachable(&self, slot: u32, generation: u32, visited: &mut hashbrown::HashSet<(u32, u32)>) {
         if !visited.insert((slot, generation)) { return; }
         if !self.heap.is_live(slot, generation) { return; }
