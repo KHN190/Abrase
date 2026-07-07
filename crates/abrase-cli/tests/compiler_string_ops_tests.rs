@@ -383,3 +383,149 @@ fn zero_alloc_scan_allocation_is_constant_in_line_count() {
     assert_eq!(a8, a64, "64 lines allocates the same as 8 ({a8} vs {a64})");
     assert_eq!(a4, 2, "only the two string literals are ever allocated, got {a4}");
 }
+
+// ---- Bytes: packed byte buffer (String cell layout, no utf8 invariant) ----
+
+#[test]
+fn bytes_len_from_string() {
+    let r = run_source("fn main() -> Int { \"abc\".to_bytes().len() }").expect("run");
+    assert_eq!(r, Value::from_int(3));
+}
+
+#[test]
+fn bytes_index_byte() {
+    let r = run_source("fn main() -> Int { \"Az\".to_bytes()[0] }").expect("run");
+    assert_eq!(r, Value::from_int(65));
+}
+
+#[test]
+fn bytes_byte_at() {
+    let r = run_source("fn main() -> Int { \"Az\".to_bytes().byte_at(1) }").expect("run");
+    assert_eq!(r, Value::from_int(122));
+}
+
+#[test]
+fn bytes_slice_len() {
+    let (v, _) = run_source_with_heap("fn main() -> Int { \"hello\".to_bytes().slice(1, 3).len() }").expect("run");
+    assert_eq!(v, Value::from_int(3));
+}
+
+#[test]
+fn bytes_temporary_no_leak() {
+    let (v, live) = run_source_with_heap("fn main() -> Int { \"hello\".to_bytes().len() }").expect("run");
+    assert_eq!(v, Value::from_int(5));
+    assert_eq!(live, 0, "bytes temp receiver must drop: {live} live");
+}
+
+#[test]
+fn bytes_bound_slice_no_leak() {
+    let src = "fn main() -> Int { let b = \"hello\".to_bytes(); b.slice(1, 2).len() }";
+    let (v, live) = run_source_with_heap(src).expect("run");
+    assert_eq!(v, Value::from_int(2));
+    assert_eq!(live, 0, "bound-bytes slice temp must drop: {live} live");
+}
+
+// A read-only native must consume a fresh owned-temp receiver (call/literal
+// result), not borrow it — else chained read-only calls leak the intermediate.
+// Regression for the owned-temp-vs-view distinction in read-only arg staging.
+#[test]
+fn chained_readonly_temp_receiver_no_leak() {
+    let (_, sl) = run_source_with_heap("fn main() -> Int { \"hello\".slice(0, 3).slice(0, 2).len() }").expect("run");
+    assert_eq!(sl, 0, "String chained slice leaks {sl}");
+    let (_, bl) = run_source_with_heap("fn main() -> Int { \"hello\".to_bytes().slice(1, 2).len() }").expect("run");
+    assert_eq!(bl, 0, "Bytes chained slice leaks {bl}");
+}
+
+#[test]
+fn bytes_binding_reused_not_consumed() {
+    let src = "fn main() -> Int { let b = \"hello\".to_bytes(); b.len() + b.byte_at(0) }";
+    let (v, live) = run_source_with_heap(src).expect("run");
+    assert_eq!(v, Value::from_int(5 + 104));
+    assert_eq!(live, 0, "read-only bytes ops must not consume: {live} live");
+}
+
+#[test]
+fn bytes_byte_at_matches_source_fuzz() {
+    const ALPHA: &[u8] = b"abcdefghijklmnop";
+    let mut seed: u64 = 0x1234_5678_9abc_def1;
+    let mut next = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
+    for _ in 0..300 {
+        let slen = 1 + (next() % 10) as usize;
+        let s: String = (0..slen).map(|_| ALPHA[(next() as usize) % ALPHA.len()] as char).collect();
+        let k = (next() % (slen as u64 + 3)) as usize;
+        let src = format!("fn main() -> Int {{ let b = \"{s}\".to_bytes(); b.byte_at({k}) }}");
+        let (v, live) = run_source_with_heap(&src).expect("run");
+        let expect = s.as_bytes().get(k).copied().unwrap_or(0) as i64;
+        assert_eq!(v, Value::from_int(expect), "s={s:?} k={k}");
+        assert_eq!(live, 0, "bound bytes byte_at leak s={s:?} k={k}: {live}");
+    }
+}
+
+#[test]
+fn bytes_slice_len_matches_oracle_fuzz() {
+    const ALPHA: &[u8] = b"abcdefgh";
+    let mut seed: u64 = 0x0fed_cba9_8765_4321;
+    let mut next = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
+    for _ in 0..300 {
+        let slen = (next() % 12) as usize;
+        let s: String = (0..slen).map(|_| ALPHA[(next() as usize) % ALPHA.len()] as char).collect();
+        let off = (next() % 14) as i64;
+        let len = (next() % 14) as i64;
+        let src = format!("fn main() -> Int {{ let b = \"{s}\".to_bytes(); b.slice({off}, {len}).len() }}");
+        let (v, live) = run_source_with_heap(&src).expect("run");
+        assert_eq!(v, Value::from_int(oracle_slice(&s, off, len).len() as i64), "s={s:?} off={off} len={len}");
+        assert_eq!(live, 0, "bound bytes slice leak s={s:?} off={off} len={len}: {live}");
+    }
+}
+
+#[test]
+fn to_bytes_roundtrip_len_equals_str_len() {
+    for s in ["", "a", "hello", "abcdefgh", "abcdefghi"] {
+        let src = format!("fn main() -> Int {{ \"{s}\".to_bytes().len() - \"{s}\".len() }}");
+        assert_eq!(run_source(&src), Ok(Value::from_int(0)), "s={s:?}");
+    }
+}
+
+// Coverage for the shape the main fuzz grammar never generates: chained
+// read-only builtin methods on owned temporaries. Random-depth slice chains
+// terminated by len/byte_at, on both String and Bytes; asserts value oracle
+// AND heap balance (the invariant the borrow/consume bug violated).
+#[test]
+fn chained_readonly_builtin_fuzz_value_and_no_leak() {
+    const ALPHA: &[u8] = b"abcdefghij";
+    let mut seed: u64 = 0xa5a5_5a5a_c3c3_3c3c;
+    let mut next = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
+    for _ in 0..500 {
+        let slen = (next() % 12) as usize;
+        let s: String = (0..slen).map(|_| ALPHA[(next() as usize) % ALPHA.len()] as char).collect();
+        let as_bytes = next() & 1 == 0;
+        let depth = (next() % 4) as usize;
+        // Fold the same slice chain in Rust to get the oracle byte window.
+        let mut cur = s.clone().into_bytes();
+        let mut chain = if as_bytes {
+            format!("\"{s}\".to_bytes()")
+        } else {
+            format!("\"{s}\"")
+        };
+        for _ in 0..depth {
+            let off = (next() % 10) as i64;
+            let len = (next() % 10) as i64;
+            chain = format!("{chain}.slice({off}, {len})");
+            let start = off.max(0).min(cur.len() as i64) as usize;
+            let take = len.max(0) as usize;
+            let end = start.saturating_add(take).min(cur.len());
+            cur = cur[start..end].to_vec();
+        }
+        let terminal_len = next() & 1 == 0;
+        let (src, expect) = if terminal_len {
+            (format!("fn main() -> Int {{ {chain}.len() }}"), cur.len() as i64)
+        } else {
+            let k = (next() % (cur.len() as u64 + 3)) as usize;
+            let e = cur.get(k).copied().unwrap_or(0) as i64;
+            (format!("fn main() -> Int {{ {chain}.byte_at({k}) }}"), e)
+        };
+        let (v, live) = run_source_with_heap(&src).unwrap_or_else(|e| panic!("{src}: {e}"));
+        assert_eq!(v, Value::from_int(expect), "{src}");
+        assert_eq!(live, 0, "heap leak in `{src}`: {live} live");
+    }
+}

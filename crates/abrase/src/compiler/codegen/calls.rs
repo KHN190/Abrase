@@ -398,7 +398,10 @@ impl Compiler {
         let mut staged: Vec<(Register, bool)> = Vec::new();
         for arg in args {
             let r = self.compile_expr(arg)?;
-            let mv = if borrows { false } else { self.arg_should_move(arg) };
+            // A read-only native borrows a surviving view (variable / container
+            // projection) but must consume a fresh owned temporary (call/literal
+            // result), else the temp's rc is never reclaimed → handle leak.
+            let mv = if borrows { Self::readonly_owned_temp(arg) } else { self.arg_should_move(arg) };
             staged.push((r, mv));
         }
         self.stage_call_args(&staged)?;
@@ -472,6 +475,14 @@ impl Compiler {
         let idx = self.add_constant(Value::UNIT)?;
         self.emit(OpCode::PushConst(dummy, idx));
         Ok(dummy)
+    }
+
+    fn readonly_owned_temp(arg: &ast::Spanned<ast::Expr>) -> bool {
+        match &arg.node {
+            ast::Expr::Identifier(_) | ast::Expr::Index { .. } | ast::Expr::FieldAccess { .. } => false,
+            ast::Expr::Paren(inner) => Self::readonly_owned_temp(inner),
+            _ => true,
+        }
     }
 
     fn native_borrows_args(&self, func_id: u16) -> bool {

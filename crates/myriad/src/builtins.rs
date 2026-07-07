@@ -2,7 +2,7 @@ use crate::{Heap, Value};
 use crate::core_mem::CoreArena;
 use crate::devices::DeviceTable;
 use crate::devices::{console, CONSOLE_ID};
-use crate::value::{alloc_string, read_string};
+use crate::value::{alloc_string, read_string, alloc_bytes, read_bytes};
 use alloc::collections::BTreeMap;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
@@ -70,6 +70,10 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("__str_len",     str_len_native());
     reg.register("__str_byte_at", str_byte_at_native());
     reg.register("__str_slice",   str_slice_native());
+    reg.register("__str_to_bytes", str_to_bytes_native());
+    reg.register("__bytes_len",   bytes_len_native());
+    reg.register("__bytes_byte_at", bytes_byte_at_native());
+    reg.register("__bytes_slice", bytes_slice_native());
 
     reg.register("print",       print_native());
     reg.register("println",     println_native());
@@ -394,6 +398,43 @@ fn str_slice_native() -> NativeFn {
         let end = start.saturating_add(take).min(bytes.len());
         let out = String::from_utf8_lossy(&bytes[start..end]);
         let v = alloc_string(ctx.heap, &out)?;
+        Ok(handle(v))
+    })
+}
+
+fn str_to_bytes_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let b = read_bytes(ctx.heap, args[0]).unwrap_or_default();
+        let v = alloc_bytes(ctx.heap, &b)?;
+        Ok(handle(v))
+    })
+}
+
+fn bytes_len_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let n = read_bytes(ctx.heap, args[0]).map(|b| b.len()).unwrap_or(0);
+        Ok(plain(Value::from_int(n as i64)))
+    })
+}
+
+fn bytes_byte_at_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let i = args[1].as_int();
+        let b = read_bytes(ctx.heap, args[0]).unwrap_or_default();
+        let v = if i < 0 { 0 } else { b.get(i as usize).copied().unwrap_or(0) };
+        Ok(plain(Value::from_int(v as i64)))
+    })
+}
+
+fn bytes_slice_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let b = read_bytes(ctx.heap, args[0]).unwrap_or_default();
+        let off = args[1].as_int();
+        let len = args[2].as_int();
+        let start = off.max(0).min(b.len() as i64) as usize;
+        let take = len.max(0) as usize;
+        let end = start.saturating_add(take).min(b.len());
+        let v = alloc_bytes(ctx.heap, &b[start..end])?;
         Ok(handle(v))
     })
 }

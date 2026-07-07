@@ -60,7 +60,7 @@ impl Checker {
 
     pub fn is_public(&self, item_name: &str) -> bool {
         match item_name {
-            "Int" | "String" | "Float" | "Bool" | "Unit" | "Char" => return true,
+            "Int" | "String" | "Float" | "Bool" | "Unit" | "Char" | "Bytes" => return true,
             _ => {}
         }
         for public_item in &self.public_items {
@@ -73,7 +73,7 @@ impl Checker {
 
     pub fn is_item_accessible(&self, item_name: &str) -> bool {
         match item_name {
-            "Int" | "String" | "Float" | "Bool" | "Unit" | "Char" => return true,
+            "Int" | "String" | "Float" | "Bool" | "Unit" | "Char" | "Bytes" => return true,
             _ => {}
         }
         for public_item in &self.public_items {

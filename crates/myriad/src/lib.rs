@@ -23,7 +23,7 @@ pub mod aot;
 
 pub use polka::{Value, HANDLE_NONE};
 pub use polka::cartridge::read_pk;
-pub use value::{alloc_string, read_string};
+pub use value::{alloc_string, read_string, alloc_bytes, read_bytes};
 pub use devices::{Device, DeviceTable};
 pub use memory::Heap;
 pub use core_mem::CoreArena;
