@@ -41,7 +41,37 @@ pub enum Type {
     Unknown,
 }
 
+// Single source for the builtin scalar name ↔ variant bijection. `from_name`
+// and `builtin_name` both derive from this list, so the two directions stay
+// inverse by construction (was two hand-written maps that drifted on `Never`).
+pub const BUILTIN_SCALARS: &[(&str, Type)] = &[
+    ("Int", Type::Int),
+    ("Float", Type::Float),
+    ("Bool", Type::Bool),
+    ("Char", Type::Char),
+    ("String", Type::String),
+    ("Unit", Type::Unit),
+    ("Never", Type::Never),
+];
+
 impl Type {
+    pub fn from_name(n: &str) -> Type {
+        for (name, t) in BUILTIN_SCALARS {
+            if *name == n { return t.clone(); }
+        }
+        Type::Named(n.to_string())
+    }
+
+    pub fn builtin_name(&self) -> Option<String> {
+        for (name, t) in BUILTIN_SCALARS {
+            if t == self { return Some((*name).to_string()); }
+        }
+        match self {
+            Type::Named(n) => Some(n.clone()),
+            _ => None,
+        }
+    }
+
     pub fn ownership(&self) -> Ownership {
         match self {
             Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Never => {

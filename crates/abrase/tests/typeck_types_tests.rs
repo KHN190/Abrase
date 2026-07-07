@@ -1,4 +1,4 @@
-use abrase::ty::{Type, Variance};
+use abrase::ty::{Type, Variance, BUILTIN_SCALARS};
 use abrase::ast::{self, Pattern, RecordField, Span, Spanned, Type as AstType, TypeBody, VariantCase};
 use abrase::typeck::Checker;
 
@@ -2598,4 +2598,30 @@ fn tuple_variant_constructor_resolves_as_function() {
         }
         other => panic!("expected Function for Node constructor; got {:?}", other),
     }
+}
+
+#[test]
+fn builtin_scalar_name_variant_roundtrip() {
+    for (name, t) in BUILTIN_SCALARS {
+        assert_eq!(Type::from_name(name), *t, "from_name({name})");
+        assert_eq!(t.builtin_name().as_deref(), Some(*name), "builtin_name({t:?})");
+    }
+}
+
+#[test]
+fn unknown_name_becomes_named_and_roundtrips() {
+    assert_eq!(Type::from_name("MyRecord"), Type::Named("MyRecord".into()));
+    assert_eq!(Type::Named("Bytes".into()).builtin_name().as_deref(), Some("Bytes"));
+}
+
+#[test]
+fn structural_types_have_no_builtin_name() {
+    assert_eq!(Type::Tuple(vec![]).builtin_name(), None);
+    assert_eq!(Type::Unknown.builtin_name(), None);
+}
+
+#[test]
+fn never_name_variant_symmetric() {
+    assert_eq!(Type::from_name("Never"), Type::Never);
+    assert_eq!(Type::Never.builtin_name().as_deref(), Some("Never"));
 }

@@ -19,15 +19,8 @@ impl Checker {
 
     pub fn receiver_type_name(ty: &Type) -> Option<String> {
         match ty {
-            Type::Int => Some("Int".to_string()),
-            Type::Float => Some("Float".to_string()),
-            Type::Bool => Some("Bool".to_string()),
-            Type::Char => Some("Char".to_string()),
-            Type::String => Some("String".to_string()),
-            Type::Unit => Some("Unit".to_string()),
-            Type::Named(n) => Some(n.clone()),
             Type::Reference { inner, .. } => Self::receiver_type_name(inner),
-            _ => None,
+            _ => ty.builtin_name(),
         }
     }
 

@@ -340,16 +340,7 @@ pub(in crate::compiler) fn is_share_type(ty: &ast::Type) -> bool {
 fn ast_type_to_rt(ty: &ast::Type) -> crate::ty::Type {
     use crate::ty::Type as RTy;
     match ty {
-        ast::Type::Named(n) => match n.as_str() {
-            "Int" => RTy::Int,
-            "Float" => RTy::Float,
-            "Bool" => RTy::Bool,
-            "Char" => RTy::Char,
-            "String" => RTy::String,
-            "Unit" => RTy::Unit,
-            "Never" => RTy::Never,
-            _ => RTy::Named(n.clone()),
-        },
+        ast::Type::Named(n) => RTy::from_name(n),
         ast::Type::Tuple(ts) if ts.is_empty() => RTy::Unit,
         ast::Type::Tuple(ts) => RTy::Tuple(ts.iter().map(ast_type_to_rt).collect()),
         ast::Type::Generic { name, args } => RTy::Generic {

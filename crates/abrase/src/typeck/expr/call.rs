@@ -365,16 +365,8 @@ impl Checker {
                             for (param, arg) in &type_args {
                                 if let Some(bounds) = self.get_trait_bounds(param) {
                                     for trait_name in &bounds {
-                                        let ty_str = match arg {
-                                            Type::Int    => "Int".to_string(),
-                                            Type::Float  => "Float".to_string(),
-                                            Type::Bool   => "Bool".to_string(),
-                                            Type::Char   => "Char".to_string(),
-                                            Type::String => "String".to_string(),
-                                            Type::Unit   => "Unit".to_string(),
-                                            Type::Named(n) => n.clone(),
-                                            _ => format!("{:?}", arg),
-                                        };
+                                        let ty_str = Self::receiver_type_name(arg)
+                                            .unwrap_or_else(|| format!("{:?}", arg));
                                         if !self.has_impl(&ty_str, trait_name) {
                                             self.report_error(
                                                 format!("Type '{}' does not satisfy bound '{}: {}' \
