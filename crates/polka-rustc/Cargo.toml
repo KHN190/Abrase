@@ -1,6 +1,6 @@
 [package]
 name = "polka-rustc"
-description = "Compiles Polka bytecode to standalone Rust source (trusted-tier AOT backend)."
+description = "Compiles Polka bytecode to no-std Rust."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
