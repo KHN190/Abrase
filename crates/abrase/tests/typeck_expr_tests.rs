@@ -2478,3 +2478,10 @@ fn closure_capturing_immutable_let_is_valid() {
         "immutable capture must be valid; got {:?}", checker.errors
     );
 }
+
+#[test]
+fn byte_string_literal_infers_bytes_type() {
+    let mut checker = Checker::new();
+    let expr = sp(ast::Expr::Literal(ast::Literal::Bytes(vec![0x1f, 0xc0])));
+    assert_eq!(checker.infer_expr(&expr), Type::Named("Bytes".into()));
+}

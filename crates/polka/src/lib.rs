@@ -25,6 +25,10 @@ pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
 // register snapshot.
 pub const DISPATCH_TAIL_FLAG: u64 = 1 << 16;
 
+// A handle-bit constant with this bit set indexes bytes_constants, not
+// string_constants. The loader routes it to alloc_bytes instead of alloc_string.
+pub const BYTES_CONST_TAG: u64 = 1 << 63;
+
 pub const REGION_ID: u8 = 0xE1;
 pub const REGION_PORT_PUSH: u8 = 0x00;
 pub const REGION_PORT_POP: u8 = 0x01;
@@ -110,6 +114,8 @@ pub struct BytecodeChunk {
     // Handle-bit constants store string_constants index; loader replaces with real heap handle.
     pub const_mask: Vec<u64>,
     pub string_constants: Vec<String>,
+    // Handle-bit constants tagged with BYTES_CONST_TAG index into this pool.
+    pub bytes_constants: Vec<Vec<u8>>,
     pub reg_count: usize,
     pub param_count: usize,
     // Debug info: source line per op (parallel to code). Empty = stripped.

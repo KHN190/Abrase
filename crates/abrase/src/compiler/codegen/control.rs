@@ -201,7 +201,7 @@ impl Compiler {
         use ast::Expr::*;
         let f = |x: &ast::Spanned<ast::Expr>| self.expr_alloc_free(x);
         match &e.node {
-            Literal(l) => !matches!(l, ast::Literal::String(_) | ast::Literal::StringInterp(_)),
+            Literal(l) => !matches!(l, ast::Literal::String(_) | ast::Literal::StringInterp(_) | ast::Literal::Bytes(_)),
             Identifier(n) => !matches!(
                 self.const_values.get(n),
                 Some(crate::compiler::codegen::inference::ConstValue::Array(_))

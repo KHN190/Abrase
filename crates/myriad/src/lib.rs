@@ -380,6 +380,8 @@ impl VirtualMachine {
 
     pub fn heap_alloc_count(&self) -> u64 { self.heap.alloc_count() }
 
+    pub fn heap_bytes_used(&self) -> usize { self.heap.bytes_used() }
+
     fn collect_reachable(&self, slot: u32, generation: u32, visited: &mut hashbrown::HashSet<(u32, u32)>) {
         if !visited.insert((slot, generation)) { return; }
         if !self.heap.is_live(slot, generation) { return; }

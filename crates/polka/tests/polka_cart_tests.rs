@@ -21,6 +21,7 @@ fn single_bytecode_fn_roundtrip() {
         constants: vec![42u64],
         const_mask: vec![0u64],
         string_constants: vec![],
+        bytes_constants: vec![],
         reg_count: 1,
         param_count: 0,
             lines: vec![],
@@ -46,6 +47,7 @@ fn native_then_bytecode_roundtrip() {
         constants: vec![],
         const_mask: vec![],
         string_constants: vec!["hi".into()],
+        bytes_constants: vec![],
         reg_count: 1,
         param_count: 0,
             lines: vec![],
@@ -77,6 +79,7 @@ fn const_mask_roundtrip() {
         constants: vec![0u64, 1u64, 2u64, 3u64],
         const_mask: vec![0b1010u64],
         string_constants: vec![],
+        bytes_constants: vec![],
         reg_count: 1,
         param_count: 0,
             lines: vec![],
@@ -106,6 +109,7 @@ fn good_minimal_module() -> Module {
             constants: vec![],
             const_mask: vec![],
             string_constants: vec![],
+            bytes_constants: vec![],
             reg_count: 1,
             param_count: 0,
             lines: vec![],
@@ -355,6 +359,7 @@ fn all_46_opcodes_roundtrip() {
         constants: vec![0u64; 0xABCE],     // exercises u16 const_count near upper end
         const_mask: vec![0u64; (0xABCE + 63) / 64],
         string_constants: vec!["hello".into(), "".into(), "中文 🚀".into()],
+        bytes_constants: vec![],
         reg_count: 64,
         param_count: 0,
             lines: vec![],
@@ -416,6 +421,7 @@ fn empty_string_in_pool() {
         src_file: String::new(),
         code: vec![OpCode::Ret(Register(0))],
         string_constants: vec!["".into(), "x".into(), "".into()],
+        bytes_constants: vec![],
         reg_count: 1,
         ..BytecodeChunk::default()
     };
@@ -524,6 +530,7 @@ fn mini_module() -> Module {
             constants: vec![7],
             const_mask: vec![0],
             string_constants: vec![],
+            bytes_constants: vec![],
             reg_count: 1,
             param_count: 0,
             lines: vec![1, 2],
@@ -601,4 +608,62 @@ fn src_file_pool_deduplicates() {
         let Chunk::Bytecode(b) = f else { panic!() };
         assert_eq!(b.src_file, "same.abe");
     }
+}
+
+#[test]
+fn bytes_constants_survive_roundtrip() {
+    let bc = BytecodeChunk {
+        src_file: String::new(),
+        code: vec![OpCode::Ret(Register(0))],
+        constants: vec![],
+        const_mask: vec![],
+        string_constants: vec![],
+        bytes_constants: vec![vec![0x1f, 0xc0, 0xff], vec![], vec![0x00]],
+        reg_count: 1,
+        param_count: 0,
+        lines: vec![],
+    };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
+    let bytes = write_pk(&m).unwrap();
+    let back = read_pk(&bytes).unwrap();
+    if let Chunk::Bytecode(b) = &back.functions[0] {
+        assert_eq!(b.bytes_constants, vec![vec![0x1f, 0xc0, 0xff], vec![], vec![0x00]]);
+    } else { panic!("expected bytecode chunk"); }
+}
+
+#[test]
+fn absent_bytes_section_reads_empty() {
+    // A module with no bytes writes no BYT section; reader yields empty pools.
+    let bc = BytecodeChunk {
+        src_file: String::new(),
+        code: vec![OpCode::Ret(Register(0))],
+        constants: vec![], const_mask: vec![], string_constants: vec![],
+        bytes_constants: vec![], reg_count: 1, param_count: 0, lines: vec![],
+    };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
+    let bytes = write_pk(&m).unwrap();
+    let back = read_pk(&bytes).unwrap();
+    if let Chunk::Bytecode(b) = &back.functions[0] {
+        assert!(b.bytes_constants.is_empty());
+    } else { panic!("expected bytecode chunk"); }
+}
+
+#[test]
+fn bytes_and_debug_sections_coexist() {
+    // Both trailing sections present: debug lines and bytes both survive.
+    let bc = BytecodeChunk {
+        src_file: "sprite.abe".into(),
+        code: vec![OpCode::Ret(Register(0))],
+        constants: vec![], const_mask: vec![], string_constants: vec![],
+        bytes_constants: vec![vec![0xde, 0xad, 0xbe, 0xef]],
+        reg_count: 1, param_count: 0, lines: vec![7],
+    };
+    let m = Module { functions: vec![Chunk::Bytecode(bc)], entry: 0, flags: 0, exports: vec![] };
+    let bytes = write_pk(&m).unwrap();
+    let back = read_pk(&bytes).unwrap();
+    if let Chunk::Bytecode(b) = &back.functions[0] {
+        assert_eq!(b.bytes_constants, vec![vec![0xde, 0xad, 0xbe, 0xef]]);
+        assert_eq!(b.lines, vec![7]);
+        assert_eq!(b.src_file, "sprite.abe");
+    } else { panic!("expected bytecode chunk"); }
 }

@@ -1,7 +1,7 @@
 use alloc::{string::{String, ToString}, vec::Vec};
 use polka::{BytecodeChunk, Chunk, Register, Module, FRAME_REGS, HANDLE_NONE};
 use crate::memory::mask_bit;
-use crate::value::alloc_string;
+use crate::value::{alloc_string, alloc_bytes};
 use super::super::VirtualMachine;
 use super::MAX_RAM;
 
@@ -280,17 +280,29 @@ impl VirtualMachine {
                     // carries into an actual heap handle (rc=1, module-lifetime).
                     for i in 0..vals.len() {
                         if !mask_bit(&mask, i) { continue; }
-                        let sidx = vals[i] as usize;
-                        let s = bc.string_constants.get(sidx)
-                            .cloned().unwrap_or_default();
-                        let needed = s.len() + 16; // crude upper bound
-                        if self.mem_used().saturating_add(needed) > MAX_RAM {
-                            return Err(format!(
-                                "out of memory at module load: string constant {} bytes",
-                                s.len()
-                            ));
-                        }
-                        let v = alloc_string(&mut self.heap, &s)?;
+                        let raw = vals[i];
+                        let v = if raw & polka::BYTES_CONST_TAG != 0 {
+                            let bidx = (raw & !polka::BYTES_CONST_TAG) as usize;
+                            let b = bc.bytes_constants.get(bidx)
+                                .cloned().unwrap_or_default();
+                            if self.mem_used().saturating_add(b.len() + 16) > MAX_RAM {
+                                return Err(format!(
+                                    "out of memory at module load: bytes constant {} bytes",
+                                    b.len()
+                                ));
+                            }
+                            alloc_bytes(&mut self.heap, &b)?
+                        } else {
+                            let s = bc.string_constants.get(raw as usize)
+                                .cloned().unwrap_or_default();
+                            if self.mem_used().saturating_add(s.len() + 16) > MAX_RAM {
+                                return Err(format!(
+                                    "out of memory at module load: string constant {} bytes",
+                                    s.len()
+                                ));
+                            }
+                            alloc_string(&mut self.heap, &s)?
+                        };
                         vals[i] = v.raw();
                         let (slot, gen_) = v.as_handle();
                         self.string_const_handles.push((slot, gen_));

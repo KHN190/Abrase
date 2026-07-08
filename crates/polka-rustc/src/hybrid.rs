@@ -54,6 +54,16 @@ pub(crate) fn inline_native_str(name: &str) -> Option<&'static str> {
     })
 }
 
+pub(crate) fn emit_native_fn(out: &mut String, idx: usize, name: &str) {
+    if let Some(expr) = inline_native_math(name) {
+        let _ = writeln!(out, "fn f{}(_h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ Ok(({}, false)) }}", idx, expr);
+    } else if let Some(body) = inline_native_str(name) {
+        let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ {} }}", idx, body);
+    } else {
+        let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ let args: Vec<myriad::Value> = a.iter().map(|&x| myriad::Value::from_raw(x)).collect(); host.call({:?}, h, &args) }}", idx, name);
+    }
+}
+
 fn math_native(module: &Module, id: usize) -> bool {
     matches!(&module.functions[id], Chunk::Native(n) if inline_native_math(&n.name).is_some())
 }
@@ -152,11 +162,7 @@ fn emit(module: &Module, lib: bool) -> Result<String, TranspileError> {
     for (i, e) in native_emit.iter().enumerate() {
         if !*e { continue; }
         if let Chunk::Native(n) = &module.functions[i] {
-            if let Some(expr) = inline_native_math(&n.name) {
-                let _ = writeln!(out, "fn f{}(_h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ Ok(({}, false)) }}", i, expr);
-            } else if let Some(body) = inline_native_str(&n.name) {
-                let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ {} }}", i, body);
-            }
+            emit_native_fn(&mut out, i, &n.name);
         }
     }
 

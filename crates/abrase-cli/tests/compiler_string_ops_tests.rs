@@ -529,3 +529,101 @@ fn chained_readonly_builtin_fuzz_value_and_no_leak() {
         assert_eq!(live, 0, "heap leak in `{src}`: {live} live");
     }
 }
+
+// --- byte string literal b"..." (Phase 2: literal -> packed Bytes const) ---
+
+#[test]
+fn byte_string_literal_len_is_raw_byte_count() {
+    // 3 raw bytes; must NOT UTF-8-expand the high byte 0xc0 (that was the whole point).
+    let r = run_source("fn main() -> Int { b\"\\x1f\\xc0\\xff\".len() }").expect("run");
+    assert_eq!(r, Value::from_int(3));
+}
+
+#[test]
+fn byte_string_literal_high_byte_is_exact() {
+    let r = run_source("fn main() -> Int { b\"\\xc0\".byte_at(0) }").expect("run");
+    assert_eq!(r, Value::from_int(192), "0xc0 must read back as 192, not a UTF-8 lead byte");
+}
+
+#[test]
+fn byte_string_literal_ascii_bytes() {
+    let r = run_source("fn main() -> Int { b\"AB\".byte_at(0) + b\"AB\".byte_at(1) }").expect("run");
+    assert_eq!(r, Value::from_int(65 + 66));
+}
+
+#[test]
+fn byte_string_literal_slice() {
+    // slice(offset, length): from index 1, take 2 bytes.
+    let r = run_source("fn main() -> Int { b\"\\x00\\x01\\x02\\x03\".slice(1, 2).len() }").expect("run");
+    assert_eq!(r, Value::from_int(2));
+    let hi = run_source("fn main() -> Int { b\"\\x00\\xc0\\x02\\x03\".slice(1, 2).byte_at(0) }").expect("run");
+    assert_eq!(hi, Value::from_int(192), "sliced bytes stay raw");
+}
+
+#[test]
+fn byte_string_literal_empty() {
+    let r = run_source("fn main() -> Int { b\"\".len() }").expect("run");
+    assert_eq!(r, Value::from_int(0));
+}
+
+#[test]
+fn byte_string_literal_no_leak() {
+    let src = "fn main() -> Int { let b = b\"\\x01\\x02\\x03\"; b.len() }";
+    let (v, live) = run_source_with_heap(src).expect("run");
+    assert_eq!(v, Value::from_int(3));
+    assert_eq!(live, 0, "byte string literal must not leak");
+}
+
+#[test]
+fn byte_string_literal_all_256_values_round_trip() {
+    // Oracle: b"\x00\x01...\xff", byte_at(i) == i for every i.
+    let mut lit = String::new();
+    for b in 0u32..=255 { lit.push_str(&format!("\\x{:02x}", b)); }
+    for i in [0usize, 1, 127, 128, 200, 255] {
+        let src = format!("fn main() -> Int {{ b\"{lit}\".byte_at({i}) }}");
+        let r = run_source(&src).unwrap_or_else(|e| panic!("i={i}: {e}"));
+        assert_eq!(r, Value::from_int(i as i64), "byte_at({i}) must equal {i}");
+    }
+    let src = format!("fn main() -> Int {{ b\"{lit}\".len() }}");
+    assert_eq!(run_source(&src).unwrap(), Value::from_int(256), "all 256 bytes stored");
+}
+
+#[test]
+fn byte_string_static_sprite() {
+    let src = "static SPR: Bytes = b\"\\x1f\\x2a\\xff\"\nfn main() -> Int { SPR.byte_at(2) }";
+    let r = run_source(src).expect("run");
+    assert_eq!(r, Value::from_int(255));
+}
+
+#[test]
+fn byte_string_literal_fuzz_round_trips_raw_bytes() {
+    // Acceptance fuzz: random byte arrays -> b"\xNN..." literal -> byte_at/len match
+    // the exact source bytes. Guards against any UTF-8/encoding corruption.
+    let mut seed: u64 = 0x9E3779B97F4A7C15;
+    let mut next = || { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (seed >> 33) as u32 };
+    for _ in 0..200 {
+        let n = (next() % 40) as usize;
+        let bytes: Vec<u8> = (0..n).map(|_| (next() & 0xff) as u8).collect();
+        let mut lit = String::new();
+        for b in &bytes { lit.push_str(&format!("\\x{:02x}", b)); }
+        let len_src = format!("fn main() -> Int {{ b\"{lit}\".len() }}");
+        assert_eq!(run_source(&len_src).unwrap(), Value::from_int(n as i64), "len mismatch for {bytes:?}");
+        if n > 0 {
+            let i = (next() as usize) % n;
+            let src = format!("fn main() -> Int {{ b\"{lit}\".byte_at({i}) }}");
+            assert_eq!(run_source(&src).unwrap(), Value::from_int(bytes[i] as i64),
+                "byte_at({i}) mismatch for {bytes:?}");
+        }
+    }
+}
+
+#[test]
+fn byte_string_packs_denser_than_int_array() {
+    // 64 bytes: Bytes packs 8/word (~9 words); Array<Int> is 1 word/elem (~65 words).
+    let bytes_prog = "fn main() -> Int { let b = b\"\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\"; b.byte_at(0) }";
+    let arr_prog = "fn main() -> Int { let a = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; a[0] }";
+    let bytes_used = run_source_bytes_used(bytes_prog).expect("bytes prog");
+    let arr_used = run_source_bytes_used(arr_prog).expect("arr prog");
+    assert!(bytes_used * 4 < arr_used,
+        "64-byte Bytes ({}) must use <1/4 the heap of a 64-int Array ({})", bytes_used, arr_used);
+}

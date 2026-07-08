@@ -241,6 +241,27 @@ impl Compiler {
         Ok((self.constants.len() - 1) as u16)
     }
 
+    pub(in crate::compiler) fn add_bytes_constant(&mut self, bytes: &[u8]) -> Result<u16, String> {
+        let byt_idx = if let Some(i) = self.bytes_constants.iter().position(|c| c.as_slice() == bytes) {
+            i as u64
+        } else {
+            self.bytes_constants.push(bytes.to_vec());
+            (self.bytes_constants.len() - 1) as u64
+        };
+        let placeholder = Value::from_raw(byt_idx | polka::BYTES_CONST_TAG);
+        for (i, c) in self.constants.iter().enumerate() {
+            if *c == placeholder && self.const_mask_bits[i] {
+                return Ok(i as u16);
+            }
+        }
+        if self.constants.len() >= u16::MAX as usize {
+            return Err("Constant pool overflow (max 65535 entries)".to_string());
+        }
+        self.constants.push(placeholder);
+        self.const_mask_bits.push(true);
+        Ok((self.constants.len() - 1) as u16)
+    }
+
     pub(in crate::compiler) fn emit_region_push(&mut self) -> Result<(), String> {
         self.emit_region_marker(crate::bytecode::REGION_PORT_PUSH)?;
         self.compiler_region_depth += 1;

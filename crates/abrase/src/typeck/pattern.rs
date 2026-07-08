@@ -284,6 +284,7 @@ impl Checker {
                 self.check_string_interpolation(parts, span);
                 Type::String
             }
+            ast::Literal::Bytes(_) => Type::Named("Bytes".into()),
             ast::Literal::Unit => Type::Unit,
         }
     }
@@ -315,6 +316,7 @@ impl Checker {
                     ast::Literal::Bool(_) => Type::Bool,
                     ast::Literal::Char(_) => Type::Char,
                     ast::Literal::String(_) | ast::Literal::StringInterp(_) => Type::String,
+                    ast::Literal::Bytes(_) => Type::Named("Bytes".into()),
                     ast::Literal::Unit => Type::Unit,
                 };
                 if *value_ty != lit_ty && *value_ty != Type::Unknown {

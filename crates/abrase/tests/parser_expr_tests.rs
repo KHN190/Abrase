@@ -498,3 +498,16 @@ fn string_len_parses_to_method_call() {
     assert_eq!(field, "len");
     assert!(args.is_empty());
 }
+
+#[test]
+fn parse_byte_string_literal() {
+    let mut parser = Parser::new(Lexer::new("b\"\\x1f\\xc0\\xff\""));
+    let expr = parser.parse_expr(Precedence::Lowest);
+    assert_eq!(expr.node, Expr::Literal(Literal::Bytes(vec![0x1f, 0xc0, 0xff])));
+}
+
+#[test]
+fn parse_byte_string_in_fn_body() {
+    let e = fn_body_expr("fn spr() -> Bytes { b\"\\x00\\x01\" }");
+    assert_eq!(e, Expr::Literal(Literal::Bytes(vec![0, 1])));
+}

@@ -93,6 +93,7 @@ pub enum Literal {
     Char(char),
     String(String),
     StringInterp(Vec<StringPart>),
+    Bytes(Vec<u8>),
     Unit,
 }
 

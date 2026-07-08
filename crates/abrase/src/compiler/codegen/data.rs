@@ -84,6 +84,7 @@ impl Compiler {
             ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
             ast::Literal::Char(c)   => self.add_constant(Value::from_char(*c))?,
             ast::Literal::String(s) => self.add_string_constant(s)?,
+            ast::Literal::Bytes(b)  => self.add_bytes_constant(b)?,
             ast::Literal::Unit      => self.add_constant(Value::UNIT)?,
             _ => return Err("Unsupported literal".to_string()),
         };

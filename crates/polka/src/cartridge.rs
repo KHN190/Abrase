@@ -93,6 +93,7 @@ pub fn write_pk(module: &Module) -> Result<Vec<u8>, EncodeError> {
     }
     write_exports(&mut out, &module.exports)?;
     write_debug_lines(&mut out, module);
+    write_bytes_section(&mut out, module);
     Ok(out)
 }
 
@@ -101,6 +102,61 @@ const DBG_MAGIC: u32 = 0x3147_4244; // "DBG1"
 
 // Layout: magic, u16 file-pool count + (u16 len + bytes) strings, then per fn:
 // u16 file idx (0xFFFF = none), u32 line count, u32×count lines.
+const BYT_MAGIC: u32 = 0x3159_5442; // "BYT1"
+
+// Per-fn bytes-constant pools, a trailing optional section like debug lines.
+// Absent = every fn has an empty pool. Old readers ignore trailing sections.
+fn write_bytes_section(out: &mut Vec<u8>, module: &Module) {
+    let any = module.functions.iter().any(|c| matches!(
+        c, Chunk::Bytecode(b) if !b.bytes_constants.is_empty()));
+    if !any { return; }
+    out.extend_from_slice(&BYT_MAGIC.to_le_bytes());
+    for chunk in &module.functions {
+        let pools: &[Vec<u8>] = match chunk {
+            Chunk::Bytecode(b) => &b.bytes_constants,
+            Chunk::Native(_) => &[],
+        };
+        out.extend_from_slice(&(pools.len() as u32).to_le_bytes());
+        for by in pools {
+            out.extend_from_slice(&(by.len() as u32).to_le_bytes());
+            out.extend_from_slice(by);
+        }
+    }
+}
+
+// Best-effort, mirrors read_debug_body: corrupt/short input degrades to empty.
+fn read_bytes_body(r: &mut Reader, functions: &mut [Chunk]) -> Option<()> {
+    let mut tables: Vec<Vec<Vec<u8>>> = Vec::with_capacity(functions.len());
+    for _ in 0..functions.len() {
+        let n = r.read_u32().ok()?;
+        let mut pool = Vec::with_capacity(n as usize);
+        for _ in 0..n {
+            let len = r.read_u32().ok()?;
+            let bytes = r.take(len as usize).ok()?.to_vec();
+            pool.push(bytes);
+        }
+        tables.push(pool);
+    }
+    for (chunk, pool) in functions.iter_mut().zip(tables) {
+        if let Chunk::Bytecode(b) = chunk { b.bytes_constants = pool; }
+    }
+    Some(())
+}
+
+// Trailer = a sequence of magic-tagged optional sections (debug lines, bytes).
+// Unknown or absent magic ends the trailer; corrupt bodies degrade to skipped.
+fn read_trailer(r: &mut Reader, functions: &mut [Chunk]) {
+    loop {
+        let m = match r.read_u32() { Ok(m) => m, Err(_) => return };
+        let ok = match m {
+            DBG_MAGIC => read_debug_body(r, functions),
+            BYT_MAGIC => read_bytes_body(r, functions),
+            _ => return,
+        };
+        if ok.is_none() { return; }
+    }
+}
+
 fn write_debug_lines(out: &mut Vec<u8>, module: &Module) {
     let any = module.functions.iter().any(|c| matches!(
         c, Chunk::Bytecode(b) if !b.lines.is_empty() || !b.src_file.is_empty()));
@@ -134,27 +190,22 @@ fn write_debug_lines(out: &mut Vec<u8>, module: &Module) {
 
 // Best-effort: debug info must never block execution. Absent, foreign, or
 // corrupt sections all degrade to stripped (empty lines).
-fn read_debug_lines(r: &mut Reader, functions: &mut [Chunk]) {
-    match r.read_u32() {
-        Ok(m) if m == DBG_MAGIC => {}
-        _ => return,
-    }
-    let Ok(pool_n) = r.read_u16() else { return };
+fn read_debug_body(r: &mut Reader, functions: &mut [Chunk]) -> Option<()> {
+    let pool_n = r.read_u16().ok()?;
     let mut pool: Vec<String> = Vec::with_capacity(pool_n as usize);
     for _ in 0..pool_n {
-        let Ok(len) = r.read_u16() else { return };
-        let Ok(bytes) = r.take(len as usize) else { return };
-        let Ok(f) = String::from_utf8(bytes.to_vec()) else { return };
+        let len = r.read_u16().ok()?;
+        let bytes = r.take(len as usize).ok()?;
+        let f = String::from_utf8(bytes.to_vec()).ok()?;
         pool.push(f);
     }
     let mut tables: Vec<(u16, Vec<u32>)> = Vec::with_capacity(functions.len());
     for _ in 0..functions.len() {
-        let Ok(fi) = r.read_u16() else { return };
-        let Ok(n) = r.read_u32() else { return };
+        let fi = r.read_u16().ok()?;
+        let n = r.read_u32().ok()?;
         let mut lines = Vec::with_capacity(n as usize);
         for _ in 0..n {
-            let Ok(l) = r.read_u32() else { return };
-            lines.push(l);
+            lines.push(r.read_u32().ok()?);
         }
         tables.push((fi, lines));
     }
@@ -164,6 +215,7 @@ fn read_debug_lines(r: &mut Reader, functions: &mut [Chunk]) {
             if let Some(f) = pool.get(fi as usize) { b.src_file = f.clone(); }
         }
     }
+    Some(())
 }
 
 fn write_exports(out: &mut Vec<u8>, exports: &[Export]) -> Result<(), EncodeError> {
@@ -218,7 +270,7 @@ pub fn read_pk(data: &[u8]) -> Result<Module, LoadError> {
         functions.push(read_fn_payload(&mut r, h)?);
     }
     let exports = read_exports(&mut r)?;
-    read_debug_lines(&mut r, &mut functions);
+    read_trailer(&mut r, &mut functions);
     Ok(Module { functions, entry, flags, exports })
 }
 
@@ -357,6 +409,7 @@ fn read_fn_payload(r: &mut Reader, header: FnHeader) -> Result<Chunk, LoadError>
                 constants,
                 const_mask,
                 string_constants,
+                bytes_constants: Vec::new(),
                 reg_count: reg_count as usize,
                 param_count: param_count as usize,
                 lines: vec![],
