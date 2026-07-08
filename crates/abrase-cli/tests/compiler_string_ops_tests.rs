@@ -627,3 +627,42 @@ fn byte_string_packs_denser_than_int_array() {
     assert!(bytes_used * 4 < arr_used,
         "64-byte Bytes ({}) must use <1/4 the heap of a 64-int Array ({})", bytes_used, arr_used);
 }
+
+// Indexing through a reference must peel `&` and still dispatch byte_at, not the
+// array raw-cell Ld path (which reads a packed word → OOB). Regression.
+#[test]
+fn index_through_ref_to_string_dispatches_byte_at() {
+    let src = "static S: String = \"abc\"; fn main() -> Int { let r = &S; r[1] }";
+    assert_eq!(run_source(src), Ok(Value::from_int(98)));
+}
+
+#[test]
+fn index_through_ref_to_bytes_dispatches_byte_at() {
+    let src = "static X: Bytes = b\"\\x01\\x02\\x03\"; fn main() -> Int { let r = &X; r[2] }";
+    assert_eq!(run_source(src), Ok(Value::from_int(3)));
+}
+
+// Reference-dimension coverage: every String/Bytes op must work through `&T`,
+// `r = &T`, `(&T)`, and `*r` — codegen dispatch predicates peel Reference (typeck
+// already does). The `&static` + `(&Bytes)[i]` bugs both lived in this omitted axis.
+#[test]
+fn string_bytes_ops_work_through_references() {
+    let hdr = "static X: Bytes = b\"\\x01\\x02\\x03\"; static S: String = \"abc\";";
+    let cases: [(&str, i64); 11] = [
+        ("let r=&X; r.len()", 3),
+        ("let r=&X; r[1]", 2),
+        ("let r=&X; r.byte_at(2)", 3),
+        ("let r=&X; r.slice(0,2).len()", 2),
+        ("(&X).len()", 3),
+        ("(&X)[0]", 1),
+        ("let r=&X; (*r)[2]", 3),
+        ("let r=&S; r.len()", 3),
+        ("let r=&S; r[1]", 98),
+        ("let r=&S; r.slice(1,2).len()", 2),
+        ("(&S)[2]", 99),
+    ];
+    for (body, want) in cases {
+        let src = format!("{hdr} fn main() -> Int {{ {body} }}");
+        assert_eq!(run_source(&src), Ok(Value::from_int(want)), "`{body}`");
+    }
+}

@@ -362,9 +362,13 @@ impl Compiler {
         base: &ast::Spanned<ast::Expr>,
         index: &ast::Spanned<ast::Expr>,
     ) -> Result<Register, String> {
-        let byte_native = match self.infer_expr_type(base) {
-            Some(ast::Type::Named(ref n)) if n == "String" => Some("__str_byte_at"),
-            Some(ast::Type::Named(ref n)) if n == "Bytes" => Some("__bytes_byte_at"),
+        fn peel(t: &ast::Type) -> &ast::Type {
+            match t { ast::Type::Reference { inner, .. } => peel(inner), _ => t }
+        }
+        let base_ty = self.infer_expr_type(base);
+        let byte_native = match base_ty.as_ref().map(peel) {
+            Some(ast::Type::Named(n)) if n == "String" => Some("__str_byte_at"),
+            Some(ast::Type::Named(n)) if n == "Bytes" => Some("__bytes_byte_at"),
             _ => None,
         };
         if let Some(native) = byte_native {
