@@ -603,6 +603,7 @@ mod vm_api_tests {
                 constants: vec![val],
                 const_mask: Vec::new(),
                 string_constants: Vec::new(),
+                bytes_constants: Vec::new(),
                 reg_count: 1,
                 param_count: 0,
                 lines: Vec::new(),

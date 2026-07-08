@@ -17,7 +17,7 @@ fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
         const_mask: Vec::new(),
         reg_count: 64,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     }))
 }
 
@@ -46,7 +46,7 @@ fn test_call_reg_dispatches_to_bytecode() {
         constants: raw_constants(vec![Value::from_int(1)]),
         const_mask: Vec::new(),
         reg_count: 2,
-        param_count: 1, string_constants: Vec::new(),
+        param_count: 1, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let caller = BytecodeChunk {
         src_file: String::new(),
@@ -61,7 +61,7 @@ fn test_call_reg_dispatches_to_bytecode() {
         constants: raw_constants(vec![Value::from_int(41), Value::from_int(0)]),
         const_mask: Vec::new(),
         reg_count: 4,
-        param_count: 0, string_constants: Vec::new(),
+        param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(callee), Chunk::Bytecode(caller)],
@@ -92,7 +92,7 @@ fn test_call_reg_dispatches_to_native() {
         constants: raw_constants(vec![Value::from_int(21), Value::from_int(0)]),
         const_mask: Vec::new(),
         reg_count: 4,
-        param_count: 0, string_constants: Vec::new(),
+        param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Native(native), Chunk::Bytecode(caller)],
@@ -133,7 +133,7 @@ fn test_handle_records_dispatch_table() {
                 Value::from_int(dispatch_port_lookup()),
             ]),
             const_mask: Vec::new(),
-            reg_count: 8, param_count: 0, string_constants: Vec::new(),
+            reg_count: 8, param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
         })],
         entry: 0,
         flags: 0,
@@ -163,7 +163,7 @@ fn test_dispatch_no_match_returns_sentinel() {
                 Value::from_int(dispatch_port_lookup()),
             ]),
             const_mask: Vec::new(),
-            reg_count: 4, param_count: 0, string_constants: Vec::new(),
+            reg_count: 4, param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
         })],
         entry: 0,
         flags: 0,
@@ -194,7 +194,7 @@ fn test_pop_handler_clears_frame_and_cell() {
                 Value::from_int(dispatch_port_pop()),
             ]),
             const_mask: Vec::new(),
-            reg_count: 4, param_count: 0, string_constants: Vec::new(),
+            reg_count: 4, param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
         })],
         entry: 0,
         flags: 0,
@@ -251,7 +251,7 @@ fn test_nested_handlers_innermost_wins() {
                 Value::from_int(dispatch_port_lookup()),
             ]),
             const_mask: Vec::new(),
-            reg_count: 16, param_count: 0, string_constants: Vec::new(),
+            reg_count: 16, param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
         })],
         entry: 0,
         flags: 0,

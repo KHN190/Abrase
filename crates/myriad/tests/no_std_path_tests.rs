@@ -9,7 +9,7 @@ fn chunk(ops: Vec<OpCode>, constants: Vec<u64>) -> Chunk {
         code: ops,
         constants,
         const_mask: Vec::new(),
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
         reg_count: 8,
         param_count: 0,
         lines: Vec::new(),

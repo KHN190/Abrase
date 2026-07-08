@@ -226,19 +226,7 @@ impl Compiler {
             self.string_constants.push(s.to_string());
             (self.string_constants.len() - 1) as u32
         };
-        // Reuse an existing handle-tagged constant pointing to the same string.
-        let placeholder = Value::from_raw(str_idx as u64);
-        for (i, c) in self.constants.iter().enumerate() {
-            if *c == placeholder && self.const_mask_bits[i] {
-                return Ok(i as u16);
-            }
-        }
-        if self.constants.len() >= u16::MAX as usize {
-            return Err("Constant pool overflow (max 65535 entries)".to_string());
-        }
-        self.constants.push(placeholder);
-        self.const_mask_bits.push(true);
-        Ok((self.constants.len() - 1) as u16)
+        self.intern_handle_const(Value::from_raw(str_idx as u64))
     }
 
     pub(in crate::compiler) fn add_bytes_constant(&mut self, bytes: &[u8]) -> Result<u16, String> {
@@ -248,7 +236,10 @@ impl Compiler {
             self.bytes_constants.push(bytes.to_vec());
             (self.bytes_constants.len() - 1) as u64
         };
-        let placeholder = Value::from_raw(byt_idx | polka::BYTES_CONST_TAG);
+        self.intern_handle_const(Value::from_raw(byt_idx | polka::BYTES_CONST_TAG))
+    }
+
+    fn intern_handle_const(&mut self, placeholder: Value) -> Result<u16, String> {
         for (i, c) in self.constants.iter().enumerate() {
             if *c == placeholder && self.const_mask_bits[i] {
                 return Ok(i as u16);
