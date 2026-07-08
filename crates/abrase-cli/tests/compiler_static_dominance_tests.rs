@@ -123,3 +123,31 @@ fn module_table_rc_balanced_across_calls_short_circuit() {
     let rc7 = run_source_table_rc(&mk(7)).expect("run 7x");
     assert_eq!(rc1, rc7, "module-table rc leaks via short-circuit path: 1x={:?} 7x={:?}", rc1, rc7);
 }
+
+// Taking `&` of a static/const must resolve it (module-lifetime, immutable),
+// not report "Variable not found". Regression: infer_borrow ran local-only
+// borrow tracking before type resolution, so statics fell through to not-found.
+#[test]
+fn ref_to_int_static_typechecks_and_derefs() {
+    let src = "static X: Int = 5; fn main() -> Int { let r = &X; *r }";
+    assert_eq!(run_source(src), Ok(Value::from_int(5)));
+}
+
+#[test]
+fn ref_to_bytes_static_derefs_and_reads() {
+    let src = "static X: Bytes = b\"\\x01\\x02\"; fn main() -> Int { let r = &X; (*r).byte_at(1) }";
+    assert_eq!(run_source(src), Ok(Value::from_int(2)));
+}
+
+#[test]
+fn ref_mut_static_rejected_with_clear_message() {
+    let src = "static X: Int = 5; fn main() -> Unit { let _ = &mut X; () }";
+    let e = run_source(src).unwrap_err();
+    assert!(e.contains("static or const"), "want static/const borrow error, got: {e}");
+}
+
+#[test]
+fn ref_undefined_still_reports_undefined() {
+    let e = run_source("fn main() -> Unit { let _ = &nope; () }").unwrap_err();
+    assert!(e.contains("Undefined variable"), "want undefined error, got: {e}");
+}

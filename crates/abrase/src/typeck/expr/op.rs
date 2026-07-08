@@ -39,6 +39,14 @@ impl Checker {
 
     fn infer_borrow(&mut self, place: &Spanned<ast::Expr>, is_mut: bool, span: ast::Span) -> Type {
         if let ast::Expr::Identifier(name) = &place.node {
+            let is_local = self.scopes.iter().any(|s| s.vars.contains_key(name));
+            if !is_local {
+                let ty = self.get_var(name, true, span);
+                if is_mut && !matches!(ty, Type::Unknown) {
+                    return self.report_error(format!("cannot mutably borrow '{}': it is a static or const", name), place.span);
+                }
+                return Type::Reference { is_mut, inner: Box::new(ty) };
+            }
             let res = if is_mut { self.try_mut_borrow(name, span) } else { self.try_immut_borrow(name, span) };
             return match res {
                 Ok(()) => {
