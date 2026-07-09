@@ -27,6 +27,15 @@ impl Checker {
     fn check_decl_signature(&mut self, decl: &ast::Decl) {
         match decl {
             ast::Decl::Fn(fn_decl) => {
+                let mut seen_attrs = std::collections::HashSet::new();
+                for a in &fn_decl.attrs {
+                    if !seen_attrs.insert(&a.name) {
+                        self.report_error(
+                            format!("duplicate attribute `@{}`", a.name),
+                            ast::Span::new(0, 0),
+                        );
+                    }
+                }
                 let params: Vec<Type> = fn_decl.params.iter()
                     .filter_map(|p| match p {
                         ast::Param::Named { ty, .. } => Some(self.convert_type(ty)),
@@ -257,6 +266,12 @@ impl Checker {
             },
 
             ast::Decl::Use { path, items } => {
+                if self.get_module_items(path).is_none() {
+                    self.report_error(
+                        format!("unresolved import: module `{}` not found", path.join(".")),
+                        ast::Span::new(0, 0),
+                    );
+                }
                 self.register_import_items(path.clone(), items.clone());
 
                 for item in items {

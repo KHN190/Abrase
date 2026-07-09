@@ -142,3 +142,15 @@ fn redeclaring_same_static_name_errors() {
     );
     assert!(!e.is_empty(), "expected a redeclaration error for duplicate static `N`");
 }
+
+#[test]
+fn repeated_attribute_is_an_error() {
+    let e = errors("@cart\n@cart\nfn main() -> <frame> Unit { frame.present() }");
+    assert!(e.iter().any(|m| m.contains("duplicate attribute")), "got: {:?}", e);
+}
+
+#[test]
+fn single_attribute_still_compiles() {
+    let e = errors("@cart\nfn main() -> <frame> Unit { frame.present() }");
+    assert!(!e.iter().any(|m| m.contains("duplicate attribute")), "got: {:?}", e);
+}
