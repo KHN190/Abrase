@@ -12,6 +12,7 @@ pub enum Effect {
     Total,
     Exn(Box<Type>),
     Alloc,
+    Io,
     Nondet,
     UserEffect(String),
 }

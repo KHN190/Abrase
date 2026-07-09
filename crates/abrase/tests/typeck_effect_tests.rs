@@ -146,7 +146,7 @@ fn verify_convert_effect_io() {
 
     let converted = checker.convert_effect(&effect_item);
     assert!(converted.is_some());
-    assert!(matches!(converted.unwrap(), Effect::Alloc));
+    assert!(matches!(converted.unwrap(), Effect::Io));
 }
 
 #[test]
@@ -320,10 +320,11 @@ fn verify_add_required_effect() {
     use abrase::ty::Effect;
 
     checker.add_required_effect(Effect::Nondet);
+    checker.add_required_effect(Effect::Io);
     checker.add_required_effect(Effect::Alloc);
 
     let required = checker.get_fn_required_effects();
-    assert_eq!(required.len(), 2);
+    assert_eq!(required.len(), 2, "Alloc is ambient and must not enter required");
 }
 
 #[test]
@@ -549,7 +550,7 @@ fn verify_required_effects_accumulate() {
     use abrase::ty::Effect;
 
     checker.add_required_effect(Effect::Nondet);
-    checker.add_required_effect(Effect::Alloc);
+    checker.add_required_effect(Effect::Io);
     checker.add_required_effect(Effect::Exn(Box::new(Type::Int)));
 
     let required = checker.get_fn_required_effects();
@@ -622,12 +623,12 @@ fn verify_compute_unhandled_effects_partial_handled() {
     use abrase::ty::Effect;
 
     checker.mark_effect_handled("nondet".into());
-    let all_effects = vec![Effect::Nondet, Effect::Alloc];
+    let all_effects = vec![Effect::Nondet, Effect::Io];
 
     checker.compute_unhandled_effects(&all_effects);
     let unhandled = checker.get_unhandled_effects();
     assert_eq!(unhandled.len(), 1);
-    assert!(matches!(&unhandled[0], Effect::Alloc));
+    assert!(matches!(&unhandled[0], Effect::Io));
 }
 
 #[test]
@@ -635,7 +636,7 @@ fn verify_compute_unhandled_effects_none_handled() {
     let mut checker = Checker::new();
     use abrase::ty::Effect;
 
-    let all_effects = vec![Effect::Nondet, Effect::Alloc];
+    let all_effects = vec![Effect::Nondet, Effect::Io];
 
     checker.compute_unhandled_effects(&all_effects);
     let unhandled = checker.get_unhandled_effects();
@@ -718,15 +719,15 @@ fn verify_effect_propagation_accumulates_in_required() {
 
     // Mark some effects as handled and compute unhandled
     checker.mark_effect_handled("nondet".into());
-    let all_effects = vec![Effect::Nondet, Effect::Alloc];
+    let all_effects = vec![Effect::Nondet, Effect::Io];
     checker.compute_unhandled_effects(&all_effects);
 
     // Propagate unhandled effects
     checker.propagate_effects_to_parent();
 
-    // Alloc should now be in required effects
+    // Io should now be in required effects
     let required = checker.get_fn_required_effects();
-    assert!(required.iter().any(|e| matches!(e, Effect::Alloc)));
+    assert!(required.iter().any(|e| matches!(e, Effect::Io)));
 }
 
 #[test]
@@ -759,12 +760,12 @@ fn verify_unhandled_effects_with_multiple_arms() {
     checker.mark_effect_handled("nondet".into());
     checker.mark_effect_handled("exn".into());
 
-    let all_effects = vec![Effect::Nondet, Effect::Alloc, Effect::Exn(Box::new(Type::Int))];
+    let all_effects = vec![Effect::Nondet, Effect::Io, Effect::Exn(Box::new(Type::Int))];
     checker.compute_unhandled_effects(&all_effects);
 
     let unhandled = checker.get_unhandled_effects();
     assert_eq!(unhandled.len(), 1);
-    assert!(matches!(&unhandled[0], Effect::Alloc));
+    assert!(matches!(&unhandled[0], Effect::Io));
 }
 
 #[test]
