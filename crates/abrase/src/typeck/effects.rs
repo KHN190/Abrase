@@ -42,7 +42,6 @@ impl Checker {
     pub fn effects_equal(&self, e1: &crate::ty::Effect, e2: &crate::ty::Effect) -> bool {
         match (e1, e2) {
             (crate::ty::Effect::Total, crate::ty::Effect::Total) => true,
-            (crate::ty::Effect::Alloc, crate::ty::Effect::Alloc) => true,
             (crate::ty::Effect::Io, crate::ty::Effect::Io) => true,
             (crate::ty::Effect::Nondet, crate::ty::Effect::Nondet) => true,
             (crate::ty::Effect::Exn(t1), crate::ty::Effect::Exn(t2)) => t1 == t2,
@@ -56,7 +55,6 @@ impl Checker {
         let name = raw.to_lowercase();
         match name.as_str() {
             "io" => Some(crate::ty::Effect::Io),
-            "alloc" => Some(crate::ty::Effect::Alloc),
             "exn" => {
                 if let Some(arg) = &eff.arg {
                     Some(crate::ty::Effect::Exn(Box::new(self.convert_type(arg))))
@@ -88,7 +86,6 @@ impl Checker {
     }
 
     pub fn add_required_effect(&mut self, effect: crate::ty::Effect) {
-        if matches!(effect, crate::ty::Effect::Alloc) { return; }
         if !self.fn_required_effects.iter().any(|e| self.effects_equal(e, &effect)) {
             self.fn_required_effects.push(effect);
         }
@@ -159,7 +156,6 @@ impl Checker {
         for effect in all_effects {
             let handled = match effect {
                 crate::ty::Effect::Total => self.handled_effects.contains(&"total".into()),
-                crate::ty::Effect::Alloc => true,
                 crate::ty::Effect::Io => self.handled_effects.contains(&"io".into()),
                 crate::ty::Effect::Nondet => self.handled_effects.contains(&"nondet".into()),
                 crate::ty::Effect::Exn(_) => self.handled_effects.contains(&"exn".into()),

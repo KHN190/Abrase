@@ -551,6 +551,19 @@ impl Checker {
             }
         }
 
+        let declared = self.fn_declared_effects.clone();
+        for decl_eff in &declared {
+            if matches!(decl_eff, crate::ty::Effect::UserEffect(n) if n == "core") { continue; }
+            if !required.iter().any(|r| self.effects_equal(r, decl_eff)) {
+                let span = fn_decl.body.stmts.first().map(|s| s.span)
+                    .or_else(|| fn_decl.body.ret.as_ref().map(|r| r.span))
+                    .unwrap_or(ast::Span::new(1, 1));
+                self.report_warning("unused-effect",
+                    format!("Function '{}' declares effect {:?} but never uses it", fn_decl.name, decl_eff),
+                    span);
+            }
+        }
+
         self.exit_scope();
         self.fn_declared_effects = saved_declared;
         self.fn_required_effects = saved_required;

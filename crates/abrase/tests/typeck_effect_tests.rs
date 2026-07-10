@@ -22,7 +22,7 @@ fn verify_effect_alias_registration() {
     let mut checker = Checker::new();
     use abrase::ty::Effect;
 
-    let effects = vec![Effect::Nondet, Effect::Alloc];
+    let effects = vec![Effect::Nondet, Effect::Io];
     checker.register_effect_alias("concurrent".into(), effects.clone());
 
     let alias = checker.get_effect_alias("concurrent");
@@ -36,9 +36,9 @@ fn verify_push_and_pop_effect() {
     use abrase::ty::Effect;
 
     checker.push_effect(Effect::Nondet);
-    checker.push_effect(Effect::Alloc);
+    checker.push_effect(Effect::Io);
 
-    let expected = vec![Effect::Nondet, Effect::Alloc];
+    let expected = vec![Effect::Nondet, Effect::Io];
     assert!(checker.effects_compatible(&expected, &expected));
 
     checker.pop_effect();
@@ -60,7 +60,7 @@ fn verify_effects_equal_alloc() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    assert!(checker.effects_equal(&Effect::Alloc, &Effect::Alloc));
+    assert!(checker.effects_equal(&Effect::Io, &Effect::Io));
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn verify_effects_compatible_subset() {
     use abrase::ty::Effect;
 
     let expected = vec![Effect::Nondet];
-    let actual = vec![Effect::Nondet, Effect::Alloc];
+    let actual = vec![Effect::Nondet, Effect::Io];
 
     assert!(checker.effects_compatible(&expected, &actual));
 }
@@ -128,7 +128,7 @@ fn verify_effects_compatible_missing_effect() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    let expected = vec![Effect::Nondet, Effect::Alloc];
+    let expected = vec![Effect::Nondet, Effect::Io];
     let actual = vec![Effect::Nondet];
 
     assert!(!checker.effects_compatible(&expected, &actual));
@@ -243,7 +243,7 @@ fn verify_function_type_multiple_effects() {
 
     let fn_type = Type::Function {
         params: vec![Type::Int],
-        effects: vec![Effect::Nondet, Effect::Alloc],
+        effects: vec![Effect::Nondet, Effect::Io],
         ret: Box::new(Type::Bool),
     };
 
@@ -264,18 +264,16 @@ fn verify_effect_total() {
 }
 
 #[test]
-fn verify_convert_effect_alloc() {
+fn verify_alloc_is_not_a_recognized_effect() {
     let checker = Checker::new();
-    use abrase::ty::Effect;
 
     let effect_item = ast::EffectItem {
         name: vec!["alloc".into()],
         arg: None,
     };
 
-    let converted = checker.convert_effect(&effect_item);
-    assert!(converted.is_some());
-    assert!(matches!(converted.unwrap(), Effect::Alloc));
+    assert!(checker.convert_effect(&effect_item).is_none(),
+        "alloc is no longer a surface effect");
 }
 
 #[test]
@@ -283,8 +281,8 @@ fn verify_effect_compatibility_with_multiple_effects() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    let expected = vec![Effect::Nondet, Effect::Alloc];
-    let actual = vec![Effect::Nondet, Effect::Alloc, Effect::Nondet];
+    let expected = vec![Effect::Nondet, Effect::Io];
+    let actual = vec![Effect::Nondet, Effect::Io, Effect::Nondet];
 
     assert!(checker.effects_compatible(&expected, &actual));
 }
@@ -294,8 +292,8 @@ fn verify_effect_compatibility_order_independent() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    let expected = vec![Effect::Alloc, Effect::Nondet];
-    let actual = vec![Effect::Nondet, Effect::Alloc];
+    let expected = vec![Effect::Io, Effect::Nondet];
+    let actual = vec![Effect::Nondet, Effect::Io];
 
     assert!(checker.effects_compatible(&expected, &actual));
 }
@@ -307,7 +305,7 @@ fn verify_set_fn_declared_effects() {
     let mut checker = Checker::new();
     use abrase::ty::Effect;
 
-    let effects = vec![Effect::Nondet, Effect::Alloc];
+    let effects = vec![Effect::Nondet, Effect::Io];
     checker.set_fn_declared_effects(effects.clone());
 
     let declared = checker.get_fn_declared_effects();
@@ -321,7 +319,7 @@ fn verify_add_required_effect() {
 
     checker.add_required_effect(Effect::Nondet);
     checker.add_required_effect(Effect::Io);
-    checker.add_required_effect(Effect::Alloc);
+    checker.add_required_effect(Effect::Io);
 
     let required = checker.get_fn_required_effects();
     assert_eq!(required.len(), 2, "Alloc is ambient and must not enter required");
@@ -345,7 +343,7 @@ fn verify_check_effect_compatibility_satisfied() {
     use abrase::ty::Effect;
 
     checker.add_required_effect(Effect::Nondet);
-    let provided = vec![Effect::Nondet, Effect::Alloc];
+    let provided = vec![Effect::Nondet, Effect::Io];
 
     let result = checker.check_effect_compatibility(&provided, d_span());
     assert!(result);
@@ -358,7 +356,7 @@ fn verify_check_effect_compatibility_unsatisfied() {
     use abrase::ty::Effect;
 
     checker.add_required_effect(Effect::Nondet);
-    let provided = vec![Effect::Alloc];
+    let provided = vec![Effect::Io];
 
     let result = checker.check_effect_compatibility(&provided, d_span());
     assert!(!result);
@@ -370,7 +368,7 @@ fn verify_unify_effects_no_duplicates() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    let effects1 = vec![Effect::Nondet, Effect::Alloc];
+    let effects1 = vec![Effect::Nondet, Effect::Io];
     let effects2 = vec![Effect::Nondet, Effect::Exn(Box::new(Type::Int))];
 
     let unified = checker.unify_effects(&effects1, &effects2);
@@ -407,7 +405,7 @@ fn verify_effects_subsume_all_provided() {
     use abrase::ty::Effect;
 
     let required = vec![Effect::Nondet];
-    let provided = vec![Effect::Nondet, Effect::Alloc];
+    let provided = vec![Effect::Nondet, Effect::Io];
 
     assert!(checker.effects_subsume(&required, &provided));
 }
@@ -417,7 +415,7 @@ fn verify_effects_subsume_missing() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    let required = vec![Effect::Nondet, Effect::Alloc];
+    let required = vec![Effect::Nondet, Effect::Io];
     let provided = vec![Effect::Nondet];
 
     assert!(!checker.effects_subsume(&required, &provided));
@@ -442,7 +440,7 @@ fn verify_infer_closure_effects_with_declared() {
     let declared = vec![Effect::Nondet];
     checker.set_fn_declared_effects(declared.clone());
 
-    let body_effects = vec![Effect::Alloc];
+    let body_effects = vec![Effect::Io];
     let inferred = checker.infer_closure_effects(&body_effects);
 
     assert_eq!(inferred, declared);
@@ -453,7 +451,7 @@ fn verify_infer_closure_effects_without_declared() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    let body_effects = vec![Effect::Alloc, Effect::Nondet];
+    let body_effects = vec![Effect::Io, Effect::Nondet];
     let inferred = checker.infer_closure_effects(&body_effects);
 
     assert_eq!(inferred, body_effects);
@@ -775,7 +773,7 @@ fn verify_alloc_effect_matches_io_handler() {
 
     // io handler should handle Alloc effect
     checker.mark_effect_handled("io".into());
-    let all_effects = vec![Effect::Alloc];
+    let all_effects = vec![Effect::Io];
 
     checker.compute_unhandled_effects(&all_effects);
     assert!(checker.get_unhandled_effects().is_empty());
@@ -817,7 +815,7 @@ fn verify_effect_subsumption_empty_to_any() {
 
     // Empty (no effects) can be used anywhere
     let declared = vec![]; // no effects
-    let expected = vec![Effect::Nondet, Effect::Alloc];
+    let expected = vec![Effect::Nondet, Effect::Io];
 
     assert!(checker.effects_subsume(&declared, &expected));
 }
@@ -828,8 +826,8 @@ fn verify_effect_subsumption_exact_match() {
     use abrase::ty::Effect;
 
     // Exact match should subsume
-    let declared = vec![Effect::Nondet, Effect::Alloc];
-    let expected = vec![Effect::Nondet, Effect::Alloc];
+    let declared = vec![Effect::Nondet, Effect::Io];
+    let expected = vec![Effect::Nondet, Effect::Io];
 
     assert!(checker.effects_subsume(&declared, &expected));
 }
@@ -871,7 +869,7 @@ fn verify_effect_subsumption_with_nondet() {
     use abrase::ty::Effect;
 
     // Function declares <nondet, alloc> but context expects <nondet>
-    let declared = vec![Effect::Nondet, Effect::Alloc]; // <nondet, alloc>
+    let declared = vec![Effect::Nondet, Effect::Io]; // <nondet, alloc>
     let expected = vec![Effect::Nondet]; // <nondet>
 
     assert!(!checker.effects_subsume(&declared, &expected));
@@ -884,7 +882,7 @@ fn verify_effect_subsumption_nondet_subsumed() {
 
     // Nondet function can be used where nondet + alloc is expected
     let declared = vec![Effect::Nondet]; // <nondet>
-    let expected = vec![Effect::Nondet, Effect::Alloc]; // <nondet, alloc>
+    let expected = vec![Effect::Nondet, Effect::Io]; // <nondet, alloc>
 
     assert!(checker.effects_subsume(&declared, &expected));
 }
@@ -895,8 +893,8 @@ fn verify_effect_subsumption_function_produces_more() {
     use abrase::ty::Effect;
 
     // Function produces MORE effects than context expects to handle
-    let declared = vec![Effect::Nondet, Effect::Alloc, Effect::Exn(Box::new(Type::Int))];
-    let expected = vec![Effect::Nondet, Effect::Alloc];
+    let declared = vec![Effect::Nondet, Effect::Io, Effect::Exn(Box::new(Type::Int))];
+    let expected = vec![Effect::Nondet, Effect::Io];
 
     // Function produces effects context doesn't expect - NOT compatible
     assert!(!checker.effects_subsume(&declared, &expected));
@@ -926,7 +924,7 @@ fn verify_effect_subsumption_order_independent() {
     // Order shouldn't matter for subsumption
     let declared_a = vec![Effect::Nondet, Effect::Total];
     let declared_b = vec![Effect::Total, Effect::Nondet];
-    let expected = vec![Effect::Nondet, Effect::Total, Effect::Alloc];
+    let expected = vec![Effect::Nondet, Effect::Total, Effect::Io];
 
     assert!(checker.effects_subsume(&declared_a, &expected));
     assert!(checker.effects_subsume(&declared_b, &expected));
@@ -951,7 +949,7 @@ fn verify_closure_declared_pure_with_io_call_invalid() {
     use abrase::ty::Effect;
 
     let declared = vec![Effect::Total]; // <pure>
-    let inferred = vec![Effect::Alloc]; // body calls IO function
+    let inferred = vec![Effect::Io]; // body calls IO function
 
     assert!(!checker.validate_closure_effects(&declared, &inferred, d_span()));
     assert!(checker.errors.len() > 0);
@@ -963,7 +961,7 @@ fn verify_closure_no_declaration_accepts_any() {
     use abrase::ty::Effect;
 
     let declared = vec![]; // No effects declared
-    let inferred = vec![Effect::Nondet, Effect::Alloc]; // Body has effects
+    let inferred = vec![Effect::Nondet, Effect::Io]; // Body has effects
 
     assert!(checker.validate_closure_effects(&declared, &inferred, d_span()));
 }
@@ -974,7 +972,7 @@ fn verify_inferred_effects_exceed_declared_single() {
     use abrase::ty::Effect;
 
     let declared = vec![Effect::Total]; // <pure>
-    let inferred = vec![Effect::Alloc]; // has IO
+    let inferred = vec![Effect::Io]; // has IO
 
     let exceeds = checker.inferred_effects_exceed_declared(&declared, &inferred);
     assert_eq!(exceeds.len(), 1);
@@ -985,8 +983,8 @@ fn verify_inferred_effects_subset_of_declared() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    let declared = vec![Effect::Nondet, Effect::Alloc, Effect::Nondet];
-    let inferred = vec![Effect::Nondet, Effect::Alloc];
+    let declared = vec![Effect::Nondet, Effect::Io, Effect::Nondet];
+    let inferred = vec![Effect::Nondet, Effect::Io];
 
     let exceeds = checker.inferred_effects_exceed_declared(&declared, &inferred);
     assert_eq!(exceeds.len(), 0);
@@ -997,7 +995,7 @@ fn verify_all_effects_declared_true() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    let declared = vec![Effect::Nondet, Effect::Alloc];
+    let declared = vec![Effect::Nondet, Effect::Io];
     let inferred = vec![Effect::Nondet];
 
     assert!(checker.all_effects_declared(&declared, &inferred));
@@ -1009,7 +1007,7 @@ fn verify_all_effects_declared_false() {
     use abrase::ty::Effect;
 
     let declared = vec![Effect::Nondet];
-    let inferred = vec![Effect::Nondet, Effect::Alloc];
+    let inferred = vec![Effect::Nondet, Effect::Io];
 
     assert!(!checker.all_effects_declared(&declared, &inferred));
 }
@@ -1019,8 +1017,8 @@ fn verify_all_effects_declared_exact_match() {
     let checker = Checker::new();
     use abrase::ty::Effect;
 
-    let declared = vec![Effect::Nondet, Effect::Alloc];
-    let inferred = vec![Effect::Nondet, Effect::Alloc];
+    let declared = vec![Effect::Nondet, Effect::Io];
+    let inferred = vec![Effect::Nondet, Effect::Io];
 
     assert!(checker.all_effects_declared(&declared, &inferred));
 }
@@ -1032,7 +1030,7 @@ fn verify_closure_with_pure_declaration_io_call_error() {
 
     // Closure declared as |x| -> <pure> but calls IO
     let declared = vec![Effect::Total];
-    let inferred = vec![Effect::Alloc];
+    let inferred = vec![Effect::Io];
 
     let result = checker.validate_closure_effects(&declared, &inferred, d_span());
     assert!(!result);
@@ -1070,8 +1068,8 @@ fn verify_closure_over_declared_single_extra_effect() {
     let mut checker = Checker::new();
     use abrase::ty::Effect;
 
-    let declared = vec![Effect::Nondet, Effect::Alloc];
-    let inferred = vec![Effect::Nondet, Effect::Alloc, Effect::Exn(Box::new(Type::Int))];
+    let declared = vec![Effect::Nondet, Effect::Io];
+    let inferred = vec![Effect::Nondet, Effect::Io, Effect::Exn(Box::new(Type::Int))];
 
     assert!(!checker.validate_closure_effects(&declared, &inferred, d_span()));
 }

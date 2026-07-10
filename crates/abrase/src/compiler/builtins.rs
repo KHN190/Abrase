@@ -71,15 +71,25 @@ impl Compiler {
         self.register_typed_native("halt",  vec![i.clone()], u.clone(), 1);
         self.register_typed_native("abort", vec![s.clone()], u.clone(), 1);
         // <core> raw-memory intrinsics (Addr = unboxed, no RC)
+        for (name, params, ret) in Self::core_intrinsic_sigs() {
+            let n = params.len();
+            self.register_typed_native(name, params, ret, n);
+        }
+    }
+
+    fn core_intrinsic_sigs() -> Vec<(&'static str, Vec<TyType>, TyType)> {
+        let (i, u) = (TyType::Int, TyType::Unit);
         let addr = TyType::Named("Addr".into());
-        for name in &["__peek8", "__peek32", "__peek64"] {
-            self.register_typed_native(name, vec![addr.clone()], i.clone(), 1);
+        let mut v = Vec::new();
+        for name in ["__peek8", "__peek32", "__peek64"] {
+            v.push((name, vec![addr.clone()], i.clone()));
         }
-        for name in &["__poke8", "__poke32", "__poke64"] {
-            self.register_typed_native(name, vec![addr.clone(), i.clone()], u.clone(), 2);
+        for name in ["__poke8", "__poke32", "__poke64"] {
+            v.push((name, vec![addr.clone(), i.clone()], u.clone()));
         }
-        self.register_typed_native("__ptr_add", vec![addr.clone(), i.clone()], addr.clone(), 2);
-        self.register_typed_native("__arena_base", vec![], addr.clone(), 0);
+        v.push(("__ptr_add", vec![addr.clone(), i.clone()], addr.clone()));
+        v.push(("__arena_base", vec![], addr.clone()));
+        v
     }
 
     pub(super) fn register_frame_present_native(&mut self) {
@@ -247,14 +257,12 @@ impl Compiler {
     }
 
     fn register_builtin_effects(&self, checker: &mut crate::typeck::Checker) {
-        let io = vec![ast::EffectItem { name: vec!["IO".into()], arg: None }];
-        let nondet = vec![ast::EffectItem { name: vec!["nondet".into()], arg: None }];
-        for name in &["now", "sleep_ms"] {
-            checker.register_function_effects(name.to_string(), io.clone());
-        }
-        for name in &["rand", "srand"] {
-            checker.register_function_effects(name.to_string(), nondet.clone());
-        }
+        // IO/nondet are runtime-dischargeable capabilities, so a `@cart main` may
+        // name them; the natives that produce them (now/rand/...) are host-provided
+        // via `register_host_fn`, uncallable in the base compiler without a host.
+        checker.register_native_capability(crate::ty::Effect::Io);
+        checker.register_native_capability(crate::ty::Effect::Nondet);
+
         // Graphics is declared so carts can name it, but the compute core does
         // NOT provide it as a capability — only a graphics-capable host adds it,
         // by registering a draw native whose effect is `<Graphics>`.
@@ -275,10 +283,7 @@ impl Compiler {
         // reaches it stays impure and fails. Only core-lib compilation provides it.
         checker.register_effect("core".into(), vec![]);
         let core = vec![ast::EffectItem { name: vec!["core".into()], arg: None }];
-        for name in &[
-            "__peek8", "__peek32", "__peek64",
-            "__poke8", "__poke32", "__poke64", "__ptr_add", "__arena_base",
-        ] {
+        for (name, _, _) in Self::core_intrinsic_sigs() {
             checker.register_function_effects_no_capability(name.to_string(), core.clone());
         }
     }
