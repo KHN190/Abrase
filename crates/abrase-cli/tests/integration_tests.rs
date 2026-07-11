@@ -1173,6 +1173,55 @@ fn cart_main_admits_host_registered_graphics_capability() {
 }
 
 #[test]
+fn host_registered_novel_effect_is_self_declaring() {
+    use abrase::ast::EffectItem;
+    use abrase::ty::Type as TyType;
+    let src = r#"
+@cart fn main() -> <frame, net> Unit {
+  loop { udp_send(0, "127.0.0.1:9000"); frame.present() }
+}
+"#;
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut c = Compiler::new().with_source(src.into());
+    c.register_host_fn(
+        "udp_send",
+        vec![TyType::Int, TyType::String],
+        TyType::Unit,
+        vec![EffectItem { name: vec!["net".into()], arg: None }],
+    ).expect("register udp_send native");
+    c.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("{}", c.pretty_print_errors()));
+}
+
+#[test]
+fn unknown_effect_name_in_fn_is_rejected() {
+    let src = "fn f() -> <bogus> Unit { () }\nfn main() -> Unit { () }\n";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(&ast);
+    assert!(checker.errors.iter().any(|e| e.message.contains("unknown effect")),
+        "expected unknown-effect error, got: {:?}", checker.errors);
+}
+
+#[test]
+fn fn_may_name_module_effect_declared_after_it() {
+    let src = "fn f() -> <Sensor> Unit { sense() }\n\
+               effect Sensor { op sense() -> Unit }\n\
+               fn main() -> Unit { () }\n";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(&ast);
+    assert!(!checker.errors.iter().any(|e| e.message.contains("unknown effect")),
+        "effect declared later must resolve, got: {:?}", checker.errors);
+}
+
+#[test]
 fn cart_only_on_main_enforced() {
     let src = "effect frame { op present() -> Unit }\n\
                @cart fn helper() -> Unit { () }\n\
@@ -1184,6 +1233,50 @@ fn cart_only_on_main_enforced() {
     checker.check_program(&ast);
     assert!(checker.errors.iter().any(|e| e.message.contains("@cart")),
         "expected @cart-on-non-main error, got: {:?}", checker.errors);
+}
+
+#[test]
+fn novel_effect_cart_consuming_heap_arg_stays_rc_balanced() {
+    use abrase::ast::EffectItem;
+    use abrase::ty::Type as TyType;
+    use std::rc::Rc;
+    let src = r#"
+@cart fn main() -> <frame, net> Unit {
+  let mut i = 0;
+  while i < 4 {
+    net_send(i.to_s());
+    i = i + 1;
+    frame.present()
+  }
+}
+"#;
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut c = Compiler::new().with_source(src.into());
+    c.register_host_fn(
+        "net_send",
+        vec![TyType::String],
+        TyType::Unit,
+        vec![EffectItem { name: vec!["net".into()], arg: None }],
+    ).expect("register net_send native");
+    let module = c.compile_module(&ast)
+        .unwrap_or_else(|_| panic!("{}", c.pretty_print_errors()));
+
+    let mut vm = VirtualMachine::new();
+    myriad::Host::default().install_into(&mut vm);
+    vm.register_native("net_send", Rc::new(|_ctx: &mut myriad::NativeCtx<'_>, _args: &[Value]| {
+        Ok((Value::from_int(0), false))
+    }));
+
+    vm.run_to_yield(&module).expect("first yield");
+    assert_eq!(vm.heap_live_count(), 0, "leak after frame 1");
+    for frame in 2..=4 {
+        let running = vm.resume(&module, Value::from_int(0))
+            .unwrap_or_else(|e| panic!("frame {}: {}", frame, e));
+        assert!(running, "frame {} should still run", frame);
+        assert_eq!(vm.heap_live_count(), 0, "leak after frame {}", frame);
+    }
 }
 
 #[test]

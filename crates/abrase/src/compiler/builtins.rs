@@ -144,6 +144,19 @@ impl Compiler {
         self.register_builtin_effects(checker);
 
         for decl in self.host_fns.values() {
+            for item in &decl.effects {
+                let raw = item.name.join(".");
+                let low = raw.to_lowercase();
+                if matches!(low.as_str(), "io" | "exn" | "nondet" | "total") {
+                    continue;
+                }
+                if checker.get_effect(&raw).is_none() {
+                    checker.register_effect(raw.clone(), vec![]);
+                }
+            }
+        }
+
+        for decl in self.host_fns.values() {
             let fn_ty = TyType::Function {
                 params: decl.params.clone(),
                 effects: checker.convert_effect_items(&decl.effects),
@@ -263,10 +276,6 @@ impl Compiler {
         checker.register_native_capability(crate::ty::Effect::Io);
         checker.register_native_capability(crate::ty::Effect::Nondet);
 
-        // Graphics is declared so carts can name it, but the compute core does
-        // NOT provide it as a capability — only a graphics-capable host adds it,
-        // by registering a draw native whose effect is `<Graphics>`.
-        checker.register_effect("Graphics".into(), vec![]);
         // `frame` is the @cart yield mechanism the core itself drives.
         checker.register_effect("frame".into(), vec!["present".into()]);
         checker.register_native_capability(crate::ty::Effect::UserEffect("frame".into()));

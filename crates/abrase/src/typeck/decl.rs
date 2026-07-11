@@ -473,6 +473,14 @@ impl Checker {
         let saved_declared = std::mem::take(&mut self.fn_declared_effects);
         let saved_required = std::mem::take(&mut self.fn_required_effects);
         let saved_handled = std::mem::take(&mut self.handled_effects);
+        for item in &fn_decl.effects {
+            if self.convert_effect(item).is_none() {
+                self.report_error(
+                    format!("unknown effect: `{}`", item.name.join(".")),
+                    ast::Span::new(0, 0),
+                );
+            }
+        }
         let converted = self.convert_effect_items(&fn_decl.effects);
         self.fn_declared_effects.extend(converted);
 
