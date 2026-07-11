@@ -352,6 +352,10 @@ impl Checker {
                 self.check_impl_decl(for_type, trait_name, generics, where_clause, methods);
             },
 
+            ast::Decl::EffectAlias { effects, .. } => {
+                self.report_unknown_effects(effects);
+            },
+
             ast::Decl::ModEnter(path) => {
                 self.enter_imported_module(path.clone());
             },
@@ -459,6 +463,17 @@ impl Checker {
         }
     }
 
+    pub fn report_unknown_effects(&mut self, items: &[ast::EffectItem]) {
+        for item in items {
+            if self.convert_effect(item).is_none() {
+                self.report_error(
+                    format!("unknown effect: `{}`", item.name.join(".")),
+                    ast::Span::new(0, 0),
+                );
+            }
+        }
+    }
+
     pub fn check_fn_decl(&mut self, fn_decl: &ast::FnDecl) {
         // Register generics and enforce where clause bounds.
         // type_args is empty at definition time; abstract generic vars are skipped.
@@ -473,14 +488,7 @@ impl Checker {
         let saved_declared = std::mem::take(&mut self.fn_declared_effects);
         let saved_required = std::mem::take(&mut self.fn_required_effects);
         let saved_handled = std::mem::take(&mut self.handled_effects);
-        for item in &fn_decl.effects {
-            if self.convert_effect(item).is_none() {
-                self.report_error(
-                    format!("unknown effect: `{}`", item.name.join(".")),
-                    ast::Span::new(0, 0),
-                );
-            }
-        }
+        self.report_unknown_effects(&fn_decl.effects);
         let converted = self.convert_effect_items(&fn_decl.effects);
         self.fn_declared_effects.extend(converted);
 

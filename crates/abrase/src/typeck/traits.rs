@@ -20,6 +20,7 @@ impl Checker {
     pub fn receiver_type_name(ty: &Type) -> Option<String> {
         match ty {
             Type::Reference { inner, .. } => Self::receiver_type_name(inner),
+            Type::Generic { name, .. } => Some(name.clone()),
             _ => ty.builtin_name(),
         }
     }

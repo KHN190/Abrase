@@ -269,17 +269,26 @@ impl Checker {
 
                     let subst = self.build_substitution_map(&params, &arg_types);
                     for (i, (arg_ty, param_ty)) in arg_types.iter().zip(params.iter()).enumerate() {
-                        // Skip strict type checking if parameter is a generic type variable
-                        // (either Type::Generic, or Type::Named(n) where n is a generic param of the callee).
-                        let is_param_generic = matches!(param_ty, Type::Generic { .. })
-                            || matches!(param_ty, Type::Named(n) if callee_generic_vars.contains(n));
+                        // A parameter carrying a type variable (`T`, `Array<T>`) stays
+                        // polymorphic and skips strict checking. A fully-concrete applied
+                        // generic (`Array<Int>`) is checked element-wise via types_compatible.
+                        let is_param_typevar = type_contains_generic_var(param_ty, &callee_generic_vars);
+                        let concrete_generic = matches!(param_ty, Type::Generic { args, .. } if !args.is_empty())
+                            && !is_param_typevar;
                         if fn_type_has_unknown(arg_ty) && fn_type_is_concrete(param_ty) {
                             self.report_error(
                                 format!("Argument {}: cannot infer closure type from context; \
                                          annotate the closure, e.g. `|x: Int| -> Int ...`", i),
                                 args[i].span,
                             );
-                        } else if !is_param_generic && arg_ty != param_ty && *arg_ty != Type::Unknown && *param_ty != Type::Unknown {
+                        } else if concrete_generic {
+                            if *arg_ty != Type::Unknown && !self.types_compatible(param_ty, arg_ty) {
+                                self.report_error(
+                                    format!("Argument {} type mismatch: expected {:?}, got {:?}", i, param_ty, arg_ty),
+                                    args[i].span
+                                );
+                            }
+                        } else if !is_param_typevar && arg_ty != param_ty && *arg_ty != Type::Unknown && *param_ty != Type::Unknown {
                             self.report_error(
                                 format!("Argument {} type mismatch: expected {:?}, got {:?}", i, param_ty, arg_ty),
                                 args[i].span
@@ -414,6 +423,23 @@ impl Checker {
 
                 self.context_stack.pop();
                 result
+    }
+}
+
+fn type_contains_generic_var(ty: &Type, gens: &[String]) -> bool {
+    match ty {
+        Type::Named(n) => gens.contains(n),
+        // A bare `Generic { args: [] }` is a type variable (`T`, `U`); an applied
+        // constructor (`Array<Int>`) carries args and is a variable only if some
+        // arg is one.
+        Type::Generic { name, args } => {
+            args.is_empty()
+                || gens.contains(name)
+                || args.iter().any(|a| type_contains_generic_var(a, gens))
+        }
+        Type::Reference { inner, .. } => type_contains_generic_var(inner, gens),
+        Type::Tuple(ts) => ts.iter().any(|t| type_contains_generic_var(t, gens)),
+        _ => false,
     }
 }
 

@@ -158,9 +158,7 @@ impl Checker {
         let prop = self.exn_prop;
         self.enter_scope();
         self.exn_prop = false;
-        for stmt in &block.stmts {
-            self.check_stmt(stmt);
-        }
+        self.check_block_stmts(&block.stmts);
         let ty = if let Some(ret_expr) = &block.ret {
             self.exn_prop = prop;
             self.infer_expr(ret_expr)

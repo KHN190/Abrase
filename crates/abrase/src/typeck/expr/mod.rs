@@ -191,17 +191,21 @@ impl Checker {
         false
     }
 
-    pub fn infer_block(&mut self, block: &ast::Block) -> Type {
-        let prop = self.exn_prop;
-        self.enter_scope();
-        self.exn_prop = false;
-        for stmt in &block.stmts {
+    pub(super) fn check_block_stmts(&mut self, stmts: &[Spanned<ast::Stmt>]) {
+        for stmt in stmts {
             let mark = self.borrow_stack.len();
             self.check_stmt(stmt);
             if !Self::stmt_binds_named_borrow(stmt) {
                 self.release_borrows_to(mark);
             }
         }
+    }
+
+    pub fn infer_block(&mut self, block: &ast::Block) -> Type {
+        let prop = self.exn_prop;
+        self.enter_scope();
+        self.exn_prop = false;
+        self.check_block_stmts(&block.stmts);
         let ty = if let Some(ret_expr) = &block.ret {
             self.exn_prop = prop;
             self.infer_expr(ret_expr)

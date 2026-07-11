@@ -1222,6 +1222,82 @@ fn fn_may_name_module_effect_declared_after_it() {
 }
 
 #[test]
+fn unknown_effect_in_effect_alias_is_rejected() {
+    let src = "effect alias Bad = <bogus>;\nfn main() -> Int { 0 }\n";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(&ast);
+    assert!(checker.errors.iter().any(|e| e.message.contains("unknown effect")),
+        "expected unknown-effect error in alias, got: {:?}", checker.errors);
+}
+
+#[test]
+fn effect_alias_may_reference_effect_declared_after_it() {
+    let src = "effect alias A = <Later>;\n\
+               effect Later { op x() -> Unit }\n\
+               fn main() -> Int { 0 }\n";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(&ast);
+    assert!(!checker.errors.iter().any(|e| e.message.contains("unknown effect")),
+        "alias forward-ref must resolve, got: {:?}", checker.errors);
+}
+
+#[test]
+fn concrete_generic_param_rejects_wrong_element_type() {
+    let src = "fn f(a: Array<Int>) -> Int { a[0] }\nfn main() -> Int { f([\"x\"]) }\n";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(&ast);
+    assert!(checker.errors.iter().any(|e| e.message.contains("mismatch")),
+        "expected element-type mismatch, got: {:?}", checker.errors);
+}
+
+#[test]
+fn concrete_generic_param_accepts_matching_element() {
+    assert_eq!(run_src("fn f(a: Array<Int>) -> Int { a[0] }\nfn main() -> Int { f([7,8]) }"),
+        Ok(Value::from_int(7)));
+}
+
+#[test]
+fn concrete_generic_param_accepts_empty_literal() {
+    assert!(run_src("fn f(a: Array<Int>) -> Int { 0 }\nfn main() -> Int { f([]) }").is_ok());
+}
+
+#[test]
+fn polymorphic_generic_param_still_skips_element_check() {
+    // `Array<T>` carries a type variable, so passing any element type must not
+    // raise the concrete-generic element mismatch. (Typeck-only; mono of a
+    // container-of-typevar generic is a separate concern.)
+    let src = "fn g<T>(a: Array<T>) -> Int { 0 }\nfn main() -> Int { g([\"x\"]) }";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(&ast);
+    assert!(!checker.errors.iter().any(|e| e.message.contains("mismatch")),
+        "type-var container param must stay polymorphic, got: {:?}", checker.errors);
+}
+
+#[test]
+fn method_on_generic_receiver_reports_no_method_not_type_missing() {
+    let src = "fn main() -> Int { [1,2].wat() }\n";
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "{}", p.pretty_print_errors());
+    let mut checker = abrase::typeck::Checker::new();
+    checker.check_program(&ast);
+    assert!(checker.errors.iter().any(|e| e.message.contains("No method")),
+        "generic receiver should dispatch (No method), not fail type lookup: {:?}", checker.errors);
+}
+
+#[test]
 fn cart_only_on_main_enforced() {
     let src = "effect frame { op present() -> Unit }\n\
                @cart fn helper() -> Unit { () }\n\

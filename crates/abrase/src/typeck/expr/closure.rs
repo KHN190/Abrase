@@ -65,6 +65,7 @@ impl Checker {
                 self.enter_scope();
 
                 // Set declared effects for the closure
+                self.report_unknown_effects(effects);
                 let declared_effects = self.convert_effect_items(effects);
                 let saved_required = std::mem::take(&mut self.fn_required_effects);
 
