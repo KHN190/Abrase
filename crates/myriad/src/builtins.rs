@@ -71,6 +71,7 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("__str_byte_at", str_byte_at_native());
     reg.register("__str_slice",   str_slice_native());
     reg.register("__str_to_bytes", str_to_bytes_native());
+    reg.register("__bytes_concat", bytes_concat_native());
     reg.register("__bytes_len",   bytes_len_native());
     reg.register("__bytes_byte_at", bytes_byte_at_native());
     reg.register("__bytes_slice", bytes_slice_native());
@@ -406,6 +407,24 @@ fn str_to_bytes_native() -> NativeFn {
     Rc::new(|ctx, args| {
         let b = read_bytes(ctx.heap, args[0]).unwrap_or_default();
         let v = alloc_bytes(ctx.heap, &b)?;
+        Ok(handle(v))
+    })
+}
+
+fn bytes_concat_native() -> NativeFn {
+    Rc::new(|ctx, args| {
+        let (slot, gen_) = args[1].as_handle();
+        let parts: Vec<u64> = ctx.heap.cell_data(slot, gen_)?.to_vec();
+        if parts.is_empty() {
+            return Err("bytes concat: parts array is empty".to_string());
+        }
+        let mut out = read_bytes(ctx.heap, args[0]).unwrap_or_default();
+        for &word in &parts {
+            if let Some(b) = read_bytes(ctx.heap, Value::from_raw(word)) {
+                out.extend_from_slice(&b);
+            }
+        }
+        let v = alloc_bytes(ctx.heap, &out)?;
         Ok(handle(v))
     })
 }

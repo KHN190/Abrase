@@ -60,6 +60,8 @@ impl Compiler {
         self.register_typed_native("__bytes_len", vec![by.clone()], i.clone(), 1);
         self.register_typed_native("__bytes_byte_at", vec![by.clone(), i.clone()], i.clone(), 2);
         self.register_typed_native("__bytes_slice", vec![by.clone(), i.clone(), i.clone()], by.clone(), 3);
+        let arr_by = TyType::Generic { name: "Array".into(), args: vec![by.clone()] };
+        self.register_typed_native("__bytes_concat", vec![by.clone(), arr_by], by.clone(), 2);
         self.read_only_natives.insert("__str_len".into());
         self.read_only_natives.insert("__str_byte_at".into());
         self.read_only_natives.insert("__str_slice".into());
@@ -243,13 +245,16 @@ impl Compiler {
         checker.register_impl_method("Str", "String", "len", "__str_len".into());
         checker.register_impl_method("Str", "String", "byte_at", "__str_byte_at".into());
         checker.register_impl_method("Str", "String", "slice", "__str_slice".into());
-        checker.register_trait("Byt".into(), vec!["len".into(), "byte_at".into(), "slice".into()]);
+        checker.register_trait("Byt".into(), vec!["len".into(), "byte_at".into(), "slice".into(), "concat".into()]);
         checker.register_trait_method_sig("Byt", "len", vec![self_ty.clone()], i.clone());
         checker.register_trait_method_sig("Byt", "byte_at", vec![self_ty.clone(), i.clone()], i.clone());
         checker.register_trait_method_sig("Byt", "slice", vec![self_ty.clone(), i.clone(), i.clone()], by.clone());
+        let arr_by = TyType::Generic { name: "Array".into(), args: vec![by.clone()] };
+        checker.register_trait_method_sig("Byt", "concat", vec![self_ty.clone(), arr_by], by.clone());
         checker.register_impl_method("Byt", "Bytes", "len", "__bytes_len".into());
         checker.register_impl_method("Byt", "Bytes", "byte_at", "__bytes_byte_at".into());
         checker.register_impl_method("Byt", "Bytes", "slice", "__bytes_slice".into());
+        checker.register_impl_method("Byt", "Bytes", "concat", "__bytes_concat".into());
         checker.register_impl("Bytes", "Byt");
         checker.register_trait("ToBytes".into(), vec!["to_bytes".into()]);
         checker.register_trait_method_sig("ToBytes", "to_bytes", vec![self_ty.clone()], by.clone());
@@ -327,6 +332,7 @@ impl Compiler {
             ("Bytes", "len", "__bytes_len"),
             ("Bytes", "byte_at", "__bytes_byte_at"),
             ("Bytes", "slice", "__bytes_slice"),
+            ("Bytes", "concat", "__bytes_concat"),
         ];
         for &(ty, m, mangled) in entries {
             dispatch.insert((ty.into(), m.into()), mangled.into());

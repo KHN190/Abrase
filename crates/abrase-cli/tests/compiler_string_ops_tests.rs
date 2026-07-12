@@ -666,3 +666,43 @@ fn string_bytes_ops_work_through_references() {
         assert_eq!(run_source(&src), Ok(Value::from_int(want)), "`{body}`");
     }
 }
+
+#[test]
+fn bytes_concat_joins_self_then_parts_in_order() {
+    assert_eq!(run_source("fn main() -> Int { b\"\\x01\".concat([b\"\\x02\", b\"\\x03\"]).byte_at(2) }"),
+        Ok(Value::from_int(3)));
+}
+#[test]
+fn bytes_concat_length_is_sum() {
+    assert_eq!(run_source("fn main() -> Int { b\"\\x01\".concat([b\"\\x02\", b\"\\x03\"]).len() }"),
+        Ok(Value::from_int(3)));
+}
+#[test]
+fn bytes_concat_self_first_byte_preserved() {
+    assert_eq!(run_source("fn main() -> Int { b\"ab\".concat([b\"cd\"]).byte_at(0) }"),
+        Ok(Value::from_int(97)));
+}
+#[test]
+fn bytes_concat_part_byte_at_boundary() {
+    assert_eq!(run_source("fn main() -> Int { b\"ab\".concat([b\"cd\"]).byte_at(2) }"),
+        Ok(Value::from_int(99)));
+}
+#[test]
+fn bytes_concat_no_leak() {
+    let (v, live) = run_source_with_heap("fn main() -> Int { b\"\\x01\".concat([b\"\\x02\"]).byte_at(1) }").expect("run");
+    assert_eq!(v, Value::from_int(2));
+    assert_eq!(live, 0, "concat leaked");
+}
+#[test]
+fn bytes_concat_empty_parts_rejected() {
+    assert!(run_source("fn main() -> Int { b\"a\".concat([]).len() }").is_err());
+}
+#[test]
+fn bytes_concat_wrong_element_type_rejected() {
+    assert!(run_source("fn main() -> Int { b\"a\".concat([1, 2]).len() }").is_err());
+}
+#[test]
+fn bytes_concat_consumes_receiver_reuse_rejected() {
+    let src = "fn main() -> Int { let x = b\"ab\"; let y = x.concat([b\"cd\"]); y.len() + x.len() }";
+    assert!(run_source(src).is_err(), "receiver reused after concat must be rejected");
+}
