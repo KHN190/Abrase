@@ -48,21 +48,27 @@ fn str_index_binding() {
 }
 
 #[test]
-fn str_index_equal_len_is_zero() {
-    let r = run_source("fn main() -> Int { \"ab\"[2] }").expect("run");
-    assert_eq!(r, Value::from_int(0));
+fn str_index_equal_len_is_runtime_error() {
+    let r = run_source("fn main() -> Int { \"ab\"[2] }");
+    assert!(r.is_err(), "index == len must trap, got {:?}", r);
 }
 
 #[test]
-fn str_index_out_of_range_is_zero() {
-    let r = run_source("fn main() -> Int { \"ab\"[99] }").expect("run");
-    assert_eq!(r, Value::from_int(0));
+fn str_index_out_of_range_is_runtime_error() {
+    let r = run_source("fn main() -> Int { \"ab\"[99] }");
+    assert!(r.is_err(), "index past end must trap, got {:?}", r);
 }
 
 #[test]
-fn str_index_negative_is_zero() {
-    let r = run_source("fn main() -> Int { \"ab\"[0 - 1] }").expect("run");
-    assert_eq!(r, Value::from_int(0));
+fn str_index_negative_is_runtime_error() {
+    let r = run_source("fn main() -> Int { \"ab\"[0 - 1] }");
+    assert!(r.is_err(), "negative index must trap, got {:?}", r);
+}
+
+#[test]
+fn str_index_in_range_still_works() {
+    let r = run_source("fn main() -> Int { \"ab\"[1] }").expect("run");
+    assert_eq!(r, Value::from_int(98));
 }
 
 #[test]
@@ -405,6 +411,18 @@ fn bytes_byte_at() {
 }
 
 #[test]
+fn bytes_byte_at_out_of_range_is_runtime_error() {
+    let r = run_source("fn main() -> Int { \"Az\".to_bytes().byte_at(2) }");
+    assert!(r.is_err(), "bytes index past end must trap, got {:?}", r);
+}
+
+#[test]
+fn bytes_byte_at_negative_is_runtime_error() {
+    let r = run_source("fn main() -> Int { \"Az\".to_bytes().byte_at(0 - 1) }");
+    assert!(r.is_err(), "bytes negative index must trap, got {:?}", r);
+}
+
+#[test]
 fn bytes_slice_len() {
     let (v, _) = run_source_with_heap("fn main() -> Int { \"hello\".to_bytes().slice(1, 3).len() }").expect("run");
     assert_eq!(v, Value::from_int(3));
@@ -454,9 +472,12 @@ fn bytes_byte_at_matches_source_fuzz() {
         let s: String = (0..slen).map(|_| ALPHA[(next() as usize) % ALPHA.len()] as char).collect();
         let k = (next() % (slen as u64 + 3)) as usize;
         let src = format!("fn main() -> Int {{ let b = \"{s}\".to_bytes(); b.byte_at({k}) }}");
+        if k >= s.as_bytes().len() {
+            assert!(run_source_with_heap(&src).is_err(), "OOB byte_at must trap s={s:?} k={k}");
+            continue;
+        }
         let (v, live) = run_source_with_heap(&src).expect("run");
-        let expect = s.as_bytes().get(k).copied().unwrap_or(0) as i64;
-        assert_eq!(v, Value::from_int(expect), "s={s:?} k={k}");
+        assert_eq!(v, Value::from_int(s.as_bytes()[k] as i64), "s={s:?} k={k}");
         assert_eq!(live, 0, "bound bytes byte_at leak s={s:?} k={k}: {live}");
     }
 }
@@ -517,15 +538,21 @@ fn chained_readonly_builtin_fuzz_value_and_no_leak() {
             cur = cur[start..end].to_vec();
         }
         let terminal_len = next() & 1 == 0;
-        let (src, expect) = if terminal_len {
-            (format!("fn main() -> Int {{ {chain}.len() }}"), cur.len() as i64)
-        } else {
+        if !terminal_len {
             let k = (next() % (cur.len() as u64 + 3)) as usize;
-            let e = cur.get(k).copied().unwrap_or(0) as i64;
-            (format!("fn main() -> Int {{ {chain}.byte_at({k}) }}"), e)
-        };
+            let src = format!("fn main() -> Int {{ {chain}.byte_at({k}) }}");
+            if k >= cur.len() {
+                assert!(run_source_with_heap(&src).is_err(), "OOB byte_at must trap: {src}");
+                continue;
+            }
+            let (v, live) = run_source_with_heap(&src).unwrap_or_else(|e| panic!("{src}: {e}"));
+            assert_eq!(v, Value::from_int(cur[k] as i64), "{src}");
+            assert_eq!(live, 0, "heap leak in `{src}`: {live} live");
+            continue;
+        }
+        let src = format!("fn main() -> Int {{ {chain}.len() }}");
         let (v, live) = run_source_with_heap(&src).unwrap_or_else(|e| panic!("{src}: {e}"));
-        assert_eq!(v, Value::from_int(expect), "{src}");
+        assert_eq!(v, Value::from_int(cur.len() as i64), "{src}");
         assert_eq!(live, 0, "heap leak in `{src}`: {live} live");
     }
 }

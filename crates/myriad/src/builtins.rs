@@ -383,8 +383,11 @@ fn str_byte_at_native() -> NativeFn {
     Rc::new(|ctx, args| {
         let i = args[1].as_int();
         let s = read_string(ctx.heap, args[0]).unwrap_or_default();
-        let b = if i < 0 { 0 } else { s.as_bytes().get(i as usize).copied().unwrap_or(0) };
-        Ok(plain(Value::from_int(b as i64)))
+        let bytes = s.as_bytes();
+        if i < 0 || i as usize >= bytes.len() {
+            return Err(format!("byte_at: index {} out of bounds for length {}", i, bytes.len()));
+        }
+        Ok(plain(Value::from_int(bytes[i as usize] as i64)))
     })
 }
 
@@ -440,8 +443,10 @@ fn bytes_byte_at_native() -> NativeFn {
     Rc::new(|ctx, args| {
         let i = args[1].as_int();
         let b = read_bytes(ctx.heap, args[0]).unwrap_or_default();
-        let v = if i < 0 { 0 } else { b.get(i as usize).copied().unwrap_or(0) };
-        Ok(plain(Value::from_int(v as i64)))
+        if i < 0 || i as usize >= b.len() {
+            return Err(format!("byte_at: index {} out of bounds for length {}", i, b.len()));
+        }
+        Ok(plain(Value::from_int(b[i as usize] as i64)))
     })
 }
 
