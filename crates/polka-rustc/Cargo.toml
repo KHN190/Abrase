@@ -1,6 +1,6 @@
 [package]
 name = "polka-rustc"
-description = "Compiles Polka bytecode to standalone Rust source (trusted-tier AOT backend)."
+description = "Compiles Polka bytecode to no-std Rust."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -18,8 +18,8 @@ name = "abrc"
 path = "src/bin/abrc.rs"
 
 [dependencies]
-polka = { package = "polka-rs", path = "../polka", version = "=0.3.1" }
+polka = { package = "polka-rs", path = "../polka", version = "=0.4.0" }
 
 [dev-dependencies]
-myriad = { package = "myriad-rs", path = "../myriad", version = "=0.3.1" }
-abrase = { path = "../abrase", version = "=0.3.1" }
+myriad = { package = "myriad-rs", path = "../myriad", version = "=0.4.0" }
+abrase = { path = "../abrase", version = "=0.4.0" }

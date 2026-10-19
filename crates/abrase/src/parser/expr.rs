@@ -53,6 +53,7 @@ impl<'a> Parser<'a> {
             Token::Float(v) => Expr::Literal(Literal::Float(*v)),
             Token::String(v) => Expr::Literal(Literal::String(v.clone())),
             Token::StringInterp(parts) => Expr::Literal(Literal::StringInterp(parts.clone())),
+            Token::Bytes(v) => Expr::Literal(Literal::Bytes(v.clone())),
             Token::Char(c) => Expr::Literal(Literal::Char(*c)),
             Token::True => Expr::Literal(Literal::Bool(true)),
             Token::False => Expr::Literal(Literal::Bool(false)),
@@ -850,7 +851,7 @@ impl<'a> Parser<'a> {
         matches!(tok,
             Token::Underscore | Token::Ident(_) | Token::Return
             | Token::Int(_) | Token::Float(_) | Token::True | Token::False
-            | Token::Char(_) | Token::String(_) | Token::LParen
+            | Token::Char(_) | Token::String(_) | Token::Bytes(_) | Token::LParen
         )
     }
 }

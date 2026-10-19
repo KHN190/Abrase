@@ -481,6 +481,7 @@ fn lit_type(lit: &Literal) -> Type {
         Literal::Bool(_) => Type::Named("Bool".into()),
         Literal::Char(_) => Type::Named("Char".into()),
         Literal::String(_) | Literal::StringInterp(_) => Type::Named("String".into()),
+        Literal::Bytes(_) => Type::Named("Bytes".into()),
         Literal::Unit => Type::Tuple(vec![]),
     }
 }

@@ -215,4 +215,60 @@ mod tests {
             assert_eq!(token, t);
         }
     }
+
+    #[test]
+    fn byte_string_hex_escapes_to_raw_bytes() {
+        let mut lexer = Lexer::new("b\"\\x1f\\xc0\\xff\"");
+        let (tok, _) = lexer.next_token();
+        assert_eq!(tok, Token::Bytes(vec![0x1f, 0xc0, 0xff]));
+    }
+
+    #[test]
+    fn byte_string_ascii_chars_are_their_bytes() {
+        let mut lexer = Lexer::new("b\"AB0\"");
+        let (tok, _) = lexer.next_token();
+        assert_eq!(tok, Token::Bytes(vec![65, 66, 48]));
+    }
+
+    #[test]
+    fn byte_string_common_escapes() {
+        let mut lexer = Lexer::new("b\"\\n\\t\\\\\\\"\\0\"");
+        let (tok, _) = lexer.next_token();
+        assert_eq!(tok, Token::Bytes(vec![10, 9, 92, 34, 0]));
+    }
+
+    #[test]
+    fn byte_string_empty() {
+        let mut lexer = Lexer::new("b\"\"");
+        let (tok, _) = lexer.next_token();
+        assert_eq!(tok, Token::Bytes(vec![]));
+    }
+
+    #[test]
+    fn byte_string_rejects_unicode_escape() {
+        let mut lexer = Lexer::new("b\"\\u{41}\"");
+        let (tok, _) = lexer.next_token();
+        assert!(matches!(tok, Token::Illegal(_)), "\\u must be rejected in byte string, got {:?}", tok);
+    }
+
+    #[test]
+    fn byte_string_rejects_raw_non_ascii() {
+        let mut lexer = Lexer::new("b\"\u{e9}\"");
+        let (tok, _) = lexer.next_token();
+        assert!(matches!(tok, Token::Illegal(_)), "raw non-ascii must be rejected, got {:?}", tok);
+    }
+
+    #[test]
+    fn byte_string_rejects_bad_hex_escape() {
+        let mut lexer = Lexer::new("b\"\\xZZ\"");
+        let (tok, _) = lexer.next_token();
+        assert!(matches!(tok, Token::Illegal(_)), "bad hex must be rejected, got {:?}", tok);
+    }
+
+    #[test]
+    fn bare_b_is_identifier_not_byte_string() {
+        let mut lexer = Lexer::new("b bx");
+        assert_eq!(lexer.next_token().0, Token::Ident("b".into()));
+        assert_eq!(lexer.next_token().0, Token::Ident("bx".into()));
+    }
 }

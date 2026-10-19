@@ -52,6 +52,7 @@ impl VirtualMachine {
                     heap: &mut self.heap, devices: &mut self.devices,
                     core_arena: &mut self.core_arena,
                     halted: &mut self.halted, exit_code: &mut self.exit_code,
+                    int32_safe: self.int32_safe,
                 };
                 let (result, result_is_handle) = aot(&mut ctx, &buf[..param_count], &tags[..param_count])?;
                 for i in 0..param_count {
@@ -75,6 +76,7 @@ impl VirtualMachine {
                 core_arena: &mut self.core_arena,
                 halted: &mut self.halted,
                 exit_code: &mut self.exit_code,
+                int32_safe: self.int32_safe,
             };
             let (result, result_is_handle) = func(&mut ctx, &buf[..param_count])?;
             for i in 0..param_count {

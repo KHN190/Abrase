@@ -104,7 +104,7 @@ impl Checker {
         self.push_region(region_name.clone());
         self.effect_stack.push(self.active_effects.clone());
         self.enter_scope();
-        for stmt in &body.stmts { self.check_stmt(stmt); }
+        self.check_block_stmts(&body.stmts);
         let body_ty = if let Some(ret_expr) = &body.ret { self.infer_expr(ret_expr) } else { Type::Unit };
         if let Some((name, esc_span)) = self.check_region_result_escape(body) {
             self.report_error(

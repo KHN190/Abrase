@@ -54,21 +54,44 @@ impl Compiler {
         self.register_typed_native("__str_eq", vec![s.clone(), s.clone()], b.clone(), 2);
         self.register_typed_native("__str_len", vec![s.clone()], i.clone(), 1);
         self.register_typed_native("__str_byte_at", vec![s.clone(), i.clone()], i.clone(), 2);
+        self.register_typed_native("__str_slice", vec![s.clone(), i.clone(), i.clone()], s.clone(), 3);
+        let by = TyType::Named("Bytes".into());
+        self.register_typed_native("__str_to_bytes", vec![s.clone()], by.clone(), 1);
+        self.register_typed_native("__bytes_len", vec![by.clone()], i.clone(), 1);
+        self.register_typed_native("__bytes_byte_at", vec![by.clone(), i.clone()], i.clone(), 2);
+        self.register_typed_native("__bytes_slice", vec![by.clone(), i.clone(), i.clone()], by.clone(), 3);
+        let arr_by = TyType::Generic { name: "Array".into(), args: vec![by.clone()] };
+        self.register_typed_native("__bytes_concat", vec![by.clone(), arr_by], by.clone(), 2);
         self.read_only_natives.insert("__str_len".into());
         self.read_only_natives.insert("__str_byte_at".into());
+        self.read_only_natives.insert("__str_slice".into());
+        self.read_only_natives.insert("__str_to_bytes".into());
+        self.read_only_natives.insert("__bytes_len".into());
+        self.read_only_natives.insert("__bytes_byte_at".into());
+        self.read_only_natives.insert("__bytes_slice".into());
         // System
         self.register_typed_native("halt",  vec![i.clone()], u.clone(), 1);
         self.register_typed_native("abort", vec![s.clone()], u.clone(), 1);
         // <core> raw-memory intrinsics (Addr = unboxed, no RC)
+        for (name, params, ret) in Self::core_intrinsic_sigs() {
+            let n = params.len();
+            self.register_typed_native(name, params, ret, n);
+        }
+    }
+
+    fn core_intrinsic_sigs() -> Vec<(&'static str, Vec<TyType>, TyType)> {
+        let (i, u) = (TyType::Int, TyType::Unit);
         let addr = TyType::Named("Addr".into());
-        for name in &["__peek8", "__peek32", "__peek64"] {
-            self.register_typed_native(name, vec![addr.clone()], i.clone(), 1);
+        let mut v = Vec::new();
+        for name in ["__peek8", "__peek32", "__peek64"] {
+            v.push((name, vec![addr.clone()], i.clone()));
         }
-        for name in &["__poke8", "__poke32", "__poke64"] {
-            self.register_typed_native(name, vec![addr.clone(), i.clone()], u.clone(), 2);
+        for name in ["__poke8", "__poke32", "__poke64"] {
+            v.push((name, vec![addr.clone(), i.clone()], u.clone()));
         }
-        self.register_typed_native("__ptr_add", vec![addr.clone(), i.clone()], addr.clone(), 2);
-        self.register_typed_native("__arena_base", vec![], addr.clone(), 0);
+        v.push(("__ptr_add", vec![addr.clone(), i.clone()], addr.clone()));
+        v.push(("__arena_base", vec![], addr.clone()));
+        v
     }
 
     pub(super) fn register_frame_present_native(&mut self) {
@@ -120,7 +143,20 @@ impl Compiler {
         };
         checker.insert_var("device_out".into(), device_out_ty, false, ast::Span::new(0, 0));
 
-        self.register_builtin_effects(checker);
+        self.register_core_intrinsic_effects(checker);
+
+        for decl in self.host_fns.values() {
+            for item in &decl.effects {
+                let raw = item.name.join(".");
+                let low = raw.to_lowercase();
+                if matches!(low.as_str(), "io" | "exn" | "nondet" | "total") {
+                    continue;
+                }
+                if checker.get_effect(&raw).is_none() {
+                    checker.register_effect(raw.clone(), vec![]);
+                }
+            }
+        }
 
         for decl in self.host_fns.values() {
             let fn_ty = TyType::Function {
@@ -201,11 +237,29 @@ impl Compiler {
         }
         checker.register_impl_method("ToC", "Int", "to_c", "__int_to_c".into());
         checker.register_impl("Int", "ToC");
-        checker.register_trait("Str".into(), vec!["len".into(), "byte_at".into()]);
+        let by = TyType::Named("Bytes".into());
+        checker.register_trait("Str".into(), vec!["len".into(), "byte_at".into(), "slice".into()]);
         checker.register_trait_method_sig("Str", "len", vec![self_ty.clone()], i.clone());
         checker.register_trait_method_sig("Str", "byte_at", vec![self_ty.clone(), i.clone()], i.clone());
+        checker.register_trait_method_sig("Str", "slice", vec![self_ty.clone(), i.clone(), i.clone()], s.clone());
         checker.register_impl_method("Str", "String", "len", "__str_len".into());
         checker.register_impl_method("Str", "String", "byte_at", "__str_byte_at".into());
+        checker.register_impl_method("Str", "String", "slice", "__str_slice".into());
+        checker.register_trait("Byt".into(), vec!["len".into(), "byte_at".into(), "slice".into(), "concat".into()]);
+        checker.register_trait_method_sig("Byt", "len", vec![self_ty.clone()], i.clone());
+        checker.register_trait_method_sig("Byt", "byte_at", vec![self_ty.clone(), i.clone()], i.clone());
+        checker.register_trait_method_sig("Byt", "slice", vec![self_ty.clone(), i.clone(), i.clone()], by.clone());
+        let arr_by = TyType::Generic { name: "Array".into(), args: vec![by.clone()] };
+        checker.register_trait_method_sig("Byt", "concat", vec![self_ty.clone(), arr_by], by.clone());
+        checker.register_impl_method("Byt", "Bytes", "len", "__bytes_len".into());
+        checker.register_impl_method("Byt", "Bytes", "byte_at", "__bytes_byte_at".into());
+        checker.register_impl_method("Byt", "Bytes", "slice", "__bytes_slice".into());
+        checker.register_impl_method("Byt", "Bytes", "concat", "__bytes_concat".into());
+        checker.register_impl("Bytes", "Byt");
+        checker.register_trait("ToBytes".into(), vec!["to_bytes".into()]);
+        checker.register_trait_method_sig("ToBytes", "to_bytes", vec![self_ty.clone()], by.clone());
+        checker.register_impl_method("ToBytes", "String", "to_bytes", "__str_to_bytes".into());
+        checker.register_impl("String", "ToBytes");
         checker.register_impl("String", "Str");
         for &(ty, mangled) in &[
             ("Int",    "__int_to_s"),
@@ -220,39 +274,9 @@ impl Compiler {
         }
     }
 
-    fn register_builtin_effects(&self, checker: &mut crate::typeck::Checker) {
-        let io = vec![ast::EffectItem { name: vec!["IO".into()], arg: None }];
-        let nondet = vec![ast::EffectItem { name: vec!["nondet".into()], arg: None }];
-        for name in &["now", "sleep_ms"] {
-            checker.register_function_effects(name.to_string(), io.clone());
-        }
-        for name in &["rand", "srand"] {
-            checker.register_function_effects(name.to_string(), nondet.clone());
-        }
-        // Graphics is declared so carts can name it, but the compute core does
-        // NOT provide it as a capability — only a graphics-capable host adds it,
-        // by registering a draw native whose effect is `<Graphics>`.
-        checker.register_effect("Graphics".into(), vec![]);
-        // `frame` is the @cart yield mechanism the core itself drives.
-        checker.register_effect("frame".into(), vec!["present".into()]);
-        checker.register_native_capability(crate::ty::Effect::UserEffect("frame".into()));
-        checker.register_effect_op(
-            "frame::present".into(),
-            crate::ty::Type::Function {
-                params: vec![],
-                ret: Box::new(crate::ty::Type::Unit),
-                effects: vec![],
-            },
-        );
-        // `<core>` is abrase's `unsafe`: raw-memory intrinsics produce it. Declared
-        // here so it propagates, but NOT a native capability — a normal cart that
-        // reaches it stays impure and fails. Only core-lib compilation provides it.
-        checker.register_effect("core".into(), vec![]);
+    fn register_core_intrinsic_effects(&self, checker: &mut crate::typeck::Checker) {
         let core = vec![ast::EffectItem { name: vec!["core".into()], arg: None }];
-        for name in &[
-            "__peek8", "__peek32", "__peek64",
-            "__poke8", "__poke32", "__poke64", "__ptr_add", "__arena_base",
-        ] {
+        for (name, _, _) in Self::core_intrinsic_sigs() {
             checker.register_function_effects_no_capability(name.to_string(), core.clone());
         }
     }
@@ -282,6 +306,12 @@ impl Compiler {
             ("Unit",   "to_s", "__unit_to_s"),
             ("String", "len",  "__str_len"),
             ("String", "byte_at", "__str_byte_at"),
+            ("String", "slice", "__str_slice"),
+            ("String", "to_bytes", "__str_to_bytes"),
+            ("Bytes", "len", "__bytes_len"),
+            ("Bytes", "byte_at", "__bytes_byte_at"),
+            ("Bytes", "slice", "__bytes_slice"),
+            ("Bytes", "concat", "__bytes_concat"),
         ];
         for &(ty, m, mangled) in entries {
             dispatch.insert((ty.into(), m.into()), mangled.into());

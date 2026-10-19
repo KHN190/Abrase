@@ -16,7 +16,7 @@ fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
         const_mask: Vec::new(),
         reg_count: 64,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     }))
 }
 
@@ -30,7 +30,7 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
             constants: raw_constants(constants),
             const_mask: Vec::new(),
             reg_count, param_count,
-            string_constants: Vec::new(),
+            string_constants: Vec::new(), bytes_constants: Vec::new(),
         })
     }).collect();
     let module = Module { functions: chunks, entry: n - 1, flags: 0, exports: vec![] };
@@ -84,7 +84,7 @@ fn oom_alloc_loop_returns_err_not_panic() {
         const_mask: Vec::new(),
         reg_count: 4,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     });
     let result = VirtualMachine::new().run(&chunk);
     let err = result.expect_err("excessive alloc must surface an error, not succeed");
@@ -114,7 +114,7 @@ fn oom_freed_cells_refund_budget() {
         const_mask: Vec::new(),
         reg_count: 8,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     });
     let result = VirtualMachine::new().run(&chunk);
     assert_eq!(result, Ok(Value::from_int(0)),
@@ -137,7 +137,7 @@ fn test_handle_allocates_cell_and_resume_frees_it() {
         const_mask: Vec::new(),
         reg_count: 64,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     });
     let _ = vm.run(&chunk);
     assert_eq!(vm.heap_live_count(), 0,
@@ -158,7 +158,7 @@ fn test_handle_without_dispatch_allocates_no_cell() {
         const_mask: Vec::new(),
         reg_count: 64,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     });
     let _ = vm.run(&install);
     assert_eq!(vm.heap_live_count(), 0,
@@ -185,7 +185,7 @@ fn test_dispatch_lookup_allocates_cont_and_snapshot() {
         const_mask: Vec::new(),
         reg_count: 64,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     });
     let _ = vm.run(&chunk);
     assert_eq!(vm.heap_live_count(), 2,
@@ -311,7 +311,7 @@ fn test_drop_reclaims_heap_via_rc_dec() {
             const_mask: Vec::new(),
             reg_count: 3,
             param_count: 0,
-            string_constants: Vec::new(),
+            string_constants: Vec::new(), bytes_constants: Vec::new(),
         })],
         entry: 0,
         flags: 0,
@@ -345,7 +345,7 @@ fn test_handle_after_free_is_rejected_via_generation() {
             const_mask: Vec::new(),
             reg_count: 5,
             param_count: 0,
-            string_constants: Vec::new(),
+            string_constants: Vec::new(), bytes_constants: Vec::new(),
         })],
         entry: 0,
         flags: 0,

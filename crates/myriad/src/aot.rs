@@ -40,6 +40,7 @@ pub struct AotHost {
     halted: bool,
     exit_code: Option<i64>,
     stdout: SharedBuf,
+    int32_safe: bool,
 }
 
 impl Default for AotHost {
@@ -54,7 +55,12 @@ impl AotHost {
         devices.install(CONSOLE_ID, Box::new(Box::new(console) as Box<dyn Console>));
         let mut registry = NativeRegistry::new();
         register_default_builtins(&mut registry);
-        Self { devices, core_arena: CoreArena::new(), registry, halted: false, exit_code: None, stdout }
+        Self { devices, core_arena: CoreArena::new(), registry, halted: false, exit_code: None, stdout, int32_safe: false }
+    }
+
+    pub fn with_int32(mut self, on: bool) -> Self {
+        self.int32_safe = on;
+        self
     }
 
     pub fn halted(&self) -> bool { self.halted }
@@ -76,6 +82,7 @@ impl AotNatives for AotHost {
             core_arena: &mut self.core_arena,
             halted: &mut self.halted,
             exit_code: &mut self.exit_code,
+            int32_safe: self.int32_safe,
         };
         let (v, h) = f(&mut ctx, args)?;
         Ok((v.raw(), h))

@@ -184,3 +184,122 @@ fn cfg_early_return_in_loop() {
     diff(src, "f", &[0, 4, 10, 50]);
 }
 
+
+// ---- host-driven AOT differential for String/Bytes natives (slice, byte_at,
+//      to_bytes): transpile lib + real myriad host, diff value AND heap-live
+//      against the interpreter. Confirms the new read-only natives survive AOT.
+
+fn aot_rustflags() -> Vec<String> {
+    if let Ok(enc) = std::env::var("CARGO_ENCODED_RUSTFLAGS") {
+        if !enc.is_empty() { return enc.split('\u{1f}').map(|s| s.to_string()).collect(); }
+    }
+    std::env::var("RUSTFLAGS").ok().filter(|s| !s.is_empty())
+        .map(|s| s.split_whitespace().map(|t| t.to_string()).collect())
+        .unwrap_or_default()
+}
+
+fn aot_deps_dir() -> String {
+    std::env::current_exe().ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .map(|d| d.to_string_lossy().into_owned())
+        .expect("deps dir")
+}
+
+fn aot_myriad_rlib() -> String {
+    let deps = aot_deps_dir();
+    let mut rlibs: Vec<std::path::PathBuf> = std::fs::read_dir(&deps).expect("deps")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.file_name().map(|n| {
+            let n = n.to_string_lossy();
+            n.starts_with("libmyriad-") && n.ends_with(".rlib")
+        }).unwrap_or(false))
+        .collect();
+    rlibs.sort_by_key(|p| std::cmp::Reverse(p.metadata().and_then(|m| m.modified()).ok()));
+    rlibs.first().expect("myriad rlib").display().to_string()
+}
+
+// Returns (value, live) from the transpiled+linked binary. Uses the Native
+// (non-lib) transpile so str/bytes natives emit inline Rust (not host.call),
+// exercising the inline bodies end-to-end. emit_native prints `OK <v> <live>`.
+fn aot_host_run(src: &str) -> (i64, usize) {
+    let m = compile_lib(src);
+    let driver = polka_rustc::transpile_module(&m).expect("transpile module");
+    let id = SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("aot_hostdiff_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sp = dir.join(format!("h_{}.rs", id));
+    let bp = dir.join(format!("h_{}.bin", id));
+    std::fs::write(&sp, &driver).unwrap();
+    let st = Command::new("rustc")
+        .args(["--edition", "2021", "-A", "warnings"])
+        .args(aot_rustflags())
+        .arg("--extern").arg(format!("myriad={}", aot_myriad_rlib()))
+        .arg("-L").arg(aot_deps_dir())
+        .arg(&sp).arg("-o").arg(&bp)
+        .output().expect("rustc");
+    assert!(st.status.success(), "rustc failed: {}\n{}", String::from_utf8_lossy(&st.stderr), driver);
+    let o = Command::new(&bp).output().expect("run");
+    let s = String::from_utf8(o.stdout).unwrap();
+    let line = s.trim().lines().last().unwrap_or("");
+    let mut it = line.split_whitespace();
+    assert_eq!(it.next(), Some("OK"), "AOT run did not print OK: {}", line);
+    let v: i64 = it.next().expect("val").parse().unwrap();
+    let live: usize = it.next().expect("live").parse().unwrap();
+    (v, live)
+}
+
+fn aot_host_diff(src: &str) {
+    let m = compile_lib(src);
+    let mut vm = VirtualMachine::new();
+    let iv = vm.run_module(&m).expect("interp").raw() as i64;
+    let il = vm.heap_live_count();
+    let (av, al) = aot_host_run(src);
+    assert_eq!(av, iv, "AOT value {} != interp {} for `{}`", av, iv, src);
+    assert_eq!(al, il, "AOT live {} != interp {} for `{}`", al, il, src);
+}
+
+#[test]
+fn aot_str_bytes_natives_match_interpreter() {
+    // slice + len + byte_at + to_bytes + chained read-only, all in one module.
+    let src = "fn main() -> Int {\n\
+        let a = \"hello\".slice(1, 3).len();\n\
+        let b = \"world\".to_bytes().len();\n\
+        let c = \"abc\".to_bytes().slice(0, 2).byte_at(1);\n\
+        let d = \"xy\".byte_at(0);\n\
+        a + b + c + d\n\
+    }\nfn main2() -> Unit { () }\n";
+    aot_host_diff(src);
+}
+
+// The str/bytes natives inline (emit direct Rust, no host.call) on the hybrid
+// transpile path — reached when the module is effectful and the str-using fn is
+// bridgeable (params, no handle constants). Non-effectful modules embed+interpret
+// by design, so this targets the hybrid path to prove the inline whitelist fires.
+#[test]
+fn aot_str_bytes_natives_inline_on_hybrid_path() {
+    // Effectful module (Handle/Raise) routes to the hybrid transpiler; `slen`
+    // takes a String param with no handle constants, so it is bridgeable and its
+    // `__str_len` call inlines as direct Rust rather than host.call.
+    let src = r#"
+        effect provider { op give() -> Int }
+        fn slen(s: String) -> Int { s.len() }
+        fn produce() -> <provider> Int { provider.give() + slen("hi") }
+        fn main() -> Int {
+            handle produce() {
+                return v => v,
+                provider.give => resume(3)
+            }
+        }
+    "#;
+    // Disable the abrase source inliner so `slen` stays a distinct fn (else it
+    // folds into `produce`, which carries the "hi" handle constant and is not
+    // bridgeable).
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "parse: {:?}", p.errors);
+    let mut c = Compiler::new().with_source(src.into()).with_lib(true).with_inline(false);
+    let m = c.compile_module(&ast).unwrap_or_else(|e| panic!("compile: {:?}", e.iter().map(|x| &x.message).collect::<Vec<_>>()));
+    let lib = polka_rustc::transpile_module_lib(&m).expect("transpile");
+    assert!(lib.contains("myriad::read_string"),
+        "bridgeable str fn must inline `__str_len` as direct Rust, not host.call:\n{}", lib);
+}

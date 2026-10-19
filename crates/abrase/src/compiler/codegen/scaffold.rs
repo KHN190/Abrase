@@ -226,8 +226,20 @@ impl Compiler {
             self.string_constants.push(s.to_string());
             (self.string_constants.len() - 1) as u32
         };
-        // Reuse an existing handle-tagged constant pointing to the same string.
-        let placeholder = Value::from_raw(str_idx as u64);
+        self.intern_handle_const(Value::from_raw(str_idx as u64))
+    }
+
+    pub(in crate::compiler) fn add_bytes_constant(&mut self, bytes: &[u8]) -> Result<u16, String> {
+        let byt_idx = if let Some(i) = self.bytes_constants.iter().position(|c| c.as_slice() == bytes) {
+            i as u64
+        } else {
+            self.bytes_constants.push(bytes.to_vec());
+            (self.bytes_constants.len() - 1) as u64
+        };
+        self.intern_handle_const(Value::from_raw(byt_idx | polka::BYTES_CONST_TAG))
+    }
+
+    fn intern_handle_const(&mut self, placeholder: Value) -> Result<u16, String> {
         for (i, c) in self.constants.iter().enumerate() {
             if *c == placeholder && self.const_mask_bits[i] {
                 return Ok(i as u16);
@@ -310,10 +322,8 @@ impl Compiler {
     ) -> Result<(), String> {
         let is_scalar = matches!(
             ty,
-            ast::Type::Named(n) if matches!(
-                n.as_str(),
-                "Int" | "Float" | "Bool" | "Char" | "Unit" | "Never"
-            )
+            ast::Type::Named(n)
+                if super::BUILTIN_SCALAR_KERNEL.contains(&n.as_str()) || matches!(n.as_str(), "Unit" | "Never")
         );
         if is_scalar { return Ok(()); }
         self.emit_region_forget(reg)

@@ -356,6 +356,7 @@ mod snapshot_tests {
                 reg_count: 42,
                 param_count: 0,
                 string_constants: Vec::new(),
+                bytes_constants: Vec::new(),
             })],
             entry: 0,
             flags: 0,

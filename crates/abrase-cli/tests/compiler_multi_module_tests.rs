@@ -493,3 +493,50 @@ fn main() -> Int { pick(2) }
     assert_eq!(v, Value::from_int(30));
 }
 
+
+fn fresh_temp_dir() -> std::path::PathBuf {
+    let n = TEMP_CTR.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("abrase_fname_{}_{}", std::process::id(), n));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    dir
+}
+
+#[test]
+fn entry_module_error_rendered_with_file_path() {
+    let dir = fresh_temp_dir();
+    fs::write(dir.join("main.abe"), "fn main() -> Int { let x: Int = \"bad\"; x }\n").unwrap();
+    let loaded = load_program(&dir.join("main.abe")).unwrap();
+    let mut c = Compiler::new();
+    let errs = c.compile_module(&loaded.decls).unwrap_err();
+    let rendered = loaded.render_errors(&errs);
+    fs::remove_dir_all(&dir).ok();
+    assert!(rendered.contains("main.abe"), "entry-module error must name its source file:\n{}", rendered);
+}
+
+#[test]
+fn imported_module_error_rendered_with_file_path() {
+    let dir = fresh_temp_dir();
+    fs::write(dir.join("util.abe"), "pub fn helper() -> Int { let x: Int = \"bad\"; x }\n").unwrap();
+    fs::write(dir.join("main.abe"), "use util::{ helper }\nfn main() -> Int { helper() }\n").unwrap();
+    let loaded = load_program(&dir.join("main.abe")).unwrap();
+    let mut c = Compiler::new();
+    let errs = c.compile_module(&loaded.decls).unwrap_err();
+    let rendered = loaded.render_errors(&errs);
+    fs::remove_dir_all(&dir).ok();
+    assert!(rendered.contains("util.abe"), "imported-module error must name util.abe, not the entry file:\n{}", rendered);
+}
+
+#[test]
+fn dead_code_warning_carries_source_module() {
+    let dir = fresh_temp_dir();
+    fs::write(dir.join("util.abe"), "pub fn helper() -> Int { 1 }\nfn dead_in_util() -> Int { 2 }\n").unwrap();
+    fs::write(dir.join("main.abe"), "use util::{ helper }\nfn main() -> Int { helper() }\n").unwrap();
+    let loaded = load_program(&dir.join("main.abe")).unwrap();
+    let mut c = Compiler::new();
+    let _ = c.compile_module(&loaded.decls);
+    fs::remove_dir_all(&dir).ok();
+    let w = c.warnings.iter().find(|w| w.message.contains("dead_in_util"))
+        .expect("expected dead_code warning for dead_in_util");
+    assert_eq!(w.module, vec!["util".to_string()],
+        "dead-code warning must carry its source module (util), not the entry/root");
+}

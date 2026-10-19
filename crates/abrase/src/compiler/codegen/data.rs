@@ -26,7 +26,7 @@ impl Compiler {
 
 pub(in crate::compiler) fn type_is_unboxed(ty: &ast::Type) -> bool {
     match ty {
-        ast::Type::Named(n) => matches!(n.as_str(), "Int" | "Float" | "Bool" | "Char" | "Addr"),
+        ast::Type::Named(n) => super::BUILTIN_SCALAR_KERNEL.contains(&n.as_str()) || n == "Addr",
         ast::Type::Tuple(items) => items.is_empty(),
         _ => false,
     }
@@ -78,12 +78,13 @@ impl Compiler {
                 self.add_constant(Value::from_int(*n))?
             }
             ast::Literal::Float(f)  => {
-                let v = if self.int32_mode { Value::from_float_f32(*f) } else { Value::from_float(*f) };
+                let v = Value::from_raw(polka::encode_float(*f, self.int32_mode));
                 self.add_constant(v)?
             }
             ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
             ast::Literal::Char(c)   => self.add_constant(Value::from_char(*c))?,
             ast::Literal::String(s) => self.add_string_constant(s)?,
+            ast::Literal::Bytes(b)  => self.add_bytes_constant(b)?,
             ast::Literal::Unit      => self.add_constant(Value::UNIT)?,
             _ => return Err("Unsupported literal".to_string()),
         };
@@ -361,11 +362,20 @@ impl Compiler {
         base: &ast::Spanned<ast::Expr>,
         index: &ast::Spanned<ast::Expr>,
     ) -> Result<Register, String> {
-        if matches!(self.infer_expr_type(base), Some(ast::Type::Named(ref n)) if n == "String") {
+        fn peel(t: &ast::Type) -> &ast::Type {
+            match t { ast::Type::Reference { inner, .. } => peel(inner), _ => t }
+        }
+        let base_ty = self.infer_expr_type(base);
+        let byte_native = match base_ty.as_ref().map(peel) {
+            Some(ast::Type::Named(n)) if n == "String" => Some("__str_byte_at"),
+            Some(ast::Type::Named(n)) if n == "Bytes" => Some("__bytes_byte_at"),
+            _ => None,
+        };
+        if let Some(native) = byte_native {
             let base_reg = self.compile_expr(base)?;
             let idx_reg = self.compile_expr(index)?;
-            let fid = *self.func_map.get("__str_byte_at")
-                .ok_or_else(|| "internal: __str_byte_at builtin not registered".to_string())?;
+            let fid = *self.func_map.get(native)
+                .ok_or_else(|| format!("internal: {} builtin not registered", native))?;
             let dest = self.emit_builtin_call(fid, &[base_reg, idx_reg])?;
             return Ok(dest);
         }

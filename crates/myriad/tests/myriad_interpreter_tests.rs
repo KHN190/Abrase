@@ -20,7 +20,7 @@ fn run(ops: Vec<OpCode>, constants: Vec<Value>) -> Result<Value, String> {
         constants: raw_constants(constants),
         const_mask: Vec::new(),
         reg_count, param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     }))
 }
 
@@ -36,7 +36,7 @@ fn run_module_with_param_counts(functions: Vec<(Vec<OpCode>, Vec<Value>, usize, 
                 constants: raw_constants(constants),
                 const_mask: Vec::new(),
                 reg_count, param_count,
-                string_constants: Vec::new(),
+                string_constants: Vec::new(), bytes_constants: Vec::new(),
             })
         })
         .collect();
@@ -849,7 +849,7 @@ fn test_call_dispatches_to_native_chunk() {
         constants: raw_constants(vec![Value::from_int(7), Value::from_int(35)]),
         const_mask: Vec::new(),
         reg_count: 3,
-        param_count: 0, string_constants: Vec::new(),
+        param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let native = NativeChunk {
         param_count: 2,
@@ -886,7 +886,7 @@ fn test_native_chunk_propagates_error() {
         constants: raw_constants(vec![Value::from_int(0)]),
         const_mask: Vec::new(),
         reg_count: 2,
-        param_count: 0, string_constants: Vec::new(),
+        param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let native = NativeChunk {
         param_count: 1,
@@ -972,7 +972,7 @@ fn test_module_load_rejects_oversize_reg_count() {
         constants: vec![],
         const_mask: Vec::new(),
         reg_count: 257,
-        param_count: 0, string_constants: Vec::new(),
+        param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(bad)],
@@ -997,7 +997,7 @@ fn test_module_load_rejects_param_count_exceeds_reg_count() {
         constants: vec![],
         const_mask: Vec::new(),
         reg_count: 2,
-        param_count: 5, string_constants: Vec::new(),
+        param_count: 5, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(bad)],
@@ -1022,7 +1022,7 @@ fn test_module_load_accepts_exact_frame_budget() {
         constants: raw_constants(vec![Value::from_int(7)]),
         const_mask: Vec::new(),
         reg_count: polka::FRAME_REGS,
-        param_count: 0, string_constants: Vec::new(),
+        param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(chunk)],
@@ -1061,7 +1061,7 @@ fn test_call_reg_out_of_range_fn_id_traps() {
         constants: raw_constants(vec![Value::from_int(99999)]),
         const_mask: Vec::new(),
         reg_count: 3,
-        param_count: 0, string_constants: Vec::new(),
+        param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller)],
@@ -1088,7 +1088,7 @@ fn test_call_reg_unknown_fn_id_traps() {
         constants: raw_constants(vec![Value::from_int(5)]),
         const_mask: Vec::new(),
         reg_count: 3,
-        param_count: 0, string_constants: Vec::new(),
+        param_count: 0, string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(caller)],
@@ -1293,7 +1293,7 @@ fn call_export_sum_two_ints() {
         const_mask: Vec::new(),
         reg_count: 3,
         param_count: 2,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let dummy = BytecodeChunk {
         lines: vec![],
@@ -1303,7 +1303,7 @@ fn call_export_sum_two_ints() {
         const_mask: Vec::new(),
         reg_count: 1,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(dummy), Chunk::Bytecode(sum)],
@@ -1365,7 +1365,7 @@ fn ident_module() -> Module {
         const_mask: Vec::new(),
         reg_count: 1,
         param_count: 1,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     Module {
         functions: vec![Chunk::Bytecode(bc)],
@@ -1421,7 +1421,7 @@ fn run_module_then_call_export_preserves_module_state() {
         const_mask: Vec::new(),
         reg_count: 1,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     };
     let module = Module {
         functions: vec![Chunk::Bytecode(bc)],

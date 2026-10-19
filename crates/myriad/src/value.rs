@@ -12,8 +12,7 @@ pub fn string_word_count(byte_len: usize) -> usize {
     1 + (byte_len + 7) / 8
 }
 
-pub fn alloc_string(heap: &mut Heap, s: &str) -> Result<Value, String> {
-    let bytes = s.as_bytes();
+pub fn alloc_bytes(heap: &mut Heap, bytes: &[u8]) -> Result<Value, String> {
     let size = string_word_count(bytes.len());
     let (slot, gen_) = heap.try_alloc(size)?;
     let dst = heap.cell_data_mut(slot, gen_)?;
@@ -25,7 +24,7 @@ pub fn alloc_string(heap: &mut Heap, s: &str) -> Result<Value, String> {
     Ok(Value::from_handle(slot, gen_))
 }
 
-pub fn read_string(heap: &Heap, val: Value) -> Option<String> {
+pub fn read_bytes(heap: &Heap, val: Value) -> Option<Vec<u8>> {
     if val.is_handle_none() { return None; }
     let (slot, gen_) = val.as_handle();
     let data = heap.cell_data(slot, gen_).ok()?;
@@ -40,5 +39,13 @@ pub fn read_string(heap: &Heap, val: Value) -> Option<String> {
         out.extend_from_slice(&word[..take]);
         remaining -= take;
     }
-    String::from_utf8(out).ok()
+    Some(out)
+}
+
+pub fn alloc_string(heap: &mut Heap, s: &str) -> Result<Value, String> {
+    alloc_bytes(heap, s.as_bytes())
+}
+
+pub fn read_string(heap: &Heap, val: Value) -> Option<String> {
+    read_bytes(heap, val).and_then(|b| String::from_utf8(b).ok())
 }

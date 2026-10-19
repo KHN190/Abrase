@@ -35,7 +35,7 @@ fn test_chunk_construction() {
         const_mask: Vec::new(),
         reg_count: 1,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     });
     let b = as_bc(&chunk);
     assert_eq!(b.code.len(), 2);
@@ -52,7 +52,7 @@ fn test_chunk_empty() {
         const_mask: Vec::new(),
         reg_count: 0,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     });
     let b = as_bc(&chunk);
     assert!(b.code.is_empty());
@@ -106,7 +106,7 @@ fn test_chunk_reg_count() {
         const_mask: Vec::new(),
         reg_count: 42,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     });
     assert_eq!(as_bc(&chunk).reg_count, 42);
 }
@@ -201,7 +201,7 @@ fn test_memory_opcodes_in_chunk() {
         const_mask: Vec::new(),
         reg_count: 4,
         param_count: 0,
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
     });
     let b = as_bc(&chunk);
     assert_eq!(b.code.len(), 6);

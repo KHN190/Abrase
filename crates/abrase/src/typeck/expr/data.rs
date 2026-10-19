@@ -58,6 +58,7 @@ impl Checker {
             Type::Generic { name, args } if name == "Array" => args.get(0).cloned().unwrap_or(Type::Unknown),
             Type::Tuple(elems) => if elems.is_empty() { Type::Unknown } else { elems[0].clone() },
             Type::String => Type::Int,
+            Type::Named(n) if n == "Bytes" => Type::Int,
             Type::Unknown => Type::Unknown,
             _ => self.report_error("Can only index arrays, tuples, or strings".into(), base.span),
         };

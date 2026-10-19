@@ -10,6 +10,11 @@ pub mod closure_expr;
 
 pub(in crate::compiler) use inference::{is_move_type, is_share_type};
 
+// Single source for the copy-scalar name kernel shared by the two non-exhaustive
+// by-name predicates (type_is_unboxed, region-forget is_scalar); each adds its
+// own extras. The ty::Type enum predicates (ownership) are exhaustive-checked.
+pub(in crate::compiler) const BUILTIN_SCALAR_KERNEL: &[&str] = &["Int", "Float", "Bool", "Char"];
+
 use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
@@ -247,10 +252,22 @@ impl Compiler {
     }
 
     pub(in crate::compiler) fn reclaim_temp_regs_above(&mut self, mark: u16) {
+        self.reclaim_temp_regs(mark, None);
+    }
+
+    pub(in crate::compiler) fn reclaim_temp_regs_above_skipping(&mut self, mark: u16, keep: Register) {
+        self.reclaim_temp_regs(mark, Some(keep));
+    }
+
+    fn reclaim_temp_regs(&mut self, mark: u16, keep: Option<Register>) {
         // Build a set of registers that must NOT be dropped: live variables,
         // loop result regs, handler table regs, env captures, module table.
         let mut protected = std::collections::HashSet::<u16>::new();
         let mut protect = mark;
+        if let Some(k) = keep {
+            protected.insert(k.0 as u16);
+            protect = protect.max(k.0 as u16 + 1);
+        }
         for reg in self.var_to_reg.values() {
             protected.insert(reg.0 as u16);
             protect = protect.max(reg.0 as u16 + 1);
@@ -395,8 +412,7 @@ impl Compiler {
             self.var_to_reg.remove(name);
             self.var_types.remove(name);
         }
-        let floor = mark.max(result.0 as u16 + 1);
-        self.reclaim_temp_regs_above(floor);
+        self.reclaim_temp_regs_above_skipping(mark, result);
         Ok(result)
     }
 

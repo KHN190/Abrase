@@ -21,9 +21,9 @@ pub mod host;
 pub mod snapshot;
 pub mod aot;
 
-pub use polka::{Value, HANDLE_NONE};
+pub use polka::{Value, HANDLE_NONE, decode_float, encode_float};
 pub use polka::cartridge::read_pk;
-pub use value::{alloc_string, read_string};
+pub use value::{alloc_string, read_string, alloc_bytes, read_bytes};
 pub use devices::{Device, DeviceTable};
 pub use memory::Heap;
 pub use core_mem::CoreArena;
@@ -378,6 +378,10 @@ impl VirtualMachine {
         total.saturating_sub(const_live).saturating_sub(module_live)
     }
 
+    pub fn heap_alloc_count(&self) -> u64 { self.heap.alloc_count() }
+
+    pub fn heap_bytes_used(&self) -> usize { self.heap.bytes_used() }
+
     fn collect_reachable(&self, slot: u32, generation: u32, visited: &mut hashbrown::HashSet<(u32, u32)>) {
         if !visited.insert((slot, generation)) { return; }
         if !self.heap.is_live(slot, generation) { return; }
@@ -599,6 +603,7 @@ mod vm_api_tests {
                 constants: vec![val],
                 const_mask: Vec::new(),
                 string_constants: Vec::new(),
+                bytes_constants: Vec::new(),
                 reg_count: 1,
                 param_count: 0,
                 lines: Vec::new(),

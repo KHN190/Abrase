@@ -15,6 +15,7 @@ pub enum Token {
     Float(f64),
     String(String),
     StringInterp(Vec<StringPart>),
+    Bytes(Vec<u8>),
     Char(char),
 
     // Operators
@@ -74,6 +75,7 @@ impl Token {
             Token::Float(f) => f.to_string(),
             Token::String(s) => format!("\"{}\"", s),
             Token::StringInterp(_) => "string literal".into(),
+            Token::Bytes(_) => "byte string literal".into(),
             Token::Char(c) => format!("'{}'", c),
             Token::Assign => "=".into(),
             Token::Plus => "+".into(),
@@ -305,6 +307,10 @@ impl<'a> Lexer<'a> {
             Some('^') => { self.read_char(); Token::Caret }
             Some('"') => return self.read_string(start_span),
             Some('\'') => return self.read_char_literal(start_span),
+            Some('b') if self.peek_char == Some('"') => {
+                self.read_char();
+                return self.read_byte_string(start_span);
+            }
             Some(c) if c.is_alphabetic() || c == '_' => {
                 let token = self.read_identifier();
                 return (token, start_span);
@@ -492,6 +498,53 @@ impl<'a> Lexer<'a> {
         }
 
         (Token::StringInterp(parts), span)
+    }
+
+    fn read_byte_string(&mut self, span: Span) -> (Token, Span) {
+        self.read_char(); // skip opening "
+        let mut bytes: Vec<u8> = Vec::new();
+        while let Some(c) = self.current_char {
+            match c {
+                '"' => { self.read_char(); return (Token::Bytes(bytes), span); }
+                '\\' => match self.read_byte_escape() {
+                    Ok(b) => bytes.push(b),
+                    Err(msg) => return (Token::Illegal(msg), span),
+                },
+                c if (c as u32) < 0x80 => { bytes.push(c as u8); self.read_char(); }
+                c => return (Token::Illegal(format!(
+                    "byte string only accepts ASCII directly; use \\xNN for byte '{}'", c
+                )), span),
+            }
+        }
+        (Token::Illegal("unterminated byte string".into()), span)
+    }
+
+    fn read_byte_escape(&mut self) -> Result<u8, String> {
+        self.read_char(); // skip '\'
+        match self.current_char {
+            Some('n')  => { self.read_char(); Ok(b'\n') }
+            Some('t')  => { self.read_char(); Ok(b'\t') }
+            Some('r')  => { self.read_char(); Ok(b'\r') }
+            Some('\\') => { self.read_char(); Ok(b'\\') }
+            Some('"')  => { self.read_char(); Ok(b'"')  }
+            Some('\'') => { self.read_char(); Ok(b'\'') }
+            Some('0')  => { self.read_char(); Ok(0) }
+            Some('x')  => {
+                self.read_char(); // skip 'x'
+                let hi = self.current_char
+                    .and_then(|c| c.to_digit(16))
+                    .ok_or_else(|| "invalid byte escape: \\x needs two hex digits".to_string())?;
+                self.read_char();
+                let lo = self.current_char
+                    .and_then(|c| c.to_digit(16))
+                    .ok_or_else(|| "invalid byte escape: \\x needs two hex digits".to_string())?;
+                self.read_char();
+                Ok(((hi << 4) | lo) as u8)
+            }
+            Some('u')  => Err("\\u is not allowed in a byte string; use \\xNN".into()),
+            Some(c) => Err(format!("unknown byte escape sequence: \\{}", c)),
+            None => Err("unterminated escape sequence at end of input".into()),
+        }
     }
 
     fn read_char_literal(&mut self, span: Span) -> (Token, Span) {

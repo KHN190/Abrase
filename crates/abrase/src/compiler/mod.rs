@@ -46,6 +46,7 @@ pub struct Compiler {
     pub(super) constants: Vec<Value>,
     pub(super) const_mask_bits: Vec<bool>,
     pub(super) string_constants: Vec<String>,
+    pub(super) bytes_constants: Vec<Vec<u8>>,
     pub(super) code: Vec<OpCode>,
     pub(super) next_reg: u16,
     pub(super) max_reg: u16,
@@ -128,6 +129,7 @@ impl Compiler {
             constants: Vec::new(),
             const_mask_bits: Vec::new(),
             string_constants: Vec::new(),
+            bytes_constants: Vec::new(),
             code: Vec::new(),
             next_reg: 0,
             max_reg: 0,
@@ -411,6 +413,7 @@ impl Compiler {
             constants: self.constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&self.const_mask_bits),
             string_constants: self.string_constants.clone(),
+            bytes_constants: self.bytes_constants.clone(),
             reg_count: self.max_reg as usize,
             param_count: 0,
             lines: vec![],
@@ -748,6 +751,7 @@ impl Compiler {
         let saved_constants = std::mem::take(&mut self.constants);
         let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let saved_string_constants = std::mem::take(&mut self.string_constants);
+        let saved_bytes_constants = std::mem::take(&mut self.bytes_constants);
         let saved_next_reg = self.next_reg;
         let saved_max_reg = self.max_reg;
         let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
@@ -922,6 +926,7 @@ impl Compiler {
             constants: taken_constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&taken_mask_bits),
             string_constants: std::mem::take(&mut self.string_constants),
+            bytes_constants: std::mem::take(&mut self.bytes_constants),
             reg_count,
             param_count,
         });
@@ -931,6 +936,7 @@ impl Compiler {
         self.constants = saved_constants;
         self.const_mask_bits = saved_const_mask_bits;
         self.string_constants = saved_string_constants;
+        self.bytes_constants = saved_bytes_constants;
         self.next_reg = saved_next_reg;
         self.max_reg = saved_max_reg;
         self.reg_holds_handle = saved_reg_holds_handle;
@@ -967,6 +973,7 @@ impl Compiler {
         let saved_constants = std::mem::take(&mut self.constants);
         let saved_const_mask_bits = std::mem::take(&mut self.const_mask_bits);
         let saved_string_constants = std::mem::take(&mut self.string_constants);
+        let saved_bytes_constants = std::mem::take(&mut self.bytes_constants);
         let saved_next_reg = self.next_reg;
         let saved_max_reg = self.max_reg;
         let saved_reg_holds_handle = std::mem::take(&mut self.reg_holds_handle);
@@ -1041,6 +1048,7 @@ impl Compiler {
             constants: taken_constants.iter().map(|v| v.raw()).collect(),
             const_mask: pack_mask_bits(&taken_mask_bits),
             string_constants: std::mem::take(&mut self.string_constants),
+            bytes_constants: std::mem::take(&mut self.bytes_constants),
             reg_count,
             param_count: 0,
         });
@@ -1050,6 +1058,7 @@ impl Compiler {
         self.constants = saved_constants;
         self.const_mask_bits = saved_const_mask_bits;
         self.string_constants = saved_string_constants;
+        self.bytes_constants = saved_bytes_constants;
         self.next_reg = saved_next_reg;
         self.max_reg = saved_max_reg;
         self.reg_holds_handle = saved_reg_holds_handle;

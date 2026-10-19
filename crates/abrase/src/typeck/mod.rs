@@ -182,7 +182,7 @@ pub mod decl;
 
 impl Checker {
     pub fn new() -> Self {
-        Self {
+        let mut checker = Self {
             scopes: vec![Scope { vars: HashMap::new() }],
             errors: Vec::new(),
             context_stack: Vec::new(),
@@ -248,7 +248,9 @@ impl Checker {
             expr_types: HashMap::new(),
             result_tail_spans: std::collections::HashSet::new(),
             warnings: Vec::new(),
-        }
+        };
+        checker.register_core_effects();
+        checker
     }
 
     pub fn report_warning(&mut self, code: &'static str, message: impl Into<String>, span: ast::Span) {

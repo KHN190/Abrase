@@ -27,10 +27,10 @@ impl Value {
     pub fn from_int(n: i64) -> Value { Value(n as u64) }
 
     #[inline(always)]
-    pub fn from_float(f: f64) -> Value { Value(f.to_bits()) }
+    pub fn from_float(f: f64) -> Value { Value(encode_float(f, false)) }
 
     #[inline(always)]
-    pub fn from_float_f32(f: f64) -> Value { Value((f as f32).to_bits() as u64) }
+    pub fn from_float_f32(f: f64) -> Value { Value(encode_float(f, true)) }
 
     #[inline(always)]
     pub fn from_bool(b: bool) -> Value { Value(if b { 1 } else { 0 }) }
@@ -52,7 +52,7 @@ impl Value {
     pub fn as_int(self) -> i64 { self.0 as i64 }
 
     #[inline(always)]
-    pub fn as_float(self) -> f64 { f64::from_bits(self.0) }
+    pub fn as_float(self) -> f64 { decode_float(self.0, false) }
 
     #[inline(always)]
     pub fn as_bool(self) -> bool { self.0 != 0 }
@@ -75,3 +75,13 @@ impl fmt::Debug for Value {
     }
 }
 
+
+#[inline(always)]
+pub fn decode_float(raw: u64, int32: bool) -> f64 {
+    if int32 { f32::from_bits(raw as u32) as f64 } else { f64::from_bits(raw) }
+}
+
+#[inline(always)]
+pub fn encode_float(f: f64, int32: bool) -> u64 {
+    if int32 { (f as f32).to_bits() as u64 } else { f.to_bits() }
+}

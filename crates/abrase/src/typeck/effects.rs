@@ -9,6 +9,18 @@ impl Checker {
         self.effect_registry.insert(name, operations);
     }
 
+    pub fn register_core_effects(&mut self) {
+        self.register_native_capability(crate::ty::Effect::Io);
+        self.register_native_capability(crate::ty::Effect::Nondet);
+        self.register_effect("frame".into(), vec!["present".into()]);
+        self.register_native_capability(crate::ty::Effect::UserEffect("frame".into()));
+        self.register_effect_op(
+            "frame::present".into(),
+            Type::Function { params: vec![], ret: Box::new(Type::Unit), effects: vec![] },
+        );
+        self.register_effect("core".into(), vec![]);
+    }
+
     pub fn register_effect_op(&mut self, key: String, ty: Type) {
         self.effect_ops_registry.insert(key, ty);
     }
@@ -42,7 +54,7 @@ impl Checker {
     pub fn effects_equal(&self, e1: &crate::ty::Effect, e2: &crate::ty::Effect) -> bool {
         match (e1, e2) {
             (crate::ty::Effect::Total, crate::ty::Effect::Total) => true,
-            (crate::ty::Effect::Alloc, crate::ty::Effect::Alloc) => true,
+            (crate::ty::Effect::Io, crate::ty::Effect::Io) => true,
             (crate::ty::Effect::Nondet, crate::ty::Effect::Nondet) => true,
             (crate::ty::Effect::Exn(t1), crate::ty::Effect::Exn(t2)) => t1 == t2,
             (crate::ty::Effect::UserEffect(n1), crate::ty::Effect::UserEffect(n2)) => n1 == n2,
@@ -54,7 +66,7 @@ impl Checker {
         let raw = eff.name.join(".");
         let name = raw.to_lowercase();
         match name.as_str() {
-            "io" | "alloc" => Some(crate::ty::Effect::Alloc),
+            "io" => Some(crate::ty::Effect::Io),
             "exn" => {
                 if let Some(arg) = &eff.arg {
                     Some(crate::ty::Effect::Exn(Box::new(self.convert_type(arg))))
@@ -156,7 +168,7 @@ impl Checker {
         for effect in all_effects {
             let handled = match effect {
                 crate::ty::Effect::Total => self.handled_effects.contains(&"total".into()),
-                crate::ty::Effect::Alloc => self.handled_effects.contains(&"io".into()) || self.handled_effects.contains(&"alloc".into()),
+                crate::ty::Effect::Io => self.handled_effects.contains(&"io".into()),
                 crate::ty::Effect::Nondet => self.handled_effects.contains(&"nondet".into()),
                 crate::ty::Effect::Exn(_) => self.handled_effects.contains(&"exn".into()),
                 crate::ty::Effect::UserEffect(name) => self.handled_effects.contains(name),

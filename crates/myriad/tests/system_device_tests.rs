@@ -57,7 +57,7 @@ fn run_bytecode(code: Vec<OpCode>, constants: Vec<u64>, reg_count: usize) -> Res
         src_file: String::new(),
             code, constants,
             const_mask: Vec::new(),
-            string_constants: Vec::new(),
+            string_constants: Vec::new(), bytes_constants: Vec::new(),
             reg_count, param_count: 0,
             lines: vec![],
         })],

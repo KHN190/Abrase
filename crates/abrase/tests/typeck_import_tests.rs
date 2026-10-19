@@ -1169,3 +1169,27 @@ fn verify_import_collision_between_two_imports_reports_error() {
     assert!(!checker.errors.is_empty(),
         "importing 'Bar' from two different modules must produce an error");
 }
+
+fn compile_errors(src: &str) -> Vec<String> {
+    use abrase::compiler::Compiler;
+    use abrase::lexer::Lexer;
+    use abrase::parser::Parser;
+    let mut p = Parser::new(Lexer::new(src)).with_source(src.into());
+    let ast = p.parse_program();
+    assert!(p.errors.is_empty(), "parse: {:?}", p.errors);
+    match Compiler::new().with_source(src.into()).compile_module(&ast) {
+        Ok(_) => vec![],
+        Err(es) => es.into_iter().map(|e| e.message).collect(),
+    }
+}
+
+#[test]
+fn single_file_use_of_unloaded_module_is_an_error() {
+    let e = compile_errors("use math::{PI}; fn main() -> Int { 0 }");
+    assert!(e.iter().any(|m| m.contains("unresolved import")), "got: {:?}", e);
+}
+
+#[test]
+fn program_without_use_still_compiles() {
+    assert!(compile_errors("fn main() -> Int { 0 }").is_empty());
+}

@@ -398,7 +398,10 @@ impl Compiler {
         let mut staged: Vec<(Register, bool)> = Vec::new();
         for arg in args {
             let r = self.compile_expr(arg)?;
-            let mv = if borrows { false } else { self.arg_should_move(arg) };
+            // A read-only native borrows a surviving view (variable / container
+            // projection) but must consume a fresh owned temporary (call/literal
+            // result), else the temp's rc is never reclaimed → handle leak.
+            let mv = if borrows { Self::readonly_owned_temp(arg) } else { self.arg_should_move(arg) };
             staged.push((r, mv));
         }
         self.stage_call_args(&staged)?;
@@ -474,6 +477,14 @@ impl Compiler {
         Ok(dummy)
     }
 
+    fn readonly_owned_temp(arg: &ast::Spanned<ast::Expr>) -> bool {
+        match &arg.node {
+            ast::Expr::Identifier(_) | ast::Expr::Index { .. } | ast::Expr::FieldAccess { .. } => false,
+            ast::Expr::Paren(inner) => Self::readonly_owned_temp(inner),
+            _ => true,
+        }
+    }
+
     fn native_borrows_args(&self, func_id: u16) -> bool {
         matches!(self.functions.get(func_id as usize),
             Some(crate::bytecode::Chunk::Native(n)) if self.read_only_natives.contains(&n.name))
@@ -497,7 +508,8 @@ impl Compiler {
             // A bare top-level fn used as a value is a fresh [fn_id, env] cell
             // (compile_identifier builds one) — move it, don't alias.
             None if !self.var_to_reg.contains_key(name)
-                && self.fn_value_adapters.contains_key(name) => true,
+                && (self.fn_value_adapters.contains_key(name)
+                    || self.layouts.variants.contains_key(name)) => true,
             _ => false,
         }
     }

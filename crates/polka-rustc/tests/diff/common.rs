@@ -60,7 +60,7 @@ pub fn chunk(code: Vec<OpCode>, constants: Vec<u64>, reg_count: usize) -> Byteco
     BytecodeChunk {
         code, constants,
         const_mask: Vec::new(),
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
         reg_count, param_count: 0,
         lines: Vec::new(),
         src_file: String::new(),
@@ -71,7 +71,7 @@ pub fn fn_chunk(code: Vec<OpCode>, constants: Vec<u64>, reg_count: usize, param_
     Chunk::Bytecode(BytecodeChunk {
         code, constants,
         const_mask: Vec::new(),
-        string_constants: Vec::new(),
+        string_constants: Vec::new(), bytes_constants: Vec::new(),
         reg_count, param_count,
         lines: Vec::new(),
         src_file: String::new(),
@@ -82,7 +82,7 @@ pub fn str_const_chunk(code: Vec<OpCode>, constants: Vec<u64>, const_mask: Vec<u
                        strings: Vec<String>, reg_count: usize, param_count: usize) -> Chunk {
     Chunk::Bytecode(BytecodeChunk {
         code, constants, const_mask,
-        string_constants: strings,
+        string_constants: strings, bytes_constants: Vec::new(),
         reg_count, param_count,
         lines: Vec::new(), src_file: String::new(),
     })
@@ -218,7 +218,7 @@ pub fn assert_same_module(functions: Vec<Chunk>, entry: usize) {
 
 pub fn assert_same_flags(code: Vec<OpCode>, constants: Vec<u64>, reg_count: usize, flags: u16) {
     let main = BytecodeChunk {
-        code, constants, const_mask: Vec::new(), string_constants: Vec::new(),
+        code, constants, const_mask: Vec::new(), string_constants: Vec::new(), bytes_constants: Vec::new(),
         reg_count, param_count: 0, lines: Vec::new(), src_file: String::new(),
     };
     let module = Module { functions: vec![Chunk::Bytecode(main)], entry: 0, flags, exports: vec![] };

@@ -224,7 +224,7 @@ impl Compiler {
                 self.add_constant(Value::from_int(*n))?
             }
             ast::Literal::Float(f)  => {
-                let v = if self.int32_mode { Value::from_float_f32(*f) } else { Value::from_float(*f) };
+                let v = Value::from_raw(polka::encode_float(*f, self.int32_mode));
                 self.add_constant(v)?
             }
             ast::Literal::Bool(b)   => self.add_constant(Value::from_bool(*b))?,
