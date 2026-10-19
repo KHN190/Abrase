@@ -150,6 +150,7 @@ impl Compiler {
         for i in (0..len).rev() {
             match &self.code[i] {
                 OpCode::Alloc(d, _) if *d == old => { alloc_pos = Some(i); break; }
+                OpCode::Jmp(_) | OpCode::Jz(_, _) | OpCode::Jnz(_, _) => return false,
                 OpCode::St(v, b, _) => {
                     if *v == old { return false; }
                     if *b != old { if op_reads_reg(&self.code[i], old) { return false; } }
