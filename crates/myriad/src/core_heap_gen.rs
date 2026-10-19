@@ -910,7 +910,7 @@ if r3 == 0 { __lbl = 8; } else { __lbl = 6; }
 match __lbl {
 6 => {
 r6 = 0u64; 
-__lbl = 103;
+__lbl = 105;
 }
 8 => {
 r7 = 18446744073709551615u64; r8 = 16u64; r27 = r8; r8 = f47(arena, &[r27])?; r27 = r8; r8 = u64::MAX; r8 = core_peek(arena, r27, 8)?; r9 = 18446744073709551615u64; r10 = 0u64; 
@@ -952,25 +952,25 @@ __lbl = 71;
 }
 _ => {}
 }
-r22 = 0u64; r23 = 57601u64; 
+r15 = 0u64; r16 = 57601u64; 
 continue 'l0;
 break 'l0;
 }
 r10 = 0u64; r11 = if (r9 as i64) < (r10 as i64) { 1 } else { 0 }; 
-if r11 == 0 { __lbl = 83; } else { __lbl = 78; }
+if r11 == 0 { __lbl = 85; } else { __lbl = 80; }
 match __lbl {
-78 => {
+80 => {
 r27 = r0; r13 = f62(arena, &[r27])?; r12 = r13; 
-__lbl = 99;
+__lbl = 101;
 }
-83 => {
+85 => {
 r27 = r9; r28 = r0; r13 = f60(arena, &[r27, r28])?; r13 = (r9 as i64).wrapping_add(4) as u64; r27 = r13; r13 = u64::MAX; r13 = f47(arena, &[r27])?; r27 = r13; r13 = u64::MAX; r13 = core_peek(arena, r27, 4)?; r27 = r9; r28 = r13; r13 = u64::MAX; r13 = f51(arena, &[r27, r28])?; r12 = r13; 
-__lbl = 99;
+__lbl = 101;
 }
 _ => {}
 }
 r6 = r12; 
-__lbl = 103;
+__lbl = 105;
 }
 _ => {}
 }

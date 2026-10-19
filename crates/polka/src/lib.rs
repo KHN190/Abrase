@@ -8,7 +8,7 @@ use alloc::{string::String, vec::Vec};
 pub mod value;
 pub mod cartridge;
 
-pub use value::{Value, HANDLE_NONE, HANDLE_SLOT_MAX};
+pub use value::{Value, HANDLE_NONE, HANDLE_SLOT_MAX, decode_float, encode_float};
 
 pub const FRAME_REGS: usize = 128;
 pub const FRAME_MASK_WORDS: usize = (FRAME_REGS + 63) / 64;

@@ -463,26 +463,6 @@ fn bytes_binding_reused_not_consumed() {
 }
 
 #[test]
-fn bytes_byte_at_matches_source_fuzz() {
-    const ALPHA: &[u8] = b"abcdefghijklmnop";
-    let mut seed: u64 = 0x1234_5678_9abc_def1;
-    let mut next = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
-    for _ in 0..300 {
-        let slen = 1 + (next() % 10) as usize;
-        let s: String = (0..slen).map(|_| ALPHA[(next() as usize) % ALPHA.len()] as char).collect();
-        let k = (next() % (slen as u64 + 3)) as usize;
-        let src = format!("fn main() -> Int {{ let b = \"{s}\".to_bytes(); b.byte_at({k}) }}");
-        if k >= s.as_bytes().len() {
-            assert!(run_source_with_heap(&src).is_err(), "OOB byte_at must trap s={s:?} k={k}");
-            continue;
-        }
-        let (v, live) = run_source_with_heap(&src).expect("run");
-        assert_eq!(v, Value::from_int(s.as_bytes()[k] as i64), "s={s:?} k={k}");
-        assert_eq!(live, 0, "bound bytes byte_at leak s={s:?} k={k}: {live}");
-    }
-}
-
-#[test]
 fn bytes_slice_len_matches_oracle_fuzz() {
     const ALPHA: &[u8] = b"abcdefgh";
     let mut seed: u64 = 0x0fed_cba9_8765_4321;

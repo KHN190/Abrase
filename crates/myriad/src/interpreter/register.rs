@@ -125,20 +125,12 @@ impl VirtualMachine {
     #[inline(always)]
     pub(crate) fn read_f64(&self, r: Register) -> Result<f64, String> {
         let raw = self.read_raw(r)?;
-        if self.int32_safe {
-            Ok(f32::from_bits(raw as u32) as f64)
-        } else {
-            Ok(f64::from_bits(raw))
-        }
+        Ok(polka::decode_float(raw, self.int32_safe))
     }
 
     #[inline(always)]
     pub(crate) fn narrow_float_bits(&self, v: f64) -> u64 {
-        if self.int32_safe {
-            (v as f32).to_bits() as u64
-        } else {
-            v.to_bits()
-        }
+        polka::encode_float(v, self.int32_safe)
     }
 
     #[inline(always)]

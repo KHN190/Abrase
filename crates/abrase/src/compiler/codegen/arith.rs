@@ -4,7 +4,6 @@ use crate::ast;
 use crate::bytecode::{OpCode, Register};
 use crate::compiler::Compiler;
 use crate::bytecode::Value;
-use super::is_move_type;
 
 impl Compiler {
     pub(in crate::compiler) fn compile_unary(
@@ -60,7 +59,7 @@ impl Compiler {
                 }
                 if let ast::Expr::Literal(ast::Literal::Float(f)) = &right.node {
                     let v = -f;
-                    let encoded = if self.int32_mode { Value::from_float_f32(v) } else { Value::from_float(v) };
+                    let encoded = Value::from_raw(polka::encode_float(v, self.int32_mode));
                     let reg = self.alloc_register()?;
                     let idx = self.add_constant(encoded)?;
                     self.emit(OpCode::PushConst(reg, idx));
@@ -109,24 +108,15 @@ impl Compiler {
                         }
                         let rr = self.compile_expr(right)?;
                         let ty = self.var_types.get(name).cloned();
-                        let is_heap = ty.as_ref().map(is_move_type).unwrap_or(false);
+                        let is_heap = !ty.as_ref().map(super::data::type_is_unboxed).unwrap_or(false);
                         if self.cell_bindings.contains(name) {
                             let cell = *self.var_to_reg.get(name)
                                 .ok_or_else(|| format!("cell binding '{}' missing register", name))?;
-                            if is_heap {
-                                let old = self.alloc_register()?;
-                                self.emit(OpCode::Ld(old, cell, 0));
-                                self.emit(OpCode::Drop(old));
-                            }
+                            self.emit_store_escape(rr, ty.as_ref())?;
                             self.emit(OpCode::St(rr, cell, 0));
                             return Ok(rr);
                         }
-                        let bound_depth = self.var_bound_at_region.get(name).copied().unwrap_or(0);
-                        if is_heap && bound_depth < self.compiler_region_depth {
-                            if let Some(t) = ty.as_ref() {
-                                self.emit_region_forget_typed(rr, t)?;
-                            }
-                        }
+                        self.emit_store_escape(rr, ty.as_ref())?;
                         let dest_reg = match self.var_to_reg.get(name).copied() {
                             Some(r) => {
                                 if is_heap { self.emit(OpCode::Drop(r)); }
@@ -147,23 +137,8 @@ impl Compiler {
                         let arr_reg = self.compile_expr(base)?;
                         let idx_reg = self.compile_expr(index)?;
                         let val_reg = self.compile_expr(right)?;
-                        // If the value is a heap type and the array outlives the current
-                        // region, the value must be forgotten from the region before
-                        // the store — otherwise region_pop will force_free a slot that
-                        // is still referenced by the (longer-lived) array.
-                        if self.compiler_region_depth > 0 {
-                            let val_ty = self.infer_expr_type(right);
-                            if val_ty.as_ref().map(super::data::type_is_unboxed).map(|u| !u).unwrap_or(false)
-                                && val_ty.as_ref().map(super::is_move_type).unwrap_or(false)
-                                && self.base_outlives_current_region(base)
-                            {
-                                if let Some(ty) = val_ty.as_ref() {
-                                    self.emit_region_forget_typed(val_reg, ty)?;
-                                } else {
-                                    self.emit_region_forget(val_reg)?;
-                                }
-                            }
-                        }
+                        let val_ty = self.infer_expr_type(right);
+                        self.emit_store_escape(val_reg, val_ty.as_ref())?;
                         let want_move = self.arg_should_move(right);
                         let store_src = if want_move {
                             val_reg
@@ -204,20 +179,7 @@ impl Compiler {
                         };
                         let val_reg = self.compile_expr(right)?;
                         let base_reg = self.compile_expr(base)?;
-                        let field_is_heap = field_ty.as_ref().map(is_move_type).unwrap_or(false);
-                        if field_is_heap {
-                            let old = self.alloc_register()?;
-                            self.emit(OpCode::Ld(old, base_reg, offset));
-                            self.emit(OpCode::Drop(old));
-                            // Same region-escape check as for Index assignment.
-                            if self.compiler_region_depth > 0 && self.base_outlives_current_region(base) {
-                                if let Some(ty) = field_ty.as_ref() {
-                                    self.emit_region_forget_typed(val_reg, ty)?;
-                                } else {
-                                    self.emit_region_forget(val_reg)?;
-                                }
-                            }
-                        }
+                        self.emit_store_escape(val_reg, field_ty.as_ref())?;
                         let want_move = self.arg_should_move(right);
                         self.emit_store_field(val_reg, want_move, base_reg, offset)?;
                         Ok(val_reg)
@@ -361,23 +323,14 @@ impl Compiler {
 }
 
 impl Compiler {
-    /// Returns true if the expression refers to a container (array, record)
-    /// whose lifetime exceeds the current compiler region depth.
-    /// Used to decide whether a heap value stored into the container must be
-    /// forgotten from the region to avoid force-free on region pop.
-    pub(in crate::compiler) fn base_outlives_current_region(
-        &self,
-        base: &ast::Spanned<ast::Expr>,
-    ) -> bool {
-        match &base.node {
-            ast::Expr::Identifier(name) => {
-                if self.resolve_static_offset(name).is_some() { return true; }
-                let bound = self.var_bound_at_region.get(name).copied().unwrap_or(0);
-                bound < self.compiler_region_depth
-            }
-            ast::Expr::Index { base: inner, .. } => self.base_outlives_current_region(inner),
-            ast::Expr::FieldAccess { base: inner, .. } => self.base_outlives_current_region(inner),
-            _ => false,
+    pub(in crate::compiler) fn emit_store_escape(
+        &mut self,
+        val: Register,
+        ty: Option<&ast::Type>,
+    ) -> Result<(), String> {
+        match ty {
+            Some(t) => self.emit_region_forget_typed(val, t),
+            None => self.emit_region_forget(val),
         }
     }
 }

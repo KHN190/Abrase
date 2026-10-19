@@ -143,7 +143,7 @@ impl Compiler {
         };
         checker.insert_var("device_out".into(), device_out_ty, false, ast::Span::new(0, 0));
 
-        self.register_builtin_effects(checker);
+        self.register_core_intrinsic_effects(checker);
 
         for decl in self.host_fns.values() {
             for item in &decl.effects {
@@ -274,28 +274,7 @@ impl Compiler {
         }
     }
 
-    fn register_builtin_effects(&self, checker: &mut crate::typeck::Checker) {
-        // IO/nondet are runtime-dischargeable capabilities, so a `@cart main` may
-        // name them; the natives that produce them (now/rand/...) are host-provided
-        // via `register_host_fn`, uncallable in the base compiler without a host.
-        checker.register_native_capability(crate::ty::Effect::Io);
-        checker.register_native_capability(crate::ty::Effect::Nondet);
-
-        // `frame` is the @cart yield mechanism the core itself drives.
-        checker.register_effect("frame".into(), vec!["present".into()]);
-        checker.register_native_capability(crate::ty::Effect::UserEffect("frame".into()));
-        checker.register_effect_op(
-            "frame::present".into(),
-            crate::ty::Type::Function {
-                params: vec![],
-                ret: Box::new(crate::ty::Type::Unit),
-                effects: vec![],
-            },
-        );
-        // `<core>` is abrase's `unsafe`: raw-memory intrinsics produce it. Declared
-        // here so it propagates, but NOT a native capability — a normal cart that
-        // reaches it stays impure and fails. Only core-lib compilation provides it.
-        checker.register_effect("core".into(), vec![]);
+    fn register_core_intrinsic_effects(&self, checker: &mut crate::typeck::Checker) {
         let core = vec![ast::EffectItem { name: vec!["core".into()], arg: None }];
         for (name, _, _) in Self::core_intrinsic_sigs() {
             checker.register_function_effects_no_capability(name.to_string(), core.clone());

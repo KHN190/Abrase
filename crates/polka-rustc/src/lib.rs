@@ -106,14 +106,14 @@ fn call_stmt(dest: Register, fn_id: usize, next: isize, ctx: &Ctx) -> Result<Str
     ))
 }
 
-fn rf(r: Register, i32s: bool) -> String {
-    if i32s { format!("f32::from_bits({} as u32) as f64", reg(r)) }
-    else { format!("f64::from_bits({})", reg(r)) }
+pub(crate) fn fdec(expr: &str, i32s: bool) -> String {
+    format!("myriad::decode_float({}, {})", expr, i32s)
 }
-fn narrowf(expr: String, i32s: bool) -> String {
-    if i32s { format!("(({}) as f32).to_bits() as u64", expr) }
-    else { format!("({}).to_bits()", expr) }
+pub(crate) fn fenc(expr: &str, i32s: bool) -> String {
+    format!("myriad::encode_float({}, {})", expr, i32s)
 }
+fn rf(r: Register, i32s: bool) -> String { fdec(&reg(r), i32s) }
+fn narrowf(expr: String, i32s: bool) -> String { fenc(&expr, i32s) }
 fn fbin(d: Register, a: Register, b: Register, op: &str, next: isize, i32s: bool) -> String {
     scalar(d, narrowf(format!("{} {} {}", rf(a, i32s), op, rf(b, i32s)), i32s), next)
 }
@@ -368,7 +368,7 @@ fn emit_fns(out: &mut String, module: &Module) -> Result<(), TranspileError> {
         let fn_cart = if idx == module.entry { cart } else { None };
         match chunk {
             Chunk::Bytecode(bc) => emit_function(out, idx, bc, &param_counts, &is_native, int32_safe, fn_cart)?,
-            Chunk::Native(n) => hybrid::emit_native_fn(out, idx, &n.name),
+            Chunk::Native(n) => hybrid::emit_native_fn(out, idx, &n.name, int32_safe),
         }
     }
     Ok(())
@@ -434,7 +434,7 @@ fn emit_native(module: &Module) -> Result<String, TranspileError> {
     let _ = writeln!(out, "fn main() {{");
     let _ = writeln!(out, "    use std::io::Write;");
     let _ = writeln!(out, "    let mut h = myriad::Heap::new();");
-    let _ = writeln!(out, "    let mut host = myriad::AotHost::new();");
+    let _ = writeln!(out, "    let mut host = myriad::AotHost::new().with_int32({});", (module.flags & polka::CART_FLAG_INT32_SAFE) != 0);
     let _ = writeln!(out, "    let r = run(&mut h, &mut host);");
     let _ = writeln!(out, "    let _ = std::io::stdout().write_all(&host.take_stdout());");
     let _ = writeln!(out, "    match r {{");
@@ -466,7 +466,7 @@ pub fn transpile_batch(modules: &[&Module]) -> Result<String, TranspileError> {
     }
     let _ = writeln!(out, "fn main() {{");
     for i in 0..modules.len() {
-        let _ = writeln!(out, "    {{ let mut h = myriad::Heap::new(); let mut host = myriad::AotHost::new();");
+        let _ = writeln!(out, "    {{ let mut h = myriad::Heap::new(); let mut host = myriad::AotHost::new().with_int32({});", (modules[i].flags & polka::CART_FLAG_INT32_SAFE) != 0);
         let _ = writeln!(out, "      match p{}::run(&mut h, &mut host) {{ Ok((v, live)) => println!(\"{} OK {{}} {{}}\", v, live), Err(e) => println!(\"{} ERR {{}}\", e) }} }}", i, i, i);
     }
     let _ = writeln!(out, "}}");

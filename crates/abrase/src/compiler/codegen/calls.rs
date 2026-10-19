@@ -508,7 +508,8 @@ impl Compiler {
             // A bare top-level fn used as a value is a fresh [fn_id, env] cell
             // (compile_identifier builds one) — move it, don't alias.
             None if !self.var_to_reg.contains_key(name)
-                && self.fn_value_adapters.contains_key(name) => true,
+                && (self.fn_value_adapters.contains_key(name)
+                    || self.layouts.variants.contains_key(name)) => true,
             _ => false,
         }
     }

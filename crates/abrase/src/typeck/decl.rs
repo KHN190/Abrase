@@ -59,8 +59,7 @@ impl Checker {
                 if fn_decl.name == "main" {
                     if is_cart {
                         let bad: Vec<_> = fn_decl.effects.iter()
-                            .filter(|e| e.name != ["frame"]
-                                && !self.convert_effect(e)
+                            .filter(|e| !self.convert_effect(e)
                                     .map_or(false, |eff| self.is_native_capability(&eff)))
                             .collect();
                         if !bad.is_empty() {

@@ -9,6 +9,18 @@ impl Checker {
         self.effect_registry.insert(name, operations);
     }
 
+    pub fn register_core_effects(&mut self) {
+        self.register_native_capability(crate::ty::Effect::Io);
+        self.register_native_capability(crate::ty::Effect::Nondet);
+        self.register_effect("frame".into(), vec!["present".into()]);
+        self.register_native_capability(crate::ty::Effect::UserEffect("frame".into()));
+        self.register_effect_op(
+            "frame::present".into(),
+            Type::Function { params: vec![], ret: Box::new(Type::Unit), effects: vec![] },
+        );
+        self.register_effect("core".into(), vec![]);
+    }
+
     pub fn register_effect_op(&mut self, key: String, ty: Type) {
         self.effect_ops_registry.insert(key, ty);
     }

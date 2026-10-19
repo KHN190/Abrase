@@ -25,6 +25,15 @@ pub struct NativeCtx<'a> {
     pub core_arena: &'a mut CoreArena,
     pub halted: &'a mut bool,
     pub exit_code: &'a mut Option<i64>,
+    pub int32_safe: bool,
+}
+
+impl<'a> NativeCtx<'a> {
+    #[inline(always)]
+    pub fn float(&self, v: Value) -> f64 { polka::decode_float(v.raw(), self.int32_safe) }
+
+    #[inline(always)]
+    pub fn float_value(&self, f: f64) -> Value { Value::from_raw(polka::encode_float(f, self.int32_safe)) }
 }
 
 // (raw, is_handle) — interpreter updates caller's frame mask bit accordingly.
@@ -282,34 +291,34 @@ fn min_native() -> NativeFn {
 }
 
 fn float_abs_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::abs(args[0].as_float())))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::abs(ctx.float(args[0]))))))
 }
 
 fn float_max_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::fmax(args[0].as_float(), args[1].as_float())))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::fmax(ctx.float(args[0]), ctx.float(args[1]))))))
 }
 
 fn float_min_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::fmin(args[0].as_float(), args[1].as_float())))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::fmin(ctx.float(args[0]), ctx.float(args[1]))))))
 }
 
 fn int_to_f_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(args[0].as_int() as f64))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_value(args[0].as_int() as f64))))
 }
 
 fn char_to_f_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
+    Rc::new(|ctx, args| {
         let c = args[0].as_char().ok_or_else(|| format!("__char_to_f: arg0 not Char: {:?}", args[0]))?;
-        Ok(plain(Value::from_float(c as u32 as f64)))
+        Ok(plain(ctx.float_value(c as u32 as f64)))
     })
 }
 
 fn bool_to_f_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(if args[0].as_bool() { 1.0 } else { 0.0 }))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_value(if args[0].as_bool() { 1.0 } else { 0.0 }))))
 }
 
 fn float_to_i_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_int(args[0].as_float() as i64))))
+    Rc::new(|ctx, args| Ok(plain(Value::from_int(ctx.float(args[0]) as i64))))
 }
 
 fn char_to_i_native() -> NativeFn {
@@ -341,7 +350,7 @@ fn int_to_s_native() -> NativeFn {
 
 fn float_to_s_native() -> NativeFn {
     Rc::new(|ctx, args| {
-        let v = alloc_string(ctx.heap, &args[0].as_float().to_string())?;
+        let v = alloc_string(ctx.heap, &ctx.float(args[0]).to_string())?;
         Ok(handle(v))
     })
 }
@@ -479,13 +488,13 @@ fn unit_to_s_native() -> NativeFn {
 }
 
 fn ceil_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::ceil(args[0].as_float())))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::ceil(ctx.float(args[0]))))))
 }
 
 fn flr_native() -> NativeFn {
-    Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::floor(args[0].as_float())))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::floor(ctx.float(args[0]))))))
 }
 
-fn cos_native()  -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::cos(args[0].as_float()))))) }
-fn sin_native()  -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::sin(args[0].as_float()))))) }
-fn sqrt_native() -> NativeFn { Rc::new(|_ctx, args| Ok(plain(Value::from_float(fmath::sqrt(args[0].as_float()))))) }
+fn cos_native()  -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::cos(ctx.float(args[0])))))) }
+fn sin_native()  -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::sin(ctx.float(args[0])))))) }
+fn sqrt_native() -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::sqrt(ctx.float(args[0])))))) }

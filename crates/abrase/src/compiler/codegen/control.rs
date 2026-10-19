@@ -105,7 +105,7 @@ impl Compiler {
         });
 
         let body_start = self.code.len();
-        self.compile_block(&filtered_body)?;
+        self.compile_loop_body(&filtered_body)?;
         if !regioned && self.body_records_alloc(body_start) {
             return Err("internal: region elided over an allocating loop body".to_string());
         }
@@ -261,7 +261,7 @@ impl Compiler {
         });
 
         let body_start = self.code.len();
-        self.compile_block(body)?;
+        self.compile_loop_body(body)?;
         if !regioned && self.body_records_alloc(body_start) {
             return Err("internal: region elided over an allocating loop body".to_string());
         }
@@ -455,7 +455,7 @@ impl Compiler {
             self.var_types.insert(name.clone(), ast::Type::Named("Int".into()));
         }
 
-        self.compile_block(body)?;
+        self.compile_loop_body(body)?;
 
         if let ast::Pattern::Bind(name) = &pattern.node {
             self.var_to_reg.remove(name);
@@ -488,6 +488,13 @@ impl Compiler {
         }
 
         Ok(result_reg)
+    }
+
+    fn compile_loop_body(&mut self, body: &ast::Block) -> Result<(), String> {
+        let mark = self.snapshot_register_high_water();
+        self.compile_block(body)?;
+        self.reclaim_temp_regs_above(mark);
+        Ok(())
     }
 
     pub(in crate::compiler) fn compile_return(

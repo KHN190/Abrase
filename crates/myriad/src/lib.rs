@@ -21,7 +21,7 @@ pub mod host;
 pub mod snapshot;
 pub mod aot;
 
-pub use polka::{Value, HANDLE_NONE};
+pub use polka::{Value, HANDLE_NONE, decode_float, encode_float};
 pub use polka::cartridge::read_pk;
 pub use value::{alloc_string, read_string, alloc_bytes, read_bytes};
 pub use devices::{Device, DeviceTable};

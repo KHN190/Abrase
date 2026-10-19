@@ -16,48 +16,54 @@ fn pure_op(op: &OpCode) -> bool {
         | Jmp(..) | Jz(..) | Jnz(..) | Call(..) | Ret(..))
 }
 
-pub(crate) fn inline_native_math(name: &str) -> Option<&'static str> {
+pub(crate) fn inline_native_math(name: &str, i32s: bool) -> Option<String> {
+    use crate::{fdec, fenc};
+    let a0 = fdec("a[0]", i32s);
+    let a1 = fdec("a[1]", i32s);
+    let unary = |f: &str| fenc(&format!("myriad::builtins::fmath::{}({})", f, a0), i32s);
+    let binary = |f: &str| fenc(&format!("myriad::builtins::fmath::{}({}, {})", f, a0, a1), i32s);
     Some(match name {
-        "sqrt" => "myriad::builtins::fmath::sqrt(f64::from_bits(a[0])).to_bits()",
-        "sin" => "myriad::builtins::fmath::sin(f64::from_bits(a[0])).to_bits()",
-        "cos" => "myriad::builtins::fmath::cos(f64::from_bits(a[0])).to_bits()",
-        "flr" => "myriad::builtins::fmath::floor(f64::from_bits(a[0])).to_bits()",
-        "ceil" => "myriad::builtins::fmath::ceil(f64::from_bits(a[0])).to_bits()",
-        "__float_abs" => "myriad::builtins::fmath::abs(f64::from_bits(a[0])).to_bits()",
-        "__float_max" => "myriad::builtins::fmath::fmax(f64::from_bits(a[0]), f64::from_bits(a[1])).to_bits()",
-        "__float_min" => "myriad::builtins::fmath::fmin(f64::from_bits(a[0]), f64::from_bits(a[1])).to_bits()",
-        "__int_abs" => "(a[0] as i64).wrapping_abs() as u64",
-        "__int_max" => "(a[0] as i64).max(a[1] as i64) as u64",
-        "__int_min" => "(a[0] as i64).min(a[1] as i64) as u64",
-        "__int_to_f" => "((a[0] as i64) as f64).to_bits()",
-        "__float_to_i" => "(f64::from_bits(a[0]) as i64) as u64",
+        "sqrt" => unary("sqrt"),
+        "sin" => unary("sin"),
+        "cos" => unary("cos"),
+        "flr" => unary("floor"),
+        "ceil" => unary("ceil"),
+        "__float_abs" => unary("abs"),
+        "__float_max" => binary("fmax"),
+        "__float_min" => binary("fmin"),
+        "__int_abs" => "(a[0] as i64).wrapping_abs() as u64".to_string(),
+        "__int_max" => "(a[0] as i64).max(a[1] as i64) as u64".to_string(),
+        "__int_min" => "(a[0] as i64).min(a[1] as i64) as u64".to_string(),
+        "__int_to_f" => fenc("(a[0] as i64) as f64", i32s),
+        "__float_to_i" => format!("({} as i64) as u64", a0),
         _ => return None,
     })
 }
 
-pub(crate) fn inline_native_str(name: &str) -> Option<&'static str> {
+pub(crate) fn inline_native_str(name: &str, i32s: bool) -> Option<String> {
+    let a0f = crate::fdec("a[0]", i32s);
     Some(match name {
-        "__int_to_s" => "let v = myriad::alloc_string(h, &(a[0] as i64).to_string())?; Ok((v.raw(), true))",
-        "__float_to_s" => "let v = myriad::alloc_string(h, &f64::from_bits(a[0]).to_string())?; Ok((v.raw(), true))",
-        "__bool_to_s" => "let v = myriad::alloc_string(h, &(a[0] != 0).to_string())?; Ok((v.raw(), true))",
-        "__unit_to_s" => "let v = myriad::alloc_string(h, \"()\")?; Ok((v.raw(), true))",
-        "__char_to_s" => "let c = char::from_u32(a[0] as u32).ok_or_else(|| \"__char_to_s: bad codepoint\".to_string())?; let v = myriad::alloc_string(h, &c.to_string())?; Ok((v.raw(), true))",
-        "__str_len" => "Ok((myriad::read_string(h, myriad::Value::from_raw(a[0])).map(|s| s.len()).unwrap_or(0) as u64, false))",
-        "__bytes_len" => "Ok((myriad::read_bytes(h, myriad::Value::from_raw(a[0])).map(|b| b.len()).unwrap_or(0) as u64, false))",
-        "__str_byte_at" => "let i = a[1] as i64; let s = myriad::read_string(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let by = s.as_bytes(); if i < 0 || i as usize >= by.len() { return Err(format!(\"byte_at: index {} out of bounds for length {}\", i, by.len())); } Ok((by[i as usize] as u64, false))",
-        "__bytes_byte_at" => "let i = a[1] as i64; let b = myriad::read_bytes(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); if i < 0 || i as usize >= b.len() { return Err(format!(\"byte_at: index {} out of bounds for length {}\", i, b.len())); } Ok((b[i as usize] as u64, false))",
-        "__str_eq" => "let x = myriad::read_string(h, myriad::Value::from_raw(a[0])); let y = myriad::read_string(h, myriad::Value::from_raw(a[1])); Ok((if x == y { 1 } else { 0 }, false))",
-        "__str_to_bytes" => "let b = myriad::read_bytes(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let v = myriad::alloc_bytes(h, &b)?; Ok((v.raw(), true))",
-        "__str_slice" => "let s = myriad::read_string(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let by = s.as_bytes(); let off = a[1] as i64; let len = a[2] as i64; let start = off.max(0).min(by.len() as i64) as usize; let take = len.max(0) as usize; let end = start.saturating_add(take).min(by.len()); let out = String::from_utf8_lossy(&by[start..end]); let v = myriad::alloc_string(h, &out)?; Ok((v.raw(), true))",
-        "__bytes_slice" => "let b = myriad::read_bytes(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let off = a[1] as i64; let len = a[2] as i64; let start = off.max(0).min(b.len() as i64) as usize; let take = len.max(0) as usize; let end = start.saturating_add(take).min(b.len()); let v = myriad::alloc_bytes(h, &b[start..end])?; Ok((v.raw(), true))",
+        "__int_to_s" => "let v = myriad::alloc_string(h, &(a[0] as i64).to_string())?; Ok((v.raw(), true))".to_string(),
+        "__float_to_s" => return Some(format!("let v = myriad::alloc_string(h, &({}).to_string())?; Ok((v.raw(), true))", a0f)),
+        "__bool_to_s" => "let v = myriad::alloc_string(h, &(a[0] != 0).to_string())?; Ok((v.raw(), true))".to_string(),
+        "__unit_to_s" => "let v = myriad::alloc_string(h, \"()\")?; Ok((v.raw(), true))".to_string(),
+        "__char_to_s" => "let c = char::from_u32(a[0] as u32).ok_or_else(|| \"__char_to_s: bad codepoint\".to_string())?; let v = myriad::alloc_string(h, &c.to_string())?; Ok((v.raw(), true))".to_string(),
+        "__str_len" => "Ok((myriad::read_string(h, myriad::Value::from_raw(a[0])).map(|s| s.len()).unwrap_or(0) as u64, false))".to_string(),
+        "__bytes_len" => "Ok((myriad::read_bytes(h, myriad::Value::from_raw(a[0])).map(|b| b.len()).unwrap_or(0) as u64, false))".to_string(),
+        "__str_byte_at" => "let i = a[1] as i64; let s = myriad::read_string(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let by = s.as_bytes(); if i < 0 || i as usize >= by.len() { return Err(format!(\"byte_at: index {} out of bounds for length {}\", i, by.len())); } Ok((by[i as usize] as u64, false))".to_string(),
+        "__bytes_byte_at" => "let i = a[1] as i64; let b = myriad::read_bytes(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); if i < 0 || i as usize >= b.len() { return Err(format!(\"byte_at: index {} out of bounds for length {}\", i, b.len())); } Ok((b[i as usize] as u64, false))".to_string(),
+        "__str_eq" => "let x = myriad::read_string(h, myriad::Value::from_raw(a[0])); let y = myriad::read_string(h, myriad::Value::from_raw(a[1])); Ok((if x == y { 1 } else { 0 }, false))".to_string(),
+        "__str_to_bytes" => "let b = myriad::read_bytes(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let v = myriad::alloc_bytes(h, &b)?; Ok((v.raw(), true))".to_string(),
+        "__str_slice" => "let s = myriad::read_string(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let by = s.as_bytes(); let off = a[1] as i64; let len = a[2] as i64; let start = off.max(0).min(by.len() as i64) as usize; let take = len.max(0) as usize; let end = start.saturating_add(take).min(by.len()); let out = String::from_utf8_lossy(&by[start..end]); let v = myriad::alloc_string(h, &out)?; Ok((v.raw(), true))".to_string(),
+        "__bytes_slice" => "let b = myriad::read_bytes(h, myriad::Value::from_raw(a[0])).unwrap_or_default(); let off = a[1] as i64; let len = a[2] as i64; let start = off.max(0).min(b.len() as i64) as usize; let take = len.max(0) as usize; let end = start.saturating_add(take).min(b.len()); let v = myriad::alloc_bytes(h, &b[start..end])?; Ok((v.raw(), true))".to_string(),
         _ => return None,
     })
 }
 
-pub(crate) fn emit_native_fn(out: &mut String, idx: usize, name: &str) {
-    if let Some(expr) = inline_native_math(name) {
+pub(crate) fn emit_native_fn(out: &mut String, idx: usize, name: &str, i32s: bool) {
+    if let Some(expr) = inline_native_math(name, i32s) {
         let _ = writeln!(out, "fn f{}(_h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ Ok(({}, false)) }}", idx, expr);
-    } else if let Some(body) = inline_native_str(name) {
+    } else if let Some(body) = inline_native_str(name, i32s) {
         let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, _host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ {} }}", idx, body);
     } else {
         let _ = writeln!(out, "fn f{}(h: &mut myriad::Heap, host: &mut dyn myriad::AotNatives, _rt: &mut myriad::RegionTable, _cs: &[Vec<u64>], _mt: &mut (u64, bool), a: &[u64], _ah: &[bool]) -> Result<(u64, bool), String> {{ let args: Vec<myriad::Value> = a.iter().map(|&x| myriad::Value::from_raw(x)).collect(); host.call({:?}, h, &args) }}", idx, name);
@@ -65,11 +71,11 @@ pub(crate) fn emit_native_fn(out: &mut String, idx: usize, name: &str) {
 }
 
 fn math_native(module: &Module, id: usize) -> bool {
-    matches!(&module.functions[id], Chunk::Native(n) if inline_native_math(&n.name).is_some())
+    matches!(&module.functions[id], Chunk::Native(n) if inline_native_math(&n.name, false).is_some())
 }
 
 fn str_native(module: &Module, id: usize) -> bool {
-    matches!(&module.functions[id], Chunk::Native(n) if inline_native_str(&n.name).is_some())
+    matches!(&module.functions[id], Chunk::Native(n) if inline_native_str(&n.name, false).is_some())
 }
 
 fn inlinable_native(module: &Module, id: usize) -> bool {
@@ -162,7 +168,7 @@ fn emit(module: &Module, lib: bool) -> Result<String, TranspileError> {
     for (i, e) in native_emit.iter().enumerate() {
         if !*e { continue; }
         if let Chunk::Native(n) = &module.functions[i] {
-            emit_native_fn(&mut out, i, &n.name);
+            emit_native_fn(&mut out, i, &n.name, int32_safe);
         }
     }
 
