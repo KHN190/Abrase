@@ -30,6 +30,7 @@ pub fn read_bytes(heap: &Heap, val: Value) -> Option<Vec<u8>> {
     let data = heap.cell_data(slot, gen_).ok()?;
     if data.is_empty() { return None; }
     let len = data[0] as usize;
+    if data[0] > usize::MAX as u64 || len > (data.len() - 1) * 8 { return None; }
     let mut out = Vec::with_capacity(len);
     let mut remaining = len;
     for i in 1..data.len() {
