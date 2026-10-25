@@ -35,7 +35,9 @@ pub(crate) fn decode_constant(raw: polka::Constant) -> Result<Word, &'static str
 
 pub mod fmath {
     pub fn sqrt(x: super::Float) -> super::Float { crate::math32::sqrt(x) }
+    #[inline]
     pub fn sin(x: super::Float) -> super::Float { crate::math32::sin(x) }
+    #[inline]
     pub fn cos(x: super::Float) -> super::Float { crate::math32::cos(x) }
     pub fn floor(x: super::Float) -> super::Float { libm::floorf(x) }
     pub fn ceil(x: super::Float) -> super::Float { libm::ceilf(x) }
