@@ -667,3 +667,165 @@ fn bytes_and_debug_sections_coexist() {
         assert_eq!(b.src_file, "sprite.abe");
     } else { panic!("expected bytecode chunk"); }
 }
+
+// Count allocator requests on this test thread; other parallel tests are unaffected.
+mod allocation_probe {
+    use std::{alloc::{GlobalAlloc, Layout, System}, cell::Cell};
+    #[derive(Clone, Copy, Default)]
+    pub struct Stats { pub largest: usize, pub calls: usize, pub fail_at: Option<usize> }
+    thread_local! { static ACTIVE: Cell<Option<Stats>> = const { Cell::new(None) }; }
+    pub struct Allocator;
+    fn denied(size: usize) -> bool {
+        ACTIVE.try_with(|state| {
+            let Some(mut stats) = state.get() else { return false; };
+            stats.calls += 1;
+            stats.largest = stats.largest.max(size);
+            let deny = stats.fail_at.is_some_and(|n| stats.calls >= n);
+            state.set(Some(stats));
+            deny
+        }).unwrap_or(false)
+    }
+    unsafe impl GlobalAlloc for Allocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            if denied(layout.size()) { return std::ptr::null_mut(); }
+            unsafe { System.alloc(layout) }
+        }
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            if denied(layout.size()) { return std::ptr::null_mut(); }
+            unsafe { System.alloc_zeroed(layout) }
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+            if denied(size) { return std::ptr::null_mut(); }
+            unsafe { System.realloc(ptr, layout, size) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) { unsafe { System.dealloc(ptr, layout) } }
+    }
+    pub fn measure<T>(fail_at: Option<usize>, f: impl FnOnce() -> T) -> (T, Stats) {
+        ACTIVE.with(|s| s.set(Some(Stats { fail_at, ..Stats::default() })));
+        let value = f();
+        let stats = ACTIVE.with(|s| s.take().unwrap());
+        (value, stats)
+    }
+}
+#[global_allocator]
+static ALLOCATION_PROBE: allocation_probe::Allocator = allocation_probe::Allocator;
+
+fn inflated_count_carts(count: u32) -> Vec<(Vec<u8>, bool)> {
+    let mut exports = write_pk(&Module { functions: vec![], entry: 0, flags: 0, exports: vec![] }).unwrap();
+    exports[16..20].copy_from_slice(&count.to_le_bytes());
+    let base = strip_trailing_debug(&write_pk(&mini_module()).unwrap());
+    let mut lines = base.clone();
+    lines.extend_from_slice(&0x3147_4244u32.to_le_bytes());
+    lines.extend_from_slice(&0u16.to_le_bytes());
+    lines.extend_from_slice(&u16::MAX.to_le_bytes());
+    lines.extend_from_slice(&count.to_le_bytes());
+    let mut bytes = base.clone();
+    bytes.extend_from_slice(&0x3159_5442u32.to_le_bytes());
+    bytes.extend_from_slice(&count.to_le_bytes());
+    let mut files = base;
+    files.extend_from_slice(&0x3147_4244u32.to_le_bytes());
+    files.extend_from_slice(&(count.min(u16::MAX as u32) as u16).to_le_bytes());
+    vec![(exports, false), (lines, true), (bytes, true), (files, true)]
+}
+
+#[test]
+fn truncated_counts_do_not_drive_allocation_sizes() {
+    for (bytes, optional) in inflated_count_carts(4096) {
+        let (result, stats) = allocation_probe::measure(None, || read_pk(&bytes));
+        assert_eq!(result.is_ok(), optional);
+        assert!(stats.largest < 4096,
+            "{} bytes of input requested a {} byte allocation", bytes.len(), stats.largest);
+    }
+}
+
+#[test]
+fn maximum_declared_counts_are_bounded_by_available_input() {
+    for (bytes, optional) in inflated_count_carts(u32::MAX) {
+        let (result, stats) = allocation_probe::measure(None, || read_pk(&bytes));
+        assert_eq!(result.is_ok(), optional);
+        assert!(stats.largest < 4096);
+    }
+    for (at, count) in [(12, u32::MAX), (24, u32::MAX)] {
+        let mut bytes = write_pk(&good_minimal_module()).unwrap();
+        bytes[at..at+4].copy_from_slice(&count.to_le_bytes());
+        let (result, stats) = allocation_probe::measure(None, || read_pk(&bytes));
+        assert!(matches!(result, Err(LoadError::Corrupt {kind: Corruption::Truncated, ..})));
+        assert!(stats.largest < 4096);
+    }
+}
+
+fn allocation_test_cart() -> Vec<u8> {
+    let mut module = mini_module();
+    let Chunk::Bytecode(b) = &mut module.functions[0] else { unreachable!() };
+    b.src_file = "cart.abe".into();
+    b.string_constants = vec!["text".into(), "".into()];
+    b.bytes_constants = vec![vec![0, 128, 255], vec![]];
+    module.functions.push(Chunk::Native(NativeChunk {name:"native".into(), param_count:0}));
+    module.exports.push(Export {name:"start".into(), fn_id:0});
+    write_pk(&module).unwrap()
+}
+
+#[test]
+fn failure_at_each_required_allocation_returns_an_error() {
+    let bytes = strip_trailing_debug(&allocation_test_cart());
+    let (valid, stats) = allocation_probe::measure(None, || read_pk(&bytes));
+    assert!(valid.is_ok());
+    for call in 1..=stats.calls {
+        let (result, _) = allocation_probe::measure(Some(call), || read_pk(&bytes));
+        assert!(matches!(result, Err(LoadError::OutOfMemory {..})), "allocation {call}: {result:?}");
+    }
+    let message = LoadError::OutOfMemory {offset:28}.to_string();
+    assert!(message.contains("out of memory") && message.contains("28"));
+}
+
+#[test]
+fn failure_at_each_optional_allocation_keeps_the_executable_module() {
+    let bytes = allocation_test_cart();
+    let core = strip_trailing_debug(&bytes);
+    let (_, core_stats) = allocation_probe::measure(None, || read_pk(&core));
+    let (valid, stats) = allocation_probe::measure(None, || read_pk(&bytes));
+    assert!(valid.is_ok());
+    assert!(stats.calls > core_stats.calls);
+    for call in core_stats.calls+1..=stats.calls {
+        let (result, _) = allocation_probe::measure(Some(call), || read_pk(&bytes));
+        let module = result.unwrap_or_else(|e| panic!("optional allocation {call}: {e}"));
+        assert_eq!(module.functions.len(), 2);
+        assert_eq!(module.exports[0].name, "start");
+        let Chunk::Bytecode(b) = &module.functions[0] else { unreachable!() };
+        assert_eq!(b.constants, vec![7]);
+        assert_eq!(b.string_constants, vec!["text", ""]);
+    }
+}
+
+#[test]
+fn duplicate_debug_sections_preserve_empty_and_missing_file_names() {
+    let mut bytes = write_pk(&mini_module()).unwrap();
+    for (name, index) in [("first.abe", 0u16), ("", 0), ("ignored.abe", u16::MAX)] {
+        bytes.extend_from_slice(&0x3147_4244u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.extend_from_slice(&index.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        let module = read_pk(&bytes).unwrap();
+        let Chunk::Bytecode(b) = &module.functions[0] else { unreachable!() };
+        assert_eq!(b.src_file, if name=="first.abe" {"first.abe"} else {""});
+    }
+}
+
+#[test]
+fn every_truncation_and_maximum_word_mutation_has_bounded_allocations() {
+    let bytes = allocation_test_cart();
+    for cut in 0..bytes.len() {
+        let (_, stats) = allocation_probe::measure(None, || read_pk(&bytes[..cut]));
+        assert!(stats.largest < 4096, "cut {cut}: {}", stats.largest);
+    }
+    for at in 0..bytes.len()-3 {
+        let mut damaged = bytes.clone();
+        damaged[at..at+4].fill(0xff);
+        let (_, stats) = allocation_probe::measure(None, || read_pk(&damaged));
+        assert!(stats.largest < 4096, "mutation {at}: {}", stats.largest);
+    }
+    let loaded = read_pk(&bytes).unwrap();
+    assert_eq!(write_pk(&loaded).unwrap(), bytes);
+}

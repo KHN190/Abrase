@@ -33,6 +33,7 @@ impl core::error::Error for EncodeError {}
 pub enum LoadError {
     NotACartridge,
     UnsupportedVersion(u16),
+    OutOfMemory { offset: usize },
     Corrupt { offset: usize, kind: Corruption },
 }
 
@@ -51,6 +52,8 @@ impl core::fmt::Display for LoadError {
                 write!(f, "not a Polka cartridge (.pk file expected)"),
             LoadError::UnsupportedVersion(v) =>
                 write!(f, "cartridge format version 0x{:04X} is not supported by this runtime", v),
+            LoadError::OutOfMemory { offset } =>
+                write!(f, "out of memory while loading cartridge at byte {}", offset),
             LoadError::Corrupt { offset, kind } => match kind {
                 Corruption::Truncated =>
                     write!(f, "cartridge ends unexpectedly at byte {}", offset),
@@ -126,14 +129,13 @@ fn write_bytes_section(out: &mut Vec<u8>, module: &Module) {
 
 // Best-effort, mirrors read_debug_body: corrupt/short input degrades to empty.
 fn read_bytes_body(r: &mut Reader, functions: &mut [Chunk]) -> Option<()> {
-    let mut tables: Vec<Vec<Vec<u8>>> = Vec::with_capacity(functions.len());
+    let mut tables = r.vector(functions.len(), 4).ok()?;
     for _ in 0..functions.len() {
-        let n = r.read_u32().ok()?;
-        let mut pool = Vec::with_capacity(n as usize);
+        let n = r.read_u32().ok()? as usize;
+        let mut pool = r.vector(n, 4).ok()?;
         for _ in 0..n {
-            let len = r.read_u32().ok()?;
-            let bytes = r.take(len as usize).ok()?.to_vec();
-            pool.push(bytes);
+            let len = r.read_u32().ok()? as usize;
+            pool.push(r.bytes(len).ok()?);
         }
         tables.push(pool);
     }
@@ -191,28 +193,28 @@ fn write_debug_lines(out: &mut Vec<u8>, module: &Module) {
 // Best-effort: debug info must never block execution. Absent, foreign, or
 // corrupt sections all degrade to stripped (empty lines).
 fn read_debug_body(r: &mut Reader, functions: &mut [Chunk]) -> Option<()> {
-    let pool_n = r.read_u16().ok()?;
-    let mut pool: Vec<String> = Vec::with_capacity(pool_n as usize);
+    let pool_n = r.read_u16().ok()? as usize;
+    let mut pool = r.vector(pool_n, 2).ok()?;
     for _ in 0..pool_n {
-        let len = r.read_u16().ok()?;
-        let bytes = r.take(len as usize).ok()?;
-        let f = String::from_utf8(bytes.to_vec()).ok()?;
-        pool.push(f);
+        let len = r.read_u16().ok()? as usize;
+        pool.push(r.string(len).ok()?);
     }
-    let mut tables: Vec<(u16, Vec<u32>)> = Vec::with_capacity(functions.len());
+    let mut tables = r.vector(functions.len(), 6).ok()?;
     for _ in 0..functions.len() {
-        let fi = r.read_u16().ok()?;
-        let n = r.read_u32().ok()?;
-        let mut lines = Vec::with_capacity(n as usize);
-        for _ in 0..n {
-            lines.push(r.read_u32().ok()?);
-        }
-        tables.push((fi, lines));
+        let fi = r.read_u16().ok()? as usize;
+        let n = r.read_u32().ok()? as usize;
+        let mut lines = r.vector(n, 4).ok()?;
+        for _ in 0..n { lines.push(r.read_u32().ok()?); }
+        let file = match pool.get(fi) {
+            Some(file) => Some(String::from_utf8(copy_bytes(file.as_bytes(), r.pos).ok()?).ok()?),
+            None => None,
+        };
+        tables.push((file, lines));
     }
-    for (chunk, (fi, lines)) in functions.iter_mut().zip(tables) {
+    for (chunk, (file, lines)) in functions.iter_mut().zip(tables) {
         if let Chunk::Bytecode(b) = chunk {
             b.lines = lines;
-            if let Some(f) = pool.get(fi as usize) { b.src_file = f.clone(); }
+            if let Some(file) = file { b.src_file = file; }
         }
     }
     Some(())
@@ -234,16 +236,11 @@ fn write_exports(out: &mut Vec<u8>, exports: &[Export]) -> Result<(), EncodeErro
 
 fn read_exports(r: &mut Reader) -> Result<Vec<Export>, LoadError> {
     let count = r.read_u32()? as usize;
-    let mut out = Vec::with_capacity(count);
+    let mut out = r.vector(count, 4)?;
     for _ in 0..count {
         let name_len = r.read_u16()? as usize;
         let fn_id = r.read_u16()?;
-        let utf8_offset = r.pos;
-        let bytes = r.take(name_len)?.to_vec();
-        let name = String::from_utf8(bytes).map_err(|_| LoadError::Corrupt {
-            offset: utf8_offset,
-            kind: Corruption::InvalidUtf8,
-        })?;
+        let name = r.string(name_len)?;
         out.push(Export { name, fn_id });
     }
     Ok(out)
@@ -261,11 +258,11 @@ pub fn read_pk(data: &[u8]) -> Result<Module, LoadError> {
     let entry = r.read_u32()? as usize;
 
     let fn_count = r.read_u32()? as usize;
-    let mut headers: Vec<FnHeader> = Vec::new();
+    let mut headers = r.vector(fn_count, 12)?;
     for _ in 0..fn_count {
         headers.push(read_fn_header(&mut r)?);
     }
-    let mut functions: Vec<Chunk> = Vec::new();
+    let mut functions = reserve_vec(fn_count, r.pos)?;
     for h in headers {
         functions.push(read_fn_payload(&mut r, h)?);
     }
@@ -372,31 +369,27 @@ fn read_fn_header(r: &mut Reader) -> Result<FnHeader, LoadError> {
 fn read_fn_payload(r: &mut Reader, header: FnHeader) -> Result<Chunk, LoadError> {
     match header {
         FnHeader::Bytecode { param_count, reg_count, const_count, string_count, code_count } => {
-            let mut constants = Vec::new();
+            let mut constants = r.vector(const_count as usize, 8)?;
             for _ in 0..const_count {
                 constants.push(r.read_u64()?);
             }
             let mask_bytes = (const_count as usize + 7) / 8;
-            let mask_raw = r.take(mask_bytes)?.to_vec();
+            let mask_raw = r.take(mask_bytes)?;
             let mask_word_count = (const_count as usize + 63) / 64;
-            let mut const_mask = vec![0u64; mask_word_count];
+            let mut const_mask = reserve_vec(mask_word_count, r.pos)?;
+            const_mask.resize(mask_word_count, 0u64);
             for i in 0..const_count as usize {
                 if (mask_raw[i / 8] >> (i % 8)) & 1 == 1 {
                     const_mask[i / 64] |= 1 << (i % 64);
                 }
             }
-            let mut string_constants = Vec::new();
+            let mut string_constants = r.vector(string_count as usize, 4)?;
             for _ in 0..string_count {
                 let len = r.read_u32()? as usize;
-                let utf8_offset = r.pos;
-                let bytes = r.take(len)?.to_vec();
-                let s = String::from_utf8(bytes).map_err(|_| LoadError::Corrupt {
-                    offset: utf8_offset,
-                    kind: Corruption::InvalidUtf8,
-                })?;
+                let s = r.string(len)?;
                 string_constants.push(s);
             }
-            let mut code = Vec::new();
+            let mut code = r.vector(code_count as usize, 4)?;
             for _ in 0..code_count {
                 let op_offset = r.pos;
                 let raw = r.take(4)?;
@@ -417,12 +410,7 @@ fn read_fn_payload(r: &mut Reader, header: FnHeader) -> Result<Chunk, LoadError>
             }))
         }
         FnHeader::Native { param_count, name_len } => {
-            let utf8_offset = r.pos;
-            let bytes = r.take(name_len as usize)?.to_vec();
-            let name = String::from_utf8(bytes).map_err(|_| LoadError::Corrupt {
-                offset: utf8_offset,
-                kind: Corruption::InvalidUtf8,
-            })?;
+            let name = r.string(name_len as usize)?;
             Ok(Chunk::Native(NativeChunk { name, param_count: param_count as usize }))
         }
     }
@@ -562,6 +550,18 @@ fn decode_op(b: [u8; 4], offset: usize) -> Result<OpCode, LoadError> {
     })
 }
 
+fn reserve_vec<T>(count: usize, offset: usize) -> Result<Vec<T>, LoadError> {
+    let mut out = Vec::new();
+    out.try_reserve_exact(count).map_err(|_| LoadError::OutOfMemory { offset })?;
+    Ok(out)
+}
+
+fn copy_bytes(bytes: &[u8], offset: usize) -> Result<Vec<u8>, LoadError> {
+    let mut out = reserve_vec(bytes.len(), offset)?;
+    out.extend_from_slice(bytes);
+    Ok(out)
+}
+
 struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
@@ -571,7 +571,7 @@ impl<'a> Reader<'a> {
     fn new(data: &'a [u8]) -> Self { Self { data, pos: 0 } }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8], LoadError> {
-        if self.pos + n > self.data.len() {
+        if n > self.data.len() - self.pos {
             return Err(LoadError::Corrupt {
                 offset: self.pos,
                 kind: Corruption::Truncated,
@@ -580,6 +580,25 @@ impl<'a> Reader<'a> {
         let s = &self.data[self.pos..self.pos + n];
         self.pos += n;
         Ok(s)
+    }
+
+    fn vector<T>(&self, count: usize, min_bytes: usize) -> Result<Vec<T>, LoadError> {
+        if count > (self.data.len() - self.pos) / min_bytes {
+            return Err(LoadError::Corrupt { offset: self.pos, kind: Corruption::Truncated });
+        }
+        reserve_vec(count, self.pos)
+    }
+
+    fn bytes(&mut self, n: usize) -> Result<Vec<u8>, LoadError> {
+        let offset = self.pos;
+        copy_bytes(self.take(n)?, offset)
+    }
+
+    fn string(&mut self, n: usize) -> Result<String, LoadError> {
+        let offset = self.pos;
+        String::from_utf8(self.bytes(n)?).map_err(|_| LoadError::Corrupt {
+            offset, kind: Corruption::InvalidUtf8,
+        })
     }
 
     fn read_u8 (&mut self) -> Result<u8,  LoadError> {
