@@ -88,7 +88,8 @@ fn int_char_bool_to_float_follow_the_selected_float_width() {
 
 #[test]
 fn numeric_strings_use_the_selected_precision_and_signed_width() {
-    for value in [0.1f32, -0.0, f32::from_bits(1), f32::MAX, f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+    for value in [0.1f32, -0.0, f32::from_bits(1), f32::MAX, f32::INFINITY, f32::NEG_INFINITY, f32::NAN,
+                  f32::from_bits(0x3f80_0001), f32::MIN_POSITIVE, 1e-30, 1e30, 16_777_216.0] {
         assert_eq!(call("__float_to_s", &[value.to_bits() as u64], true).1.unwrap(), value.to_string());
     }
     for value in [0.1f64, -0.0, f64::from_bits(1), f64::MAX, f64::INFINITY, f64::NAN] {
@@ -98,6 +99,18 @@ fn numeric_strings_use_the_selected_precision_and_signed_width() {
         assert_eq!(call("__int_to_s", &[raw], true).1.unwrap(), (raw as i32).to_string());
         assert_eq!(call("__to_str", &[raw], true).1.unwrap(), (raw as i32).to_string());
         assert_eq!(call("__int_to_s", &[raw], false).1.unwrap(), (raw as i64).to_string());
+    }
+}
+
+#[test]
+fn public_profile_formatters_preserve_display_text() {
+    for bits in [0, 0x8000_0000, 1, 0x007f_ffff, 0x0080_0000, 0x3f80_0001,
+                 0x7f7f_ffff, 0x7f80_0000, 0xff80_0000, 0x7fc0_1234] {
+        let value = f32::from_bits(bits);
+        assert_eq!(word32::format_float(value), value.to_string());
+    }
+    for value in [0.1f64, -0.0, f64::MAX, f64::NAN] {
+        assert_eq!(word64::format_float(value), value.to_string());
     }
 }
 

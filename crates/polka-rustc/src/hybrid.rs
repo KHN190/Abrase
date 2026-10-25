@@ -44,7 +44,7 @@ pub(crate) fn inline_native_str(name: &str, i32s: bool) -> Option<String> {
     let a0f = crate::fdec("a[0]", i32s);
     Some(match name {
         "__int_to_s" => "let v = runtime::alloc_string(h, &(a[0] as Int).to_string())?; Ok((v.raw(), true))".to_string(),
-        "__float_to_s" => return Some(format!("let v = runtime::alloc_string(h, &({}).to_string())?; Ok((v.raw(), true))", a0f)),
+        "__float_to_s" => return Some(format!("let v = runtime::alloc_string(h, &runtime::format_float({}))?; Ok((v.raw(), true))", a0f)),
         "__bool_to_s" => "let v = runtime::alloc_string(h, &(a[0] != 0).to_string())?; Ok((v.raw(), true))".to_string(),
         "__unit_to_s" => "let v = runtime::alloc_string(h, \"()\")?; Ok((v.raw(), true))".to_string(),
         "__char_to_s" => "let c = char::from_u32(a[0] as u32).ok_or_else(|| \"__char_to_s: bad codepoint\".to_string())?; let v = runtime::alloc_string(h, &c.to_string())?; Ok((v.raw(), true))".to_string(),

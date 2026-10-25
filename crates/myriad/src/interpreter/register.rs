@@ -428,6 +428,13 @@ pub(crate) fn validate_module_register_budget(module: &Module) -> Result<(), Str
             if b.constants.len() > u16::MAX as usize {
                 return Err(String::from("module constant pool exceeds format limit"));
             }
+            for (index, &constant) in b.constants.iter().enumerate() {
+                if b.const_is_handle(index as u16) {
+                    constant_pool(constant)?;
+                } else {
+                    constant_word(constant)?;
+                }
+            }
             if b.reg_count > FRAME_REGS {
                 return Err(format!(
                     "module load: fn {} has reg_count {} > frame budget {}",

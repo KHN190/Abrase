@@ -292,3 +292,38 @@ fn word32_copy_move_and_deep_forget_keep_rc_and_region_ownership() {
     assert_eq!(expected, (Outcome::Ok(42), 0));
     assert_eq!(compile_run_full(&run32(&m)), expected);
 }
+
+#[test]
+fn word32_float_to_string_uses_the_profile_formatter_and_releases_its_handle() {
+    let m = Module {
+        functions: vec![
+            Chunk::Native(NativeChunk {
+                name: "__float_to_s".into(),
+                param_count: 1,
+            }),
+            Chunk::Native(NativeChunk {
+                name: "__str_len".into(),
+                param_count: 1,
+            }),
+            fn_chunk(
+                vec![
+                    O::PushConst(r(0), 0),
+                    O::Move(r(4), r(0)),
+                    O::Call(r(1), 0),
+                    O::Move(r(4), r(1)),
+                    O::Call(r(2), 1),
+                    O::Ret(r(2)),
+                ],
+                vec![0.000244140625f32.to_bits() as u64],
+                4,
+                0,
+            ),
+        ],
+        entry: 2,
+        flags: CART_FLAG_INT32_SAFE,
+        exports: vec![],
+    };
+    let source = run32(&m);
+    assert!(source.contains("runtime::format_float("));
+    assert_eq!(compile_run_full(&source), (Outcome::Ok(13), 0));
+}

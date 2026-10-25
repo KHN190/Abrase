@@ -4,6 +4,7 @@
 extern crate alloc;
 
 pub(crate) mod math32;
+pub(crate) mod formatter32;
 pub mod runtime;
 pub use runtime::{Runtime, RuntimeValue, RuntimeProfile};
 

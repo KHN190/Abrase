@@ -7,7 +7,12 @@ pub struct LoadedModule {
 }
 
 pub fn load(module: Module) -> Result<LoadedModule, String> {
-    validate_module_register_budget(&module)?;
+    validate(&module)?;
+    Ok(LoadedModule { module })
+}
+
+pub fn validate(module: &Module) -> Result<(), String> {
+    validate_module_register_budget(module)?;
     if module.entry >= module.functions.len() {
         return Err(format!(
             "module load: entry {} out of range (functions: {})",
@@ -15,5 +20,5 @@ pub fn load(module: Module) -> Result<LoadedModule, String> {
             module.functions.len()
         ));
     }
-    Ok(LoadedModule { module })
+    Ok(())
 }

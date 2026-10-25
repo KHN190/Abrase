@@ -272,24 +272,24 @@ impl VirtualMachine {
         let mut s = String::new();
         if !self.profile { return s; }
         let mut ops: Vec<_> = self.prof_ops.iter().collect();
-        ops.sort_by(|a, b| b.1.cmp(a.1));
+        ops.sort_unstable_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
         let total: Word = self.prof_ops.values().fold(0, |sum, n| sum.saturating_add(*n));
         let _ = writeln!(s, "[profile] {} ops executed", total);
         for (name, n) in ops {
-            let _ = writeln!(s, "  {:>12} {:>6.1}%  {}", n, *n as Float * 100.0 / total.max(1) as Float, name);
+            let _ = writeln!(s, "  {:>12} {:>6}%  {}", n, format_diagnostic_float(*n as Float * 100.0 / total.max(1) as Float, 1), name);
         }
         let mut fns: Vec<_> = self.prof_fns.iter().collect();
-        fns.sort_by(|a, b| b.1.cmp(a.1));
+        fns.sort_unstable_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
         let _ = writeln!(s, "[profile] per-fn opcode breakdown (top 15 fns):");
         for (fid, n) in fns.into_iter().take(15) {
-            let _ = writeln!(s, "  {:>12} {} ({:.1}%)", n,
+            let _ = writeln!(s, "  {:>12} {} ({}%)", n,
                 debug::render_fn_label(*fid, &self.fn_names),
-                *n as Float * 100.0 / total.max(1) as Float);
+                format_diagnostic_float(*n as Float * 100.0 / total.max(1) as Float, 1));
             if let Some(ops) = self.prof_fn_ops.get(fid) {
                 let mut fo: Vec<_> = ops.iter().collect();
-                fo.sort_by(|a, b| b.1.cmp(a.1));
+                fo.sort_unstable_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
                 let line: Vec<String> = fo.into_iter().take(8)
-                    .map(|(name, c)| format!("{} {:.0}%", name, *c as Float * 100.0 / (*n).max(1) as Float))
+                    .map(|(name, c)| format!("{} {}%", name, format_diagnostic_float(*c as Float * 100.0 / (*n).max(1) as Float, 0)))
                     .collect();
                 let _ = writeln!(s, "               {}", line.join("  "));
             }
@@ -671,6 +671,40 @@ mod vm_api_tests {
         assert_eq!(vm.prof_fns[&0], Word::MAX);
         assert_eq!(vm.prof_fn_ops[&0]["Ret"], Word::MAX);
         assert!(vm.profile_report().contains(&format!("{} ops executed", Word::MAX)));
+    }
+
+    #[test]
+    fn diagnostic_float_text_uses_the_profile_formatter() {
+        assert_eq!(format_diagnostic_float(1.25, 6), if IS_INT32 { "1.25" } else { "1.250000" });
+        let mut vm = VirtualMachine::new().with_profile(true);
+        vm.prof_ops.insert("Ret", 1);
+        vm.prof_fns.insert(0, 1);
+        vm.prof_fn_ops.entry(0).or_default().insert("Ret", 1);
+        let report = vm.profile_report();
+        assert!(report.contains(if IS_INT32 { "(100%)" } else { "(100.0%)" }), "{report}");
+        assert!(report.contains("Ret 100%"), "{report}");
+    }
+
+    #[test]
+    fn profiling_ties_use_name_and_function_id_order() {
+        let mut vm = VirtualMachine::new().with_profile(true);
+        vm.prof_ops.insert("Zulu", 1);
+        vm.prof_ops.insert("Alpha", 1);
+        for id in (0..20).rev() {
+            vm.prof_fns.insert(id, 1);
+            vm.prof_fn_ops.entry(id).or_default().insert("Zulu", 1);
+            vm.prof_fn_ops.entry(id).or_default().insert("Alpha", 1);
+        }
+        let report = vm.profile_report();
+        assert!(report.find("Alpha\n").unwrap() < report.find("Zulu\n").unwrap());
+        let mut previous = 0;
+        for id in 0..15 {
+            let index = report.find(&format!("#{id} (")).unwrap();
+            assert!(index > previous);
+            previous = index;
+        }
+        assert!(!report.contains("#15 ("));
+        assert!(report.contains("Alpha 100%  Zulu 100%"));
     }
 
     #[test]

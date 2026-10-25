@@ -22,6 +22,8 @@ pub use region::RegionTable;
 
 pub(crate) use crate::word32 as runtime;
 pub const IS_INT32: bool = true;
+pub fn format_float(value: Float) -> alloc::string::String { crate::formatter32::format_float(value) }
+pub(crate) fn format_diagnostic_float(value: Float, _legacy_precision: usize) -> alloc::string::String { format_float(value) }
 pub const FRAME_MASK_WORDS: usize = 4;
 pub const DISPATCH_TAIL_FLAG: Word = 1 << 16;
 pub type TraceMask = [Word; FRAME_MASK_WORDS];

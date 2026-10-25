@@ -71,7 +71,7 @@ impl<'a> NativeCtx<'a> {
     }
 
     fn float_string(&self, v: Value) -> String {
-        Float::from_bits(v.raw()).to_string()
+        runtime::format_float(Float::from_bits(v.raw()))
     }
 }
 

@@ -19,6 +19,43 @@ pub(self) const STAGE_SLACK: usize = 32;
 
 pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
+fn diagnostic_text_contains(text: &str, needle: &str) -> bool {
+    needle.is_empty() || text.as_bytes().windows(needle.len()).any(|window| window == needle.as_bytes())
+}
+
+#[cfg(test)]
+mod trace_format_tests {
+    extern crate std;
+    use super::*;
+    use core::cell::RefCell;
+    std::thread_local! { static TRACE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) }; }
+    fn capture(text: &str) { TRACE.with(|trace| trace.borrow_mut().push(text.into())); }
+
+    #[test]
+    fn diagnostic_filter_keeps_exact_utf8_substring_semantics() {
+        for text in ["", "abc", "aaaab", "你好🌍", "name::value"] {
+            for needle in ["", "a", "ab", "aaaab", "你好", "好🌍", "🌍", "value", "missing"] {
+                assert_eq!(diagnostic_text_contains(text, needle), text.contains(needle));
+            }
+        }
+    }
+
+    #[test]
+    fn static_trace_callback_uses_profile_float_text() {
+        TRACE.with(|trace| trace.borrow_mut().clear());
+        let vm = VirtualMachine::new().with_static_names(alloc::vec![String::from("value")])
+            .with_trace_static(Some(String::from("*"))).with_trace_out(capture);
+        let raw = (1.25 as Float).to_bits();
+        vm.trace_static_access("Ld", 3, 0, raw, false);
+        TRACE.with(|trace| {
+            let trace = trace.borrow();
+            assert_eq!(trace.len(), 1);
+            let value = if runtime::IS_INT32 { "1.25" } else { "1.250000" };
+            assert_eq!(trace[0], format!("[TRACE_STATIC] Ld slot=3 off=0 name=value val=int({}) / float({value})", raw as Int));
+        });
+    }
+}
+
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
         let module = Module { functions: vec![chunk.clone()], entry: 0, flags: if runtime::IS_INT32 { polka::CART_FLAG_INT32_SAFE } else { 0 }, exports: vec![] };
@@ -431,11 +468,11 @@ impl VirtualMachine {
         let idx = off as usize;
         let name = self.static_names.get(idx).map(|s| s.as_str()).unwrap_or("");
         if name.is_empty() { return; }
-        if traced == "*" || name.contains(traced) {
+        if traced == "*" || diagnostic_text_contains(name, traced) {
             let val = if is_handle {
                 format!("handle({:#x})", raw)
             } else {
-                format!("int({}) / float({:.6})", raw as Int, Float::from_bits(raw))
+                format!("int({}) / float({})", raw as Int, runtime::format_diagnostic_float(Float::from_bits(raw), 6))
             };
             if let Some(f) = self.trace_out {
                 f(&format!("[TRACE_STATIC] {} slot={} off={} name={} val={}", op, slot, off, name, val));

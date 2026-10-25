@@ -11,6 +11,15 @@ This crate defines its computation core.
 
 ## Embedding
 
+`Runtime::new(&module)` selects a real `word32` runtime for `INT32_SAFE`
+cartridges and `word64` otherwise. Register natives through its typed
+`word32_mut()` / `word64_mut()` accessors; their `Value` and `Heap` types
+cannot be mixed. The selected profile stays fixed until the runtime is dropped.
+The CLI sets this cartridge flag with `--int32`; no width feature is needed.
+
+The root `VirtualMachine` API below retains the typed 64-bit host API and
+rejects `INT32_SAFE` modules. On 32-bit bare metal only `word32` is compiled.
+
 ```rust
 use myriad::{Host, VirtualMachine};
 
