@@ -5,9 +5,16 @@ use crate::TranspileError;
 
 pub(crate) fn is_effectful(module: &Module) -> bool {
     module.functions.iter().any(|c| {
-        c.as_bytecode().is_some_and(|b| b.code.iter().any(|op| {
-            matches!(op, polka::OpCode::Handle(..) | polka::OpCode::Raise(..) | polka::OpCode::Resume(..))
-        }))
+        c.as_bytecode().is_some_and(|b| {
+            b.code.iter().any(|op| {
+                matches!(
+                    op,
+                    polka::OpCode::Handle(..)
+                        | polka::OpCode::Raise(..)
+                        | polka::OpCode::Resume(..)
+                )
+            })
+        })
     })
 }
 
@@ -23,27 +30,48 @@ fn emit(module: &Module, lib: bool) -> Result<String, TranspileError> {
     let pk = polka::cartridge::write_pk(module)
         .map_err(|e| TranspileError::Unsupported(format!("write_pk: {:?}", e)))?;
     let mut out = String::new();
-    let _ = writeln!(out, "#![allow(dead_code)]");
+    let _ = writeln!(out, "#![allow(dead_code, unused_imports)]");
+    crate::TargetWidth::for_module(module).aliases(&mut out);
     let vis = if lib { "pub " } else { "" };
     let _ = write!(out, "{}const PK: &[u8] = &[", vis);
-    for b in &pk { let _ = write!(out, "{},", b); }
+    for b in &pk {
+        let _ = write!(out, "{},", b);
+    }
     let _ = writeln!(out, "];");
     if lib {
-        let _ = writeln!(out, "pub fn register_aot(_vm: &mut myriad::VirtualMachine) {{}}");
+        let _ = writeln!(
+            out,
+            "pub fn register_aot(_vm: &mut runtime::VirtualMachine) {{}}"
+        );
         return Ok(out);
     }
     let _ = writeln!(out, "fn main() {{");
     let _ = writeln!(out, "    use std::io::Write;");
-    let _ = writeln!(out, "    let module = myriad::read_pk(PK).expect(\"read_pk\");");
-    let _ = writeln!(out, "    let console = myriad::devices::BufferConsole::new();");
+    let _ = writeln!(
+        out,
+        "    let module = runtime::read_pk(PK).expect(\"read_pk\");"
+    );
+    let _ = writeln!(
+        out,
+        "    let console = runtime::devices::BufferConsole::new();"
+    );
     let _ = writeln!(out, "    let (cart_out, _) = console.handles();");
-    let _ = writeln!(out, "    let mut vm = myriad::VirtualMachine::new();");
-    let _ = writeln!(out, "    myriad::Host::default().with_console(Box::new(console)).install_into(&mut vm);");
+    let _ = writeln!(out, "    let mut vm = runtime::VirtualMachine::new();");
+    let _ = writeln!(
+        out,
+        "    runtime::Host::default().with_console(Box::new(console)).install_into(&mut vm);"
+    );
     let _ = writeln!(out, "    let r = vm.run_module(&module);");
     let _ = writeln!(out, "    let live = vm.heap_live_count();");
-    let _ = writeln!(out, "    let _ = std::io::stdout().write_all(&cart_out.borrow());");
+    let _ = writeln!(
+        out,
+        "    let _ = std::io::stdout().write_all(&cart_out.borrow());"
+    );
     let _ = writeln!(out, "    match r {{");
-    let _ = writeln!(out, "        Ok(v) => println!(\"OK {{}} {{}}\", v.raw(), live),");
+    let _ = writeln!(
+        out,
+        "        Ok(v) => println!(\"OK {{}} {{}}\", v.raw(), live),"
+    );
     let _ = writeln!(out, "        Err(e) => println!(\"ERR {{}}\", e),");
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}");

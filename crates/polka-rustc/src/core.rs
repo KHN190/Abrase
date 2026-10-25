@@ -31,12 +31,9 @@ impl NumericTarget {
 
     fn constant(self, raw: u64) -> Result<u64, TranspileError> {
         if !self.word32 { return Ok(raw); }
-        let low = raw as u32;
-        if raw == low as u64 || raw == low as i32 as i64 as u64 {
-            Ok(low as u64)
-        } else {
-            Err(TranspileError::Unsupported(format!("core32 constant {raw:#x} exceeds word width")))
-        }
+        polka::constant_word32(raw).map(u64::from).map_err(|_| {
+            TranspileError::Unsupported(format!("core32 constant {raw:#x} exceeds word width"))
+        })
     }
 }
 

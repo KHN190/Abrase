@@ -6,7 +6,7 @@
 use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
-use myriad::{read_string, VirtualMachine};
+use myriad::{word32, word64};
 
 fn run_raw(src: &str, int32: bool) -> Result<(u64, Option<String>), String> {
     let mut p = Parser::new(Lexer::new(src)).with_source(src.to_string());
@@ -14,10 +14,15 @@ fn run_raw(src: &str, int32: bool) -> Result<(u64, Option<String>), String> {
     if !p.errors.is_empty() { return Err(format!("parse:\n{}", p.pretty_print_errors())); }
     let mut c = Compiler::new().with_source(src.to_string()).with_int32_mode(int32);
     let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
-    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
-    let v = vm.run_module(&module)?;
-    let s = read_string(vm.heap_ref(), v);
-    Ok((v.raw(), s))
+    macro_rules! execute {
+        ($profile:ident) => {{
+            let mut vm = $profile::VirtualMachine::new().with_step_cap(1_000_000);
+            let value = vm.run_module(&module)?;
+            let text = $profile::read_string(vm.heap_ref(), value);
+            Ok((value.raw() as u64, text))
+        }};
+    }
+    if int32 { execute!(word32) } else { execute!(word64) }
 }
 
 fn float_result(src: &str, int32: bool) -> f64 {
@@ -27,7 +32,7 @@ fn float_result(src: &str, int32: bool) -> f64 {
 
 fn int_result(src: &str, int32: bool) -> i64 {
     let (raw, _) = run_raw(src, int32).unwrap_or_else(|e| panic!("int32={}: {}\n{}", int32, e, src));
-    raw as i64
+    if int32 { raw as u32 as i32 as i64 } else { raw as i64 }
 }
 
 fn string_result(src: &str, int32: bool) -> String {

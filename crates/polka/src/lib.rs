@@ -6,13 +6,19 @@ extern crate alloc;
 use alloc::{string::String, vec::Vec};
 
 pub mod numeric;
+pub mod word32;
+#[cfg(not(all(target_os = "none", target_pointer_width = "32")))]
+pub mod word64;
+mod constant;
+pub use constant::{Constant, Constant32, constant_word32, constant_pool_index, constant_is_bytes};
+use numeric::{Word, WORD_BITS};
 pub mod value;
 pub mod cartridge;
 
 pub use value::{Value, HANDLE_NONE, HANDLE_SLOT_MAX, decode_float, encode_float};
 
 pub const FRAME_REGS: usize = 128;
-pub const FRAME_MASK_WORDS: usize = (FRAME_REGS + 63) / 64;
+pub const FRAME_MASK_WORDS: usize = (FRAME_REGS + WORD_BITS as usize - 1) / WORD_BITS as usize;
 
 pub const DISPATCH_ID: u8 = 0xE0;
 pub const DISPATCH_PORT_LOOKUP: u8 = 0x00;
@@ -24,10 +30,11 @@ pub const DISPATCH_NO_MATCH: u16 = 0xFFFF;
 // Dispatch-table fn_id entries may carry this bit: the arm is tail-resumptive
 // (compiled to end in Ret), so raise may call it plainly — no cont cell, no
 // register snapshot.
-pub const DISPATCH_TAIL_FLAG: u64 = 1 << 16;
+pub const DISPATCH_TAIL_FLAG: Word = 1 << 16;
 
 // A handle-bit constant with this bit set indexes bytes_constants, not
 // string_constants. The loader routes it to alloc_bytes instead of alloc_string.
+#[cfg(not(all(target_os = "none", target_pointer_width = "32")))]
 pub const BYTES_CONST_TAG: u64 = 1 << 63;
 
 pub const REGION_ID: u8 = 0xE1;
@@ -111,9 +118,9 @@ pub enum OpCode {
 #[derive(Clone, Default, Debug)]
 pub struct BytecodeChunk {
     pub code: Vec<OpCode>,
-    pub constants: Vec<u64>,
+    pub constants: Vec<Constant>,
     // Handle-bit constants store string_constants index; loader replaces with real heap handle.
-    pub const_mask: Vec<u64>,
+    pub const_mask: Vec<Word>,
     pub string_constants: Vec<String>,
     // Handle-bit constants tagged with BYTES_CONST_TAG index into this pool.
     pub bytes_constants: Vec<Vec<u8>>,
@@ -129,8 +136,8 @@ impl BytecodeChunk {
     #[inline]
     pub fn const_is_handle(&self, idx: u16) -> bool {
         let i = idx as usize;
-        let word = i / 64;
-        let bit = i % 64;
+        let word = i / WORD_BITS as usize;
+        let bit = i % WORD_BITS as usize;
         self.const_mask.get(word).map_or(false, |w| (w >> bit) & 1 == 1)
     }
 }
@@ -177,17 +184,17 @@ pub struct Export {
 pub const CART_FLAG_INT32_SAFE: u16 = 0x0001;
 
 #[inline(always)]
-pub fn mask_bit_set(mask: &[u64], idx: usize) -> bool {
-    let word = idx / 64;
-    let bit = idx % 64;
+pub fn mask_bit_set(mask: &[Word], idx: usize) -> bool {
+    let word = idx / WORD_BITS as usize;
+    let bit = idx % WORD_BITS as usize;
     mask.get(word).map_or(false, |w| (w >> bit) & 1 == 1)
 }
 
 #[inline(always)]
-pub fn mask_set(mask: &mut [u64], idx: usize, on: bool) {
-    let word = idx / 64;
-    let bit = idx % 64;
+pub fn mask_set(mask: &mut [Word], idx: usize, on: bool) {
+    let word = idx / WORD_BITS as usize;
+    let bit = idx % WORD_BITS as usize;
     if let Some(w) = mask.get_mut(word) {
-        if on { *w |= 1u64 << bit; } else { *w &= !(1u64 << bit); }
+        if on { *w |= (1 as Word) << bit; } else { *w &= !((1 as Word) << bit); }
     }
 }

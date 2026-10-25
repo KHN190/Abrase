@@ -1,32 +1,32 @@
+use super::runtime;
+use runtime::{Word, Int, Value, HANDLE_NONE, RuntimeSet};
 use alloc::{boxed::Box, string::String, vec::Vec};
-use crate::builtins::{NativeCtx, NativeRegistry, register_default_builtins};
-use crate::core_mem::CoreArena;
-use crate::devices::{BufferConsole, Console, DeviceTable, CONSOLE_ID, SharedBuf};
-use crate::memory::Heap;
-use crate::Value;
+use runtime::builtins::{NativeCtx, NativeRegistry, register_default_builtins};
+use runtime::core_mem::CoreArena;
+use runtime::devices::{BufferConsole, Console, DeviceTable, CONSOLE_ID, SharedBuf};
+use runtime::memory::Heap;
 
 pub trait AotNatives {
-    fn call(&mut self, name: &str, heap: &mut Heap, args: &[Value]) -> Result<(u64, bool), String>;
+    fn call(&mut self, name: &str, heap: &mut Heap, args: &[Value]) -> Result<(Word, bool), String>;
     fn halted(&self) -> bool { false }
 }
 
-pub fn reachable_live_count(h: &Heap, root_raw: u64) -> usize {
-    use hashbrown::HashSet;
-    let mut seen: HashSet<(u32, u32)> = HashSet::new();
-    if root_raw != polka::HANDLE_NONE {
+pub fn reachable_live_count(h: &Heap, root_raw: Word) -> usize {
+    let mut seen: RuntimeSet<(u32, u32)> = RuntimeSet::new();
+    if root_raw != HANDLE_NONE {
         let (s, g) = Value::from_raw(root_raw).as_handle();
         walk(h, s, g, &mut seen);
     }
     seen.iter().filter(|(s, g)| h.is_live(*s, *g)).count()
 }
 
-fn walk(h: &Heap, slot: u32, g: u32, seen: &mut hashbrown::HashSet<(u32, u32)>) {
+fn walk(h: &Heap, slot: u32, g: u32, seen: &mut RuntimeSet<(u32, u32)>) {
     if !seen.insert((slot, g)) || !h.is_live(slot, g) { return; }
     let (Ok(data), Ok(mask)) = (h.cell_data(slot, g), h.cell_mask(slot, g)) else { return; };
-    let data: Vec<u64> = data.to_vec();
-    let mask: Vec<u64> = mask.to_vec();
+    let data: Vec<Word> = data.to_vec();
+    let mask: Vec<Word> = mask.to_vec();
     for i in 0..data.len() {
-        if (mask[i / 64] >> (i % 64)) & 1 == 1 && data[i] != polka::HANDLE_NONE {
+        if (mask[i / Word::BITS as usize] >> (i % Word::BITS as usize)) & 1 == 1 && data[i] != HANDLE_NONE {
             let (cs, cg) = Value::from_raw(data[i]).as_handle();
             walk(h, cs, cg, seen);
         }
@@ -38,7 +38,7 @@ pub struct AotHost {
     core_arena: CoreArena,
     registry: NativeRegistry,
     halted: bool,
-    exit_code: Option<i64>,
+    exit_code: Option<Int>,
     stdout: SharedBuf,
     int32_safe: bool,
 }
@@ -55,7 +55,7 @@ impl AotHost {
         devices.install(CONSOLE_ID, Box::new(Box::new(console) as Box<dyn Console>));
         let mut registry = NativeRegistry::new();
         register_default_builtins(&mut registry);
-        Self { devices, core_arena: CoreArena::new(), registry, halted: false, exit_code: None, stdout, int32_safe: false }
+        Self { devices, core_arena: CoreArena::new(), registry, halted: false, exit_code: None, stdout, int32_safe: runtime::IS_INT32 }
     }
 
     pub fn with_int32(mut self, on: bool) -> Self {
@@ -64,7 +64,7 @@ impl AotHost {
     }
 
     pub fn halted(&self) -> bool { self.halted }
-    pub fn exit_code(&self) -> Option<i64> { self.exit_code }
+    pub fn exit_code(&self) -> Option<Int> { self.exit_code }
 
     pub fn take_stdout(&self) -> Vec<u8> {
         self.stdout.borrow().clone()
@@ -72,7 +72,8 @@ impl AotHost {
 }
 
 impl AotNatives for AotHost {
-    fn call(&mut self, name: &str, heap: &mut Heap, args: &[Value]) -> Result<(u64, bool), String> {
+    fn call(&mut self, name: &str, heap: &mut Heap, args: &[Value]) -> Result<(Word, bool), String> {
+        if self.int32_safe != runtime::IS_INT32 { return Err(String::from("native numeric profile mismatch: INT32_SAFE requires word32")); }
         let f = self.registry.get(name)
             .ok_or_else(|| alloc::format!("unknown native fn {}", name))?
             .clone();
@@ -93,14 +94,14 @@ impl AotNatives for AotHost {
 #[cfg(test)]
 mod aot_tests {
     use super::*;
-    use crate::value::alloc_string;
+    use runtime::value::alloc_string;
 
     #[test]
     fn host_dispatches_native_and_errs_on_unknown() {
         let mut host = AotHost::new();
         let mut h = Heap::new();
         let (v, is_handle) = host.call("__int_max", &mut h, &[Value::from_int(3), Value::from_int(7)]).unwrap();
-        assert_eq!(v as i64, 7);
+        assert_eq!(v as Int, 7);
         assert!(!is_handle);
         assert!(host.call("not_a_native", &mut h, &[]).is_err());
     }
@@ -131,14 +132,14 @@ mod aot_tests {
         let (ps, pg) = h.try_alloc(1).unwrap();
         h.st(ps, pg, 0, Value::from_handle(cs, cg).raw(), true).unwrap();
         assert_eq!(reachable_live_count(&h, Value::from_handle(ps, pg).raw()), 2);
-        assert_eq!(reachable_live_count(&h, polka::HANDLE_NONE), 0);
+        assert_eq!(reachable_live_count(&h, HANDLE_NONE), 0);
     }
 
     #[test]
     fn aot_natives_halted_defaults_false() {
         struct Bare;
         impl AotNatives for Bare {
-            fn call(&mut self, _: &str, _: &mut Heap, _: &[Value]) -> Result<(u64, bool), String> { Ok((0, false)) }
+            fn call(&mut self, _: &str, _: &mut Heap, _: &[Value]) -> Result<(Word, bool), String> { Ok((0, false)) }
         }
         assert!(!Bare.halted());
     }

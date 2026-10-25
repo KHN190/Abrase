@@ -1,4 +1,4 @@
-use crate::memory::Heap;
+use super::memory::Heap;
 use alloc::{string::{String, ToString}, vec::Vec};
 
 pub struct RegionTable {
@@ -55,8 +55,8 @@ impl RegionTable {
         let size = match heap.size(slot, generation) { Ok(n) => n, Err(_) => return };
         for off in 0..size {
             if let Ok((raw, is_handle)) = heap.ld(slot, generation, off) {
-                if is_handle && raw != polka::HANDLE_NONE {
-                    let (s, g) = polka::Value::from_raw(raw).as_handle();
+                if is_handle && raw != super::HANDLE_NONE {
+                    let (s, g) = super::Value::from_raw(raw).as_handle();
                     self.deep_forget_inner(heap, s, g, visited);
                 }
             }

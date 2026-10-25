@@ -1,31 +1,33 @@
+use super::super::runtime;
+use runtime::{Word, Int, HANDLE_NONE};
 use alloc::string::{String, ToString};
-use polka::{Register, Module, HANDLE_NONE};
-use crate::memory::mask_bit;
-use crate::debug::DebugEvent;
+use polka::{Register, Module};
+use runtime::memory::mask_bit;
+use runtime::debug::DebugEvent;
 use super::super::{VirtualMachine, Value};
 use super::register::{split_port, decode_dispatch_key};
 
 
 impl VirtualMachine {
     pub(super) fn do_dei(&mut self, d: Register, port_reg: Register) -> Result<(), String> {
-        let port_val = self.read_i64(port_reg)?;
+        let port_val = self.read_int(port_reg)?;
         let (device_id, port) = split_port(port_val)?;
         match (device_id, port) {
             (polka::DISPATCH_ID, polka::DISPATCH_PORT_LOOKUP) => {
                 let (raw, is_handle) = if let Some(frame) = self.handlers.last() {
-                    self.heap.ld(frame.cell_slot, frame.cell_gen, crate::cont_slot::DISPATCH_FN_ID)?
+                    self.heap.ld(frame.cell_slot, frame.cell_gen, runtime::cont_slot::DISPATCH_FN_ID)?
                 } else {
-                    (self.dispatch_last_result.take().unwrap_or(0xFFFF) as u64, false)
+                    (self.dispatch_last_result.take().unwrap_or(0xFFFF) as Word, false)
                 };
                 self.write(d, raw, is_handle)
             }
             (polka::DISPATCH_ID, polka::DISPATCH_PORT_ENV) => {
                 let (raw, is_handle) = if let Some(frame) = self.handlers.last() {
-                    self.heap.ld(frame.cell_slot, frame.cell_gen, crate::cont_slot::DISPATCH_ENV)?
+                    self.heap.ld(frame.cell_slot, frame.cell_gen, runtime::cont_slot::DISPATCH_ENV)?
                 } else {
                     self.dispatch_last_env.take().unwrap_or((HANDLE_NONE, false))
                 };
-                let (raw, is_handle) = if raw == HANDLE_NONE && !is_handle { (0u64, false) } else { (raw, is_handle) };
+                let (raw, is_handle) = if raw == HANDLE_NONE && !is_handle { (0 as Word, false) } else { (raw, is_handle) };
                 if is_handle { self.rc_inc_handle(raw)?; }
                 self.write(d, raw, is_handle)
             }
@@ -48,33 +50,33 @@ impl VirtualMachine {
 
     pub(super) fn do_deo(&mut self, module: &Module, src: Register, port_reg: Register) -> Result<(), String> {
         let (raw, is_handle) = self.read(src)?;
-        let port_val = self.read_i64(port_reg)?;
+        let port_val = self.read_int(port_reg)?;
         let (device_id, port) = split_port(port_val)?;
         match (device_id, port) {
             (0x00, 0x01) => {
-                if !is_handle { self.exit_code = Some((raw as i64) & 0xFFFF_FFFF); }
+                if !is_handle { self.exit_code = Some(raw as u32 as Int); }
                 self.halted = true;
                 Ok(())
             }
             (0x00, 0x02) => {
                 let msg = if is_handle && raw != HANDLE_NONE {
                     let v = Value::from_raw(raw);
-                    crate::value::read_string(&self.heap, v).unwrap_or_else(|| format!("(handle {:?})", v))
+                    runtime::value::read_string(&self.heap, v).unwrap_or_else(|| format!("(handle {:?})", v))
                 } else {
-                    format!("{}", raw as i64)
+                    format!("{}", raw as Int)
                 };
                 Err(format!("panic: {}", msg))
             }
             (polka::DISPATCH_ID, polka::DISPATCH_PORT_LOOKUP) => {
                 let key = decode_dispatch_key(raw)?;
-                let mut init_mask = vec![0u64; (crate::cont_slot::SIZE + 63) / 64];
-                init_mask[0] = crate::cont_slot::INIT_MASK_WORD0;
-                let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(crate::cont_slot::SIZE, &init_mask)?;
+                let mut init_mask = vec![0 as Word; runtime::cont_slot::SIZE.div_ceil(Word::BITS as usize)];
+                init_mask[0] = runtime::cont_slot::INIT_MASK_WORD0;
+                let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(runtime::cont_slot::SIZE, &init_mask)?;
                 self.region_record_alloc(cell_slot, cell_gen);
-                self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_PC, (self.pc - 1) as u64, false)?;
-                self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_BASE, self.base_reg as u64, false)?;
-                self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_FUNC, self.current_func as u64, false)?;
-                self.heap.st(cell_slot, cell_gen, crate::cont_slot::ALIVE, 1, false)?;
+                self.heap.st(cell_slot, cell_gen, runtime::cont_slot::SUSPEND_PC, (self.pc - 1) as Word, false)?;
+                self.heap.st(cell_slot, cell_gen, runtime::cont_slot::SUSPEND_BASE, self.base_reg as Word, false)?;
+                self.heap.st(cell_slot, cell_gen, runtime::cont_slot::SUSPEND_FUNC, self.current_func as Word, false)?;
+                self.heap.st(cell_slot, cell_gen, runtime::cont_slot::ALIVE, 1, false)?;
 
                 let reg_count = self.current_fn_reg_count(module);
                 let snapshot = self.snapshot_registers(self.base_reg, reg_count)?;
@@ -86,10 +88,10 @@ impl VirtualMachine {
                     handler_frame.cell_gen = cell_gen;
                 }
                 let (fn_id, env) = self.resolve_dispatch(key);
-                self.heap.st(cell_slot, cell_gen, crate::cont_slot::DISPATCH_FN_ID, fn_id as u64, false)?;
+                self.heap.st(cell_slot, cell_gen, runtime::cont_slot::DISPATCH_FN_ID, fn_id as Word, false)?;
                 let (env_raw, env_is_handle) = env.unwrap_or((HANDLE_NONE, false));
                 if env_is_handle { self.rc_inc_handle(env_raw)?; }
-                self.heap.st(cell_slot, cell_gen, crate::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
+                self.heap.st(cell_slot, cell_gen, runtime::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
                 self.dispatch_last_result = Some(fn_id);
                 self.dispatch_last_env = env;
                 Ok(())
@@ -103,7 +105,7 @@ impl VirtualMachine {
                 Ok(())
             }
             (polka::DISPATCH_ID, polka::DISPATCH_PORT_RETURN_FN) => {
-                let fn_id = raw as i64;
+                let fn_id = raw as Int;
                 let handler = self.handlers.last_mut()
                     .ok_or("dispatch.return_fn: no active handler frame")?;
                 handler.pending_return_arm_fn = Some(fn_id as usize);
@@ -156,18 +158,18 @@ impl VirtualMachine {
         let (alive_raw, saved_base, saved_func, suspended_snapshot) = {
             let data = self.heap.cell_data(cell_slot, cell_gen)?;
             let mask = self.heap.cell_mask(cell_slot, cell_gen)?;
-            debug_assert!(data.len() >= crate::cont_slot::SIZE);
-            let alive = data[crate::cont_slot::ALIVE];
-            let saved_base = data[crate::cont_slot::SUSPEND_BASE] as usize;
-            let saved_func = data[crate::cont_slot::SUSPEND_FUNC] as usize;
-            let snap_raw = data[crate::cont_slot::REGS_SNAPSHOT_SLOT];
-            let snap_is_handle = mask_bit(mask, crate::cont_slot::REGS_SNAPSHOT_SLOT);
+            debug_assert!(data.len() >= runtime::cont_slot::SIZE);
+            let alive = data[runtime::cont_slot::ALIVE];
+            let saved_base = data[runtime::cont_slot::SUSPEND_BASE] as usize;
+            let saved_func = data[runtime::cont_slot::SUSPEND_FUNC] as usize;
+            let snap_raw = data[runtime::cont_slot::REGS_SNAPSHOT_SLOT];
+            let snap_is_handle = mask_bit(mask, runtime::cont_slot::REGS_SNAPSHOT_SLOT);
             let snap = if !snap_is_handle || snap_raw == HANDLE_NONE {
-                crate::snapshot::SnapshotHandle::EMPTY
+                runtime::snapshot::SnapshotHandle::EMPTY
             } else {
                 let (slot, generation) = Self::decode_handle(snap_raw);
-                let count = data[crate::cont_slot::REGS_COUNT] as usize;
-                crate::snapshot::SnapshotHandle { slot, generation, count }
+                let count = data[runtime::cont_slot::REGS_COUNT] as usize;
+                runtime::snapshot::SnapshotHandle { slot, generation, count }
             };
             (alive, saved_base, saved_func, snap)
         };
@@ -177,7 +179,7 @@ impl VirtualMachine {
             n => return Err(format!("resume: continuation cell corrupted (alive slot = {})", n)),
         }
 
-        self.heap.st(cell_slot, cell_gen, crate::cont_slot::ALIVE, 0, false)?;
+        self.heap.st(cell_slot, cell_gen, runtime::cont_slot::ALIVE, 0, false)?;
 
         let (val_raw, val_is_handle) = self.read(val_reg)?;
 
@@ -220,7 +222,7 @@ impl VirtualMachine {
         self.restore_registers(saved_base, suspended_snapshot)?;
 
         if !suspended_snapshot.is_empty() {
-            self.heap.st(cell_slot, cell_gen, crate::cont_slot::REGS_SNAPSHOT_SLOT, HANDLE_NONE, true)?;
+            self.heap.st(cell_slot, cell_gen, runtime::cont_slot::REGS_SNAPSHOT_SLOT, HANDLE_NONE, true)?;
             self.heap.rc_dec(suspended_snapshot.slot, suspended_snapshot.generation)?;
         }
 

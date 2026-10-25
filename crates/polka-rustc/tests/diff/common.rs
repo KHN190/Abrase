@@ -98,12 +98,7 @@ pub fn interp(bc: &BytecodeChunk) -> Outcome {
     }
 }
 
-pub fn run_module_outcome(module: &Module) -> Outcome {
-    match VirtualMachine::new().with_step_cap(1_000_000).run_module(module) {
-        Ok(v) => Outcome::Ok(v.raw()),
-        Err(e) => Outcome::Err(e),
-    }
-}
+pub fn run_module_outcome(module: &Module) -> Outcome { interp_with_live(module).0 }
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -160,10 +155,10 @@ pub fn compile_run_lib_full(module: &Module) -> (Outcome, usize) {
         "{lib}\nfn main() {{\n\
          use std::io::Write;\n\
          let module = myriad::read_pk(PK).expect(\"read_pk\");\n\
-         let console = myriad::devices::BufferConsole::new();\n\
+         let console = runtime::devices::BufferConsole::new();\n\
          let (cart_out, _) = console.handles();\n\
-         let mut vm = myriad::VirtualMachine::new();\n\
-         myriad::Host::default().with_console(Box::new(console)).install_into(&mut vm);\n\
+         let mut vm = runtime::VirtualMachine::new();\n\
+         runtime::Host::default().with_console(Box::new(console)).install_into(&mut vm);\n\
          register_aot(&mut vm);\n\
          let r = vm.run_module(&module);\n\
          let live = vm.heap_live_count();\n\
@@ -271,13 +266,21 @@ pub fn module_with_flags(bc: BytecodeChunk, flags: u16) -> Module {
 }
 
 pub fn interp_with_live(module: &Module) -> (Outcome, usize) {
-    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
-    let o = match vm.run_module(module) {
-        Ok(v) => Outcome::Ok(v.raw()),
-        Err(e) => Outcome::Err(e),
-    };
-    let live = vm.heap_live_count();
-    (o, live)
+    if module.flags & polka::CART_FLAG_INT32_SAFE != 0 {
+        let mut vm = myriad::word32::VirtualMachine::new().with_step_cap(1_000_000);
+        let outcome = match vm.run_module(module) {
+            Ok(value) => Outcome::Ok(u64::from(value.raw())),
+            Err(error) => Outcome::Err(error),
+        };
+        (outcome, vm.heap_live_count())
+    } else {
+        let mut vm = myriad::word64::VirtualMachine::new().with_step_cap(1_000_000);
+        let outcome = match vm.run_module(module) {
+            Ok(value) => Outcome::Ok(value.raw()),
+            Err(error) => Outcome::Err(error),
+        };
+        (outcome, vm.heap_live_count())
+    }
 }
 
 pub struct Rng(pub u64);

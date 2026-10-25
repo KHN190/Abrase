@@ -1,7 +1,7 @@
-use myriad::VirtualMachine;
+use myriad::{word32, word64};
 use polka::{BytecodeChunk, Chunk, Module, OpCode, Register, CART_FLAG_INT32_SAFE};
 
-fn run_result(flags: u16, constants: &[i64], op: OpCode) -> Result<polka::Value, String> {
+fn run_result(flags: u16, constants: &[i64], op: OpCode) -> Result<i64, String> {
     let module = Module {
         functions: vec![Chunk::Bytecode(BytecodeChunk {
             code: vec![
@@ -18,11 +18,15 @@ fn run_result(flags: u16, constants: &[i64], op: OpCode) -> Result<polka::Value,
         flags,
         exports: vec![],
     };
-    VirtualMachine::new().run_module(&module)
+    if flags & CART_FLAG_INT32_SAFE != 0 {
+        word32::VirtualMachine::new().run_module(&module).map(|value| value.as_int() as i64)
+    } else {
+        word64::VirtualMachine::new().run_module(&module).map(|value| value.as_int())
+    }
 }
 
 fn run(flags: u16, constants: &[i64], op: OpCode) -> i64 {
-    run_result(flags, constants, op).expect("execute opcode").as_int()
+    run_result(flags, constants, op).expect("execute opcode")
 }
 
 macro_rules! word_contract {

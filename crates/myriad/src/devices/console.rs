@@ -1,7 +1,7 @@
+use super::super::{Int, Device, Value};
 use core::cell::RefCell;
 use alloc::rc::Rc;
 use alloc::{boxed::Box, string::String, vec::Vec};
-use crate::{Device, Value};
 
 pub const CONSOLE_ID: u8 = 0x10;
 pub const PORT_STDIN: u8 = 0x00;
@@ -29,7 +29,7 @@ impl Device for Box<dyn Console> {
     fn read(&mut self, port: u8) -> Result<(Value, bool), String> {
         let v = match port {
             PORT_STDIN => match self.read_byte()? {
-                Some(b) => Value::from_int(b as i64),
+                Some(b) => Value::from_int(b as Int),
                 None => Value::from_int(-1),
             },
             _ => Value::from_int(0),
@@ -37,7 +37,7 @@ impl Device for Box<dyn Console> {
         Ok((v, false))
     }
 
-    fn write(&mut self, port: u8, val: Value, is_handle: bool, heap: &mut crate::memory::Heap)
+    fn write(&mut self, port: u8, val: Value, is_handle: bool, heap: &mut super::super::memory::Heap)
         -> Result<(), String>
     {
         if is_handle { heap.rc_dec_handle(val.raw())?; return Ok(()); }
@@ -50,7 +50,7 @@ impl Device for Box<dyn Console> {
         }
     }
 
-    fn write_bytes(&mut self, port: u8, bytes: &[u8], _heap: &mut crate::memory::Heap)
+    fn write_bytes(&mut self, port: u8, bytes: &[u8], _heap: &mut super::super::memory::Heap)
         -> Result<(), String>
     {
         match port {

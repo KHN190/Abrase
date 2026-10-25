@@ -6,7 +6,7 @@ use myriad::{Value, VirtualMachine};
 fn scalar_const_emits_literal_not_runtime_table() {
     let bc = chunk(vec![OpCode::PushConst(r(0), 0), OpCode::Ret(r(0))], vec![Value::from_int(42).raw()], 1);
     let src = polka_rustc::transpile_program(&bc).unwrap();
-    assert!(src.contains("42u64"), "non-handle const must emit as a literal");
+    assert!(src.contains("let c0: Word = 42 as Word;"), "non-handle const must emit as a literal");
     assert!(!src.contains("cs[0][0]"), "non-handle const must not route through the runtime table");
 }
 

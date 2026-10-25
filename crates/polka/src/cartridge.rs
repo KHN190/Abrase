@@ -1,5 +1,6 @@
 use alloc::{string::String, vec, vec::Vec};
-use crate::{BytecodeChunk, Chunk, Export, Module, NativeChunk, OpCode, Register};
+use crate::numeric::{Word, WORD_BITS};
+use crate::{Constant, BytecodeChunk, Chunk, Export, Module, NativeChunk, OpCode, Register};
 
 pub const MAGIC: u32 = 0xECFF_00EC;
 pub const VERSION: u16 = 0x0202;
@@ -33,6 +34,7 @@ impl core::error::Error for EncodeError {}
 pub enum LoadError {
     NotACartridge,
     UnsupportedVersion(u16),
+    UnsupportedProfile(u16),
     OutOfMemory { offset: usize },
     Corrupt { offset: usize, kind: Corruption },
 }
@@ -43,6 +45,7 @@ pub enum Corruption {
     UnknownKind(u8),
     UnknownOpcode(u8),
     InvalidUtf8,
+    InvalidConstant,
 }
 
 impl core::fmt::Display for LoadError {
@@ -52,6 +55,8 @@ impl core::fmt::Display for LoadError {
                 write!(f, "not a Polka cartridge (.pk file expected)"),
             LoadError::UnsupportedVersion(v) =>
                 write!(f, "cartridge format version 0x{:04X} is not supported by this runtime", v),
+            LoadError::UnsupportedProfile(flags) =>
+                write!(f, "cartridge profile {flags:#x} is not supported by this runtime"),
             LoadError::OutOfMemory { offset } =>
                 write!(f, "out of memory while loading cartridge at byte {}", offset),
             LoadError::Corrupt { offset, kind } => match kind {
@@ -61,6 +66,8 @@ impl core::fmt::Display for LoadError {
                     write!(f, "malformed cartridge at byte {}: unknown function entry kind {}", offset, k),
                 Corruption::UnknownOpcode(b) =>
                     write!(f, "malformed cartridge at byte {}: unknown opcode 0x{:02X}", offset, b),
+                Corruption::InvalidConstant =>
+                    write!(f, "malformed cartridge at byte {}: constant exceeds runtime width", offset),
                 Corruption::InvalidUtf8 =>
                     write!(f, "malformed cartridge at byte {}: invalid UTF-8 in string pool", offset),
             }
@@ -246,6 +253,25 @@ fn read_exports(r: &mut Reader) -> Result<Vec<Export>, LoadError> {
     Ok(out)
 }
 
+#[cfg(test)]
+mod profile_policy_tests {
+    use super::*;
+    #[test]
+    fn narrow_only_rejects_wide_while_hosts_accept_both_profiles() {
+        assert!(matches!(validate_runtime_profile(0, true), Err(LoadError::UnsupportedProfile(0))));
+        assert!(validate_runtime_profile(crate::CART_FLAG_INT32_SAFE, true).is_ok());
+        assert!(validate_runtime_profile(0, false).is_ok());
+        assert!(validate_runtime_profile(crate::CART_FLAG_INT32_SAFE, false).is_ok());
+    }
+}
+
+fn validate_runtime_profile(flags: u16, narrow_only: bool) -> Result<(), LoadError> {
+    if narrow_only && flags & crate::CART_FLAG_INT32_SAFE == 0 {
+        return Err(LoadError::UnsupportedProfile(flags));
+    }
+    Ok(())
+}
+
 pub fn read_pk(data: &[u8]) -> Result<Module, LoadError> {
     let mut r = Reader::new(data);
 
@@ -255,6 +281,7 @@ pub fn read_pk(data: &[u8]) -> Result<Module, LoadError> {
     let version = r.read_u16()?;
     if version != VERSION { return Err(LoadError::UnsupportedVersion(version)); }
     let flags = r.read_u16()?;
+    validate_runtime_profile(flags, cfg!(all(target_os = "none", target_pointer_width = "32")))?;
     let entry = r.read_u32()? as usize;
 
     let fn_count = r.read_u32()? as usize;
@@ -369,19 +396,30 @@ fn read_fn_header(r: &mut Reader) -> Result<FnHeader, LoadError> {
 fn read_fn_payload(r: &mut Reader, header: FnHeader) -> Result<Chunk, LoadError> {
     match header {
         FnHeader::Bytecode { param_count, reg_count, const_count, string_count, code_count } => {
+            #[cfg(all(target_os = "none", target_pointer_width = "32"))]
+            let constants_start = r.pos;
             let mut constants = r.vector(const_count as usize, 8)?;
             for _ in 0..const_count {
-                constants.push(r.read_u64()?);
+                constants.push(r.read_constant()?);
             }
             let mask_bytes = (const_count as usize + 7) / 8;
             let mask_raw = r.take(mask_bytes)?;
-            let mask_word_count = (const_count as usize + 63) / 64;
+            let mask_word_count = (const_count as usize + WORD_BITS as usize - 1) / WORD_BITS as usize;
             let mut const_mask = reserve_vec(mask_word_count, r.pos)?;
-            const_mask.resize(mask_word_count, 0u64);
+            const_mask.resize(mask_word_count, 0 as Word);
             for i in 0..const_count as usize {
                 if (mask_raw[i / 8] >> (i % 8)) & 1 == 1 {
-                    const_mask[i / 64] |= 1 << (i % 64);
+                    const_mask[i / WORD_BITS as usize] |= (1 as Word) << (i % WORD_BITS as usize);
                 }
+            }
+            #[cfg(all(target_os = "none", target_pointer_width = "32"))]
+            for (index, constant) in constants.iter().copied().enumerate() {
+                let valid = if crate::mask_bit_set(&const_mask, index) {
+                    constant.pool_index().is_ok()
+                } else { constant.to_word().is_ok() };
+                if !valid { return Err(LoadError::Corrupt {
+                    offset: constants_start + index * 8, kind: Corruption::InvalidConstant,
+                }); }
             }
             let mut string_constants = r.vector(string_count as usize, 4)?;
             for _ in 0..string_count {
@@ -610,8 +648,8 @@ impl<'a> Reader<'a> {
     fn read_u32(&mut self) -> Result<u32, LoadError> {
         let b = self.take(4)?; Ok(u32::from_le_bytes([b[0],b[1],b[2],b[3]]))
     }
-    fn read_u64(&mut self) -> Result<u64, LoadError> {
+    fn read_constant(&mut self) -> Result<Constant, LoadError> {
         let b = self.take(8)?;
-        Ok(u64::from_le_bytes([b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7]]))
+        Ok(Constant::from_le_bytes([b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7]]))
     }
 }

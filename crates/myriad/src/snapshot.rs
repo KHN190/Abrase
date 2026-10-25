@@ -1,7 +1,9 @@
 use alloc::string::String;
-use polka::{Chunk, Module, HANDLE_NONE};
-use crate::memory::mask_bit;
-use crate::{cont_slot, VirtualMachine};
+use polka::{Chunk, Module};
+use super::HANDLE_NONE;
+use super::{Word, WORD_BITS, WORD_BYTES};
+use super::memory::mask_bit;
+use super::{cont_slot, VirtualMachine};
 
 #[derive(Clone, Copy)]
 pub struct SnapshotHandle {
@@ -56,11 +58,11 @@ impl VirtualMachine {
                 base, end, self.registers.len()
             ));
         }
-        self.mem_charge(reg_count.saturating_mul(8))?;
-        let mut init_mask = vec![0u64; (reg_count + 63) / 64];
+        self.mem_charge(reg_count.saturating_mul(WORD_BYTES))?;
+        let mut init_mask = vec![0 as Word; reg_count.div_ceil(WORD_BITS as usize)];
         for i in 0..reg_count {
             if self.reg_mask_bit(base + i) {
-                init_mask[i / 64] |= 1u64 << (i % 64);
+                init_mask[i / WORD_BITS as usize] |= (1 as Word) << (i % WORD_BITS as usize);
             }
         }
         let (slot, generation) = self.heap.try_alloc_with_mask(reg_count, &init_mask)?;
@@ -85,7 +87,7 @@ impl VirtualMachine {
         let needed = base + snapshot.count;
         if needed > self.registers.len() {
             self.registers.resize(needed, HANDLE_NONE);
-            let mask_words_needed = (needed + 63) / 64;
+            let mask_words_needed = needed.div_ceil(WORD_BITS as usize);
             if mask_words_needed > self.register_mask.len() {
                 self.register_mask.resize(mask_words_needed, 0);
             }
@@ -124,9 +126,9 @@ impl VirtualMachine {
             self.heap.st(cell_slot, cell_gen, cont_slot::REGS_COUNT, 0, false)?;
             return Ok(());
         }
-        let handle = polka::Value::from_handle(snapshot.slot, snapshot.generation).raw();
+        let handle = super::Value::from_handle(snapshot.slot, snapshot.generation).raw();
         self.heap.st(cell_slot, cell_gen, cont_slot::REGS_SNAPSHOT_SLOT, handle, true)?;
-        self.heap.st(cell_slot, cell_gen, cont_slot::REGS_COUNT, snapshot.count as u64, false)?;
+        self.heap.st(cell_slot, cell_gen, cont_slot::REGS_COUNT, snapshot.count as Word, false)?;
         Ok(())
     }
 }
@@ -135,13 +137,13 @@ impl VirtualMachine {
 mod snapshot_tests {
     use super::*;
     use alloc::{vec, vec::Vec};
-    use crate::HandlerFrame;
+    use super::super::HandlerFrame;
     use polka::{BytecodeChunk, Chunk, Module};
 
     fn vm() -> VirtualMachine { VirtualMachine::new() }
 
-    fn encode_handle(slot: u32, gen_: u32) -> u64 {
-        ((slot as u64) << 24) | (gen_ as u64)
+    fn encode_handle(slot: u32, gen_: u32) -> Word {
+        super::super::Value::from_handle(slot, gen_).raw()
     }
 
     #[test]
@@ -262,7 +264,7 @@ mod snapshot_tests {
         // Build a snapshot of count=4 by hand using snapshot_registers,
         // then restore at base=10 to force extension.
         v.ensure_registers(4);
-        for i in 0..4 { v.registers[i] = (i * 10) as u64; }
+        for i in 0..4 { v.registers[i] = (i * 10) as Word; }
         let snap = v.snapshot_registers(0, 4).expect("snapshot");
         v.restore_registers(10, snap).expect("restore");
         assert!(v.registers.len() >= 14);
@@ -430,4 +432,43 @@ mod snapshot_tests {
         assert!(snap_is_h);
         assert_eq!(count_raw, 2);
     }
+
+    #[test]
+    fn snapshot_restore_crosses_word_masks_without_reclassifying_scalar_bits() {
+        let mut v = vm();
+        v.ensure_registers(65);
+        let mut children = Vec::new();
+        for index in [31, 32, 63, 64] {
+            let (slot, generation) = v.heap_alloc(1);
+            v.registers[index] = encode_handle(slot, generation);
+            v.set_reg_mask_bit(index, true);
+            children.push((index, slot, generation));
+        }
+        v.registers[0] = v.registers[31];
+        let scalar_bits = v.registers[0];
+        let snapshot = v.snapshot_registers_off_region(0, 65).unwrap();
+        for &(index, slot, generation) in &children {
+            assert_eq!(v.heap.rc(slot, generation), Some(2));
+            v.heap.rc_dec(slot, generation).unwrap();
+            v.registers[index] = 7;
+            v.set_reg_mask_bit(index, false);
+        }
+        v.restore_registers(0, snapshot).unwrap();
+        assert_eq!(v.registers[0], scalar_bits);
+        assert!(!v.reg_mask_bit(0));
+        for &(index, slot, generation) in &children {
+            assert_eq!(v.registers[index], encode_handle(slot, generation));
+            assert!(v.reg_mask_bit(index));
+            assert_eq!(v.heap.rc(slot, generation), Some(2));
+        }
+        v.heap.rc_dec(snapshot.slot, snapshot.generation).unwrap();
+        for (index, slot, generation) in children {
+            assert_eq!(v.heap.rc(slot, generation), Some(1));
+            v.heap.rc_dec(slot, generation).unwrap();
+            v.registers[index] = HANDLE_NONE;
+            v.set_reg_mask_bit(index, false);
+        }
+        assert_eq!(v.heap.live_count(), 0);
+    }
+
 }

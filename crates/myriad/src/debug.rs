@@ -1,5 +1,10 @@
+use super::runtime;
+use runtime::Word;
 use alloc::{boxed::Box, string::String};
-use polka::{OpCode, Value};
+use polka::OpCode;
+use runtime::Value;
+
+pub use runtime::TraceMask;
 
 pub enum DebugEvent<'a> {
     Trace {
@@ -8,8 +13,8 @@ pub enum DebugEvent<'a> {
         op: &'a OpCode,
         base_reg: usize,
         // The current fn's register window and which of those regs hold handles.
-        window: &'a [u64],
-        handle_mask: u128,
+        window: &'a [Word],
+        handle_mask: TraceMask,
         // Source line of this op (0 = no debug info).
         line: u32,
         // Source file of this fn ("" = unknown).

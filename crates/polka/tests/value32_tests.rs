@@ -1,6 +1,4 @@
-#![cfg(feature = "word32")]
-
-use polka::{Value, HANDLE_NONE, HANDLE_SLOT_MAX};
+use polka::word32::{Value, HANDLE_NONE, HANDLE_SLOT_MAX};
 
 #[test]
 fn values_use_four_bytes_and_native_numeric_arguments() {

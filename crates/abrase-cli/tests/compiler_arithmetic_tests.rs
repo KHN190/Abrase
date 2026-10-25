@@ -305,9 +305,9 @@ fn int_div_by_zero_traps_not_panic() {
 }
 
 #[test]
-fn int_min_div_neg_one_const_folds_no_panic() {
+fn int_min_div_neg_one_constant_traps_without_host_panic() {
     let src = format!("fn main() -> Int {{ {MIN_EXPR} / (0 - 1) }}");
-    assert!(run_source(&src).is_ok(), "compile-time fold of MIN/-1 must not host-panic");
+    assert!(run_source(&src).is_err(), "constant MIN/-1 must trap just like the runtime opcode");
 }
 
 #[test]
@@ -322,9 +322,9 @@ fn int_mod_by_zero_traps_not_panic() {
 }
 
 #[test]
-fn int_min_mod_neg_one_const_folds_no_panic() {
+fn int_min_mod_neg_one_constant_traps_without_host_panic() {
     let src = format!("fn main() -> Int {{ {MIN_EXPR} % (0 - 1) }}");
-    assert!(run_source(&src).is_ok(), "compile-time fold of MIN%-1 must not host-panic");
+    assert!(run_source(&src).is_err(), "constant MIN%-1 must trap just like the runtime opcode");
 }
 
 #[test]

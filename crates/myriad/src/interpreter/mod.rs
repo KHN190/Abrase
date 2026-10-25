@@ -1,10 +1,12 @@
+use super::runtime;
+use runtime::{Word, Int, Float, HANDLE_NONE};
 use alloc::{string::{String, ToString}, vec::Vec};
-use self::register::validate_module_register_budget;
+use self::register::{validate_module_register_budget, validate_module_profile};
 use super::{VirtualMachine, Value};
 use super::debug::DebugEvent;
-use polka::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS, HANDLE_NONE};
-use crate::frame::Frame;
-use crate::memory::mask_bit;
+use polka::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS};
+use runtime::frame::Frame;
+use runtime::memory::mask_bit;
 
 pub mod frame;
 pub mod effect;
@@ -19,7 +21,7 @@ pub const MAX_RAM: usize = 64 * 1024 * 1024;
 
 impl VirtualMachine {
     pub fn run(&mut self, chunk: &Chunk) -> Result<Value, String> {
-        let module = Module { functions: vec![chunk.clone()], entry: 0, flags: 0, exports: vec![] };
+        let module = Module { functions: vec![chunk.clone()], entry: 0, flags: if runtime::IS_INT32 { polka::CART_FLAG_INT32_SAFE } else { 0 }, exports: vec![] };
         self.run_module(&module)
     }
 
@@ -45,6 +47,7 @@ impl VirtualMachine {
         name: &str,
         args: &[Value],
     ) -> Result<Value, String> {
+        validate_module_profile(module)?;
         let export = module.exports.iter().find(|e| e.name == name)
             .ok_or_else(|| format!("no export named '{}'", name))?;
         let fn_id = export.fn_id as usize;
@@ -72,6 +75,7 @@ impl VirtualMachine {
         fn_id: usize,
         args: &[Value],
     ) -> Result<Value, String> {
+        validate_module_profile(module)?;
         if self.exit_code.is_some() {
             return Ok(Value::from_int(self.exit_code.unwrap()));
         }
@@ -216,6 +220,13 @@ impl VirtualMachine {
                 }
                 let opcode_pc = self.pc;
                 let opcode = unsafe { bc.code.get_unchecked(opcode_pc) };
+                if let Some(remaining) = &mut self.step_remaining {
+                    if *remaining == 0 {
+                        self.failing_pc = opcode_pc;
+                        return Err(String::from("step cap exceeded"));
+                    }
+                    *remaining -= 1;
+                }
                 if TRACE {
                     let pass = self.trace_filter.as_ref()
                         .map_or(true, |f| f.get(self.current_func).copied().unwrap_or(false));
@@ -224,9 +235,11 @@ impl VirtualMachine {
                         let base = self.base_reg;
                         let rc = bc.reg_count.min(128);
                         let end = (base + rc).min(self.registers.len());
-                        let mut handle_mask: u128 = 0;
+                        let mut handle_mask = runtime::empty_trace_mask();
                         for i in 0..end.saturating_sub(base) {
-                            if self.reg_mask_bit(base + i) { handle_mask |= 1u128 << i; }
+                            if self.reg_mask_bit(base + i) {
+                                runtime::set_trace_mask(&mut handle_mask, i);
+                            }
                         }
                         let event = DebugEvent::Trace {
                             func: self.current_func, pc: opcode_pc, op: opcode,
@@ -240,16 +253,15 @@ impl VirtualMachine {
                 }
                 if PROF {
                     let name = Self::op_name(opcode);
-                    *self.prof_ops.entry(name).or_insert(0) += 1;
-                    *self.prof_fns.entry(self.current_func).or_insert(0) += 1;
-                    *self.prof_fn_ops.entry(self.current_func).or_default().entry(name).or_insert(0) += 1;
+                    let count = self.prof_ops.entry(name).or_insert(0);
+                    *count = count.saturating_add(1);
+                    let count = self.prof_fns.entry(self.current_func).or_insert(0);
+                    *count = count.saturating_add(1);
+                    let count = self.prof_fn_ops.entry(self.current_func).or_default().entry(name).or_insert(0);
+                    *count = count.saturating_add(1);
                 }
                 self.pc = opcode_pc + 1;
-                self.steps = self.steps.wrapping_add(1);
-                if self.steps > self.step_cap {
-                    self.failing_pc = opcode_pc;
-                    return Err(format!("step cap exceeded ({} ops)", self.step_cap));
-                }
+                self.steps = self.steps.saturating_add(1);
                 if self.heap_check {
                     self.heap.trace_pc = opcode_pc;
                 }
@@ -271,6 +283,7 @@ impl VirtualMachine {
     }
 
     pub fn run_to_yield(&mut self, module: &Module) -> Result<(), String> {
+        validate_module_profile(module)?;
         self.yielded = false;
         validate_module_register_budget(module)?;
         self.int32_safe = (module.flags & polka::CART_FLAG_INT32_SAFE) != 0;
@@ -281,7 +294,7 @@ impl VirtualMachine {
             self.heap.clear();
             self.string_const_handles.clear();
             self.resolve_constants(module)?;
-            self.module_table_raw = polka::HANDLE_NONE;
+            self.module_table_raw = HANDLE_NONE;
             self.module_table_is_handle = false;
             self.run_module_init(module)?;
         }
@@ -299,6 +312,7 @@ impl VirtualMachine {
     }
 
     pub fn resume(&mut self, module: &Module, input: Value) -> Result<bool, String> {
+        validate_module_profile(module)?;
         if !self.yielded {
             return Err("resume: VM is not suspended".into());
         }
@@ -333,7 +347,7 @@ impl VirtualMachine {
             }
             OpCode::Call(dest, fn_id) => self.do_call(module, bc, *dest, *fn_id as usize),
             OpCode::CallReg(dest, fn_id_reg) => {
-                let fn_id = self.read_i64(*fn_id_reg)?;
+                let fn_id = self.read_int(*fn_id_reg)?;
                 if !(0..=0xFFFF).contains(&fn_id) {
                     return Err(format!("call_reg: fn_id {} out of u16 range", fn_id));
                 }
@@ -352,10 +366,10 @@ impl VirtualMachine {
                 self.write(*d, v, is_handle)
             }
 
-            OpCode::Ld(d, b, off)      => self.exec_ld(*d, *b, *off as i64),
-            OpCode::St(src, b, off)    => self.exec_st(*src, *b, *off as i64),
-            OpCode::LdIdx(d, b, i)     => { let off = self.read_i64(*i)?; if off < 0 { return Err(format!("ldidx: negative index {}", off)); } self.exec_ld(*d, *b, off) }
-            OpCode::StIdx(src, b, i)   => { let off = self.read_i64(*i)?; if off < 0 { return Err(format!("stidx: negative index {}", off)); } self.exec_st(*src, *b, off) }
+            OpCode::Ld(d, b, off)      => self.exec_ld(*d, *b, *off as Int),
+            OpCode::St(src, b, off)    => self.exec_st(*src, *b, *off as Int),
+            OpCode::LdIdx(d, b, i)     => { let off = self.read_int(*i)?; if off < 0 { return Err(format!("ldidx: negative index {}", off)); } self.exec_ld(*d, *b, off) }
+            OpCode::StIdx(src, b, i)   => { let off = self.read_int(*i)?; if off < 0 { return Err(format!("stidx: negative index {}", off)); } self.exec_st(*src, *b, off) }
 
 
             OpCode::Alloc(d, size) => {
@@ -394,7 +408,7 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    fn exec_ld(&mut self, d: Register, b: Register, off: i64) -> Result<(), String> {
+    fn exec_ld(&mut self, d: Register, b: Register, off: Int) -> Result<(), String> {
         let (slot, gen_) = self.read_handle(b)?;
         let (raw, is_handle) = self.heap.ld(slot, gen_, off as usize)?;
         if is_handle { self.rc_inc_handle(raw)?; }
@@ -403,7 +417,7 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    fn exec_st(&mut self, src: Register, b: Register, off: i64) -> Result<(), String> {
+    fn exec_st(&mut self, src: Register, b: Register, off: Int) -> Result<(), String> {
         let (slot, gen_) = self.read_handle(b)?;
         let (raw, is_handle) = self.take(src)?;
         self.trace_static_access("St", slot, off, raw, is_handle);
@@ -412,7 +426,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn trace_static_access(&self, op: &str, slot: u32, off: i64, raw: u64, is_handle: bool) {
+    fn trace_static_access(&self, op: &str, slot: u32, off: Int, raw: Word, is_handle: bool) {
         let traced = match self.trace_static_filter.as_deref() { Some(s) => s, None => return };
         let idx = off as usize;
         let name = self.static_names.get(idx).map(|s| s.as_str()).unwrap_or("");
@@ -421,7 +435,7 @@ impl VirtualMachine {
             let val = if is_handle {
                 format!("handle({:#x})", raw)
             } else {
-                format!("int({}) / float({:.6})", raw as i64, f64::from_bits(raw))
+                format!("int({}) / float({:.6})", raw as Int, Float::from_bits(raw))
             };
             if let Some(f) = self.trace_out {
                 f(&format!("[TRACE_STATIC] {} slot={} off={} name={} val={}", op, slot, off, name, val));

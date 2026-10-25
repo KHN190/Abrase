@@ -19,7 +19,4 @@ homepage.workspace     = true
 name = "polka"
 doctest = false
 
-[features]
-word32 = []
-
 [dependencies]

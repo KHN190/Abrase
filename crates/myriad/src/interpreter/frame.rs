@@ -1,7 +1,9 @@
+use super::super::runtime;
+use runtime::{Word, HANDLE_NONE};
 use alloc::{string::String, vec::Vec};
-use polka::{BytecodeChunk, Chunk, Register, Module, FRAME_REGS, HANDLE_NONE};
-use crate::frame::Frame;
-use crate::builtins::NativeCtx;
+use polka::{BytecodeChunk, Chunk, Register, Module, FRAME_REGS};
+use runtime::frame::Frame;
+use runtime::builtins::NativeCtx;
 use super::super::{VirtualMachine, Value};
 use super::{MAX_REGISTERS, MAX_RECURSION_DEPTH, STAGE_SLACK};
 
@@ -118,7 +120,7 @@ impl VirtualMachine {
         key_reg: Register,
         args_base: Register,
     ) -> Result<(), String> {
-        let key_raw = self.read_i64(key_reg)?;
+        let key_raw = self.read_int(key_reg)?;
         if !(0..=0xFFFFFF).contains(&key_raw) {
             return Err(format!("raise: bad key {}", key_raw));
         }
@@ -154,7 +156,7 @@ impl VirtualMachine {
         // Op args are MOVED into the operation: take them out of the caller
         // window (before snapshotting, in the suspension path).
         let args_base_abs = self.base_reg + args_base.to_usize();
-        let mut moved_args: Vec<(u64, bool)> = Vec::with_capacity(nargs);
+        let mut moved_args: Vec<(Word, bool)> = Vec::with_capacity(nargs);
         for i in 0..nargs {
             let src_abs = args_base_abs + i;
             let raw = self.read_abs_raw(src_abs);
@@ -167,14 +169,14 @@ impl VirtualMachine {
         // Tail-resumptive arm (compiled to end in Ret): plain call, the cont
         // cell and register snapshot would never be read — skip them entirely.
         if !tail_arm {
-            let mut init_mask = vec![0u64; (crate::cont_slot::SIZE + 63) / 64];
-            init_mask[0] = crate::cont_slot::INIT_MASK_WORD0;
-            let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(crate::cont_slot::SIZE, &init_mask)?;
+            let mut init_mask = vec![0 as Word; runtime::cont_slot::SIZE.div_ceil(Word::BITS as usize)];
+            init_mask[0] = runtime::cont_slot::INIT_MASK_WORD0;
+            let (cell_slot, cell_gen) = self.checked_heap_alloc_with_mask(runtime::cont_slot::SIZE, &init_mask)?;
             self.region_record_alloc(cell_slot, cell_gen);
-            self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_PC, (self.pc - 1) as u64, false)?;
-            self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_BASE, self.base_reg as u64, false)?;
-            self.heap.st(cell_slot, cell_gen, crate::cont_slot::SUSPEND_FUNC, self.current_func as u64, false)?;
-            self.heap.st(cell_slot, cell_gen, crate::cont_slot::ALIVE, 1, false)?;
+            self.heap.st(cell_slot, cell_gen, runtime::cont_slot::SUSPEND_PC, (self.pc - 1) as Word, false)?;
+            self.heap.st(cell_slot, cell_gen, runtime::cont_slot::SUSPEND_BASE, self.base_reg as Word, false)?;
+            self.heap.st(cell_slot, cell_gen, runtime::cont_slot::SUSPEND_FUNC, self.current_func as Word, false)?;
+            self.heap.st(cell_slot, cell_gen, runtime::cont_slot::ALIVE, 1, false)?;
 
             let snapshot = self.snapshot_registers(self.base_reg, caller_reg_count)?;
             self.write_snapshot_into_cell(cell_slot, cell_gen, snapshot)?;
@@ -184,9 +186,9 @@ impl VirtualMachine {
                 handler_frame.cell_slot = cell_slot;
                 handler_frame.cell_gen = cell_gen;
             }
-            self.heap.st(cell_slot, cell_gen, crate::cont_slot::DISPATCH_FN_ID, arm_fn_id as u64, false)?;
+            self.heap.st(cell_slot, cell_gen, runtime::cont_slot::DISPATCH_FN_ID, arm_fn_id as Word, false)?;
             if env_is_handle { self.rc_inc_handle(env_raw)?; }
-            self.heap.st(cell_slot, cell_gen, crate::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
+            self.heap.st(cell_slot, cell_gen, runtime::cont_slot::DISPATCH_ENV, env_raw, env_is_handle)?;
         }
 
         let new_base = self.base_reg + caller_reg_count;
@@ -224,14 +226,14 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(super) fn resolve_dispatch_for(&self, effect_id: u16, op_id: usize) -> (u16, bool, Option<(u64, bool)>) {
+    pub(super) fn resolve_dispatch_for(&self, effect_id: u16, op_id: usize) -> (u16, bool, Option<(Word, bool)>) {
         for h in self.handlers.iter().rev() {
             if h.effect_id != effect_id { continue; }
             if let Some(slot) = h.dispatch_table_slot {
                 if let Ok((raw, _)) = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2) {
-                    let tail = (raw & polka::DISPATCH_TAIL_FLAG) != 0;
+                    let tail = (raw & runtime::DISPATCH_TAIL_FLAG) != 0;
                     let n = raw & 0xFFFF;
-                    if raw & !(polka::DISPATCH_TAIL_FLAG | 0xFFFF) == 0 && (n as u16) != polka::DISPATCH_NO_MATCH {
+                    if raw & !(runtime::DISPATCH_TAIL_FLAG | 0xFFFF) == 0 && (n as u16) != polka::DISPATCH_NO_MATCH {
                         let env = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2 + 1).ok();
                         return (n as u16, tail, env);
                     }
@@ -280,7 +282,7 @@ impl VirtualMachine {
 
     #[cold]
     #[inline(never)]
-    pub(super) fn do_ret_slow(&mut self, module: &Module, frame: super::Frame, return_raw: u64, return_is_handle: bool) -> Result<(), String> {
+    pub(super) fn do_ret_slow(&mut self, module: &Module, frame: super::Frame, return_raw: Word, return_is_handle: bool) -> Result<(), String> {
         let is_body_frame = self.handlers.last()
             .and_then(|h| h.body_frame_index)
             .map_or(false, |idx| idx == self.frames.len());
@@ -339,7 +341,7 @@ impl VirtualMachine {
         if !route_through_return_arm {
             if let Some(cont) = frame.cont.as_ref() {
                 if cont.snapshot_count > 0 {
-                    let snap = crate::snapshot::SnapshotHandle {
+                    let snap = runtime::snapshot::SnapshotHandle {
                         slot: cont.snapshot_slot,
                         generation: cont.snapshot_gen,
                         count: cont.snapshot_count,
@@ -357,7 +359,7 @@ impl VirtualMachine {
 
         if let Some(cont) = frame.cont.as_ref() {
             if cont.snapshot_count > 0 {
-                let snap = crate::snapshot::SnapshotHandle {
+                let snap = runtime::snapshot::SnapshotHandle {
                     slot: cont.snapshot_slot,
                     generation: cont.snapshot_gen,
                     count: cont.snapshot_count,

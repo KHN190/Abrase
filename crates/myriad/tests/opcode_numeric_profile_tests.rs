@@ -1,4 +1,4 @@
-use myriad::VirtualMachine;
+use myriad::{word32, word64};
 use polka::{BytecodeChunk, Chunk, Module, OpCode, Register, CART_FLAG_INT32_SAFE};
 
 fn r(n: u8) -> Register { Register(n) }
@@ -9,9 +9,15 @@ fn run(flags: u16, constants: Vec<u64>, code: Vec<OpCode>) -> (u64, usize) {
             constants, code, reg_count: 5, ..BytecodeChunk::default()
         })], entry: 0, flags, exports: vec![],
     };
-    let mut vm = VirtualMachine::new();
-    let value = vm.run_module(&module).expect("execute profile").raw();
-    (value, vm.heap_live_count())
+    if flags & CART_FLAG_INT32_SAFE != 0 {
+        let mut vm = word32::VirtualMachine::new();
+        let value = vm.run_module(&module).expect("execute narrow profile").raw();
+        (value as u64, vm.heap_live_count())
+    } else {
+        let mut vm = word64::VirtualMachine::new();
+        let value = vm.run_module(&module).expect("execute wide profile").raw();
+        (value, vm.heap_live_count())
+    }
 }
 
 fn binary(flags: u16, a: u64, b: u64, op: OpCode) -> u64 {
@@ -73,10 +79,10 @@ fn integer32_comparisons_use_signed_low_word() {
 }
 
 #[test]
-fn integer32_bitwise_results_use_canonical_sign_extension() {
+fn integer32_bitwise_results_use_native_word_bits() {
     for (op, expected) in [
-        (OpCode::And(r(2), r(0), r(1)), i32::MIN as i64 as u64),
-        (OpCode::Or(r(2), r(0), r(1)), u64::MAX),
+        (OpCode::And(r(2), r(0), r(1)), i32::MIN as u32 as u64),
+        (OpCode::Or(r(2), r(0), r(1)), u32::MAX as u64),
         (OpCode::Xor(r(2), r(0), r(1)), i32::MAX as u64),
     ] {
         assert_eq!(binary(CART_FLAG_INT32_SAFE, 0x80000000, 0xffffffff, op), expected);
@@ -105,6 +111,6 @@ fn raw_equality_preserves_handle_bits_above_32() {
         code.extend([OpCode::Ld(r(1), r(0), 0), OpCode::Ld(r(2), r(0), 256)]);
         code.push(if eq { OpCode::Eq(r(3), r(1), r(2)) } else { OpCode::Neq(r(3), r(1), r(2)) });
         code.extend([OpCode::Drop(r(1)), OpCode::Drop(r(2)), OpCode::Drop(r(0)), OpCode::Ret(r(3))]);
-        assert_eq!(run(CART_FLAG_INT32_SAFE, vec![], code), (expected, 0));
+        assert_eq!(run(0, vec![], code), (expected, 0));
     }
 }

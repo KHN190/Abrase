@@ -1,33 +1,36 @@
-use myriad::{CoreArena, DeviceTable, Heap, NativeCtx, NativeRegistry, Value};
-use myriad::builtins::register_default_builtins;
+use myriad::{word32, word64};
 
 fn call(name: &str, args: &[u64], int32_safe: bool) -> (u64, Option<String>) {
-    let mut registry = NativeRegistry::new();
-    register_default_builtins(&mut registry);
-    let mut heap = Heap::new();
-    let mut devices = DeviceTable::new();
-    let mut arena = CoreArena::new();
-    let mut halted = false;
-    let mut exit_code = None;
-    let mut ctx = NativeCtx {
-        heap: &mut heap, devices: &mut devices, core_arena: &mut arena,
-        halted: &mut halted, exit_code: &mut exit_code, int32_safe,
-    };
-    let (value, is_handle) = registry.get(name).unwrap()(
-        &mut ctx, &args.iter().copied().map(Value::from_raw).collect::<Vec<_>>(),
-    ).unwrap();
-    let text = if is_handle {
-        let text = myriad::read_string(&heap, value).expect("string result");
-        let (slot, generation) = value.as_handle();
-        heap.rc_dec(slot, generation).unwrap();
-        Some(text)
-    } else { None };
-    assert_eq!(heap.live_count(), 0);
-    (value.raw(), text)
+    macro_rules! invoke {
+        ($profile:ident) => {{
+            let mut registry = $profile::NativeRegistry::new();
+            $profile::builtins::register_default_builtins(&mut registry);
+            let mut heap = $profile::Heap::new();
+            let mut devices = $profile::DeviceTable::new();
+            let mut arena = $profile::CoreArena::new();
+            let mut halted = false; let mut exit_code = None;
+            let mut ctx = $profile::NativeCtx { heap: &mut heap, devices: &mut devices, core_arena: &mut arena,
+                halted: &mut halted, exit_code: &mut exit_code, int32_safe };
+            let arguments: Vec<_> = args.iter().map(|&raw| $profile::Value::from_raw(raw as $profile::Word)).collect();
+            let (value, is_handle) = registry.get(name).unwrap()(&mut ctx, &arguments).unwrap();
+            let text = if is_handle {
+                let text = $profile::read_string(&heap, value).expect("string result");
+                let (slot, generation) = value.as_handle(); heap.rc_dec(slot, generation).unwrap(); Some(text)
+            } else { None };
+            assert_eq!(heap.live_count(), 0);
+            (value.raw() as u64, text)
+        }};
+    }
+    if int32_safe { invoke!(word32) } else { invoke!(word64) }
+}
+
+fn integer_result(name: &str, args: &[u64], int32_safe: bool) -> i64 {
+    let raw = call(name, args, int32_safe).0;
+    if int32_safe { raw as u32 as i32 as i64 } else { raw as i64 }
 }
 
 fn convert(raw: u64, int32_safe: bool) -> i64 {
-    call("__float_to_i", &[raw], int32_safe).0 as i64
+    integer_result("__float_to_i", &[raw], int32_safe)
 }
 
 #[test]
@@ -57,10 +60,10 @@ fn float64_to_int_retains_i64_bounds_and_large_values() {
 fn integer_natives_use_the_selected_signed_width() {
     for raw in [i32::MIN as i64 as u64, 0x80000000, u64::MAX, 0xffffffff, 0, i32::MAX as u64] {
         let n = raw as i32;
-        assert_eq!(call("__int_abs", &[raw], true).0 as i64, i64::from(n.wrapping_abs()));
-        assert_eq!(call("__int_max", &[raw, 0], true).0 as i64, i64::from(n.max(0)));
-        assert_eq!(call("__int_min", &[raw, 0], true).0 as i64, i64::from(n.min(0)));
-        assert_eq!(call("__int_abs", &[raw], false).0 as i64, (raw as i64).wrapping_abs());
+        assert_eq!(integer_result("__int_abs", &[raw], true), i64::from(n.wrapping_abs()));
+        assert_eq!(integer_result("__int_max", &[raw, 0], true), i64::from(n.max(0)));
+        assert_eq!(integer_result("__int_min", &[raw, 0], true), i64::from(n.min(0)));
+        assert_eq!(integer_result("__int_abs", &[raw], false), (raw as i64).wrapping_abs());
     }
 }
 

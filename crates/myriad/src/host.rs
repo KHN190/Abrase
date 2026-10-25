@@ -1,6 +1,6 @@
 use alloc::{boxed::Box, vec::Vec};
-use crate::{Device, VirtualMachine};
-use crate::devices::{
+use super::{Device, VirtualMachine};
+use super::devices::{
     BufferConsole, Console, SystemDevice,
     CONSOLE_ID, SYSTEM_ID,
 };

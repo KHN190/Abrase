@@ -1,6 +1,6 @@
+use super::super::{Int, Device, Value};
 use alloc::string::String;
-use crate::{Device, Value};
-use crate::memory::Heap;
+use super::super::memory::Heap;
 
 pub const SYSTEM_ID: u8 = 0x00;
 pub const PORT_VERSION_MAJOR: u8 = 0x00;
@@ -10,12 +10,12 @@ pub const PORT_FLAGS: u8 = 0x03;
 pub const PORT_VERSION_MINOR: u8 = 0x04;
 pub const PORT_VERSION_PATCH: u8 = 0x05;
 
-pub const SPEC_MAJOR: i64 = 2;
-pub const SPEC_MINOR: i64 = 0;
-pub const SPEC_PATCH: i64 = 1;
+pub const SPEC_MAJOR: Int = 2;
+pub const SPEC_MINOR: Int = 0;
+pub const SPEC_PATCH: Int = 1;
 
 pub struct SystemDevice {
-    pub flags: i64,
+    pub flags: Int,
 }
 
 impl SystemDevice {

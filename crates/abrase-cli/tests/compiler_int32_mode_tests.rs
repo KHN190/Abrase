@@ -151,8 +151,11 @@ fn default_mode_stores_float_as_f64_bit_pattern() {
 
 fn run_int32(src: &str, int32: bool) -> polka::Value {
     let m = compile_with_int32(src, int32).expect("compile");
-    let mut vm = myriad::VirtualMachine::new();
-    vm.run_module(&m).expect("run")
+    let mut runtime = myriad::Runtime::new(&m).expect("select profile");
+    match runtime.run_module(&m).expect("run") {
+        myriad::RuntimeValue::Word32(value) => polka::Value::from_raw(value.raw() as u64),
+        myriad::RuntimeValue::Word64(value) => value,
+    }
 }
 
 #[test]

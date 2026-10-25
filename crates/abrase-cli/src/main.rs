@@ -10,8 +10,8 @@ use abrase::lexer::Lexer;
 use abrase::loader;
 use abrase::parser::Parser;
 use abrase::typeck::Checker;
-use myriad::{Value, VirtualMachine, read_string};
-use abrase_cli::host::{install_std_devices, myriad_stderr_sink, eprintln_sink};
+use myriad::{Runtime as NumericRuntime, RuntimeProfile};
+use abrase_cli::host::VmOptions;
 
 const USAGE: &str = "\
 Abrase compiler & Myriad Runtime
@@ -182,62 +182,10 @@ fn cmd_run(program: &loader::LoadedProgram, trace: bool, handlers: bool, codegen
     let fn_names = compiler.fn_names();
     let static_names = compiler.static_names_by_offset();
 
-    let mut vm = apply_vm_diagnostics(
-        VirtualMachine::new()
-            .with_trace_frames(handlers)
-            .with_fn_names(fn_names)
-            .with_static_names(static_names),
-        trace,
-    );
-    if let Ok(spec) = std::env::var("BREAK_AT") {
-        vm = vm.with_debug_sink(break_at_sink(spec));
-    }
-    if let Ok(spec) = std::env::var("TRACE_FN") {
-        let names = compiler.fn_names();
-        let mut bits = vec![false; names.len()];
-        for want in spec.split(',') {
-            match names.iter().position(|n| n == want.trim()) {
-                Some(i) => bits[i] = true,
-                None => eprintln!("TRACE_FN: unknown fn '{}'", want.trim()),
-            }
-        }
-        vm = vm.with_trace_filter(bits);
-    }
-
-    install_std_devices(&mut vm);
-
-    let result = if is_cart_main(ast) {
-        run_cart(&mut vm, &module)
-    } else {
-        let main_returns_unit = main_returns_unit(ast);
-        vm.run_module(&module).map(|v| {
-            if !main_returns_unit { print_result(&vm, v); }
-            ()
-        })
-    };
-    eprint!("{}", vm.profile_report());
-    match result {
-        Ok(()) => {
-            if let Some(code) = vm.exit_code() {
-                if trace { eprintln!("[heap] live={}", vm.heap_live_count()); }
-                if leak { eprint!("{}", vm.live_slots_report()); }
-                return ExitCode::from(code as u8);
-            }
-            if trace { eprintln!("[heap] live={}", vm.heap_live_count()); }
-            if leak { eprint!("{}", vm.live_slots_report()); }
-            ExitCode::SUCCESS
-        }
-        Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
-    }
-}
-
-fn run_cart(vm: &mut VirtualMachine, module: &polka::Module) -> Result<(), String> {
-    vm.run_to_yield(module)?;
-    loop {
-        let still_running = vm.resume(module, myriad::Value::from_int(0))?;
-        if !still_running { break; }
-    }
-    Ok(())
+    execute_module(&module, VmOptions {
+        trace, handlers, leak, cart: is_cart_main(ast), print_value: !main_returns_unit(ast),
+        exit_on_halt: true, fn_names, static_names,
+    })
 }
 
 fn is_cart_main(ast: &[abrase::ast::Decl]) -> bool {
@@ -264,16 +212,6 @@ fn main_returns_unit(ast: &[abrase::ast::Decl]) -> bool {
         }
     }
     false
-}
-
-fn print_result(vm: &VirtualMachine, v: Value) {
-    if vm.last_result_is_handle() && !v.is_handle_none() {
-        if let Some(s) = read_string(vm.heap_ref(), v) {
-            println!("{}", s);
-            return;
-        }
-    }
-    println!("{}", v.as_int());
 }
 
 fn cmd_check(program: &loader::LoadedProgram, int32: bool, no_built_in: bool) -> ExitCode {
@@ -640,80 +578,20 @@ fn cmd_load(pk_path: &str, trace: bool, handlers: bool, leak: bool) -> ExitCode 
             return ExitCode::from(65);
         }
     };
-    let mut vm = apply_vm_diagnostics(
-        VirtualMachine::new().with_trace_frames(handlers),
-        trace,
-    );
-    if let Ok(spec) = std::env::var("BREAK_AT") {
-        vm = vm.with_debug_sink(break_at_sink(spec));
-    }
-    install_std_devices(&mut vm);
-    match vm.run_module(&module) {
-        Ok(v) => {
-            print_result(&vm, v);
-            if leak { eprint!("{}", vm.live_slots_report()); }
-            ExitCode::SUCCESS
-        }
-        Err(e) => { eprintln!("runtime error: {}", e); ExitCode::from(2) }
-    }
+    execute_module(&module, VmOptions { trace, handlers, leak, print_value: true, ..VmOptions::default() })
 }
 
-// BREAK_AT=<fn-name|#id>:<pc> — on the matching trace event, dump the fn's
-// register window with handle annotations. The VM only emits events; all
-// breakpoint logic lives host-side.
-// BREAK_AT=<fn|#id>:<pc> or <file.abe>:<line>.
-// Read diagnostic env vars (TRACE_SLOT/TRACE_STATIC/PROFILE/ABRASE_HEAP_CHECK)
-// and wire the matching VM sinks. Env reading lives here, not in no_std myriad.
-fn apply_vm_diagnostics(mut vm: VirtualMachine, trace: bool) -> VirtualMachine {
-    if trace {
-        vm = vm.with_debug_sink(myriad_stderr_sink());
-    }
-    match std::env::var("TRACE_SLOT") {
-        Ok(s) if s == "*" => vm = vm.with_heap_trace(None, true, eprintln_sink),
-        Ok(s) => if let Ok(n) = s.parse::<u32>() {
-            vm = vm.with_heap_trace(Some(n), false, eprintln_sink);
-        },
-        Err(_) => {}
-    }
-    if let Ok(s) = std::env::var("TRACE_STATIC") {
-        if !s.is_empty() { vm = vm.with_trace_static(Some(s)); }
-    }
-    if std::env::var("PROFILE").is_ok() { vm = vm.with_profile(true); }
-    if std::env::var("ABRASE_HEAP_CHECK").is_ok() { vm = vm.with_heap_check(true); }
-    vm.with_trace_out(eprintln_sink)
-}
-
-fn break_at_sink(spec: String) -> myriad::DebugSink {
-    let (fn_part, pos_part) = match spec.rsplit_once(':') {
-        Some(p) => p,
-        None => {
-            eprintln!("BREAK_AT: expected <fn>:<pc> or <file>:<line>, got '{}'", spec);
-            return Box::new(|_, _| {});
-        }
+fn execute_module(module: &polka::Module, options: VmOptions) -> ExitCode {
+    let runtime = match NumericRuntime::new(module) {
+        Ok(runtime) => runtime,
+        Err(error) => { eprintln!("runtime error: {}", error); return ExitCode::from(2); }
     };
-    let want_pos: usize = pos_part.parse().unwrap_or(usize::MAX);
-    let file_mode = fn_part.contains('.');
-    let fn_part = fn_part.to_string();
-    Box::new(move |event, names| {
-        if let myriad::DebugEvent::Trace { func, pc, op, base_reg, window, handle_mask, line, file } = event {
-            let matched = if file_mode {
-                *line as usize == want_pos && *file == fn_part
-            } else {
-                *pc == want_pos
-                    && fn_part.strip_prefix('#')
-                        .map(|id| id.parse::<usize>() == Ok(*func))
-                        .unwrap_or_else(|| names.get(*func).map_or(false, |n| n == &fn_part))
-            };
-            if !matched { return; }
-            eprintln!("[break {}:{}] {:?} (base r{})",
-                myriad::render_fn_label(*func, names), pc, op, base_reg);
-            for (i, raw) in window.iter().enumerate() {
-                let is_h = i < 128 && (handle_mask & (1u128 << i)) != 0;
-                if *raw == polka::HANDLE_NONE && !is_h { continue; }
-                eprintln!("    r{:<3} = {:#018x}{}", i, raw, if is_h { "  (handle)" } else { "" });
-            }
-        }
-    })
+    match runtime.profile() {
+        RuntimeProfile::Word32 => abrase_cli::host::word32::execute(
+            runtime.into_word32().ok().expect("selected narrow profile"), module, options),
+        RuntimeProfile::Word64 => abrase_cli::host::word64::execute(
+            runtime.into_word64().ok().expect("selected wide profile"), module, options),
+    }
 }
 
 // Fill BytecodeChunk.src_file from the loader's fn→file map (compiler stays

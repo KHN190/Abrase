@@ -1,4 +1,3 @@
-use std::io::{Read, Write};
 use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
@@ -8,81 +7,31 @@ use myriad::devices::{
     SystemDevice, SYSTEM_ID,
 };
 
-/// Real stdio console. Lives in the CLI (std) host, not in no_std myriad.
-pub struct StdoutConsole;
-
-impl Console for StdoutConsole {
-    fn read_byte(&mut self) -> Result<Option<u8>, String> {
-        let mut byte = [0u8];
-        match std::io::stdin().read(&mut byte) {
-            Ok(0) => Ok(None),
-            Ok(_) => Ok(Some(byte[0])),
-            Err(e) => Err(format!("console.stdin: {}", e)),
-        }
-    }
-    fn write_stdout(&mut self, byte: u8) -> Result<(), String> {
-        std::io::stdout().write_all(&[byte]).map_err(|e| format!("console.stdout: {}", e))
-    }
-    fn write_stderr(&mut self, byte: u8) -> Result<(), String> {
-        std::io::stderr().write_all(&[byte]).map_err(|e| format!("console.stderr: {}", e))
-    }
-    fn flush(&mut self) -> Result<(), String> {
-        std::io::stdout().flush().map_err(|e| format!("flush: {}", e))?;
-        std::io::stderr().flush().map_err(|e| format!("flush: {}", e))
-    }
-    fn write_stdout_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
-        std::io::stdout().write_all(bytes).map_err(|e| format!("console.stdout: {}", e))
-    }
-    fn write_stderr_bulk(&mut self, bytes: &[u8]) -> Result<(), String> {
-        std::io::stderr().write_all(bytes).map_err(|e| format!("console.stderr: {}", e))
-    }
+#[derive(Default)]
+pub struct VmOptions {
+    pub trace: bool,
+    pub handlers: bool,
+    pub leak: bool,
+    pub cart: bool,
+    pub print_value: bool,
+    pub exit_on_halt: bool,
+    pub fn_names: Vec<String>,
+    pub static_names: Vec<String>,
 }
 
-/// Text sink for VM diagnostics (TRACE_SLOT/TRACE_STATIC/trace_frames). Writes
-/// a line to stderr; passed to `VirtualMachine::with_heap_trace`/`with_trace_out`.
-pub fn eprintln_sink(s: &str) {
-    eprintln!("{}", s);
-}
+pub fn eprintln_sink(text: &str) { eprintln!("{}", text); }
 
-/// myriad op-trace sink (was `myriad::debug::stderr_sink`). Lives here because
-/// it needs std stderr; myriad only defines the abstract `DebugSink` type.
-pub fn myriad_stderr_sink() -> myriad::DebugSink {
-    use myriad::debug::{DebugEvent, render_fn_label};
-    Box::new(|event: &DebugEvent, names: &[String]| {
-        match event {
-            DebugEvent::Trace { func, pc, op, line, .. } => {
-                if *line > 0 {
-                    eprintln!("[{}:{} @{}] {:?}", render_fn_label(*func, names), pc, line, op);
-                } else {
-                    eprintln!("[{}:{}] {:?}", render_fn_label(*func, names), pc, op);
-                }
-            }
-            DebugEvent::HandlePush {
-                effect_id, cell_slot, cell_gen, suspend_pc, suspend_base, dest, depth,
-            } => {
-                eprintln!(
-                    "  [handle] push effect_id={} cell=(slot {},gen {}) suspend_pc={} suspend_base={} dest=r{} depth={}",
-                    effect_id, cell_slot, cell_gen, suspend_pc, suspend_base, dest, depth
-                );
-            }
-            DebugEvent::Resume {
-                saved_pc, saved_base, cell_dest, val, handler_dest, alive, depth,
-            } => {
-                eprintln!(
-                    "  [resume] -> saved_pc={} saved_base={} cell_dest=r{} val={:?} handler_dest=r{} alive={:?} depth={}",
-                    saved_pc, saved_base, cell_dest, val, handler_dest, alive, depth
-                );
-            }
-        }
-    })
+pub mod word32 {
+    use myriad::word32 as vm;
+    fn is_handle_mask(mask: &vm::TraceMask, index: usize) -> bool { index < 128 && mask[index / 32] & (1 << (index % 32)) != 0 }
+    include!("profile_host.rs");
 }
-
-/// Install the standard stdio host (system + real console) onto a VM. Replaces
-/// the old `myriad::Host::default()`, which now defaults to a headless buffer.
-pub fn install_std_devices(vm: &mut VirtualMachine) {
-    vm.install_device(SYSTEM_ID, Box::new(SystemDevice::new()));
-    vm.install_device(CONSOLE_ID, Box::new(Box::new(StdoutConsole) as Box<dyn Console>));
+pub mod word64 {
+    use myriad::word64 as vm;
+    fn is_handle_mask(mask: &vm::TraceMask, index: usize) -> bool { index < 128 && mask & (1u128 << index) != 0 }
+    include!("profile_host.rs");
 }
+pub use word64::{StdoutConsole, install_std_devices, myriad_stderr_sink};
 
 pub struct Runtime {
     vm: VirtualMachine,

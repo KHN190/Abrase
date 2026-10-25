@@ -1,17 +1,7 @@
-#[cfg(feature = "word32")]
-pub type Word = u32;
-#[cfg(not(feature = "word32"))]
-pub type Word = u64;
-
-#[cfg(feature = "word32")]
-pub type Int = i32;
-#[cfg(not(feature = "word32"))]
-pub type Int = i64;
-
-#[cfg(feature = "word32")]
-pub type Float = f32;
-#[cfg(not(feature = "word32"))]
-pub type Float = f64;
+#[cfg(all(target_os = "none", target_pointer_width = "32"))]
+pub use crate::word32::{Word, Int, Float};
+#[cfg(not(all(target_os = "none", target_pointer_width = "32")))]
+pub use crate::word64::{Word, Int, Float};
 
 pub const WORD_BITS: u32 = Word::BITS;
 pub const WORD_BYTES: usize = core::mem::size_of::<Word>();

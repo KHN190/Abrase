@@ -300,6 +300,6 @@ fn aot_str_bytes_natives_inline_on_hybrid_path() {
     let mut c = Compiler::new().with_source(src.into()).with_lib(true).with_inline(false);
     let m = c.compile_module(&ast).unwrap_or_else(|e| panic!("compile: {:?}", e.iter().map(|x| &x.message).collect::<Vec<_>>()));
     let lib = polka_rustc::transpile_module_lib(&m).expect("transpile");
-    assert!(lib.contains("myriad::read_string"),
+    assert!(lib.contains("runtime::read_string"),
         "bridgeable str fn must inline `__str_len` as direct Rust, not host.call:\n{}", lib);
 }

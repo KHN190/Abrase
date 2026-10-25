@@ -1,92 +1,77 @@
-use crate::{Heap, Value};
-use crate::core_mem::CoreArena;
-use crate::devices::DeviceTable;
-use crate::devices::{console, CONSOLE_ID};
-use crate::value::{alloc_string, read_string, alloc_bytes, read_bytes};
+use super::runtime;
+use runtime::{Word, Int, Float, Heap, Value};
+use runtime::core_mem::CoreArena;
+use runtime::devices::DeviceTable;
+use runtime::devices::{console, CONSOLE_ID};
+use runtime::value::{alloc_string, read_string, alloc_bytes, read_bytes};
 use alloc::collections::BTreeMap;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-pub mod fmath {
-    pub fn sqrt(x: f64) -> f64 { libm::sqrt(x) }
-    pub fn sin(x: f64) -> f64 { libm::sin(x) }
-    pub fn cos(x: f64) -> f64 { libm::cos(x) }
-    pub fn floor(x: f64) -> f64 { libm::floor(x) }
-    pub fn ceil(x: f64) -> f64 { libm::ceil(x) }
-    pub fn abs(x: f64) -> f64 { libm::fabs(x) }
-    pub fn fmax(a: f64, b: f64) -> f64 { libm::fmax(a, b) }
-    pub fn fmin(a: f64, b: f64) -> f64 { libm::fmin(a, b) }
-}
+pub use runtime::fmath;
 
 pub struct NativeCtx<'a> {
     pub heap: &'a mut Heap,
     pub devices: &'a mut DeviceTable,
     pub core_arena: &'a mut CoreArena,
     pub halted: &'a mut bool,
-    pub exit_code: &'a mut Option<i64>,
+    pub exit_code: &'a mut Option<Int>,
     pub int32_safe: bool,
 }
 
 impl<'a> NativeCtx<'a> {
     #[inline(always)]
-    pub fn float(&self, v: Value) -> f64 { polka::decode_float(v.raw(), self.int32_safe) }
+    pub fn float(&self, v: Value) -> Float { Float::from_bits(v.raw()) }
 
     #[inline(always)]
-    pub fn float_value(&self, f: f64) -> Value { Value::from_raw(polka::encode_float(f, self.int32_safe)) }
+    pub fn float_value(&self, f: Float) -> Value { Value::from_raw(f.to_bits()) }
 
-    pub fn integer(&self, v: Value) -> i64 {
-        if self.int32_safe { v.raw() as i32 as i64 } else { v.as_int() }
+    pub fn integer(&self, v: Value) -> Int {
+        v.as_int()
     }
 
-    fn integer_unary(&self, v: Value, narrow: fn(i32) -> i32, wide: fn(i64) -> i64) -> Value {
-        let result = if self.int32_safe { narrow(v.raw() as i32) as i64 } else { wide(v.as_int()) };
+    fn integer_unary(&self, v: Value, operation: fn(Int) -> Int) -> Value {
+        let result = operation(v.as_int());
         Value::from_int(result)
     }
 
-    fn integer_binary(&self, a: Value, b: Value, narrow: fn(i32, i32) -> i32, wide: fn(i64, i64) -> i64) -> Value {
-        let result = if self.int32_safe { narrow(a.raw() as i32, b.raw() as i32) as i64 }
-            else { wide(a.as_int(), b.as_int()) };
+    fn integer_binary(&self, a: Value, b: Value, operation: fn(Int, Int) -> Int) -> Value {
+        let result = operation(a.as_int(), b.as_int());
         Value::from_int(result)
     }
 
-    fn float_unary(&self, v: Value, narrow: fn(f32) -> f32, wide: fn(f64) -> f64) -> Value {
-        let raw = if self.int32_safe { narrow(f32::from_bits(v.raw() as u32)).to_bits() as u64 }
-            else { wide(f64::from_bits(v.raw())).to_bits() };
+    fn float_unary(&self, v: Value, operation: fn(Float) -> Float) -> Value {
+        let raw = operation(Float::from_bits(v.raw())).to_bits();
         Value::from_raw(raw)
     }
 
-    fn float_binary(&self, a: Value, b: Value, narrow: fn(f32, f32) -> f32, wide: fn(f64, f64) -> f64) -> Value {
-        let raw = if self.int32_safe {
-            narrow(f32::from_bits(a.raw() as u32), f32::from_bits(b.raw() as u32)).to_bits() as u64
-        } else { wide(f64::from_bits(a.raw()), f64::from_bits(b.raw())).to_bits() };
+    fn float_binary(&self, a: Value, b: Value, operation: fn(Float, Float) -> Float) -> Value {
+        let raw = operation(Float::from_bits(a.raw()), Float::from_bits(b.raw())).to_bits();
         Value::from_raw(raw)
     }
 
     fn int_to_float(&self, v: Value) -> Value {
-        let raw = if self.int32_safe { ((v.raw() as i32) as f32).to_bits() as u64 }
-            else { (v.as_int() as f64).to_bits() };
+        let raw = (v.as_int() as Float).to_bits();
         Value::from_raw(raw)
     }
 
     fn unsigned_to_float(&self, n: u32) -> Value {
-        let raw = if self.int32_safe { (n as f32).to_bits() as u64 } else { (n as f64).to_bits() };
+        let raw = (n as Float).to_bits();
         Value::from_raw(raw)
     }
 
     fn float_to_int(&self, v: Value) -> Value {
-        let result = if self.int32_safe { (f32::from_bits(v.raw() as u32) as i32) as i64 }
-            else { f64::from_bits(v.raw()) as i64 };
+        let result = Float::from_bits(v.raw()) as Int;
         Value::from_int(result)
     }
 
     fn integer_string(&self, v: Value) -> String {
-        if self.int32_safe { (v.raw() as i32).to_string() } else { v.as_int().to_string() }
+        v.as_int().to_string()
     }
 
     fn float_string(&self, v: Value) -> String {
-        if self.int32_safe { f32::from_bits(v.raw() as u32).to_string() }
-            else { f64::from_bits(v.raw()).to_string() }
+        Float::from_bits(v.raw()).to_string()
     }
 }
 
@@ -168,7 +153,7 @@ pub fn register_default_builtins(reg: &mut NativeRegistry) {
     reg.register("__frame_present", frame_present_native());
 }
 
-fn peek_native(width: u64) -> NativeFn {
+fn peek_native(width: Word) -> NativeFn {
     Rc::new(move |ctx, args| {
         let addr = args[0].raw();
         let v = ctx.core_arena.peek(addr, width)?;
@@ -176,7 +161,7 @@ fn peek_native(width: u64) -> NativeFn {
     })
 }
 
-fn poke_native(width: u64) -> NativeFn {
+fn poke_native(width: Word) -> NativeFn {
     Rc::new(move |ctx, args| {
         let addr = args[0].raw();
         let val = args[1].raw();
@@ -222,24 +207,24 @@ fn concat_native() -> NativeFn {
         // past the cell buffer and into host memory.
         let a_len = {
             let d = ctx.heap.cell_data(a_slot, a_gen)?;
-            (d[0] as usize).min(d.len().saturating_sub(1) * 8)
+            (d[0] as usize).min(d.len().saturating_sub(1) * runtime::WORD_BYTES)
         };
         let b_len = {
             let d = ctx.heap.cell_data(b_slot, b_gen)?;
-            (d[0] as usize).min(d.len().saturating_sub(1) * 8)
+            (d[0] as usize).min(d.len().saturating_sub(1) * runtime::WORD_BYTES)
         };
         let total = a_len + b_len;
-        let size = 1 + (total + 7) / 8;
+        let size = 1 + total.div_ceil(runtime::WORD_BYTES);
 
         let (slot, gen_) = ctx.heap.try_alloc(size)?;
 
-        // Source `Box<[u64]>` buffers stay put even if cells Vec reallocs,
+        // Source `Box<[Word]>` buffers stay put even if cells Vec reallocs,
         // so these raw pointers remain valid until next free of a/b.
         let a_src = ctx.heap.cell_data(a_slot, a_gen)?[1..].as_ptr() as *const u8;
         let b_src = ctx.heap.cell_data(b_slot, b_gen)?[1..].as_ptr() as *const u8;
 
         let dst = ctx.heap.cell_data_mut(slot, gen_)?;
-        dst[0] = total as u64;
+        dst[0] = total as Word;
         let dst_ptr = dst[1..].as_mut_ptr() as *mut u8;
         unsafe {
             core::ptr::copy_nonoverlapping(a_src, dst_ptr, a_len);
@@ -271,7 +256,7 @@ fn print_native() -> NativeFn {
         let bytes: Vec<u8> = {
             let d = ctx.heap.cell_data(slot, gen_)?;
             // Clamp stated length to actual cell payload capacity.
-            let len = (d[0] as usize).min(d.len().saturating_sub(1) * 8);
+            let len = (d[0] as usize).min(d.len().saturating_sub(1) * runtime::WORD_BYTES);
             let ptr = d[1..].as_ptr() as *const u8;
             unsafe { core::slice::from_raw_parts(ptr, len).to_vec() }
         };
@@ -288,7 +273,7 @@ fn println_native() -> NativeFn {
         let (slot, gen_) = args[0].as_handle();
         let bytes: Vec<u8> = {
             let d = ctx.heap.cell_data(slot, gen_)?;
-            let len = (d[0] as usize).min(d.len().saturating_sub(1) * 8);
+            let len = (d[0] as usize).min(d.len().saturating_sub(1) * runtime::WORD_BYTES);
             let ptr = d[1..].as_ptr() as *const u8;
             unsafe { core::slice::from_raw_parts(ptr, len).to_vec() }
         };
@@ -307,7 +292,7 @@ fn write_console(devices: &mut DeviceTable, heap: &mut Heap, bytes: &[u8], op: &
 fn halt_native() -> NativeFn {
     Rc::new(|ctx, args| {
         let code = args[0].as_int();
-        *ctx.exit_code = Some(code & 0xFFFF_FFFF);
+        *ctx.exit_code = Some(code as u32 as Int);
         *ctx.halted = true;
         Ok(plain(Value::ZERO))
     })
@@ -322,27 +307,27 @@ fn abort_native() -> NativeFn {
 }
 
 fn abs_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.integer_unary(args[0], i32::wrapping_abs, i64::wrapping_abs))))
+    Rc::new(|ctx, args| Ok(plain(ctx.integer_unary(args[0], Int::wrapping_abs))))
 }
 
 fn max_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.integer_binary(args[0], args[1], i32::max, i64::max))))
+    Rc::new(|ctx, args| Ok(plain(ctx.integer_binary(args[0], args[1], Int::max))))
 }
 
 fn min_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.integer_binary(args[0], args[1], i32::min, i64::min))))
+    Rc::new(|ctx, args| Ok(plain(ctx.integer_binary(args[0], args[1], Int::min))))
 }
 
 fn float_abs_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], libm::fabsf, fmath::abs))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], fmath::abs))))
 }
 
 fn float_max_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_binary(args[0], args[1], libm::fmaxf, fmath::fmax))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_binary(args[0], args[1], fmath::fmax))))
 }
 
 fn float_min_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_binary(args[0], args[1], libm::fminf, fmath::fmin))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_binary(args[0], args[1], fmath::fmin))))
 }
 
 fn int_to_f_native() -> NativeFn {
@@ -367,7 +352,7 @@ fn float_to_i_native() -> NativeFn {
 fn char_to_i_native() -> NativeFn {
     Rc::new(|_ctx, args| {
         let c = args[0].as_char().ok_or_else(|| format!("__char_to_i: arg0 not Char: {:?}", args[0]))?;
-        Ok(plain(Value::from_int(c as i64)))
+        Ok(plain(Value::from_int(c as Int)))
     })
 }
 
@@ -427,7 +412,7 @@ fn string_to_s_native() -> NativeFn {
 fn str_len_native() -> NativeFn {
     Rc::new(|ctx, args| {
         let n = read_string(ctx.heap, args[0]).map(|s| s.len()).unwrap_or(0);
-        Ok(plain(Value::from_int(n as i64)))
+        Ok(plain(Value::from_int(n as Int)))
     })
 }
 
@@ -439,7 +424,7 @@ fn str_byte_at_native() -> NativeFn {
         if i < 0 || i as usize >= bytes.len() {
             return Err(format!("byte_at: index {} out of bounds for length {}", i, bytes.len()));
         }
-        Ok(plain(Value::from_int(bytes[i as usize] as i64)))
+        Ok(plain(Value::from_int(bytes[i as usize] as Int)))
     })
 }
 
@@ -449,7 +434,7 @@ fn str_slice_native() -> NativeFn {
         let bytes = s.as_bytes();
         let off = args[1].as_int();
         let len = args[2].as_int();
-        let start = off.max(0).min(bytes.len() as i64) as usize;
+        let start = off.max(0).min(bytes.len() as Int) as usize;
         let take = len.max(0) as usize;
         let end = start.saturating_add(take).min(bytes.len());
         let out = String::from_utf8_lossy(&bytes[start..end]);
@@ -469,7 +454,7 @@ fn str_to_bytes_native() -> NativeFn {
 fn bytes_concat_native() -> NativeFn {
     Rc::new(|ctx, args| {
         let (slot, gen_) = args[1].as_handle();
-        let parts: Vec<u64> = ctx.heap.cell_data(slot, gen_)?.to_vec();
+        let parts: Vec<Word> = ctx.heap.cell_data(slot, gen_)?.to_vec();
         if parts.is_empty() {
             return Err("bytes concat: parts array is empty".to_string());
         }
@@ -487,7 +472,7 @@ fn bytes_concat_native() -> NativeFn {
 fn bytes_len_native() -> NativeFn {
     Rc::new(|ctx, args| {
         let n = read_bytes(ctx.heap, args[0]).map(|b| b.len()).unwrap_or(0);
-        Ok(plain(Value::from_int(n as i64)))
+        Ok(plain(Value::from_int(n as Int)))
     })
 }
 
@@ -498,7 +483,7 @@ fn bytes_byte_at_native() -> NativeFn {
         if i < 0 || i as usize >= b.len() {
             return Err(format!("byte_at: index {} out of bounds for length {}", i, b.len()));
         }
-        Ok(plain(Value::from_int(b[i as usize] as i64)))
+        Ok(plain(Value::from_int(b[i as usize] as Int)))
     })
 }
 
@@ -507,7 +492,7 @@ fn bytes_slice_native() -> NativeFn {
         let b = read_bytes(ctx.heap, args[0]).unwrap_or_default();
         let off = args[1].as_int();
         let len = args[2].as_int();
-        let start = off.max(0).min(b.len() as i64) as usize;
+        let start = off.max(0).min(b.len() as Int) as usize;
         let take = len.max(0) as usize;
         let end = start.saturating_add(take).min(b.len());
         let v = alloc_bytes(ctx.heap, &b[start..end])?;
@@ -531,14 +516,13 @@ fn unit_to_s_native() -> NativeFn {
 }
 
 fn ceil_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], libm::ceilf, fmath::ceil))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], fmath::ceil))))
 }
 
 fn flr_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], libm::floorf, fmath::floor))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], fmath::floor))))
 }
 
-// Trigonometry still uses the widening compatibility path; libm sinf/cosf also use f64 internally.
 fn cos_native()  -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::cos(ctx.float(args[0])))))) }
 fn sin_native()  -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::sin(ctx.float(args[0])))))) }
-fn sqrt_native() -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], libm::sqrtf, fmath::sqrt)))) }
+fn sqrt_native() -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], fmath::sqrt)))) }

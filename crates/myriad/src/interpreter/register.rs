@@ -1,32 +1,24 @@
+use super::super::runtime;
+use runtime::{Word, Int, Float, HANDLE_NONE};
 use alloc::{string::{String, ToString}, vec::Vec};
-use polka::{BytecodeChunk, Chunk, Register, Module, OpCode, FRAME_REGS, HANDLE_NONE};
-use crate::memory::mask_bit;
-use crate::value::{alloc_string, alloc_bytes};
+use polka::{BytecodeChunk, Chunk, Register, Module, OpCode, FRAME_REGS};
+use runtime::value::{alloc_string, alloc_bytes};
+use runtime::memory::mask_bit;
 use super::super::VirtualMachine;
 use super::MAX_RAM;
 
 
 macro_rules! eval_integer {
     ($narrow:expr, $left:expr, $right:expr, |$x:ident, $y:ident| $body:expr) => {{
-        if $narrow {
-            let ($x, $y) = ($left as i32, $right as i32);
-            $body
-        } else {
-            let ($x, $y) = ($left as i64, $right as i64);
-            $body
-        }
+        let ($x, $y) = ($left as Int, $right as Int);
+        $body
     }};
 }
 
 macro_rules! eval_float {
     ($narrow:expr, $left:expr, $right:expr, |$x:ident, $y:ident| $body:expr) => {{
-        if $narrow {
-            let ($x, $y) = (f32::from_bits($left as u32), f32::from_bits($right as u32));
-            $body
-        } else {
-            let ($x, $y) = (f64::from_bits($left), f64::from_bits($right));
-            $body
-        }
+        let ($x, $y) = (Float::from_bits($left), Float::from_bits($right));
+        $body
     }};
 }
 
@@ -57,48 +49,48 @@ impl VirtualMachine {
         if needed > self.registers.len() {
             self.registers.resize(needed, HANDLE_NONE);
         }
-        let mask_words_needed = (needed + 63) / 64;
+        let mask_words_needed = needed.div_ceil(Word::BITS as usize);
         if mask_words_needed > self.register_mask.len() {
             self.register_mask.resize(mask_words_needed, 0);
         }
     }
 
     #[inline(always)]
-    pub(crate) fn read_abs_raw(&self, abs: usize) -> u64 {
+    pub(crate) fn read_abs_raw(&self, abs: usize) -> Word {
         debug_assert!(abs < self.registers.len());
         unsafe { *self.registers.get_unchecked(abs) }
     }
 
     #[inline(always)]
-    pub(crate) fn write_abs_raw(&mut self, abs: usize, v: u64) {
+    pub(crate) fn write_abs_raw(&mut self, abs: usize, v: Word) {
         debug_assert!(abs < self.registers.len());
         unsafe { *self.registers.get_unchecked_mut(abs) = v; }
     }
 
     #[inline(always)]
     pub(crate) fn reg_mask_bit(&self, abs: usize) -> bool {
-        let w = abs / 64;
-        let b = abs % 64;
+        let w = abs / Word::BITS as usize;
+        let b = abs % Word::BITS as usize;
         self.register_mask.get(w).map_or(false, |x| (x >> b) & 1 == 1)
     }
 
     #[inline(always)]
     pub(crate) fn set_reg_mask_bit(&mut self, abs: usize, on: bool) {
-        let w = abs / 64;
-        let b = abs % 64;
+        let w = abs / Word::BITS as usize;
+        let b = abs % Word::BITS as usize;
         if let Some(x) = self.register_mask.get_mut(w) {
-            if on { *x |= 1u64 << b; } else { *x &= !(1u64 << b); }
+            if on { *x |= (1 as Word) << b; } else { *x &= !((1 as Word) << b); }
         }
     }
 
     #[inline(always)]
-    pub(crate) fn write_abs(&mut self, abs: usize, raw: u64, is_handle: bool) {
+    pub(crate) fn write_abs(&mut self, abs: usize, raw: Word, is_handle: bool) {
         self.write_abs_raw(abs, raw);
         self.set_reg_mask_bit(abs, is_handle);
     }
 
     #[inline(always)]
-    pub(crate) fn take_abs(&mut self, abs: usize) -> (u64, bool) {
+    pub(crate) fn take_abs(&mut self, abs: usize) -> (Word, bool) {
         let v = self.read_abs_raw(abs);
         let h = self.reg_mask_bit(abs);
         self.write_abs_raw(abs, HANDLE_NONE);
@@ -107,25 +99,25 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    pub(crate) fn read(&self, r: Register) -> Result<(u64, bool), String> {
+    pub(crate) fn read(&self, r: Register) -> Result<(Word, bool), String> {
         let abs = self.abs(r);
         let v = self.read_abs_raw(abs);
         Ok((v, self.reg_mask_bit(abs)))
     }
 
     #[inline(always)]
-    pub(crate) fn read_at(&self, r: Register) -> (u64, bool) {
+    pub(crate) fn read_at(&self, r: Register) -> (Word, bool) {
         let abs = self.abs(r);
         (self.read_abs_raw(abs), self.reg_mask_bit(abs))
     }
 
     #[inline(always)]
-    pub(crate) fn read_raw(&self, r: Register) -> Result<u64, String> {
+    pub(crate) fn read_raw(&self, r: Register) -> Result<Word, String> {
         Ok(self.read_abs_raw(self.abs(r)))
     }
 
     #[inline(always)]
-    pub(crate) fn take(&mut self, r: Register) -> Result<(u64, bool), String> {
+    pub(crate) fn take(&mut self, r: Register) -> Result<(Word, bool), String> {
         let abs = self.abs(r);
         let v = self.read_abs_raw(abs);
         let h = self.reg_mask_bit(abs);
@@ -135,15 +127,15 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    pub(crate) fn write(&mut self, r: Register, raw: u64, is_handle: bool) -> Result<(), String> {
+    pub(crate) fn write(&mut self, r: Register, raw: Word, is_handle: bool) -> Result<(), String> {
         let abs = self.abs(r);
         self.write_abs(abs, raw, is_handle);
         Ok(())
     }
 
     #[inline(always)]
-    pub(crate) fn read_i64(&self, r: Register) -> Result<i64, String> {
-        Ok(self.read_raw(r)? as i64)
+    pub(crate) fn read_int(&self, r: Register) -> Result<Int, String> {
+        Ok(self.read_raw(r)? as Int)
     }
 
     #[inline(always)]
@@ -160,8 +152,8 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    pub(crate) fn decode_handle(raw: u64) -> (u32, u32) {
-        crate::memory::handle_parts(raw)
+    pub(crate) fn decode_handle(raw: Word) -> (u32, u32) {
+        runtime::memory::handle_parts(raw)
     }
 
     pub(crate) fn check_handle_tags(&self, where_: &str) -> Result<(), String> {
@@ -191,14 +183,14 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    pub(crate) fn rc_inc_handle(&mut self, raw: u64) -> Result<(), String> {
+    pub(crate) fn rc_inc_handle(&mut self, raw: Word) -> Result<(), String> {
         if raw == HANDLE_NONE { return Ok(()); }
         let (s, g) = Self::decode_handle(raw);
         self.heap.rc_inc(s, g)
     }
 
     #[inline(always)]
-    pub(crate) fn rc_dec_handle(&mut self, raw: u64) -> Result<(), String> {
+    pub(crate) fn rc_dec_handle(&mut self, raw: Word) -> Result<(), String> {
         if raw == HANDLE_NONE { return Ok(()); }
         let (s, g) = Self::decode_handle(raw);
         self.heap.rc_dec(s, g)?;
@@ -226,7 +218,7 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    pub(crate) fn checked_heap_alloc_with_mask(&mut self, size: usize, init_mask: &[u64]) -> Result<(u32, u32), String> {
+    pub(crate) fn checked_heap_alloc_with_mask(&mut self, size: usize, init_mask: &[Word]) -> Result<(u32, u32), String> {
         self.mem_charge(size.saturating_mul(8))?;
         self.heap.try_alloc_with_mask(size, init_mask)
     }
@@ -243,23 +235,23 @@ impl VirtualMachine {
         };
         let (left, right) = (self.read_raw(a)?, self.read_raw(b)?);
         let raw = eval_integer!(self.int32_safe, left, right, |x, y| match *op {
-            Add(..) => x.wrapping_add(y) as i64 as u64,
-            Sub(..) => x.wrapping_sub(y) as i64 as u64,
-            Mul(..) => x.wrapping_mul(y) as i64 as u64,
-            Div(..) => x.checked_div(y).ok_or_else(|| "div by zero".to_string())? as i64 as u64,
-            Mod(..) => x.checked_rem(y).ok_or_else(|| "mod by zero".to_string())? as i64 as u64,
-            Neg(..) => x.wrapping_neg() as i64 as u64,
-            AddImm(_,_,imm) => x.wrapping_add(imm as _) as i64 as u64,
-            SubImm(_,_,imm) => x.wrapping_sub(imm as _) as i64 as u64,
-            Lt(..) => bool_u64(x < y),
-            Gt(..) => bool_u64(x > y),
-            Lte(..) => bool_u64(x <= y),
-            Gte(..) => bool_u64(x >= y),
-            And(..) => (x & y) as i64 as u64,
-            Or(..) => (x | y) as i64 as u64,
-            Xor(..) => (x ^ y) as i64 as u64,
-            Shl(..) => x.wrapping_shl(y as u32) as i64 as u64,
-            Shr(..) => x.wrapping_shr(y as u32) as i64 as u64,
+            Add(..) => x.wrapping_add(y) as Int as Word,
+            Sub(..) => x.wrapping_sub(y) as Int as Word,
+            Mul(..) => x.wrapping_mul(y) as Int as Word,
+            Div(..) => x.checked_div(y).ok_or_else(|| "div by zero".to_string())? as Int as Word,
+            Mod(..) => x.checked_rem(y).ok_or_else(|| "mod by zero".to_string())? as Int as Word,
+            Neg(..) => x.wrapping_neg() as Int as Word,
+            AddImm(_,_,imm) => x.wrapping_add(imm as _) as Int as Word,
+            SubImm(_,_,imm) => x.wrapping_sub(imm as _) as Int as Word,
+            Lt(..) => bool_word(x < y),
+            Gt(..) => bool_word(x > y),
+            Lte(..) => bool_word(x <= y),
+            Gte(..) => bool_word(x >= y),
+            And(..) => (x & y) as Int as Word,
+            Or(..) => (x | y) as Int as Word,
+            Xor(..) => (x ^ y) as Int as Word,
+            Shl(..) => x.wrapping_shl(y as u32) as Int as Word,
+            Shr(..) => x.wrapping_shr(y as u32) as Int as Word,
             _ => unreachable!("integer opcode"),
         });
         self.write(d, raw, false)
@@ -275,13 +267,13 @@ impl VirtualMachine {
         };
         let (left, right) = (self.read_raw(a)?, self.read_raw(b)?);
         let raw = eval_float!(self.int32_safe, left, right, |x, y| match *op {
-            FAdd(..) => (x + y).to_bits() as u64,
-            FSub(..) => (x - y).to_bits() as u64,
-            FMul(..) => (x * y).to_bits() as u64,
-            FDiv(..) => (x / y).to_bits() as u64,
-            FNeg(..) => (-x).to_bits() as u64,
-            FLt(..) => bool_u64(x < y),
-            FEq(..) => bool_u64(x == y),
+            FAdd(..) => (x + y).to_bits() as Word,
+            FSub(..) => (x - y).to_bits() as Word,
+            FMul(..) => (x * y).to_bits() as Word,
+            FDiv(..) => (x / y).to_bits() as Word,
+            FNeg(..) => (-x).to_bits() as Word,
+            FLt(..) => bool_word(x < y),
+            FEq(..) => bool_word(x == y),
             _ => unreachable!("float opcode"),
         });
         self.write(d, raw, false)
@@ -292,7 +284,7 @@ impl VirtualMachine {
         let xa = self.read_raw(a)?;
         let xb = self.read_raw(b)?;
         let r = (xa == xb) ^ negate;
-        self.write(d, bool_u64(r), false)
+        self.write(d, bool_word(r), false)
     }
 
     pub(super) fn resolve_constants(&mut self, module: &Module) -> Result<(), String> {
@@ -301,38 +293,35 @@ impl VirtualMachine {
         self.resolved_constants.reserve(module.functions.len());
         self.resolved_const_mask.reserve(module.functions.len());
         for chunk in &module.functions {
-            let (vals, mask): (Vec<u64>, Vec<u64>) = match chunk {
+            let (vals, mask): (Vec<Word>, Vec<Word>) = match chunk {
                 Chunk::Bytecode(bc) => {
-                    let mut vals = bc.constants.clone();
-                    let mask = bc.const_mask.clone();
-                    // For each handle-bit constant, resolve the string-pool index it
-                    // carries into an actual heap handle (rc=1, module-lifetime).
-                    for i in 0..vals.len() {
-                        if !mask_bit(&mask, i) { continue; }
-                        let raw = vals[i];
-                        let v = if raw & polka::BYTES_CONST_TAG != 0 {
-                            let bidx = (raw & !polka::BYTES_CONST_TAG) as usize;
-                            let b = bc.bytes_constants.get(bidx)
-                                .cloned().unwrap_or_default();
+                    let mut vals = Vec::with_capacity(bc.constants.len());
+                    let mut mask = vec![0 as Word; bc.constants.len().div_ceil(Word::BITS as usize)];
+                    for i in 0..bc.constants.len() {
+                        if bc.const_is_handle(i as u16) {
+                            mask[i / Word::BITS as usize] |= (1 as Word) << (i % Word::BITS as usize);
+                        }
+                    }
+                    for (i, &constant) in bc.constants.iter().enumerate() {
+                        if !mask_bit(&mask, i) {
+                            vals.push(constant_word(constant)?);
+                            continue;
+                        }
+                        let (is_bytes, index) = constant_pool(constant)?;
+                        let v = if is_bytes {
+                            let b = bc.bytes_constants.get(index).cloned().unwrap_or_default();
                             if self.mem_used().saturating_add(b.len() + 16) > MAX_RAM {
-                                return Err(format!(
-                                    "out of memory at module load: bytes constant {} bytes",
-                                    b.len()
-                                ));
+                                return Err(format!("out of memory at module load: bytes constant {} bytes", b.len()));
                             }
                             alloc_bytes(&mut self.heap, &b)?
                         } else {
-                            let s = bc.string_constants.get(raw as usize)
-                                .cloned().unwrap_or_default();
+                            let s = bc.string_constants.get(index).cloned().unwrap_or_default();
                             if self.mem_used().saturating_add(s.len() + 16) > MAX_RAM {
-                                return Err(format!(
-                                    "out of memory at module load: string constant {} bytes",
-                                    s.len()
-                                ));
+                                return Err(format!("out of memory at module load: string constant {} bytes", s.len()));
                             }
                             alloc_string(&mut self.heap, &s)?
                         };
-                        vals[i] = v.raw();
+                        vals.push(v.raw());
                         let (slot, gen_) = v.as_handle();
                         self.string_const_handles.push((slot, gen_));
                     }
@@ -362,14 +351,14 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(super) fn resolve_dispatch(&self, key: u16) -> (u16, Option<(u64, bool)>) {
+    pub(super) fn resolve_dispatch(&self, key: u16) -> (u16, Option<(Word, bool)>) {
         let effect_id = (key >> 8) as u16;
         let op_id = (key & 0xFF) as usize;
         for h in self.handlers.iter().rev() {
             if h.effect_id != effect_id { continue; }
             if let Some(slot) = h.dispatch_table_slot {
                 if let Ok((raw, _)) = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2) {
-                    let n = raw as i64;
+                    let n = raw as Int;
                     if (0..=0xFFFF).contains(&n) {
                         let env = self.heap.ld(slot, h.dispatch_table_gen, op_id * 2 + 1).ok();
                         return (n as u16, env);
@@ -382,15 +371,15 @@ impl VirtualMachine {
 }
 
 #[inline(always)]
-pub(crate) fn bool_u64(b: bool) -> u64 { if b { 1 } else { 0 } }
+pub(crate) fn bool_word(b: bool) -> Word { if b { 1 } else { 0 } }
 
-pub(crate) fn decode_dispatch_key(raw: u64) -> Result<u16, String> {
-    let n = raw as i64;
+pub(crate) fn decode_dispatch_key(raw: Word) -> Result<u16, String> {
+    let n = raw as Int;
     if (0..=0xFFFF).contains(&n) { Ok(n as u16) }
     else { Err(format!("dispatch.lookup: bad key {}", n)) }
 }
 
-pub(crate) fn split_port(port_val: i64) -> Result<(u8, u8), String> {
+pub(crate) fn split_port(port_val: Int) -> Result<(u8, u8), String> {
     if !(0..=0xFFFF).contains(&port_val) {
         return Err(format!("device port {:#x} out of 16-bit range", port_val));
     }
@@ -416,9 +405,29 @@ pub(crate) fn max_reg(op: &polka::OpCode) -> Option<u8> {
     }
 }
 
+
+fn constant_word(raw: polka::Constant) -> Result<Word, String> {
+    runtime::decode_constant(raw).map_err(String::from)
+}
+
+fn constant_pool(raw: polka::Constant) -> Result<(bool, usize), String> {
+    Ok((polka::constant_is_bytes(raw), polka::constant_pool_index(raw).map_err(String::from)?))
+}
+
+pub(crate) fn validate_module_profile(module: &Module) -> Result<(), String> {
+    if (module.flags & polka::CART_FLAG_INT32_SAFE != 0) != runtime::IS_INT32 {
+        return Err(String::from("module numeric profile mismatch: INT32_SAFE requires word32"));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_module_register_budget(module: &Module) -> Result<(), String> {
+    validate_module_profile(module)?;
     for (i, chunk) in module.functions.iter().enumerate() {
         if let Chunk::Bytecode(b) = chunk {
+            if b.constants.len() > u16::MAX as usize {
+                return Err(String::from("module constant pool exceeds format limit"));
+            }
             if b.reg_count > FRAME_REGS {
                 return Err(format!(
                     "module load: fn {} has reg_count {} > frame budget {}",

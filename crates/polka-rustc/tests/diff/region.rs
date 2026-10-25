@@ -10,6 +10,14 @@ fn region_module(code: Vec<OpCode>, constants: Vec<u64>, reg_count: usize) -> Mo
     Module { functions: vec![fn_chunk(code, constants, reg_count, 0)], entry: 0, flags: 0, exports: vec![] }
 }
 
+fn compare_both_widths(mut module: Module) {
+    let wide = Module { functions: module.functions.clone(), entry: module.entry, flags: module.flags, exports: module.exports.clone() };
+    let wide_result = interp_with_live(&wide);
+    module.flags |= polka::CART_FLAG_INT32_SAFE;
+    let narrow_result = interp_with_live(&module);
+    batch_compare(vec![wide, module], vec![wide_result, narrow_result], true);
+}
+
 #[test]
 fn region_push_alloc_pop_frees_all() {
     let m = region_module(
@@ -25,8 +33,7 @@ fn region_push_alloc_pop_frees_all() {
         ],
         vec![Value::from_int(PUSH).raw(), Value::from_int(POP).raw(), Value::from_int(0).raw()], 4,
     );
-    let i = interp_with_live(&m);
-    batch_compare(vec![m], vec![i], true);
+    compare_both_widths(m);
 }
 
 #[test]
@@ -49,8 +56,7 @@ fn region_forget_excludes_from_pop() {
             Value::from_int(FORGET).raw(), Value::from_int(0).raw(),
         ], 4,
     );
-    let i = interp_with_live(&m);
-    batch_compare(vec![m], vec![i], true);
+    compare_both_widths(m);
 }
 
 #[test]
@@ -72,6 +78,5 @@ fn region_nested_push_pop() {
         ],
         vec![Value::from_int(PUSH).raw(), Value::from_int(POP).raw(), Value::from_int(0).raw()], 4,
     );
-    let i = interp_with_live(&m);
-    batch_compare(vec![m], vec![i], true);
+    compare_both_widths(m);
 }

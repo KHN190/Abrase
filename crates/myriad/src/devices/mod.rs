@@ -1,11 +1,11 @@
+use super::{Int, Value};
 use alloc::{boxed::Box, string::String, vec::Vec};
 pub mod system;
 pub mod console;
 
 pub use system::{SystemDevice, SYSTEM_ID};
 pub use console::{Console, BufferConsole, CONSOLE_ID, SharedBuf};
-use polka::Value;
-use crate::memory::Heap;
+use super::memory::Heap;
 
 pub trait Device {
     /// Read a port. Returns (value, is_handle). For non-handle ports the tag
@@ -28,7 +28,7 @@ pub trait Device {
     // to issue a single syscall. Not exposed via DEI/DEO.
     fn write_bytes(&mut self, port: u8, bytes: &[u8], heap: &mut Heap) -> Result<(), String> {
         for &b in bytes {
-            self.write(port, Value::from_int(b as i64), false, heap)?;
+            self.write(port, Value::from_int(b as Int), false, heap)?;
         }
         Ok(())
     }

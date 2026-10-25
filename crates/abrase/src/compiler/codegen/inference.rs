@@ -182,8 +182,10 @@ impl Compiler {
             }
             ast::Expr::Unary { op: ast::UnaryOp::Neg, right } => {
                 match self.try_const_fold(right)?.into_lit()? {
-                    ast::Literal::Int(n) => Some(ConstValue::Lit(ast::Literal::Int(n.wrapping_neg()))),
-                    ast::Literal::Float(f) => Some(ConstValue::Lit(ast::Literal::Float(-f))),
+                    ast::Literal::Int(n) => Some(ConstValue::Lit(ast::Literal::Int(
+                        if self.int32_mode { (n as i32).wrapping_neg() as i64 } else { n.wrapping_neg() }))),
+                    ast::Literal::Float(f) => Some(ConstValue::Lit(ast::Literal::Float(
+                        if self.int32_mode { -(f as f32) as f64 } else { -f }))),
                     _ => None,
                 }
             }
@@ -199,28 +201,44 @@ impl Compiler {
                 use ast::BinaryOp as B;
                 use ast::Literal as L;
                 let out = match (l, r) {
-                    (L::Int(a), L::Int(b)) => match op {
-                        B::Add => Some(L::Int(a.wrapping_add(b))),
-                        B::Sub => Some(L::Int(a.wrapping_sub(b))),
-                        B::Mul => Some(L::Int(a.wrapping_mul(b))),
-                        B::Div if b != 0 => Some(L::Int(a.wrapping_div(b))),
-                        B::Mod if b != 0 => Some(L::Int(a.wrapping_rem(b))),
-                        B::Eq  => Some(L::Bool(a == b)),
-                        B::Neq => Some(L::Bool(a != b)),
-                        B::Lt  => Some(L::Bool(a < b)),
-                        B::Gt  => Some(L::Bool(a > b)),
-                        B::Lte => Some(L::Bool(a <= b)),
-                        B::Gte => Some(L::Bool(a >= b)),
-                        _ => None,
+                    (L::Int(a), L::Int(b)) => {
+                        macro_rules! fold_integer {
+                            ($left:expr, $right:expr) => {{
+                                let (a, b) = ($left, $right);
+                                match op {
+                                    B::Add => Some(L::Int(a.wrapping_add(b) as i64)),
+                                    B::Sub => Some(L::Int(a.wrapping_sub(b) as i64)),
+                                    B::Mul => Some(L::Int(a.wrapping_mul(b) as i64)),
+                                    B::Div => a.checked_div(b).map(|value| L::Int(value as i64)),
+                                    B::Mod => a.checked_rem(b).map(|value| L::Int(value as i64)),
+                                    B::Eq  => Some(L::Bool(a == b)),
+                                    B::Neq => Some(L::Bool(a != b)),
+                                    B::Lt  => Some(L::Bool(a < b)),
+                                    B::Gt  => Some(L::Bool(a > b)),
+                                    B::Lte => Some(L::Bool(a <= b)),
+                                    B::Gte => Some(L::Bool(a >= b)),
+                                    _ => None,
+                                }
+                            }};
+                        }
+                        if self.int32_mode { fold_integer!(a as i32, b as i32) } else { fold_integer!(a, b) }
                     },
-                    (L::Float(a), L::Float(b)) => match op {
-                        B::Add => Some(L::Float(a + b)),
-                        B::Sub => Some(L::Float(a - b)),
-                        B::Mul => Some(L::Float(a * b)),
-                        B::Div if b != 0.0 => Some(L::Float(a / b)),
-                        B::Lt  => Some(L::Bool(a < b)),
-                        B::Gt  => Some(L::Bool(a > b)),
-                        _ => None,
+                    (L::Float(a), L::Float(b)) => {
+                        macro_rules! fold_float {
+                            ($left:expr, $right:expr) => {{
+                                let (a, b) = ($left, $right);
+                                match op {
+                                    B::Add => Some(L::Float((a + b) as f64)),
+                                    B::Sub => Some(L::Float((a - b) as f64)),
+                                    B::Mul => Some(L::Float((a * b) as f64)),
+                                    B::Div if b != 0.0 => Some(L::Float((a / b) as f64)),
+                                    B::Lt  => Some(L::Bool(a < b)),
+                                    B::Gt  => Some(L::Bool(a > b)),
+                                    _ => None,
+                                }
+                            }};
+                        }
+                        if self.int32_mode { fold_float!(a as f32, b as f32) } else { fold_float!(a, b) }
                     },
                     (L::Bool(a), L::Bool(b)) => match op {
                         B::And => Some(L::Bool(a && b)),

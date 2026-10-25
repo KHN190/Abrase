@@ -1,6 +1,6 @@
 use alloc::string::String;
 use polka::Module;
-use crate::interpreter::register::validate_module_register_budget;
+use super::interpreter::register::validate_module_register_budget;
 
 pub struct LoadedModule {
     pub module: Module,
