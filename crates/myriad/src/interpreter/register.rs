@@ -1,10 +1,34 @@
 use alloc::{string::{String, ToString}, vec::Vec};
-use polka::{BytecodeChunk, Chunk, Register, Module, FRAME_REGS, HANDLE_NONE};
+use polka::{BytecodeChunk, Chunk, Register, Module, OpCode, FRAME_REGS, HANDLE_NONE};
 use crate::memory::mask_bit;
 use crate::value::{alloc_string, alloc_bytes};
 use super::super::VirtualMachine;
 use super::MAX_RAM;
 
+
+macro_rules! eval_integer {
+    ($narrow:expr, $left:expr, $right:expr, |$x:ident, $y:ident| $body:expr) => {{
+        if $narrow {
+            let ($x, $y) = ($left as i32, $right as i32);
+            $body
+        } else {
+            let ($x, $y) = ($left as i64, $right as i64);
+            $body
+        }
+    }};
+}
+
+macro_rules! eval_float {
+    ($narrow:expr, $left:expr, $right:expr, |$x:ident, $y:ident| $body:expr) => {{
+        if $narrow {
+            let ($x, $y) = (f32::from_bits($left as u32), f32::from_bits($right as u32));
+            $body
+        } else {
+            let ($x, $y) = (f64::from_bits($left), f64::from_bits($right));
+            $body
+        }
+    }};
+}
 
 impl VirtualMachine {
     pub(crate) fn branch(&mut self, bc: &BytecodeChunk, offset: i16) -> Result<(), String> {
@@ -123,17 +147,6 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    pub(crate) fn read_f64(&self, r: Register) -> Result<f64, String> {
-        let raw = self.read_raw(r)?;
-        Ok(polka::decode_float(raw, self.int32_safe))
-    }
-
-    #[inline(always)]
-    pub(crate) fn narrow_float_bits(&self, v: f64) -> u64 {
-        polka::encode_float(v, self.int32_safe)
-    }
-
-    #[inline(always)]
     pub(crate) fn read_handle(&self, r: Register) -> Result<(u32, u32), String> {
         let abs = self.abs(r);
         let v = self.read_abs_raw(abs);
@@ -219,28 +232,59 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    pub(crate) fn bin_i64<F: Fn(i64, i64) -> i64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
-        let x = self.read_i64(a)?;
-        let y = self.read_i64(b)?;
-        self.write(d, f(x, y) as u64, false)
+    pub(crate) fn exec_integer_op(&mut self, op: &OpCode) -> Result<(), String> {
+        use OpCode::*;
+        let (d, a, b) = match *op {
+            Add(d,a,b)|Sub(d,a,b)|Mul(d,a,b)|Div(d,a,b)|Mod(d,a,b)
+            |Lt(d,a,b)|Gt(d,a,b)|Lte(d,a,b)|Gte(d,a,b)
+            |And(d,a,b)|Or(d,a,b)|Xor(d,a,b)|Shl(d,a,b)|Shr(d,a,b) => (d,a,b),
+            Neg(d,a)|AddImm(d,a,_)|SubImm(d,a,_) => (d,a,a),
+            _ => unreachable!("integer opcode"),
+        };
+        let (left, right) = (self.read_raw(a)?, self.read_raw(b)?);
+        let raw = eval_integer!(self.int32_safe, left, right, |x, y| match *op {
+            Add(..) => x.wrapping_add(y) as i64 as u64,
+            Sub(..) => x.wrapping_sub(y) as i64 as u64,
+            Mul(..) => x.wrapping_mul(y) as i64 as u64,
+            Div(..) => x.checked_div(y).ok_or_else(|| "div by zero".to_string())? as i64 as u64,
+            Mod(..) => x.checked_rem(y).ok_or_else(|| "mod by zero".to_string())? as i64 as u64,
+            Neg(..) => x.wrapping_neg() as i64 as u64,
+            AddImm(_,_,imm) => x.wrapping_add(imm as _) as i64 as u64,
+            SubImm(_,_,imm) => x.wrapping_sub(imm as _) as i64 as u64,
+            Lt(..) => bool_u64(x < y),
+            Gt(..) => bool_u64(x > y),
+            Lte(..) => bool_u64(x <= y),
+            Gte(..) => bool_u64(x >= y),
+            And(..) => (x & y) as i64 as u64,
+            Or(..) => (x | y) as i64 as u64,
+            Xor(..) => (x ^ y) as i64 as u64,
+            Shl(..) => x.wrapping_shl(y as u32) as i64 as u64,
+            Shr(..) => x.wrapping_shr(y as u32) as i64 as u64,
+            _ => unreachable!("integer opcode"),
+        });
+        self.write(d, raw, false)
     }
 
     #[inline(always)]
-    pub(crate) fn bin_f64<F: Fn(f64, f64) -> f64>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
-        let x = self.read_f64(a)?;
-        let y = self.read_f64(b)?;
-        let bits = self.narrow_float_bits(f(x, y));
-        self.write(d, bits, false)
-    }
-
-    #[inline(always)]
-    pub(crate) fn bin_i64_checked<F: Fn(i64, i64) -> Option<i64>>(
-        &mut self, d: Register, a: Register, b: Register, msg: &str, f: F,
-    ) -> Result<(), String> {
-        let x = self.read_i64(a)?;
-        let y = self.read_i64(b)?;
-        let r = f(x, y).ok_or_else(|| msg.to_string())?;
-        self.write(d, r as u64, false)
+    pub(crate) fn exec_float_op(&mut self, op: &OpCode) -> Result<(), String> {
+        use OpCode::*;
+        let (d, a, b) = match *op {
+            FAdd(d,a,b)|FSub(d,a,b)|FMul(d,a,b)|FDiv(d,a,b)|FLt(d,a,b)|FEq(d,a,b) => (d,a,b),
+            FNeg(d,a) => (d,a,a),
+            _ => unreachable!("float opcode"),
+        };
+        let (left, right) = (self.read_raw(a)?, self.read_raw(b)?);
+        let raw = eval_float!(self.int32_safe, left, right, |x, y| match *op {
+            FAdd(..) => (x + y).to_bits() as u64,
+            FSub(..) => (x - y).to_bits() as u64,
+            FMul(..) => (x * y).to_bits() as u64,
+            FDiv(..) => (x / y).to_bits() as u64,
+            FNeg(..) => (-x).to_bits() as u64,
+            FLt(..) => bool_u64(x < y),
+            FEq(..) => bool_u64(x == y),
+            _ => unreachable!("float opcode"),
+        });
+        self.write(d, raw, false)
     }
 
     #[inline(always)]
@@ -249,13 +293,6 @@ impl VirtualMachine {
         let xb = self.read_raw(b)?;
         let r = (xa == xb) ^ negate;
         self.write(d, bool_u64(r), false)
-    }
-
-    #[inline(always)]
-    pub(crate) fn bin_i64_cmp<F: Fn(i64, i64) -> bool>(&mut self, d: Register, a: Register, b: Register, f: F) -> Result<(), String> {
-        let x = self.read_i64(a)?;
-        let y = self.read_i64(b)?;
-        self.write(d, bool_u64(f(x, y)), false)
     }
 
     pub(super) fn resolve_constants(&mut self, module: &Module) -> Result<(), String> {

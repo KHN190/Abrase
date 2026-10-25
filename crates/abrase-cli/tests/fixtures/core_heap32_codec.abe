@@ -1,0 +1,55 @@
+const HDR_SLOT_HEAD: Int = 20;
+const HDR_SLOT_COUNT: Int = 24;
+const HDR_HEAP_START: Int = 28;
+const ENTRY_ACTIVE: Int = 65536;
+const ENTRY_RETIRED: Int = 131072;
+
+fn entry_at(slot: Int) -> <core> Int { GLOBAL_HDR + slot * 8 }
+fn heap_start() -> <core> Int { __peek32(at(HDR_HEAP_START)) }
+fn binding_available() -> <core> Int {
+    if __peek32(at(HDR_SLOT_HEAD)) == 0 { 0 } else { 1 }
+}
+fn enc(off: Int, gen: Int) -> <core> Int {
+    let slot = __peek32(at(HDR_SLOT_HEAD));
+    let entry = entry_at(slot);
+    let state = __peek32(at(entry + 4));
+    __poke32(at(HDR_SLOT_HEAD), __peek32(at(entry)));
+    __poke32(at(entry), off);
+    __poke32(at(entry + 4), state | ENTRY_ACTIVE);
+    (slot << 16) | (state & 65535)
+}
+fn chk(h: Int) -> <core> Int {
+    let slot = (h >> 16) & 65535;
+    if slot == 0 || slot > __peek32(at(HDR_SLOT_COUNT)) {
+        0 - 1
+    } else {
+        let entry = entry_at(slot);
+        let state = __peek32(at(entry + 4));
+        if (state & ENTRY_ACTIVE) == 0 || (state & 65535) != (h & 65535) {
+            0 - 1
+        } else {
+            let off = __peek32(at(entry));
+            let frontier = __peek32(at(HDR_FRONTIER));
+            if off < heap_start() || off > frontier - BLK_HDR {
+                0 - 1
+            } else {
+                if __peek32(at(off)) == 0 { 0 - 1 } else { off }
+            }
+        }
+    }
+}
+fn binding_release(h: Int) -> <core> Unit {
+    let slot = (h >> 16) & 65535;
+    let entry = entry_at(slot);
+    let gen = h & 65535;
+    if gen == 65535 {
+        __poke32(at(entry), 0);
+        __poke32(at(entry + 4), ENTRY_RETIRED | gen)
+    } else {
+        __poke32(at(entry), __peek32(at(HDR_SLOT_HEAD)));
+        __poke32(at(entry + 4), gen + 1);
+        __poke32(at(HDR_SLOT_HEAD), slot)
+    }
+}
+fn block_released(off: Int) -> <core> Unit { () }
+pub fn resolve_offset(h: Int) -> <core> Int { chk(h) }

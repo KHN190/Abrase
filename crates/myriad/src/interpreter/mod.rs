@@ -1,5 +1,5 @@
 use alloc::{string::{String, ToString}, vec::Vec};
-use self::register::{bool_u64, validate_module_register_budget};
+use self::register::validate_module_register_budget;
 use super::{VirtualMachine, Value};
 use super::debug::DebugEvent;
 use polka::{BytecodeChunk, Chunk, OpCode, Register, Module, FRAME_REGS, HANDLE_NONE};
@@ -312,50 +312,15 @@ impl VirtualMachine {
     #[inline(always)]
     fn exec(&mut self, module: &Module, bc: &BytecodeChunk, op: &OpCode) -> Result<(), String> {
         match op {
-            OpCode::Add(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_add(y)),
-            OpCode::Sub(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_sub(y)),
-            OpCode::Mul(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_mul(y)),
-            OpCode::Div(d, a, b)  => self.bin_i64_checked(*d, *a, *b, "div by zero", |x, y| x.checked_div(y)),
-            OpCode::Mod(d, a, b)  => self.bin_i64_checked(*d, *a, *b, "mod by zero", |x, y| x.checked_rem(y)),
-            OpCode::Neg(d, a)     => {
-                let v = self.read_i64(*a)?;
-                self.write(*d, v.wrapping_neg() as u64, false)
-            }
-
-            OpCode::FAdd(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x + y),
-            OpCode::FSub(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x - y),
-            OpCode::FMul(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x * y),
-            OpCode::FDiv(d, a, b) => self.bin_f64(*d, *a, *b, |x, y| x / y),
-            OpCode::FNeg(d, a)    => {
-                let x = self.read_f64(*a)?;
-                let bits = self.narrow_float_bits(-x);
-                self.write(*d, bits, false)
-            }
-            OpCode::FLt(d, a, b)  => {
-                let x = self.read_f64(*a)?;
-                let y = self.read_f64(*b)?;
-                let r = if x.is_nan() || y.is_nan() { false } else { x < y };
-                self.write(*d, bool_u64(r), false)
-            }
-            OpCode::FEq(d, a, b)  => {
-                let x = self.read_f64(*a)?;
-                let y = self.read_f64(*b)?;
-                let r = if x.is_nan() || y.is_nan() { false } else { x == y };
-                self.write(*d, bool_u64(r), false)
-            }
-
-            OpCode::Eq(d, a, b)  => self.bin_eq(*d, *a, *b, false),
+            OpCode::Add(..)|OpCode::Sub(..)|OpCode::Mul(..)|OpCode::Div(..)|OpCode::Mod(..)
+            |OpCode::Neg(..)|OpCode::AddImm(..)|OpCode::SubImm(..)
+            |OpCode::Lt(..)|OpCode::Gt(..)|OpCode::Lte(..)|OpCode::Gte(..)
+            |OpCode::And(..)|OpCode::Or(..)|OpCode::Xor(..)|OpCode::Shl(..)|OpCode::Shr(..)
+                => self.exec_integer_op(op),
+            OpCode::FAdd(..)|OpCode::FSub(..)|OpCode::FMul(..)|OpCode::FDiv(..)
+            |OpCode::FNeg(..)|OpCode::FLt(..)|OpCode::FEq(..) => self.exec_float_op(op),
+            OpCode::Eq(d, a, b) => self.bin_eq(*d, *a, *b, false),
             OpCode::Neq(d, a, b) => self.bin_eq(*d, *a, *b, true),
-            OpCode::Lt(d, a, b)  => self.bin_i64_cmp(*d, *a, *b, |x, y| x < y),
-            OpCode::Gt(d, a, b)  => self.bin_i64_cmp(*d, *a, *b, |x, y| x > y),
-            OpCode::Lte(d, a, b) => self.bin_i64_cmp(*d, *a, *b, |x, y| x <= y),
-            OpCode::Gte(d, a, b) => self.bin_i64_cmp(*d, *a, *b, |x, y| x >= y),
-
-            OpCode::And(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x & y),
-            OpCode::Or(d, a, b)  => self.bin_i64(*d, *a, *b, |x, y| x | y),
-            OpCode::Xor(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x ^ y),
-            OpCode::Shl(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_shl((y as u32) & 63)),
-            OpCode::Shr(d, a, b) => self.bin_i64(*d, *a, *b, |x, y| x.wrapping_shr((y as u32) & 63)),
 
             OpCode::Jmp(off) => self.branch(bc, *off),
             OpCode::Jz(r, off) => {
@@ -391,14 +356,7 @@ impl VirtualMachine {
             OpCode::St(src, b, off)    => self.exec_st(*src, *b, *off as i64),
             OpCode::LdIdx(d, b, i)     => { let off = self.read_i64(*i)?; if off < 0 { return Err(format!("ldidx: negative index {}", off)); } self.exec_ld(*d, *b, off) }
             OpCode::StIdx(src, b, i)   => { let off = self.read_i64(*i)?; if off < 0 { return Err(format!("stidx: negative index {}", off)); } self.exec_st(*src, *b, off) }
-            OpCode::AddImm(d, s, imm) => {
-                let x = self.read_i64(*s)?;
-                self.write(*d, x.wrapping_add(*imm as i64) as u64, false)
-            }
-            OpCode::SubImm(d, s, imm) => {
-                let x = self.read_i64(*s)?;
-                self.write(*d, x.wrapping_sub(*imm as i64) as u64, false)
-            }
+
 
             OpCode::Alloc(d, size) => {
                 let (slot, generation) = self.checked_heap_alloc(*size as usize)?;

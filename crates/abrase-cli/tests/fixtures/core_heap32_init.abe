@@ -1,0 +1,27 @@
+pub fn core_init(size: Int, slots: Int) -> <core> Int {
+    if slots < 1 || slots > 65534 || size < GLOBAL_HDR || size > 2147483647 {
+        0 - 1
+    } else {
+        let start = GLOBAL_HDR + (slots + 1) * 8;
+        if start > size {
+            0 - 1
+        } else {
+            __poke32(at(HDR_FRONTIER), start);
+            __poke32(at(HDR_SIZE), size);
+            __poke32(at(HDR_FREELIST), 0);
+            __poke32(at(HDR_SLOT_HEAD), 1);
+            __poke32(at(HDR_SLOT_COUNT), slots);
+            __poke32(at(HDR_HEAP_START), start);
+            __poke32(at(GLOBAL_HDR), 0);
+            __poke32(at(GLOBAL_HDR + 4), ENTRY_RETIRED);
+            let mut slot = 1;
+            while slot <= slots {
+                let next = if slot == slots { 0 } else { slot + 1 };
+                __poke32(at(entry_at(slot)), next);
+                __poke32(at(entry_at(slot) + 4), 0);
+                slot = slot + 1;
+            };
+            0
+        }
+    }
+}

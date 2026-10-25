@@ -2,16 +2,37 @@ use abrase::compiler::Compiler;
 use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 
-const CORE: &str = include_str!("fixtures/core_heap.abe");
-const GEN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../myriad/src/core_heap_gen.rs");
+#[path = "support/core_heap_source.rs"]
+mod source;
+const GEN_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../myriad/src/core_heap_gen.rs"
+);
 
-fn generate() -> String {
-    let mut p = Parser::new(Lexer::new(CORE)).with_source(CORE.into());
+const GEN32_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../myriad/src/core_heap32_gen.rs"
+);
+
+fn generate(word32: bool) -> String {
+    let core = if word32 {
+        source::source32()
+    } else {
+        source::CORE.into()
+    };
+    let core = core.as_str();
+    let mut p = Parser::new(Lexer::new(core)).with_source(core.into());
     let ast = p.parse_program();
     assert!(p.errors.is_empty(), "parse: {:?}", p.errors);
-    let mut c = Compiler::new().with_source(CORE.into()).with_lib(true);
+    let mut c = Compiler::new()
+        .with_source(core.into())
+        .with_lib(true)
+        .with_int32_mode(word32);
     let m = c.compile_module(&ast).unwrap_or_else(|e| {
-        panic!("compile: {:?}", e.iter().map(|x| &x.message).collect::<Vec<_>>())
+        panic!(
+            "compile: {:?}",
+            e.iter().map(|x| &x.message).collect::<Vec<_>>()
+        )
     });
     let body = polka_rustc::core::transpile_core(&m).expect("transpile_core");
     format!(
@@ -26,12 +47,22 @@ fn generate() -> String {
 #[test]
 #[ignore = "writes the vendored trust archive; run explicitly to regenerate"]
 fn regenerate() {
-    std::fs::write(GEN_PATH, generate()).expect("write gen file");
+    std::fs::write(GEN_PATH, generate(false)).expect("write gen file");
+    std::fs::write(GEN32_PATH, generate(true)).expect("write gen32 file");
 }
 
 #[test]
 fn vendored_core_gen_is_in_sync() {
     let current = std::fs::read_to_string(GEN_PATH).unwrap_or_default();
-    assert_eq!(current, generate(),
-        "myriad/src/core_heap_gen.rs is stale — run `cargo test -p abrase-cli --test core_gen_tests regenerate -- --ignored`");
+    assert_eq!(
+        current,
+        generate(false),
+        "myriad/src/core_heap_gen.rs is stale — run `cargo test -p abrase-cli --test core_gen_tests regenerate -- --ignored`"
+    );
+}
+
+#[test]
+fn vendored_core32_gen_is_in_sync() {
+    let current = std::fs::read_to_string(GEN32_PATH).unwrap_or_default();
+    assert!(current == generate(true), "core_heap32_gen.rs is stale");
 }

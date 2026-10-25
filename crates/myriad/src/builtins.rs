@@ -34,6 +34,60 @@ impl<'a> NativeCtx<'a> {
 
     #[inline(always)]
     pub fn float_value(&self, f: f64) -> Value { Value::from_raw(polka::encode_float(f, self.int32_safe)) }
+
+    pub fn integer(&self, v: Value) -> i64 {
+        if self.int32_safe { v.raw() as i32 as i64 } else { v.as_int() }
+    }
+
+    fn integer_unary(&self, v: Value, narrow: fn(i32) -> i32, wide: fn(i64) -> i64) -> Value {
+        let result = if self.int32_safe { narrow(v.raw() as i32) as i64 } else { wide(v.as_int()) };
+        Value::from_int(result)
+    }
+
+    fn integer_binary(&self, a: Value, b: Value, narrow: fn(i32, i32) -> i32, wide: fn(i64, i64) -> i64) -> Value {
+        let result = if self.int32_safe { narrow(a.raw() as i32, b.raw() as i32) as i64 }
+            else { wide(a.as_int(), b.as_int()) };
+        Value::from_int(result)
+    }
+
+    fn float_unary(&self, v: Value, narrow: fn(f32) -> f32, wide: fn(f64) -> f64) -> Value {
+        let raw = if self.int32_safe { narrow(f32::from_bits(v.raw() as u32)).to_bits() as u64 }
+            else { wide(f64::from_bits(v.raw())).to_bits() };
+        Value::from_raw(raw)
+    }
+
+    fn float_binary(&self, a: Value, b: Value, narrow: fn(f32, f32) -> f32, wide: fn(f64, f64) -> f64) -> Value {
+        let raw = if self.int32_safe {
+            narrow(f32::from_bits(a.raw() as u32), f32::from_bits(b.raw() as u32)).to_bits() as u64
+        } else { wide(f64::from_bits(a.raw()), f64::from_bits(b.raw())).to_bits() };
+        Value::from_raw(raw)
+    }
+
+    fn int_to_float(&self, v: Value) -> Value {
+        let raw = if self.int32_safe { ((v.raw() as i32) as f32).to_bits() as u64 }
+            else { (v.as_int() as f64).to_bits() };
+        Value::from_raw(raw)
+    }
+
+    fn unsigned_to_float(&self, n: u32) -> Value {
+        let raw = if self.int32_safe { (n as f32).to_bits() as u64 } else { (n as f64).to_bits() };
+        Value::from_raw(raw)
+    }
+
+    fn float_to_int(&self, v: Value) -> Value {
+        let result = if self.int32_safe { (f32::from_bits(v.raw() as u32) as i32) as i64 }
+            else { f64::from_bits(v.raw()) as i64 };
+        Value::from_int(result)
+    }
+
+    fn integer_string(&self, v: Value) -> String {
+        if self.int32_safe { (v.raw() as i32).to_string() } else { v.as_int().to_string() }
+    }
+
+    fn float_string(&self, v: Value) -> String {
+        if self.int32_safe { f32::from_bits(v.raw() as u32).to_string() }
+            else { f64::from_bits(v.raw()).to_string() }
+    }
 }
 
 // (raw, is_handle) — interpreter updates caller's frame mask bit accordingly.
@@ -203,7 +257,7 @@ fn to_str_native() -> NativeFn {
             let v = alloc_string(ctx.heap, &s)?;
             return Ok(handle(v));
         }
-        let v = alloc_string(ctx.heap, &args[0].as_int().to_string())?;
+        let v = alloc_string(ctx.heap, &ctx.integer_string(args[0]))?;
         Ok(handle(v))
     })
 }
@@ -268,57 +322,46 @@ fn abort_native() -> NativeFn {
 }
 
 fn abs_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let n = args[0].as_int();
-        Ok(plain(Value::from_int(n.wrapping_abs())))
-    })
+    Rc::new(|ctx, args| Ok(plain(ctx.integer_unary(args[0], i32::wrapping_abs, i64::wrapping_abs))))
 }
 
 fn max_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let a = args[0].as_int();
-        let b = args[1].as_int();
-        Ok(plain(Value::from_int(a.max(b))))
-    })
+    Rc::new(|ctx, args| Ok(plain(ctx.integer_binary(args[0], args[1], i32::max, i64::max))))
 }
 
 fn min_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let a = args[0].as_int();
-        let b = args[1].as_int();
-        Ok(plain(Value::from_int(a.min(b))))
-    })
+    Rc::new(|ctx, args| Ok(plain(ctx.integer_binary(args[0], args[1], i32::min, i64::min))))
 }
 
 fn float_abs_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::abs(ctx.float(args[0]))))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], libm::fabsf, fmath::abs))))
 }
 
 fn float_max_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::fmax(ctx.float(args[0]), ctx.float(args[1]))))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_binary(args[0], args[1], libm::fmaxf, fmath::fmax))))
 }
 
 fn float_min_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::fmin(ctx.float(args[0]), ctx.float(args[1]))))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_binary(args[0], args[1], libm::fminf, fmath::fmin))))
 }
 
 fn int_to_f_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_value(args[0].as_int() as f64))))
+    Rc::new(|ctx, args| Ok(plain(ctx.int_to_float(args[0]))))
 }
 
 fn char_to_f_native() -> NativeFn {
     Rc::new(|ctx, args| {
         let c = args[0].as_char().ok_or_else(|| format!("__char_to_f: arg0 not Char: {:?}", args[0]))?;
-        Ok(plain(ctx.float_value(c as u32 as f64)))
+        Ok(plain(ctx.unsigned_to_float(c as u32)))
     })
 }
 
 fn bool_to_f_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_value(if args[0].as_bool() { 1.0 } else { 0.0 }))))
+    Rc::new(|ctx, args| Ok(plain(ctx.unsigned_to_float(u32::from(args[0].as_bool())))))
 }
 
 fn float_to_i_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(Value::from_int(ctx.float(args[0]) as i64))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_to_int(args[0]))))
 }
 
 fn char_to_i_native() -> NativeFn {
@@ -333,8 +376,8 @@ fn bool_to_i_native() -> NativeFn {
 }
 
 fn int_to_c_native() -> NativeFn {
-    Rc::new(|_ctx, args| {
-        let n = args[0].as_int();
+    Rc::new(|ctx, args| {
+        let n = ctx.integer(args[0]);
         let u = u32::try_from(n).map_err(|_| format!("abort: invalid codepoint {}", n))?;
         let c = char::from_u32(u).ok_or_else(|| format!("abort: invalid codepoint U+{:X}", u))?;
         Ok(plain(Value::from_char(c)))
@@ -343,14 +386,14 @@ fn int_to_c_native() -> NativeFn {
 
 fn int_to_s_native() -> NativeFn {
     Rc::new(|ctx, args| {
-        let v = alloc_string(ctx.heap, &args[0].as_int().to_string())?;
+        let v = alloc_string(ctx.heap, &ctx.integer_string(args[0]))?;
         Ok(handle(v))
     })
 }
 
 fn float_to_s_native() -> NativeFn {
     Rc::new(|ctx, args| {
-        let v = alloc_string(ctx.heap, &ctx.float(args[0]).to_string())?;
+        let v = alloc_string(ctx.heap, &ctx.float_string(args[0]))?;
         Ok(handle(v))
     })
 }
@@ -488,13 +531,14 @@ fn unit_to_s_native() -> NativeFn {
 }
 
 fn ceil_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::ceil(ctx.float(args[0]))))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], libm::ceilf, fmath::ceil))))
 }
 
 fn flr_native() -> NativeFn {
-    Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::floor(ctx.float(args[0]))))))
+    Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], libm::floorf, fmath::floor))))
 }
 
+// Trigonometry still uses the widening compatibility path; libm sinf/cosf also use f64 internally.
 fn cos_native()  -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::cos(ctx.float(args[0])))))) }
 fn sin_native()  -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::sin(ctx.float(args[0])))))) }
-fn sqrt_native() -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_value(fmath::sqrt(ctx.float(args[0])))))) }
+fn sqrt_native() -> NativeFn { Rc::new(|ctx, args| Ok(plain(ctx.float_unary(args[0], libm::sqrtf, fmath::sqrt)))) }

@@ -6,11 +6,39 @@ use crate::TranspileError;
 // AOT backend for `<core>` runtime libraries (heap/RC/region written in abrase).
 // A core module has no VM: functions operate only on scalar registers plus a
 // flat byte arena via the peek/poke/ptr_add/arena_base intrinsics. Emit each fn
-// as `f{idx}(arena, args) -> u64`, inline the intrinsics with the L2 bounds and
+// as `f{idx}(arena, args) -> word`, inline the intrinsics with the L2 bounds and
 // alignment checks, and expose every `pub fn` as a raw-ABI wrapper.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AddrBackend { Arena, Device }
+
+#[derive(Clone, Copy)]
+struct NumericTarget {
+    word: &'static str,
+    int: &'static str,
+    shift_mask: u32,
+    word32: bool,
+}
+
+impl NumericTarget {
+    fn for_module(module: &Module) -> Self {
+        if module.flags & polka::CART_FLAG_INT32_SAFE != 0 {
+            Self { word: "u32", int: "i32", shift_mask: 31, word32: true }
+        } else {
+            Self { word: "u64", int: "i64", shift_mask: 63, word32: false }
+        }
+    }
+
+    fn constant(self, raw: u64) -> Result<u64, TranspileError> {
+        if !self.word32 { return Ok(raw); }
+        let low = raw as u32;
+        if raw == low as u64 || raw == low as i32 as i64 as u64 {
+            Ok(low as u64)
+        } else {
+            Err(TranspileError::Unsupported(format!("core32 constant {raw:#x} exceeds word width")))
+        }
+    }
+}
 
 fn reg(r: Register) -> String { format!("r{}", r.0) }
 
@@ -26,20 +54,20 @@ fn intrinsic_name(module: &Module, fn_id: usize) -> Option<&str> {
 // no_std: only `&[u8]` slices, core ops, and `&'static str` errors — no alloc,
 // no std. Suitable for linking as `libmyriad-core` on bare metal.
 const PRELUDE: &str = r#"
-fn core_peek(arena: &[u8], addr: u64, width: u64) -> Result<u64, &'static str> {
+fn core_peek(arena: &[u8], addr: @WORD@, width: @WORD@) -> Result<@WORD@, &'static str> {
     if addr & (width - 1) != 0 { return Err("core: misaligned access"); }
     let end = match addr.checked_add(width) { Some(e) => e, None => return Err("core: address overflow") };
-    if end > arena.len() as u64 { return Err("core: out-of-bounds access"); }
-    let mut v: u64 = 0;
-    let mut i = 0u64;
-    while i < width { v |= (arena[(addr + i) as usize] as u64) << (8 * i); i += 1; }
+    if @OUT_OF_BOUNDS@ { return Err("core: out-of-bounds access"); }
+    let mut v: @WORD@ = 0;
+    let mut i = 0@WORD@;
+    while i < width { v |= (arena[(addr + i) as usize] as @WORD@) << (8 * i); i += 1; }
     Ok(v)
 }
-fn core_poke(arena: &mut [u8], addr: u64, val: u64, width: u64) -> Result<(), &'static str> {
+fn core_poke(arena: &mut [u8], addr: @WORD@, val: @WORD@, width: @WORD@) -> Result<(), &'static str> {
     if addr & (width - 1) != 0 { return Err("core: misaligned access"); }
     let end = match addr.checked_add(width) { Some(e) => e, None => return Err("core: address overflow") };
-    if end > arena.len() as u64 { return Err("core: out-of-bounds access"); }
-    let mut i = 0u64;
+    if @OUT_OF_BOUNDS@ { return Err("core: out-of-bounds access"); }
+    let mut i = 0@WORD@;
     while i < width { arena[(addr + i) as usize] = (val >> (8 * i)) as u8; i += 1; }
     Ok(())
 }
@@ -47,23 +75,21 @@ fn core_poke(arena: &mut [u8], addr: u64, val: u64, width: u64) -> Result<(), &'
 
 // Device backend: absolute physical addr, volatile access, align-checked, no bounds; board sets `MMIO_BASE` at boot.
 const PRELUDE_DEVICE: &str = r#"
-pub static mut MMIO_BASE: u64 = 0;
-fn core_peek(_arena: &[u8], addr: u64, width: u64) -> Result<u64, &'static str> {
+pub static mut MMIO_BASE: @WORD@ = 0;
+fn core_peek(_arena: &[u8], addr: @WORD@, width: @WORD@) -> Result<@WORD@, &'static str> {
     if addr & (width - 1) != 0 { return Err("core: misaligned access"); }
     unsafe { Ok(match width {
-        1 => core::ptr::read_volatile(addr as *const u8) as u64,
-        4 => core::ptr::read_volatile(addr as *const u32) as u64,
-        8 => core::ptr::read_volatile(addr as *const u64),
-        _ => return Err("core: bad width"),
+        1 => core::ptr::read_volatile(addr as *const u8) as @WORD@,
+        4 => core::ptr::read_volatile(addr as *const u32) as @WORD@,
+@PEEK64@        _ => return Err("core: bad width"),
     }) }
 }
-fn core_poke(_arena: &mut [u8], addr: u64, val: u64, width: u64) -> Result<(), &'static str> {
+fn core_poke(_arena: &mut [u8], addr: @WORD@, val: @WORD@, width: @WORD@) -> Result<(), &'static str> {
     if addr & (width - 1) != 0 { return Err("core: misaligned access"); }
     unsafe { match width {
         1 => core::ptr::write_volatile(addr as *mut u8, val as u8),
         4 => core::ptr::write_volatile(addr as *mut u32, val as u32),
-        8 => core::ptr::write_volatile(addr as *mut u64, val),
-        _ => return Err("core: bad width"),
+@POKE64@        _ => return Err("core: bad width"),
     } }
     Ok(())
 }
@@ -74,9 +100,14 @@ pub fn transpile_core(module: &Module) -> Result<String, TranspileError> {
 }
 
 pub fn transpile_core_backend(module: &Module, backend: AddrBackend) -> Result<String, TranspileError> {
+    let numeric = NumericTarget::for_module(module);
     let mut out = String::new();
     out.push_str("// generated by polka-rustc (core backend)\n");
-    out.push_str(match backend { AddrBackend::Arena => PRELUDE, AddrBackend::Device => PRELUDE_DEVICE });
+    let prelude = match backend { AddrBackend::Arena => PRELUDE, AddrBackend::Device => PRELUDE_DEVICE };
+    out.push_str(&prelude.replace("@WORD@", numeric.word)
+        .replace("@OUT_OF_BOUNDS@", if numeric.word32 { "(end as usize) > arena.len()" } else { "end > arena.len() as u64" })
+        .replace("@PEEK64@", if numeric.word32 { "" } else { "        8 => core::ptr::read_volatile(addr as *const u64),\n" })
+        .replace("@POKE64@", if numeric.word32 { "" } else { "        8 => core::ptr::write_volatile(addr as *mut u64, val),\n" }));
 
     let param_counts: Vec<usize> = module.functions.iter().map(|c| c.param_count()).collect();
 
@@ -92,15 +123,16 @@ pub fn transpile_core_backend(module: &Module, backend: AddrBackend) -> Result<S
         }
     }
 
+    let word = numeric.word;
     for export in &module.exports {
         if export.name == "__module_init" || export.name == "main" { continue; }
         let fid = export.fn_id as usize;
         let k = param_counts.get(fid).copied().unwrap_or(0);
-        let params: Vec<String> = (0..k).map(|j| format!("a{}: u64", j)).collect();
+        let params: Vec<String> = (0..k).map(|j| format!("a{}: {word}", j)).collect();
         let args: Vec<String> = (0..k).map(|j| format!("a{}", j)).collect();
         let _ = write!(
             out,
-            "pub fn {}(arena: &mut [u8]{}{}) -> Result<u64, &'static str> {{ f{}(arena, &[{}]) }}\n",
+            "pub fn {}(arena: &mut [u8]{}{}) -> Result<{word}, &'static str> {{ f{}(arena, &[{}]) }}\n",
             export.name,
             if k == 0 { "" } else { ", " },
             params.join(", "),
@@ -122,9 +154,10 @@ fn term_succ(t: &Term) -> Vec<usize> {
 }
 
 fn emit_core_fn(out: &mut String, idx: usize, bc: &BytecodeChunk, param_counts: &[usize], module: &Module, backend: AddrBackend) -> Result<(), TranspileError> {
-    let _ = write!(out, "fn f{}(arena: &mut [u8], a: &[u64]) -> Result<u64, &'static str> {{\n", idx);
+    let word = NumericTarget::for_module(module).word;
+    let _ = write!(out, "fn f{}(arena: &mut [u8], a: &[{word}]) -> Result<{word}, &'static str> {{\n", idx);
     let nregs = bc.reg_count + crate::STAGE_SLACK;
-    for r in 0..nregs { let _ = write!(out, "    let mut r{}: u64 = 0;\n", r); }
+    for r in 0..nregs { let _ = write!(out, "    let mut r{}: {word} = 0;\n", r); }
     for j in 0..param_counts[idx] { let _ = write!(out, "    r{} = a[{}];\n", j, j); }
     out.push_str("    let mut __lbl: usize = 0; let _ = &mut __lbl;\n");
 
@@ -281,18 +314,20 @@ impl<'a> Reloop<'a> {
 }
 
 fn emit_core_op(op: &OpCode, reg_count: usize, param_counts: &[usize], module: &Module, constants: &[u64], backend: AddrBackend) -> Result<String, TranspileError> {
-    let bin = |a: Register, b: Register, m: &str| format!("({} as i64).{}({} as i64) as u64", reg(a), m, reg(b));
-    let cmp = |a: Register, b: Register, o: &str| format!("if ({} as i64) {} ({} as i64) {{ 1 }} else {{ 0 }}", reg(a), o, reg(b));
+    let numeric = NumericTarget::for_module(module);
+    let (word, int, shift_mask) = (numeric.word, numeric.int, numeric.shift_mask);
+    let bin = |a: Register, b: Register, m: &str| format!("({} as {int}).{}({} as {int}) as {word}", reg(a), m, reg(b));
+    let cmp = |a: Register, b: Register, o: &str| format!("if ({} as {int}) {} ({} as {int}) {{ 1 }} else {{ 0 }}", reg(a), o, reg(b));
     let asg = |d: Register, e: String| format!("{} = {};", reg(d), e);
     let s = match op {
         OpCode::Add(d, a, b) => asg(*d, bin(*a, *b, "wrapping_add")),
         OpCode::Sub(d, a, b) => asg(*d, bin(*a, *b, "wrapping_sub")),
         OpCode::Mul(d, a, b) => asg(*d, bin(*a, *b, "wrapping_mul")),
-        OpCode::Div(d, a, b) => format!("{} = match ({} as i64).checked_div({} as i64) {{ Some(v) => v as u64, None => return Err(\"div by zero\") }};", reg(*d), reg(*a), reg(*b)),
-        OpCode::Mod(d, a, b) => format!("{} = match ({} as i64).checked_rem({} as i64) {{ Some(v) => v as u64, None => return Err(\"mod by zero\") }};", reg(*d), reg(*a), reg(*b)),
-        OpCode::Neg(d, a) => asg(*d, format!("({} as i64).wrapping_neg() as u64", reg(*a))),
-        OpCode::AddImm(d, a, imm) => asg(*d, format!("({} as i64).wrapping_add({}) as u64", reg(*a), *imm as i64)),
-        OpCode::SubImm(d, a, imm) => asg(*d, format!("({} as i64).wrapping_sub({}) as u64", reg(*a), *imm as i64)),
+        OpCode::Div(d, a, b) => format!("{} = match ({} as {int}).checked_div({} as {int}) {{ Some(v) => v as {word}, None => return Err(\"div by zero\") }};", reg(*d), reg(*a), reg(*b)),
+        OpCode::Mod(d, a, b) => format!("{} = match ({} as {int}).checked_rem({} as {int}) {{ Some(v) => v as {word}, None => return Err(\"mod by zero\") }};", reg(*d), reg(*a), reg(*b)),
+        OpCode::Neg(d, a) => asg(*d, format!("({} as {int}).wrapping_neg() as {word}", reg(*a))),
+        OpCode::AddImm(d, a, imm) => asg(*d, format!("({} as {int}).wrapping_add({}) as {word}", reg(*a), *imm as i64)),
+        OpCode::SubImm(d, a, imm) => asg(*d, format!("({} as {int}).wrapping_sub({}) as {word}", reg(*a), *imm as i64)),
         OpCode::Eq(d, a, b) => asg(*d, cmp(*a, *b, "==")),
         OpCode::Neq(d, a, b) => asg(*d, cmp(*a, *b, "!=")),
         OpCode::Lt(d, a, b) => asg(*d, cmp(*a, *b, "<")),
@@ -302,17 +337,17 @@ fn emit_core_op(op: &OpCode, reg_count: usize, param_counts: &[usize], module: &
         OpCode::And(d, a, b) => asg(*d, format!("{} & {}", reg(*a), reg(*b))),
         OpCode::Or(d, a, b) => asg(*d, format!("{} | {}", reg(*a), reg(*b))),
         OpCode::Xor(d, a, b) => asg(*d, format!("{} ^ {}", reg(*a), reg(*b))),
-        OpCode::Shl(d, a, b) => asg(*d, format!("({} as i64).wrapping_shl(({} as u32) & 63) as u64", reg(*a), reg(*b))),
-        OpCode::Shr(d, a, b) => asg(*d, format!("({} as i64).wrapping_shr(({} as u32) & 63) as u64", reg(*a), reg(*b))),
-        OpCode::PushConst(d, ci) => asg(*d, format!("{}u64", constants.get(*ci as usize).copied().unwrap_or(0))),
+        OpCode::Shl(d, a, b) => asg(*d, format!("({} as {int}).wrapping_shl(({} as u32) & {shift_mask}) as {word}", reg(*a), reg(*b))),
+        OpCode::Shr(d, a, b) => asg(*d, format!("({} as {int}).wrapping_shr(({} as u32) & {shift_mask}) as {word}", reg(*a), reg(*b))),
+        OpCode::PushConst(d, ci) => asg(*d, format!("{}{word}", numeric.constant(constants.get(*ci as usize).copied().unwrap_or(0))?)),
         OpCode::Copy(d, a) => asg(*d, reg(*a)),
-        OpCode::Move(d, a) => format!("{} = {}; {} = u64::MAX;", reg(*d), reg(*a), reg(*a)),
+        OpCode::Move(d, a) => format!("{} = {}; {} = {word}::MAX;", reg(*d), reg(*a), reg(*a)),
         OpCode::Drop(_) | OpCode::Deo(_, _) => String::new(),
         OpCode::Call(dest, fn_id) => {
             let fid = *fn_id as usize;
             let k = *param_counts.get(fid).ok_or_else(|| TranspileError::Unsupported(format!("call to unknown fn {}", fid)))?;
             let args: Vec<String> = (0..k).map(|j| reg(Register((reg_count + j) as u8))).collect();
-            if let Some(name) = intrinsic_name(module, fid) { emit_intrinsic(*dest, name, &args, backend)? }
+            if let Some(name) = intrinsic_name(module, fid) { emit_intrinsic(*dest, name, &args, backend, numeric)? }
             else { format!("{} = f{}(arena, &[{}])?;", reg(*dest), fid, args.join(", ")) }
         }
         OpCode::Jmp(_) | OpCode::Jz(_, _) | OpCode::Jnz(_, _) | OpCode::Ret(_) => String::new(),
@@ -321,7 +356,10 @@ fn emit_core_op(op: &OpCode, reg_count: usize, param_counts: &[usize], module: &
     Ok(s)
 }
 
-fn emit_intrinsic(dest: Register, name: &str, args: &[String], backend: AddrBackend) -> Result<String, TranspileError> {
+fn emit_intrinsic(dest: Register, name: &str, args: &[String], backend: AddrBackend, numeric: NumericTarget) -> Result<String, TranspileError> {
+    if numeric.word32 && matches!(name, "__peek64" | "__poke64") {
+        return Err(TranspileError::Unsupported(format!("core32 intrinsic {name}")));
+    }
     let d = reg(dest);
     let s = match name {
         "__peek8" => format!("{} = core_peek(arena, {}, 1)?;", d, args[0]),
