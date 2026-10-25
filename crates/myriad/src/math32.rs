@@ -181,6 +181,7 @@ fn kernel_reduce(x: &[f32], e0: i32) -> (i32, f32, f32) {
     (n & 7, hi, lo)
 }
 
+#[cfg_attr(all(feature = "ram-math", target_arch = "arm", target_os = "none"), unsafe(link_section = ".data.ram_func"))]
 fn reduce(x: f32) -> (i32, f32, f32) {
     let bits = x.to_bits();
     let magnitude = bits & 0x7fff_ffff;
@@ -290,6 +291,7 @@ fn kernel_cos(x: f32, y: f32) -> f32 {
     }
 }
 
+#[cfg_attr(all(feature = "ram-math", target_arch = "arm", target_os = "none"), unsafe(link_section = ".data.ram_func"))]
 pub fn sin(x: f32) -> f32 {
     let bits = x.to_bits() & 0x7fff_ffff;
     if bits <= 0x3f490fd8 {
@@ -307,6 +309,7 @@ pub fn sin(x: f32) -> f32 {
     }
 }
 
+#[cfg_attr(all(feature = "ram-math", target_arch = "arm", target_os = "none"), unsafe(link_section = ".data.ram_func"))]
 pub fn cos(x: f32) -> f32 {
     let bits = x.to_bits() & 0x7fff_ffff;
     if bits <= 0x3f490fd8 {

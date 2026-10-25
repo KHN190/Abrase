@@ -19,6 +19,9 @@ homepage.workspace     = true
 name = "myriad"
 doctest = false
 
+[features]
+ram-math = []
+
 [dependencies]
 polka = { package = "polka-rs", path = "../polka", version = "=0.4.0", default-features = false }
 libm = "0.2"
