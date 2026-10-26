@@ -3,7 +3,7 @@ use abrase::lexer::Lexer;
 use abrase::parser::Parser;
 use myriad::devices::BufferConsole;
 use myriad::devices::console::SharedBuf;
-use myriad::{Host, Value, VirtualMachine, read_string};
+use myriad::{Host, Value, VirtualMachine};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
@@ -74,35 +74,48 @@ pub fn run_with(source: &str, int32: bool, no_built_in: bool) -> RunResult {
     };
     let warnings = render_warnings(&compiler);
 
-    let console = BufferConsole::new();
-    let (out_buf, err_buf) = console.handles();
+    macro_rules! execute {
+        ($runtime:path) => {{
+            use $runtime as runtime;
+            use runtime::{Host, VirtualMachine, read_string};
+            use runtime::devices::BufferConsole;
+            let console = BufferConsole::new();
+            let (out_buf, err_buf) = console.handles();
 
-    let mut vm = VirtualMachine::new().with_fn_names(compiler.fn_names());
-    Host::headless()
-        .with_console(Box::new(console))
-        .install_into(&mut vm);
+            let mut vm = VirtualMachine::new().with_fn_names(compiler.fn_names());
+            Host::headless()
+                .with_console(Box::new(console))
+                .install_into(&mut vm);
 
-    match vm.run_module(&module) {
-        Ok(v) => {
-            let value = match read_string(vm.heap_ref(), v) {
-                Some(s) => s,
-                None => v.as_int().to_string(),
-            };
-            RunResult {
-                ok: true,
-                value,
-                stdout: drain(&out_buf),
-                stderr: drain(&err_buf),
-                error: String::new(),
-                warnings,
+            match vm.run_module(&module) {
+                Ok(v) => {
+                    let value = match read_string(vm.heap_ref(), v) {
+                        Some(s) => s,
+                        None => v.as_int().to_string(),
+                    };
+                    RunResult {
+                        ok: true,
+                        value,
+                        stdout: drain(&out_buf),
+                        stderr: drain(&err_buf),
+                        error: String::new(),
+                        warnings,
+                    }
+                }
+                Err(e) => {
+                    let mut res = RunResult::err(format!("runtime error: {}", e), warnings);
+                    res.stdout = drain(&out_buf);
+                    res.stderr = drain(&err_buf);
+                    res
+                }
             }
-        }
-        Err(e) => {
-            let mut res = RunResult::err(format!("runtime error: {}", e), warnings);
-            res.stdout = drain(&out_buf);
-            res.stderr = drain(&err_buf);
-            res
-        }
+        }};
+    }
+
+    if module.flags & polka::CART_FLAG_INT32_SAFE != 0 {
+        execute!(myriad::word32)
+    } else {
+        execute!(myriad::word64)
     }
 }
 

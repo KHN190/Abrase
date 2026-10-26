@@ -487,7 +487,7 @@ impl VirtualMachine {
             let (s, g) = Self::decode_handle(table_raw);
             (Some(s), g)
         } else { (None, 0) };
-        self.handlers.push(super::HandlerFrame {
+        self.push_handler(super::HandlerFrame {
             effect_id,
             dispatch_table_slot: table_slot,
             dispatch_table_gen: table_gen,

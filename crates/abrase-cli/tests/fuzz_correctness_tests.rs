@@ -1153,9 +1153,13 @@ fn run_raw(src: &str, int32: bool) -> Result<u64, String> {
     if !p.errors.is_empty() { return Err(format!("parse:\n{}", p.pretty_print_errors())); }
     let mut c = Compiler::new().with_source(src.to_string()).with_int32_mode(int32);
     let module = c.compile_module(&ast).map_err(|_| c.pretty_print_errors())?;
-    let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
-    let v = vm.run_module(&module).map_err(|e| format!("vm: {}", e))?;
-    Ok(v.raw())
+    if module.flags & polka::CART_FLAG_INT32_SAFE != 0 {
+        let mut vm = myriad::word32::VirtualMachine::new().with_step_cap(1_000_000);
+        vm.run_module(&module).map(|v| v.raw() as u64).map_err(|e| format!("vm: {}", e))
+    } else {
+        let mut vm = VirtualMachine::new().with_step_cap(1_000_000);
+        vm.run_module(&module).map(|v| v.raw()).map_err(|e| format!("vm: {}", e))
+    }
 }
 
 const F_OPS: &[(&str, fn(f64, f64) -> f64)] = &[

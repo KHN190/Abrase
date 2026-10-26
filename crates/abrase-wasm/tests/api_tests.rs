@@ -93,6 +93,40 @@ fn int32_mode_accepts_in_range_program() {
 }
 
 #[test]
+fn numeric_mode_selects_the_vm_integer_width() {
+    let source = "fn main() -> Int { let x = 2147483647; x + 1 }";
+    for (int32, expected) in [(true, "-2147483648"), (false, "2147483648")] {
+        let result = run_with(source, int32, false);
+        assert!(result.ok, "{}", result.error);
+        assert_eq!(result.value, expected);
+    }
+}
+
+#[test]
+fn both_numeric_modes_decode_strings_and_capture_stdout() {
+    let source = "fn main() -> String { println(\"before\"); \"hello 字🙂\" }";
+    for int32 in [false, true] {
+        let result = run_with(source, int32, false);
+        assert!(result.ok, "{}", result.error);
+        assert_eq!(result.value, "hello 字🙂");
+        assert_eq!(result.stdout, "before\n");
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[test]
+fn both_numeric_modes_preserve_stdout_on_runtime_errors() {
+    let source = "fn main() -> Int { println(\"before\"); let z = 0; 1 / z }";
+    for int32 in [false, true] {
+        let result = run_with(source, int32, false);
+        assert!(!result.ok);
+        assert!(result.error.contains("runtime error"), "{}", result.error);
+        assert!(result.error.contains("zero"), "{}", result.error);
+        assert_eq!(result.stdout, "before\n");
+    }
+}
+
+#[test]
 fn int32_mode_rejects_out_of_range_literal() {
     let r = run_with(&read(&format!("{}/int32_out_of_range.abe", SCRIPTS)), true, false);
     assert!(!r.ok);

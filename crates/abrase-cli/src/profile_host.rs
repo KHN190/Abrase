@@ -48,11 +48,11 @@ pub fn myriad_stderr_sink() -> vm::DebugSink {
                 }
             }
             DebugEvent::HandlePush {
-                effect_id, cell_slot, cell_gen, suspend_pc, suspend_base, dest, depth,
+                effect_id, dispatch_table, depth,
             } => {
                 eprintln!(
-                    "  [handle] push effect_id={} cell=(slot {},gen {}) suspend_pc={} suspend_base={} dest=r{} depth={}",
-                    effect_id, cell_slot, cell_gen, suspend_pc, suspend_base, dest, depth
+                    "  [handle] push effect_id={} dispatch_table={:?} depth={}",
+                    effect_id, dispatch_table, depth
                 );
             }
             DebugEvent::Resume {

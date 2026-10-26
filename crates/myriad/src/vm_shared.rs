@@ -460,7 +460,16 @@ impl VirtualMachine {
     }
 
     pub fn push_handler(&mut self, h: HandlerFrame) {
+        let effect_id = h.effect_id;
+        let dispatch_table = h.dispatch_table_slot.map(|slot| (slot, h.dispatch_table_gen));
         self.handlers.push(h);
+        if self.debug_sink.is_some() {
+            self.emit_debug(&DebugEvent::HandlePush {
+                effect_id,
+                dispatch_table,
+                depth: self.handlers.len(),
+            });
+        }
     }
 }
 

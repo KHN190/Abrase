@@ -22,11 +22,9 @@ pub enum DebugEvent<'a> {
     },
     HandlePush {
         effect_id: u16,
-        cell_slot: u32,
-        cell_gen: u32,
-        suspend_pc: usize,
-        suspend_base: usize,
-        dest: usize,
+        // Handle installs a dispatch table; continuation cells are created later.
+        dispatch_table: Option<(u32, u32)>,
+        // Stack depth after the handler is installed.
         depth: usize,
     },
     Resume {

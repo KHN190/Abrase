@@ -31,6 +31,8 @@ let result = vm.run_module(&module)?;
 
 See the [main repo](https://github.com/KHN190/Abrase) for more examples.
 
+On bare-metal ARM, `ram-math` places FP32 sine, cosine, and range reduction in `.data.ram_func`. The linker/startup must copy this section into executable RAM. It does not select the VM numeric width.
+
 ## License
 
 MIT
